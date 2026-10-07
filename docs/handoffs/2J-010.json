@@ -3,14 +3,15 @@
   "task_id": "2J-010",
   "agent": "codex",
   "branch": "agent/codex/2J-010-services-plans-rights",
-  "commits": ["274aa9afcc736495ae11d9a3fafc388ca8d4a43c"],
+  "commits": ["274aa9afcc736495ae11d9a3fafc388ca8d4a43c", "40e199286e7783ffecadad3550686d4f17032a50"],
   "files_changed": ["apps/admin-web/**", "apps/api/**", "docker-compose.yml", "README.md", "package.json", "pnpm-lock.yaml", ".github/workflows/quality.yml", "docs/handoffs/2J-010.*"],
   "tests": [
     {"name": "Workspace typecheck and build", "command": "corepack pnpm@10.34.6 typecheck && corepack pnpm@10.34.6 build", "result": "PASS", "evidence": "All seven workspace packages typecheck and build successfully on the implementation head."},
     {"name": "PostgreSQL API integration", "command": "DATABASE_URL=postgres://2j_local@127.0.0.1:54329/2j_platform corepack pnpm@10.34.6 --filter @2j/api test", "result": "PASS", "evidence": "4/4 API tests pass against local PostgreSQL 17, including persistent service/plan/right creation and readback."},
     {"name": "Admin web test", "command": "corepack pnpm@10.34.6 --filter @2j/admin-web test", "result": "PASS", "evidence": "1/1 server-rendered accessibility/content contract test passes."},
+    {"name": "Local HTTP smoke test", "command": "GET http://127.0.0.1:3100/health and /api/services", "result": "PASS", "evidence": "Windows development process starts successfully; API returns local-only health and persisted service list on loopback."},
     {"name": "Dependency audit", "command": "corepack pnpm@10.34.6 audit --audit-level high", "result": "PASS", "evidence": "No known vulnerabilities; Drizzle ORM is at 0.45.2 or later."},
-    {"name": "Hosted quality and secret scans", "command": "GitHub Actions for PR #6", "result": "NOT_RUN", "evidence": "Pending on the final handoff commit; do not merge before the exact-head checks pass."}
+    {"name": "Hosted quality and secret scans", "command": "GitHub Actions for PR #6", "result": "NOT_RUN", "evidence": "The implementation head has been rechecked locally after a Windows entrypoint fix; hosted checks are running on the final documentation head. Do not merge before exact-head checks pass."}
   ],
   "decisions": ["Services/plans/rights only; no pricing/payment/renewal behavior chosen", "Plan cadence and right type/period are explicitly selected per draft plan", "Loopback-only until runtime authentication and permissions are reviewed", "No 2jfitnessapp, training or Búnker changes"],
   "risks": ["API has no runtime authentication and must not be exposed or deployed", "Product decisions for price, renewal, expiration, cancellation and scheduling remain unresolved"],
