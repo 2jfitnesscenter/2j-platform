@@ -14,6 +14,22 @@ jobs:
     name: quality
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: 2j_platform
+          POSTGRES_USER: 2j_local
+          POSTGRES_PASSWORD: 2j_local_dev_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U 2j_local -d 2j_platform"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://2j_local:2j_local_dev_only@127.0.0.1:5432/2j_platform
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -25,6 +41,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @2j/api db:migrate
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
