@@ -1,0 +1,78 @@
+/* Generated from tokens.json. Do not edit by hand. */
+:root {
+  color-scheme: light;
+  --2j-type-font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --2j-type-mono-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --2j-type-size-xs: 0.75rem;
+  --2j-type-size-sm: 0.875rem;
+  --2j-type-size-md: 1rem;
+  --2j-type-size-lg: 1.125rem;
+  --2j-type-size-xl: 1.375rem;
+  --2j-type-size-display: 1.75rem;
+  --2j-type-line-height-tight: 1.2;
+  --2j-type-line-height-normal: 1.5;
+  --2j-type-line-height-relaxed: 1.65;
+  --2j-type-weight-regular: 400;
+  --2j-type-weight-medium: 500;
+  --2j-type-weight-semibold: 600;
+  --2j-type-weight-bold: 700;
+  --2j-space-0: 0;
+  --2j-space-1: 0.25rem;
+  --2j-space-2: 0.5rem;
+  --2j-space-3: 0.75rem;
+  --2j-space-4: 1rem;
+  --2j-space-5: 1.25rem;
+  --2j-space-6: 1.5rem;
+  --2j-space-8: 2rem;
+  --2j-space-10: 2.5rem;
+  --2j-space-12: 3rem;
+  --2j-space-16: 4rem;
+  --2j-radius-sm: 0.375rem;
+  --2j-radius-md: 0.625rem;
+  --2j-radius-lg: 0.875rem;
+  --2j-radius-xl: 1.125rem;
+  --2j-radius-pill: 999px;
+  --2j-elevation-low: 0 1px 2px rgb(16 24 12 / 8%);
+  --2j-elevation-medium: 0 8px 24px rgb(16 24 12 / 12%);
+  --2j-elevation-high: 0 18px 48px rgb(16 24 12 / 18%);
+  --2j-motion-fast: 120ms;
+  --2j-motion-normal: 180ms;
+  --2j-motion-slow: 260ms;
+  --2j-motion-easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --2j-color-canvas: #f5f7f2;
+  --2j-color-surface: #ffffff;
+  --2j-color-surface-raised: #ffffff;
+  --2j-color-surface-subtle: #edf1e8;
+  --2j-color-text-primary: #172015;
+  --2j-color-text-secondary: #52604e;
+  --2j-color-text-on-brand: #14210d;
+  --2j-color-border: #d6ddcf;
+  --2j-color-border-strong: #aeb9a4;
+  --2j-color-brand: #73b52e;
+  --2j-color-brand-strong: #578923;
+  --2j-color-success: #26734a;
+  --2j-color-warning: #865900;
+  --2j-color-danger: #a83232;
+  --2j-color-info: #285f91;
+  --2j-color-focus: #285f91;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --2j-color-canvas: #10130f;
+  --2j-color-surface: #171b15;
+  --2j-color-surface-raised: #1e241b;
+  --2j-color-surface-subtle: #252d21;
+  --2j-color-text-primary: #f2f5ee;
+  --2j-color-text-secondary: #aab5a2;
+  --2j-color-text-on-brand: #14210d;
+  --2j-color-border: #343d2f;
+  --2j-color-border-strong: #56634d;
+  --2j-color-brand: #73b52e;
+  --2j-color-brand-strong: #91c65c;
+  --2j-color-success: #80d5a0;
+  --2j-color-warning: #f4c36b;
+  --2j-color-danger: #ff9690;
+  --2j-color-info: #8fc8ff;
+  --2j-color-focus: #8fc8ff;
+}
