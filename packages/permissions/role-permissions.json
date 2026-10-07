@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0.0",
+  "source": "DECISIONS_2J.md; final action-level scope remains a product gate",
+  "roles": {
+    "admin": ["*"],
+    "trainer": ["clients.read", "health.read", "training.read", "calendar.read", "communication.read", "timeclock.read"],
+    "reception-management": ["clients.read", "calendar.read", "reservations.manage", "billing.read-basic", "timeclock.read"],
+    "accountant": []
+  },
+  "unresolved": [
+    "Accountant exact economic/fiscal permissions",
+    "Health data field-level and purpose limits",
+    "Role administration and grant approval workflow",
+    "Session transport/provider and retention policy"
+  ]
+}

@@ -1,3 +1,3 @@
-# packages/permissions
+# `@2j/permissions`
 
-Reserved architecture boundary. Product behavior is not implemented in 2J-001. Follow TECH_ARCHITECTURE.md in product research; contracts and design require their dedicated TASKs.
+Server-side deny-by-default permission policy contracts and approved starter matrix. Exact accountant, health-field and role administration scopes remain gated; see `docs/architecture/identity/identity-permissions-audit.md`.
