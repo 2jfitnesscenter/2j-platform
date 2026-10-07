@@ -16,6 +16,7 @@ test('plan rights require a quota and a period for periodic quotas', () => {
   assert.equal(planInput.safeParse(valid).success, true);
   assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'sessions_quota' }] }).success, false);
   assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'period_quota', quantity: 8 }] }).success, false);
+  assert.equal(planInput.safeParse({ ...valid, priceMinor: 12000 }).success, false);
 });
 
 test('health endpoint announces local-only mode without database access', async (t) => {

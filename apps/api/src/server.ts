@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 
 export const serviceInput = z.object({ name: z.string().trim().min(1).max(100), area: z.string().trim().min(1).max(80), status: z.enum(['active', 'draft']) }).strict();
-export const planInput = z.object({ name: z.string().trim().min(1).max(100), billingCadence: z.enum(['monthly', 'weekly', 'session_pack', 'period']), priceMinor: z.number().int().nonnegative().nullable().optional(), periodDays: z.number().int().min(1).max(3660).nullable().optional(), rights: z.array(z.object({ rightType: z.enum(['service_access', 'sessions_quota', 'period_quota']), quantity: z.number().int().positive().nullable().optional(), period: z.enum(['week', 'month', 'plan_period']).nullable().optional(), validDays: z.number().int().min(1).max(3660).nullable().optional() }).strict()).min(1).max(20) }).strict().superRefine((plan, context) => {
+export const planInput = z.object({ name: z.string().trim().min(1).max(100), billingCadence: z.enum(['monthly', 'weekly', 'session_pack', 'period']), periodDays: z.number().int().min(1).max(3660).nullable().optional(), rights: z.array(z.object({ rightType: z.enum(['service_access', 'sessions_quota', 'period_quota']), quantity: z.number().int().positive().nullable().optional(), period: z.enum(['week', 'month', 'plan_period']).nullable().optional(), validDays: z.number().int().min(1).max(3660).nullable().optional() }).strict()).min(1).max(20) }).strict().superRefine((plan, context) => {
   plan.rights.forEach((right, index) => {
     if (right.rightType === 'service_access' && (right.quantity != null || right.period != null)) context.addIssue({ code: 'custom', path: ['rights', index], message: 'Service access cannot have a quota or period' });
     if (right.rightType !== 'service_access' && !Number.isInteger(right.quantity)) context.addIssue({ code: 'custom', path: ['rights', index, 'quantity'], message: 'Quota rights require a quantity' });
@@ -54,7 +54,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
       const result = await client.begin(async (tx) => {
         const [exists] = await tx`SELECT id FROM services WHERE id=${serviceId} AND status <> 'archived'`;
         if (!exists) return null;
-        const [plan] = await tx`INSERT INTO plans (service_id,name,billing_cadence,price_minor,period_days) VALUES (${serviceId},${parsed.data.name},${parsed.data.billingCadence},${parsed.data.priceMinor ?? null},${parsed.data.periodDays ?? null}) RETURNING id,name,billing_cadence AS "billingCadence",price_minor AS "priceMinor",currency,period_days AS "periodDays",status`;
+        const [plan] = await tx`INSERT INTO plans (service_id,name,billing_cadence,period_days) VALUES (${serviceId},${parsed.data.name},${parsed.data.billingCadence},${parsed.data.periodDays ?? null}) RETURNING id,name,billing_cadence AS "billingCadence",price_minor AS "priceMinor",currency,period_days AS "periodDays",status`;
         if (!plan) throw new Error('Plan insert returned no row');
         const rights = await Promise.all(parsed.data.rights.map((right) => tx`INSERT INTO plan_rights (plan_id,right_type,quantity,period,valid_days) VALUES (${plan.id},${right.rightType},${right.quantity ?? null},${right.period ?? null},${right.validDays ?? null}) RETURNING id,right_type AS "rightType",quantity,period,valid_days AS "validDays"`));
         return { ...plan, rights: rights.flat() };
