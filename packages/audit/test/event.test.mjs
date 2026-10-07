@@ -18,6 +18,9 @@ test('audit envelope accepts minimal metadata and rejects credential or sensitiv
 test('audit changes are summarized and bounded in size', () => {
   assert.throws(() => validateAuditEvent({ ...base, changes: { status: 'x'.repeat(241) } }), /too long/);
   assert.throws(() => validateAuditEvent({ ...base, occurredAt: 'yesterday' }), /ISO 8601/);
+  assert.throws(() => validateAuditEvent({ ...base, occurredAt: '2026-02-31T12:00:00Z' }), /ISO 8601/);
+  assert.throws(() => validateAuditEvent({ ...base, occurredAt: '2026-10-07T12:00:00' }), /ISO 8601/);
+  assert.doesNotThrow(() => validateAuditEvent({ ...base, occurredAt: '2026-10-07T12:00:00+01:00' }));
   assert.throws(() => validateAuditEvent({ ...base, action: '' }), /required/);
   assert.throws(() => validateAuditEvent({ ...base, unexpectedPayload: 'not allowed' }), /Unknown audit field/);
 });

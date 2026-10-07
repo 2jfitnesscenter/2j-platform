@@ -16,7 +16,7 @@ Session token verification is an infrastructure responsibility. Once cryptograph
 
 ## Audit envelope
 
-`packages/audit/audit-event.schema.json` defines the machine-readable envelope. Events record actor, action, resource, outcome, timestamp and correlation ID. Optional changes are short summaries only. Credential, health/diagnosis, and document-content keys are rejected. Audit storage is append-only by contract; application access must not expose update/delete methods. Sensitive reads, denied access, and administrative overrides should be auditable when their product policy is approved. Audit retention and deletion require explicit legal review.
+`packages/audit/audit-event.schema.json` defines the machine-readable envelope. Events record actor, action, resource, outcome, timestamp and correlation ID. Runtime validation requires an ISO 8601 calendar-valid timestamp with an explicit timezone. Optional changes are bounded scalar summaries only. Credential, health/diagnosis, and document-content keys are rejected. Audit storage is append-only by contract; application access must not expose update/delete methods. Sensitive reads, denied access, and administrative overrides should be auditable when their product policy is approved. Audit retention and deletion require explicit legal review.
 
 ## Tests and implementation gates
 

@@ -22,6 +22,22 @@ const fieldMaxLength: Readonly<Record<string, number>> = {
   resourceId: 160, correlationId: 160, reasonCode: 120,
 };
 
+function isIsoDateTime(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone] = match;
+  if (!zone) return false;
+  const year = Number(yearText); const month = Number(monthText); const day = Number(dayText);
+  const hour = Number(hourText); const minute = Number(minuteText); const second = Number(secondText);
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(year, month - 1, day);
+  calendar.setUTCHours(0, 0, 0, 0);
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) return false;
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  if (zone !== 'Z' && (Number(zone.slice(1, 3)) > 23 || Number(zone.slice(4, 6)) > 59)) return false;
+  return !Number.isNaN(Date.parse(value));
+}
+
 export function validateAuditEvent(event: AuditEvent): void {
   for (const key of Object.keys(event)) {
     if (!allowedEventKeys.has(key)) throw new Error(`Unknown audit field: ${key}`);
@@ -30,7 +46,7 @@ export function validateAuditEvent(event: AuditEvent): void {
   for (const key of required) {
     if (typeof event[key] !== 'string' || event[key].length === 0) throw new Error(`Audit field is required: ${key}`);
   }
-  if (Number.isNaN(Date.parse(event.occurredAt)) || !/^\d{4}-\d\d-\d\dT/.test(event.occurredAt)) throw new Error('Audit timestamp must be ISO 8601');
+  if (!isIsoDateTime(event.occurredAt)) throw new Error('Audit timestamp must be ISO 8601 with a valid calendar date and timezone');
   if (!['success', 'denied', 'failure'].includes(event.outcome)) throw new Error('Invalid audit outcome');
   if (event.changes !== undefined && (event.changes === null || typeof event.changes !== 'object' || Array.isArray(event.changes))) {
     throw new Error('Audit changes must be an object of scalar summaries');
