@@ -3,21 +3,21 @@
   "task_id": "2J-010",
   "agent": "codex",
   "branch": "agent/codex/2J-010-services-plans-rights",
-  "commits": ["274aa9afcc736495ae11d9a3fafc388ca8d4a43c", "40e199286e7783ffecadad3550686d4f17032a50"],
+  "commits": ["274aa9afcc736495ae11d9a3fafc388ca8d4a43c", "40e199286e7783ffecadad3550686d4f17032a50", "bbfa0b1dafa5b844244db54a7c8549ee4e823add", "2dd0cbbcf3c66e01d5325c58815c2cfdf62a50e3"],
   "files_changed": ["apps/admin-web/**", "apps/api/**", "docker-compose.yml", "README.md", "package.json", "pnpm-lock.yaml", ".github/workflows/quality.yml", "docs/handoffs/2J-010.*"],
   "tests": [
     {"name": "Workspace typecheck and build", "command": "corepack pnpm@10.34.6 typecheck && corepack pnpm@10.34.6 build", "result": "PASS", "evidence": "All seven workspace packages typecheck and build successfully on the implementation head."},
-    {"name": "PostgreSQL API integration", "command": "DATABASE_URL=postgres://2j_local@127.0.0.1:54329/2j_platform corepack pnpm@10.34.6 --filter @2j/api test", "result": "PASS", "evidence": "4/4 API tests pass against local PostgreSQL 17, including persistent service/plan/right creation and readback."},
+    {"name": "PostgreSQL API integration", "command": "DATABASE_URL=postgres://2j_local@127.0.0.1:54329/2j_platform corepack pnpm@10.34.6 --filter @2j/api test", "result": "PASS", "evidence": "4/4 API tests pass against local PostgreSQL 17, including explicit service state, null price/currency, plan/right creation and readback."},
     {"name": "Admin web test", "command": "corepack pnpm@10.34.6 --filter @2j/admin-web test", "result": "PASS", "evidence": "1/1 server-rendered accessibility/content contract test passes."},
     {"name": "Local HTTP smoke test", "command": "GET http://127.0.0.1:3100/health and /api/services", "result": "PASS", "evidence": "Windows development process starts successfully; API returns local-only health and persisted service list on loopback."},
     {"name": "Dependency audit", "command": "corepack pnpm@10.34.6 audit --audit-level high", "result": "PASS", "evidence": "No known vulnerabilities; Drizzle ORM is at 0.45.2 or later."},
-    {"name": "Hosted quality and secret scans", "command": "GitHub Actions run 46 on 6f62b84780d9a0b3c85c04ba71d950bf7d177eb0", "result": "PASS", "evidence": "The hosted quality and full-history secret-scan workflow completed successfully on the final implementation/handoff head; no source-code changes followed, only task-source tracking updates outside this repository."}
+    {"name": "Hosted quality and secret scans", "command": "GitHub Actions run 59 on 2dd0cbbcf3c66e01d5325c58815c2cfdf62a50e3", "result": "PASS", "evidence": "Hosted quality and full-history secret scan completed successfully on the latest implementation head; includes all migrations, typecheck, tests, build and audit."}
   ],
-  "decisions": ["Services/plans/rights only; no pricing/payment/renewal behavior chosen", "Plan cadence and right type/period are explicitly selected per draft plan", "Loopback-only until runtime authentication and permissions are reviewed", "No 2jfitnessapp, training or Búnker changes"],
+  "decisions": ["Services/plans/rights only; no pricing/payment/renewal behavior chosen", "Service state and plan cadence/right type/period are explicitly selected; price and currency remain unset", "Loopback-only until runtime authentication and permissions are reviewed", "No 2jfitnessapp, training or Búnker changes"],
   "risks": ["API has no runtime authentication and must not be exposed or deployed", "Product decisions for price, renewal, expiration, cancellation and scheduling remain unresolved"],
   "followups": ["Independent reviewer and QA inspect exact final head", "Complete 2J-020 Clients 360 and 2J-030 Calendar/Bookings/Waitlist in separate branches/PRs", "Do not change 2J-008 from DRY RUN or enable provider LIVE"],
   "status": "REVIEW",
   "summary": "Local-first 2J-010 services, plans and rights UI/API using real PostgreSQL, with no production deployment.",
   "reviewer_instructions": ["Review migration constraints and transaction behavior", "Verify there is no public binding or pricing/business default", "Check accessibility/token use and exact-head CI before merge"],
-  "source_commit": "6fada190ee14d75eac0bb4cced5705cb22907197"
+  "source_commit": "9cec43fd549f6f16e2ad1574ccef4613c2f97b4f"
 }
