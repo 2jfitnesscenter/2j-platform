@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2J-020",
+  "agent": "codex",
+  "branch": "agent/codex/2J-020-clients-360",
+  "commits": [],
+  "files_changed": [],
+  "tests": [{"name": "Implementation and independent validation", "command": "See product-research/tasks/2J-020.json; run all required tests when dependencies are met", "result": "NOT_RUN", "evidence": "Task is staged only; implementation waits for 2J-010 integration and exact acceptance criteria remain authoritative in 2j-product-research."}],
+  "decisions": ["2j-product-research/tasks/2J-020.json is the source-of-truth contract", "No training/Búnker data duplication", "Sensitive health, payment and document sections require implemented server-side permissions"],
+  "risks": ["Client identity is personal data and requires access control before non-local exposure", "Implementation depends on 2J-010"],
+  "followups": ["Start implementation only after 2J-010 is integrated", "Keep each module data at its source of truth", "Independent reviewer and QA must differ from implementer"],
+  "status": "READY",
+  "summary": "Reserved isolated branch and draft PR for 2J-020 Clients 360; no implementation yet.",
+  "reviewer_instructions": ["Do not treat this task-registration PR as implementation or approval", "Check source task and dependency status before starting code"],
+  "source_commit": "4cfe216d1c2cdd1d73862c1c4ab0198241cd6072"
+}
