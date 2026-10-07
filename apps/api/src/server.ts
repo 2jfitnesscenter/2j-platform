@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 
-export const serviceInput = z.object({ name: z.string().trim().min(1).max(100), area: z.string().trim().min(1).max(80) }).strict();
+export const serviceInput = z.object({ name: z.string().trim().min(1).max(100), area: z.string().trim().min(1).max(80), status: z.enum(['active', 'draft']) }).strict();
 export const planInput = z.object({ name: z.string().trim().min(1).max(100), billingCadence: z.enum(['monthly', 'weekly', 'session_pack', 'period']), priceMinor: z.number().int().nonnegative().nullable().optional(), periodDays: z.number().int().min(1).max(3660).nullable().optional(), rights: z.array(z.object({ rightType: z.enum(['service_access', 'sessions_quota', 'period_quota']), quantity: z.number().int().positive().nullable().optional(), period: z.enum(['week', 'month', 'plan_period']).nullable().optional(), validDays: z.number().int().min(1).max(3660).nullable().optional() }).strict()).min(1).max(20) }).strict().superRefine((plan, context) => {
   plan.rights.forEach((right, index) => {
     if (right.rightType === 'service_access' && (right.quantity != null || right.period != null)) context.addIssue({ code: 'custom', path: ['rights', index], message: 'Service access cannot have a quota or period' });
@@ -29,7 +29,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
   app.post('/api/services', async (request, reply) => {
     const parsed = serviceInput.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
-    try { const [row] = await client`INSERT INTO services (name,area) VALUES (${parsed.data.name},${parsed.data.area}) RETURNING id,name,area,status,updated_at AS "updatedAt"`; return reply.code(201).send(row); }
+    try { const [row] = await client`INSERT INTO services (name,area,status) VALUES (${parsed.data.name},${parsed.data.area},${parsed.data.status}) RETURNING id,name,area,status,updated_at AS "updatedAt"`; return reply.code(201).send(row); }
     catch (error) { if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') return reply.code(409).send({ error: 'service_already_exists' }); app.log.error(error); return reply.code(503).send({ error: 'database_unavailable' }); }
   });
   app.get('/api/services/:serviceId/plans', async (request, reply) => {

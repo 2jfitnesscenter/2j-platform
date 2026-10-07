@@ -5,7 +5,7 @@ export const services = pgTable('services', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
   area: text('area').notNull(),
-  status: text('status').notNull().default('active'),
+  status: text('status').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -20,7 +20,7 @@ export const plans = pgTable('plans', {
   name: text('name').notNull(),
   billingCadence: text('billing_cadence').notNull(),
   priceMinor: integer('price_minor'),
-  currency: char('currency', { length: 3 }).notNull().default('EUR'),
+  currency: char('currency', { length: 3 }),
   periodDays: integer('period_days'),
   status: text('status').notNull().default('draft'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -29,7 +29,7 @@ export const plans = pgTable('plans', {
   index('plans_service_idx').on(table.serviceId, table.status),
   check('plans_cadence_allowed', sql`${table.billingCadence} IN ('monthly', 'weekly', 'session_pack', 'period')`),
   check('plans_status_allowed', sql`${table.status} IN ('active', 'draft', 'archived')`),
-  check('plans_price_nonnegative', sql`${table.priceMinor} IS NULL OR ${table.priceMinor} >= 0`),
+  check('plans_price_currency_required', sql`${table.priceMinor} IS NULL OR (${table.priceMinor} >= 0 AND ${table.currency} IS NOT NULL)`),
 ]);
 
 export const planRights = pgTable('plan_rights', {
