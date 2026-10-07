@@ -17,8 +17,9 @@ test('explicit deny takes precedence over the admin wildcard', () => {
 });
 
 test('admin can perform operations unless explicitly denied', () => {
-  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'configuration.manage'), true);
-  assert.equal(can({ actorId: 'fixture', role: 'admin', deniedPermissions: ['configuration.manage'] }, 'configuration.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'settings.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'does.not.exist'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'admin', deniedPermissions: ['settings.manage'] }, 'settings.manage'), false);
 });
 
 test('runtime role matrix matches its reviewable JSON contract', async () => {

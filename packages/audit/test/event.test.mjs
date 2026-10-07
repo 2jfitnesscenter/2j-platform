@@ -8,7 +8,11 @@ const base = { id: 'event-1', occurredAt: '2026-10-07T12:00:00Z', actorId: 'acto
 test('audit envelope accepts minimal metadata and rejects credential or sensitive payloads', () => {
   assert.doesNotThrow(() => validateAuditEvent(base));
   assert.throws(() => validateAuditEvent({ ...base, changes: { accessToken: 'not-logged' } }), /Sensitive audit field/);
+  assert.throws(() => validateAuditEvent({ ...base, changes: { apiKey: 'not-logged' } }), /Sensitive audit field/);
+  assert.throws(() => validateAuditEvent({ ...base, changes: { api_key: 'not-logged' } }), /Sensitive audit field/);
+  assert.throws(() => validateAuditEvent({ ...base, changes: { privateKey: 'not-logged' } }), /Sensitive audit field/);
   assert.throws(() => validateAuditEvent({ ...base, changes: { diagnosis: 'not-logged' } }), /Sensitive audit field/);
+  assert.throws(() => validateAuditEvent({ ...base, changes: { summary: { password: 'not-logged' } } }), /scalar/);
 });
 
 test('audit changes are summarized and bounded in size', () => {
@@ -22,4 +26,7 @@ test('machine schema requires the same identity/correlation audit envelope', asy
   const schema = JSON.parse(await readFile(new URL('../audit-event.schema.json', import.meta.url), 'utf8'));
   assert.deepEqual(schema.required, ['id', 'occurredAt', 'actorId', 'action', 'resourceType', 'resourceId', 'correlationId', 'outcome']);
   assert.equal(schema.additionalProperties, false);
+  const deniedKey = new RegExp(schema.properties.changes.propertyNames.not.pattern);
+  for (const key of ['apiKey', 'api_key', 'privateKey', 'password', 'medicalRecord']) assert.match(key, deniedKey);
+  assert.deepEqual(schema.properties.changes.additionalProperties.type, ['string', 'number', 'boolean', 'null']);
 });

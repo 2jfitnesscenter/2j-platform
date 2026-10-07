@@ -6,7 +6,7 @@ This is a server-side policy contract only. It does not select an identity provi
 
 ## Roles and authorization
 
-The role names follow approved `DECISIONS_2J.md`: Admin, Entrenador, Recepción/Gestión, and Contable. `packages/permissions/role-permissions.json` records the action-level starter matrix strictly where source decisions support it. Every request is checked on the server; UI visibility is not authorization. Unknown roles and permissions deny. Explicit denies override grants, including the Admin wildcard.
+The role names follow approved `DECISIONS_2J.md`: Admin, Entrenador, Recepción/Gestión, and Contable. `packages/permissions/role-permissions.json` records the action-level starter matrix strictly where source decisions support it. Every request is checked on the server; UI visibility is not authorization. Unknown roles and permissions deny. Explicit denies override grants, including the Admin wildcard. The permission registry is explicit: adding an operation requires adding and reviewing its identifier before the Admin wildcard can grant it.
 
 Contable intentionally has no effective grants until its exact economic/fiscal scope is approved. The high-level approved statement that it may access necessary economic/fiscal information is not enough to infer specific actions. Health fields/purposes and role administration grants remain gated too. Trainer access to clients reflects the approved all-clients rule; finer health access must be product-reviewed before sensitive runtime functionality.
 

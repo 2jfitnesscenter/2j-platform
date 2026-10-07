@@ -18,7 +18,7 @@
     "changes": {
       "type": "object",
       "maxProperties": 30,
-      "propertyNames": {"not": {"pattern": "[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Mm][Ee][Dd][Ii][Cc][Aa][Ll]|[Dd][Ii][Aa][Gg][Nn][Oo][Ss]|[Dd][Oo][Cc][Uu][Mm][Ee][Nn][Tt].?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Hh][Ee][Aa][Ll][Tt][Hh].?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]"}},
+      "propertyNames": {"not": {"pattern": "[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Aa][Pp][Ii]([_-]?[Kk][Ee][Yy])?|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]([_-]?[Kk][Ee][Yy])?|[Mm][Ee][Dd][Ii][Cc][Aa][Ll]|[Dd][Ii][Aa][Gg][Nn][Oo][Ss]|[Dd][Oo][Cc][Uu][Mm][Ee][Nn][Tt].?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Hh][Ee][Aa][Ll][Tt][Hh].?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]"}},
       "additionalProperties": {"type": ["string", "number", "boolean", "null"], "maxLength": 240}
     }
   }

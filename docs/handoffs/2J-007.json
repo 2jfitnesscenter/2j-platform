@@ -3,14 +3,14 @@
   "task_id": "2J-007",
   "agent": "codex",
   "branch": "agent/codex/2J-007-identity-permissions-audit",
-  "commits": ["cbfb3e4", "0145f62", "deb6784"],
+  "commits": ["d00b49c", "cc90379"],
   "files_changed": [],
-  "tests": [{"name": "Identity/authorization/audit contracts", "command": "pnpm typecheck && pnpm test && pnpm build && pnpm audit --audit-level high", "result": "PASS", "evidence": "2026-10-07 local: typecheck 5/5 packages; 15/15 tests passed; build 5/5 packages; pnpm audit high found no known vulnerabilities; git diff --check clean. Remote CI and independent critical review/QA pending."}],
+  "tests": [{"name": "Identity/authorization/audit contracts", "command": "pnpm typecheck && pnpm test && pnpm build && pnpm audit --audit-level high", "result": "PENDING", "evidence": "Independent review/QA of d00b49c found three blockers: Admin wildcard granted unknown permission IDs, audit changes accepted nested objects, and credential key denylist omitted apiKey/privateKey. All three addressed with regression tests; rerun and exact-head review/QA required."}],
   "decisions": ["Uses approved role names and explicit source-backed starter grants", "No identity-provider or legal-retention choice made"],
-  "risks": ["Accountant exact scope, sensitive health access, role editor and retention need explicit decisions"],
-  "followups": ["Independent reviewer and QA", "Human approval before merge", "Resolve gated policy decisions before production identity implementation"],
+  "risks": ["Accountant exact scope, sensitive health access, role editor and retention need explicit decisions", "Critical review findings fixed; independent confirmation pending"],
+  "followups": ["Re-run critical reviewer and QA against corrected head", "Human approval before merge", "Resolve gated policy decisions before production identity implementation"],
   "status": "REVIEW",
   "summary": "Deny-by-default authorization, revocable session contract, and sensitive-data-aware append-only audit contract",
   "reviewer_instructions": ["Check each grant against DECISIONS_2J.md", "Verify sensitive audit payload rejection and deny-by-default tests", "Confirm no provider or credentials were introduced"],
-  "source_commit": "0145f62"
+  "source_commit": "86fbec4"
 }
