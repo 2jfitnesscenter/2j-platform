@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2J-001",
+  "agent": "codex",
+  "branch": "agent/codex/2J-001-repo-foundation",
+  "commits": [
+    "3a5aaf629673900f8f508fc86dae1001900c57ca"
+  ],
+  "files_changed": [
+    ".github/CODEOWNERS",
+    ".github/ISSUE_TEMPLATE/task.yml",
+    ".github/pull_request_template.md",
+    ".gitignore",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "apps/admin-web/README.md",
+    "apps/api/README.md",
+    "apps/staff-app/README.md",
+    "docs/adr/README.md",
+    "docs/architecture/source-of-truth.md",
+    "docs/handoffs/2J-001.md",
+    "docs/product/README.md",
+    "docs/runbooks/main-protection.md",
+    "package.json",
+    "packages/auth/README.md",
+    "packages/contracts/README.md",
+    "packages/design-tokens/README.md",
+    "packages/domain/README.md",
+    "packages/observability/README.md",
+    "packages/permissions/README.md",
+    "packages/testing/README.md",
+    "packages/ui/README.md",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "protection.json",
+    "tooling/README.md",
+    "tsconfig.base.json",
+    "turbo.json"
+  ],
+  "tests": [
+    {
+      "name": "Repository verification",
+      "command": "gh repo view; branch protection API; git diff --check",
+      "result": "PASS",
+      "evidence": "Private, ADMIN, default main confirmed. Protection API 403 captured; explicit plan supplied. Platform typecheck/build invoke zero packages (scaffold only)."
+    }
+  ],
+  "decisions": [
+    "No product decision changed",
+    "DRY_RUN only; no auto-merge"
+  ],
+  "risks": [
+    "Independent reviewer and QA pending",
+    "GitHub Pro required for main protection"
+  ],
+  "followups": [
+    "Independent reviewer / QA",
+    "Human approval before merge"
+  ],
+  "status": "REVIEW",
+  "summary": "2J-001 implementation ready for independent review",
+  "reviewer_instructions": [
+    "Check acceptance criteria against pinned research task",
+    "Do not treat local checks as independent approval"
+  ],
+  "source_commit": "2a9ec28a07acef0b8857db6c74924c5c1189047f"
+}
