@@ -20,10 +20,6 @@ export interface DomainError {
   readonly retryable: boolean;
 }
 
-export interface UnitOfWork {
-  run<Result>(operation: () => Promise<Result>): Promise<Result>;
-}
-
 export interface OutboxMessage {
   readonly id: string;
   readonly type: string;
@@ -35,4 +31,13 @@ export interface OutboxMessage {
 /** Persist this record in the same transaction as the domain state change. */
 export interface OutboxWriter {
   append(message: OutboxMessage): Promise<void>;
+}
+
+/** Infrastructure must implement outbox writes on this same transaction connection. */
+export interface DomainTransaction {
+  readonly outbox: OutboxWriter;
+}
+
+export interface UnitOfWork {
+  run<Result>(operation: (transaction: DomainTransaction) => Promise<Result>): Promise<Result>;
 }

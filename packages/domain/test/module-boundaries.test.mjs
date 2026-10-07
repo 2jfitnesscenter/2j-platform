@@ -29,3 +29,9 @@ test('backend contract keeps transactions local and side effects post-commit', (
   assert.equal(contract.rules.transactionOwner, 'single-domain-use-case');
   assert.equal(contract.rules.externalEffects, 'after-commit-outbox');
 });
+
+test('unit of work scopes the outbox writer to the active transaction', async () => {
+  const source = await readFile(new URL('../src/index.ts', import.meta.url), 'utf8');
+  assert.match(source, /interface DomainTransaction\s*\{\s*readonly outbox: OutboxWriter;/);
+  assert.match(source, /run<Result>\(operation: \(transaction: DomainTransaction\) => Promise<Result>\)/);
+});
