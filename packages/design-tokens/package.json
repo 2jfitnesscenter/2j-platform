@@ -1,0 +1,15 @@
+{
+  "name": "@2j/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tokens.json": "./tokens.json",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "scripts": {
+    "typecheck": "node tooling/validate-tokens.mjs",
+    "build": "node tooling/generate-css.mjs --check",
+    "test": "node --test test/*.test.mjs"
+  }
+}
