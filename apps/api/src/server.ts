@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { z } from 'zod';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 
 export const serviceInput = z.object({ name: z.string().trim().min(1).max(100), area: z.string().trim().min(1).max(80) }).strict();
@@ -64,7 +66,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
   return app;
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll('\\', '/')}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const app = buildServer();
   await app.listen({ host: process.env.HOST ?? '127.0.0.1', port: Number(process.env.PORT ?? 3100) });
 }
