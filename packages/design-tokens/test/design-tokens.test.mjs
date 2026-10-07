@@ -19,10 +19,13 @@ const contrast = (foreground, background) => {
 for (const mode of ['light', 'dark']) {
   test(`${mode} semantic text and status colors meet WCAG AA`, () => {
     const colors = tokens.themes[mode].color;
-    for (const name of ['textPrimary', 'textSecondary', 'success', 'warning', 'danger', 'info', 'focus']) {
-      assert.ok(contrast(colors[name], colors.canvas) >= 4.5, `${mode}.${name} must contrast with canvas`);
+    for (const [background, foregrounds] of Object.entries(tokens.themes.contrastPairs)) {
+      for (const foreground of foregrounds) {
+        assert.ok(contrast(colors[foreground], colors[background]) >= 4.5,
+          `${mode}.${foreground} on ${background} must meet WCAG AA`);
+      }
     }
-    assert.ok(contrast(colors.textOnBrand, colors.brand) >= 4.5, `${mode}.textOnBrand must contrast with brand`);
+    assert.deepEqual(tokens.themes.contrastPairs.brand, ['textOnBrand'], 'brandStrong is not an approved text surface');
   });
 }
 

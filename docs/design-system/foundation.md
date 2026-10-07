@@ -30,7 +30,7 @@ The package exports both light and dark palettes. It intentionally does not sele
 
 ## Accessibility and motion
 
-Use semantic HTML, keyboard operability, visible focus, accessible names, and WCAG AA 4.5:1 text contrast for the tested semantic color pairs. Do not encode meaning by color alone. Respect `prefers-reduced-motion`; tokens expose short durations and do not mandate animation. Loading/error/success feedback must not depend on motion.
+Use semantic HTML, keyboard operability, visible focus, accessible names, and WCAG AA 4.5:1 text contrast for the tested semantic color pairs. `tokens.json` defines the permitted foreground/background combinations: `textOnBrand` is for the primary `brand` surface only; `brandStrong` is not a text surface. Tests verify every permitted pair in light and dark themes. Do not encode meaning by color alone. Respect `prefers-reduced-motion`; tokens expose short durations and do not mandate animation. Loading/error/success feedback must not depend on motion.
 
 ## Verification
 
