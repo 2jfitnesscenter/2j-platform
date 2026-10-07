@@ -1,0 +1,7 @@
+{
+  "name": "@2j/audit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {"typecheck": "tsc --noEmit", "build": "tsc", "test": "node --test test/*.test.mjs"}
+}

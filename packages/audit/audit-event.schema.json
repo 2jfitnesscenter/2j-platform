@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://2j.invalid/schemas/audit-event.schema.json",
+  "title": "2J audit event envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "occurredAt", "actorId", "action", "resourceType", "resourceId", "correlationId", "outcome"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 120},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "actorId": {"type": "string", "minLength": 1, "maxLength": 120},
+    "action": {"type": "string", "minLength": 1, "maxLength": 160},
+    "resourceType": {"type": "string", "minLength": 1, "maxLength": 120},
+    "resourceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "correlationId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "outcome": {"enum": ["success", "denied", "failure"]},
+    "reasonCode": {"type": "string", "maxLength": 120},
+    "changes": {
+      "type": "object",
+      "maxProperties": 30,
+      "propertyNames": {"not": {"pattern": "[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Mm][Ee][Dd][Ii][Cc][Aa][Ll]|[Dd][Ii][Aa][Gg][Nn][Oo][Ss]|[Dd][Oo][Cc][Uu][Mm][Ee][Nn][Tt].?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Hh][Ee][Aa][Ll][Tt][Hh].?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]"}},
+      "additionalProperties": {"type": ["string", "number", "boolean", "null"], "maxLength": 240}
+    }
+  }
+}

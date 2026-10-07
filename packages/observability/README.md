@@ -1,3 +1,3 @@
-# packages/observability
+# `@2j/audit`
 
-Reserved architecture boundary. Product behavior is not implemented in 2J-001. Follow TECH_ARCHITECTURE.md in product research; contracts and design require their dedicated TASKs.
+Append-only audit event contract and validation. Operational logs and audit records are separate; do not store credentials, health contents or document contents in event payloads.

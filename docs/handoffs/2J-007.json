@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2J-007",
+  "agent": "codex",
+  "branch": "agent/codex/2J-007-identity-permissions-audit",
+  "commits": [],
+  "files_changed": [],
+  "tests": [{"name": "Identity/authorization/audit contracts", "command": "pnpm typecheck && pnpm test && pnpm build && pnpm audit --audit-level high", "result": "PENDING", "evidence": ""}],
+  "decisions": ["Uses approved role names and explicit source-backed starter grants", "No identity-provider or legal-retention choice made"],
+  "risks": ["Accountant exact scope, sensitive health access, role editor and retention need explicit decisions"],
+  "followups": ["Independent reviewer and QA", "Human approval before merge", "Resolve gated policy decisions before production identity implementation"],
+  "status": "REVIEW",
+  "summary": "Deny-by-default authorization, revocable session contract, and sensitive-data-aware append-only audit contract",
+  "reviewer_instructions": ["Check each grant against DECISIONS_2J.md", "Verify sensitive audit payload rejection and deny-by-default tests", "Confirm no provider or credentials were introduced"],
+  "source_commit": "2acecda"
+}

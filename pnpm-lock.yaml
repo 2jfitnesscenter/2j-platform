@@ -15,9 +15,15 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  packages/audit: {}
+
+  packages/auth: {}
+
   packages/design-tokens: {}
 
   packages/domain: {}
+
+  packages/permissions: {}
 
 packages:
 
