@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2J-030",
+  "agent": "codex",
+  "branch": "agent/codex/2J-030-calendar-bookings-waitlist",
+  "commits": [],
+  "files_changed": [],
+  "tests": [{"name": "Implementation and independent validation", "command": "See product-research/tasks/2J-030.json; run all required tests when dependencies are met", "result": "NOT_RUN", "evidence": "Task is staged only; implementation waits for 2J-010 and 2J-020 integration and product rules remain as pending decisions."}],
+  "decisions": ["2j-product-research/tasks/2J-030.json is the source-of-truth contract", "Week view primary; schedules separated from generated sessions", "Waitlist promotion, late cancellation/no-show and booking horizon stay undecided"],
+  "risks": ["Capacity and concurrent bookings require transactional Postgres tests", "Implementation depends on 2J-010 and 2J-020"],
+  "followups": ["Start implementation only after 2J-010 and 2J-020 are integrated", "Do not invent waitlist or late-cancel rules", "Require independent reviewer and QA"],
+  "status": "READY",
+  "summary": "Reserved isolated branch and draft PR for 2J-030 Calendar/Bookings/Waitlist; no implementation yet.",
+  "reviewer_instructions": ["Do not treat this task-registration PR as implementation or approval", "Check source task and dependency status before starting code"],
+  "source_commit": "4cfe216d1c2cdd1d73862c1c4ab0198241cd6072"
+}
