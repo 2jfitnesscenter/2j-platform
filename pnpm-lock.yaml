@@ -17,6 +17,8 @@ importers:
 
   packages/design-tokens: {}
 
+  packages/domain: {}
+
 packages:
 
   '@turbo/darwin-64@2.11.7':
