@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0.0",
+  "modules": [
+    "identity", "clients", "scheduling", "entitlements", "billing", "staff",
+    "communications", "health-documents", "follow-up", "commerce", "configuration", "audit"
+  ],
+  "dependencies": {
+    "identity": ["audit"],
+    "clients": ["identity", "audit"],
+    "scheduling": ["identity", "clients", "entitlements", "staff", "audit"],
+    "entitlements": ["identity", "clients", "audit"],
+    "billing": ["identity", "clients", "entitlements", "audit"],
+    "staff": ["identity", "audit"],
+    "communications": ["identity", "clients", "audit"],
+    "health-documents": ["identity", "clients", "audit"],
+    "follow-up": ["identity", "clients", "audit"],
+    "commerce": ["identity", "clients", "entitlements", "billing", "audit"],
+    "configuration": ["identity", "audit"],
+    "audit": []
+  },
+  "rules": {
+    "database": "postgresql",
+    "transactionOwner": "single-domain-use-case",
+    "crossModuleWrites": "explicit-application-coordination-only",
+    "externalEffects": "after-commit-outbox",
+    "sourceOfTruth": "backend-domain-and-database-constraints"
+  }
+}

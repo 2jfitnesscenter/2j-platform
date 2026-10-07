@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2J-006",
+  "agent": "codex",
+  "branch": "agent/codex/2J-006-domain-backend-architecture",
+  "commits": ["0818c4a", "6e44b53"],
+  "files_changed": ["docs/architecture/domain", "packages/domain", "tasks/2J-006.md", "docs/handoffs/2J-006.*"],
+  "tests": [{"name": "Domain architecture checks", "command": "pnpm typecheck && pnpm test && pnpm build && pnpm audit --audit-level high", "result": "PASS", "evidence": "Independent QA at 0145f62: typecheck 2 packages, 6/6 tests, build 2 packages and high-severity audit passed. Independent reviewer PASS; CI quality and secret scans passed at 0145f62. Code unchanged in doc-only rebase to 6e44b53; current-head CI/reviewer confirmation pending."}],
+  "decisions": ["Uses existing approved TypeScript/PostgreSQL direction", "No product or legal decision changed"],
+  "risks": ["Runtime implementation and product rules remain separate tasks"],
+  "followups": ["Confirm latest-head CI, reviewer and QA after doc-only rebase", "Human approval before merge"],
+  "status": "REVIEW",
+  "summary": "Testable module boundaries and backend transaction/side-effect conventions",
+  "reviewer_instructions": ["Check graph invariants and scope against approved architecture", "Confirm no production runtime or product rules were added"],
+  "source_commit": "5a9260c"
+}

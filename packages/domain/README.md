@@ -1,3 +1,5 @@
 # packages/domain
 
-Reserved architecture boundary. Product behavior is not implemented in 2J-001. Follow TECH_ARCHITECTURE.md in product research; contracts and design require their dedicated TASKs.
+# `@2j/domain`
+
+Domain boundaries and backend conventions for the new management platform. The package exposes infrastructure-neutral contracts only; product use cases and persistence are introduced by separately reviewed tasks. See `docs/architecture/domain/backend-architecture.md` and its machine-checked dependency allowlist.
