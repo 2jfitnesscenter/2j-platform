@@ -27,3 +27,10 @@ test('runtime role matrix matches its reviewable JSON contract', async () => {
   assert.deepEqual(contract.roles, rolePermissions);
   assert.ok(contract.unresolved.length > 0);
 });
+
+test('prototype names are not treated as registered roles', () => {
+  for (const role of ['toString', 'constructor', '__proto__']) {
+    assert.equal(can({ actorId: 'fixture', role }, 'clients.read'), false);
+    assert.throws(() => requirePermission({ actorId: 'fixture', role }, 'clients.read'), { code: 'FORBIDDEN', statusCode: 403 });
+  }
+});

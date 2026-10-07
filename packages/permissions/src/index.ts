@@ -24,6 +24,7 @@ export const knownPermissions: ReadonlySet<string> = new Set([
 export function can(context: AuthorizationContext, permission: string): boolean {
   if (!knownPermissions.has(permission)) return false;
   if (context.deniedPermissions?.includes(permission)) return false;
+  if (!Object.hasOwn(rolePermissions, context.role)) return false;
   return rolePermissions[context.role]?.some((grant) => grant === '*' || grant === permission) ?? false;
 }
 
