@@ -1,0 +1,11 @@
+name: TASK
+description: Executable engineering task
+title: "2J-XXX — "
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: Structured TASK
+      description: Include objective, context, scope, exclusions, modules, dependencies, acceptance criteria, required tests, risk, implementer, reviewer and QA.
+    validations:
+      required: true

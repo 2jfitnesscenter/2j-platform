@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2J-001",
+  "agent": "codex",
+  "branch": "agent/codex/2J-001-repo-foundation",
+  "commits": [
+    "3a5aaf629673900f8f508fc86dae1001900c57ca",
+    "28ba296"
+  ],
+  "files_changed": [
+    ".github/CODEOWNERS",
+    ".github/ISSUE_TEMPLATE/task.yml",
+    ".github/pull_request_template.md",
+    ".gitignore",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "apps/admin-web/README.md",
+    "apps/api/README.md",
+    "apps/staff-app/README.md",
+    "docs/adr/README.md",
+    "docs/architecture/source-of-truth.md",
+    "docs/handoffs/2J-001.md",
+    "docs/product/README.md",
+    "docs/runbooks/main-protection.md",
+    "package.json",
+    "packages/auth/README.md",
+    "packages/contracts/README.md",
+    "packages/design-tokens/README.md",
+    "packages/domain/README.md",
+    "packages/observability/README.md",
+    "packages/permissions/README.md",
+    "packages/testing/README.md",
+    "packages/ui/README.md",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "protection.json",
+    "tooling/README.md",
+    "tsconfig.base.json",
+    "turbo.json"
+  ],
+  "tests": [
+    {
+      "name": "Repository verification",
+      "command": "gh repo view; branch protection API; git diff --check",
+      "result": "PASS",
+      "evidence": "Private, ADMIN, default main confirmed. Protection API 403 captured; explicit plan supplied. Platform typecheck/build invoke zero packages (scaffold only)."
+    },
+    {
+      "name": "Independent repository foundation review",
+      "command": "Review exact PR #1 head 28ba29606d65f880f6a69bcd67e78b9926faeb6a",
+      "result": "PASS",
+      "evidence": "Independent reviewer found no scope, security, permissions, or configuration finding. The protection payload does not invent required checks; docs accurately state that main protection is not enabled and the API is blocked by the private-repository plan."
+    },
+    {
+      "name": "Independent scaffold QA",
+      "command": "pnpm typecheck; pnpm build; git diff --check; scope inspection",
+      "result": "PASS",
+      "evidence": "Independent QA at exact head: typecheck/build exit 0 but Turbo executed zero tasks because the scaffold has zero packages; diff check clean and no app/provider runtime. Environment had Node 24.21 and pnpm 11.19 although the repo pins pnpm 10.34.6."
+    }
+  ],
+  "decisions": [
+    "No product decision changed",
+    "DRY_RUN only; no auto-merge"
+  ],
+  "risks": [
+    "Main protection remains disabled until an owner resolves the private-repository plan limitation",
+    "Local scaffold checks provide no application package coverage"
+  ],
+  "followups": [
+    "Human decision on branch protection/plan if protection is required before merging foundational PRs",
+    "Human approval before merge"
+  ],
+  "status": "REVIEW",
+  "summary": "2J-001 implementation ready for independent review",
+  "reviewer_instructions": [
+    "Check acceptance criteria against pinned research task",
+    "Do not treat local checks as independent approval"
+  ],
+  "source_commit": "2a9ec28a07acef0b8857db6c74924c5c1189047f"
+}
