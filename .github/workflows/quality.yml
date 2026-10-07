@@ -40,5 +40,5 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.2"
-      - run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner .
+      - run: go run github.com/zricethezav/gitleaks/v8@83d9cd684c87d95d656c1458ef04895a7f1cbd8e git --redact --no-banner .
 
