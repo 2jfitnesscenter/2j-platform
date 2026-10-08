@@ -135,7 +135,7 @@ test('an access right without a target remains optional and is submitted without
   fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: plan.name } });
   fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
   fireEvent.change(within(dialog).getByLabelText('Renovación'), { target: { value: 'monthly' } });
-  fireEvent.change(within(dialog).getByLabelText('Destino del acceso (opcional)'), { target: { value: '' } });
+  fireEvent.change(within(dialog).getByLabelText(/Destino del acceso \(opcional\)/), { target: { value: '' } });
   assert.ok(within(dialog).getByText('El alcance de un acceso sin destino está pendiente de decisión.'));
   const create = within(dialog).getByRole('button', { name: 'Crear borrador' });
   assert.equal(create.disabled, false);
