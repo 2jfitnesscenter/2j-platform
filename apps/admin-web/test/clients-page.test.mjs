@@ -82,7 +82,8 @@ test('create dialog focuses its first field, traps keyboard focus, and restores 
   const dialog = await screen.findByRole('dialog', { name: 'Nuevo cliente' });
   const firstName = within(dialog).getByLabelText('Nombre');
   assert.equal(document.activeElement, firstName);
-  firstName.focus();
+  const close = within(dialog).getByRole('button', { name: 'Cerrar diálogo' });
+  close.focus();
   fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
   assert.equal(document.activeElement, within(dialog).getByRole('button', { name: 'Crear cliente' }));
   fireEvent.keyDown(document, { key: 'Escape' });
