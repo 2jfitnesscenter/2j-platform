@@ -19,8 +19,8 @@ export function describePlan(plan: { kind: PlanKind; renewalCadence: string | nu
   const cadence = plan.renewalCadence ? cadenceLabel[plan.renewalCadence] ?? 'Renovación configurada' : 'Sin renovación';
   const validity = plan.periodDays ? `cada ${plan.periodDays} días` : cadence.toLocaleLowerCase('es');
   const rights = plan.rights.map((right) => {
-    const target = right.serviceId ? 'servicio seleccionado' : 'servicios incluidos';
-    if (right.rightType === 'service_access') return `Acceso a ${target}`;
+    const target = right.serviceId ? 'servicio seleccionado' : null;
+    if (right.rightType === 'service_access') return target ? `Acceso a ${target}` : 'Acceso sin destino especificado';
     if (right.rightType === 'sessions_quota') return `${right.quantity} sesiones ${right.quotaScope === 'shared' ? 'compartidas' : 'por servicio'}`;
     const period = periodLabel[right.period ?? ''] ?? 'periodo';
     const mode = right.period === 'plan_period' ? '' : ` (${right.periodMode === 'calendar' ? 'calendario' : 'móvil'})`;

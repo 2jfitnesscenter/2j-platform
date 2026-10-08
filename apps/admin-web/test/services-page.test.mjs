@@ -115,6 +115,35 @@ test('created plan refreshes the visible plan detail and service plan count with
   assert.ok(planReads >= 2, 'selected plan detail should refresh after the save');
 });
 
+test('an access right without a target is described neutrally in multi-service plans', async () => {
+  const second = { ...service, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Valoración inicial' };
+  const unscopedPlan = { ...plan, services: [{ id: service.id, name: service.name, area: service.area }, { id: second.id, name: second.name, area: second.area }], rights: [{ ...plan.rights[0], serviceId: null }] };
+  initialFetch({ plans: [unscopedPlan] });
+  render(React.createElement(ServicesPage));
+  await screen.findByRole('heading', { name: unscopedPlan.name });
+  assert.ok(screen.getByText(service.name, { selector: '.service-chip' }));
+  assert.ok(screen.getByText(second.name, { selector: '.service-chip' }));
+  assert.ok(screen.getByText('Destino sin especificar'));
+  assert.equal(screen.queryByText('Todos los servicios incluidos'), null);
+});
+
+test('an access right without a target remains optional and is submitted without implying its scope', async () => {
+  let submitted;
+  initialFetch({ onPlanCreate: (_url, options) => { submitted = JSON.parse(options.body); return response(plan, 201); } });
+  render(React.createElement(ServicesPage));
+  const dialog = await openPlanDialog();
+  fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: plan.name } });
+  fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
+  fireEvent.change(within(dialog).getByLabelText('Renovación'), { target: { value: 'monthly' } });
+  fireEvent.change(within(dialog).getByLabelText('Destino del acceso (opcional)'), { target: { value: '' } });
+  assert.ok(within(dialog).getByText('El alcance de un acceso sin destino está pendiente de decisión.'));
+  const create = within(dialog).getByRole('button', { name: 'Crear borrador' });
+  assert.equal(create.disabled, false);
+  fireEvent.click(create);
+  await waitFor(() => assert.ok(submitted));
+  assert.equal(submitted.rights[0].serviceId, null);
+});
+
 test('creating a plan without the currently selected service selects a service that contains the new plan', async () => {
   const second = { ...service, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Valoración inicial' };
   const secondPlan = { ...plan, services: [{ id: second.id, name: second.name, area: second.area }] };
@@ -181,4 +210,5 @@ test('plan loading, fetch failure and valid empty response have distinct states 
 test('plan summary maps domain kinds, cadence, rights and quota periods to Spanish copy', () => {
   assert.equal(describePlan({ kind: 'session_pack', renewalCadence: null, periodDays: null, rights: [{ rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantity: 8, period: null, periodMode: null }] }), 'Bono de sesiones: sin renovación; incluye 8 sesiones compartidas.');
   assert.equal(describePlan({ kind: 'recurring', renewalCadence: 'monthly', periodDays: null, rights: [{ rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 8, period: 'month', periodMode: 'calendar' }] }), 'Plan recurrente: renovación mensual; incluye 8 accesos por mes (calendario).');
+  assert.equal(describePlan({ kind: 'recurring', renewalCadence: 'monthly', periodDays: null, rights: [{ rightType: 'service_access', serviceId: null, quotaScope: null, quantity: null, period: null, periodMode: null }] }), 'Plan recurrente: renovación mensual; incluye Acceso sin destino especificado.');
 });

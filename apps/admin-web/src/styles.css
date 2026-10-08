@@ -17,8 +17,8 @@ button { color: inherit; }
 }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 8px 42px; color: inherit; text-decoration: none; }
 .brand-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: var(--2j-radius-md); background: var(--2j-color-brand); color: var(--2j-color-text-on-brand); font-size: 17px; font-weight: var(--2j-type-weight-bold); letter-spacing: -.06em; }
-.brand-copy { font-size: 11px; font-weight: var(--2j-type-weight-bold); letter-spacing: .12em; }
-.brand-copy small { display: block; margin-top: 5px; color: var(--2j-color-sidebar-muted); font-size: 11px; letter-spacing: .14em; }
+.brand-copy { font-size: 12px; font-weight: var(--2j-type-weight-bold); letter-spacing: .12em; }
+.brand-copy small { display: block; margin-top: 5px; color: var(--2j-color-sidebar-muted); font-size: 12px; letter-spacing: .14em; }
 .nav-label, .eyebrow { color: var(--2j-color-text-secondary); font-size: 12px; font-weight: var(--2j-type-weight-bold); letter-spacing: .12em; }
 .nav-label { margin: 0 12px 12px; color: var(--2j-color-sidebar-muted); }
 .sidebar nav { display: grid; gap: 5px; }
