@@ -55,6 +55,10 @@
   --2j-color-danger: #a83232;
   --2j-color-info: #285f91;
   --2j-color-focus: #285f91;
+  --2j-color-sidebar: #172015;
+  --2j-color-sidebar-text: #f2f5ee;
+  --2j-color-sidebar-muted: #c1cbb9;
+  --2j-color-sidebar-active: #2a3625;
 }
 
 :root[data-theme="dark"] {
@@ -75,4 +79,8 @@
   --2j-color-danger: #ff9690;
   --2j-color-info: #8fc8ff;
   --2j-color-focus: #8fc8ff;
+  --2j-color-sidebar: #10130f;
+  --2j-color-sidebar-text: #f2f5ee;
+  --2j-color-sidebar-muted: #c1cbb9;
+  --2j-color-sidebar-active: #252d21;
 }

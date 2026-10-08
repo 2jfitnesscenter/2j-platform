@@ -1,49 +1,30 @@
-import { pgTable, uuid, text, integer, char, timestamp, index, uniqueIndex, check } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, char, timestamp, index, uniqueIndex, primaryKey, foreignKey, check } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
+export const areas = pgTable('areas', {
+  id: uuid('id').defaultRandom().primaryKey(), name: text('name').notNull(), normalizedName: text('normalized_name').notNull(),
+  status: text('status').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex('areas_normalized_active_unique').on(sql`lower(btrim(${table.name}))`).where(sql`${table.status} = 'active'`), check('areas_status_allowed', sql`${table.status} IN ('active', 'archived')`), check('areas_name_length', sql`char_length(${table.name}) BETWEEN 1 AND 80`), check('areas_normalized_name_length', sql`char_length(${table.normalizedName}) BETWEEN 1 AND 80`), check('areas_normalized_name_matches_name', sql`${table.normalizedName} = lower(btrim(${table.name}))`)]);
+
 export const services = pgTable('services', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: text('name').notNull(),
-  area: text('area').notNull(),
-  status: text('status').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  uniqueIndex('services_name_area_unique').on(sql`lower(${table.name})`, sql`lower(${table.area})`).where(sql`${table.status} <> 'archived'`),
-  check('services_name_length', sql`char_length(${table.name}) BETWEEN 1 AND 100`),
-  check('services_area_length', sql`char_length(${table.area}) BETWEEN 1 AND 80`),
-]);
+  id: uuid('id').defaultRandom().primaryKey(), areaId: uuid('area_id').notNull().references(() => areas.id, { onDelete: 'restrict' }), name: text('name').notNull(), status: text('status').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex('services_name_area_unique').on(table.areaId, sql`lower(${table.name})`).where(sql`${table.status} <> 'archived'`), index('services_updated_idx').on(table.updatedAt, table.name), check('services_status_allowed', sql`${table.status} IN ('active', 'draft', 'archived')`), check('services_name_length', sql`char_length(${table.name}) BETWEEN 1 AND 100`)]);
 
 export const plans = pgTable('plans', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  serviceId: uuid('service_id').notNull().references(() => services.id, { onDelete: 'restrict' }),
-  name: text('name').notNull(),
-  billingCadence: text('billing_cadence').notNull(),
-  priceMinor: integer('price_minor'),
-  currency: char('currency', { length: 3 }),
-  periodDays: integer('period_days'),
-  status: text('status').notNull().default('draft'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  index('plans_service_idx').on(table.serviceId, table.status),
-  check('plans_cadence_allowed', sql`${table.billingCadence} IN ('monthly', 'weekly', 'session_pack', 'period')`),
-  check('plans_status_allowed', sql`${table.status} IN ('active', 'draft', 'archived')`),
-  check('plans_price_currency_required', sql`${table.priceMinor} IS NULL OR (${table.priceMinor} >= 0 AND ${table.currency} IS NOT NULL)`),
-]);
+  id: uuid('id').defaultRandom().primaryKey(), name: text('name').notNull(), status: text('status').notNull(), currentVersion: integer('current_version').notNull().default(1),
+  idempotencyKey: uuid('idempotency_key').notNull(), requestHash: char('request_hash', { length: 64 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex('plans_idempotency_key_unique').on(table.idempotencyKey), uniqueIndex('plans_active_name_unique').on(sql`lower(${table.name})`).where(sql`${table.status} <> 'archived'`), index('plans_status_name_idx').on(table.status, table.name), check('plans_status_allowed', sql`${table.status} IN ('active', 'draft', 'archived')`), check('plans_name_length', sql`char_length(${table.name}) BETWEEN 1 AND 100`), check('plans_version_positive', sql`${table.currentVersion} > 0`)]);
+
+export const planVersions = pgTable('plan_versions', {
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'restrict' }), version: integer('version').notNull(), kind: text('kind').notNull(), renewalCadence: text('renewal_cadence'), periodDays: integer('period_days'), timezone: text('timezone').notNull().default('Europe/Canary'), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.planId, table.version] }), check('plan_versions_version_positive', sql`${table.version} > 0`), check('plan_versions_kind_allowed', sql`${table.kind} IN ('recurring', 'session_pack')`), check('plan_versions_cadence_allowed', sql`${table.renewalCadence} IS NULL OR ${table.renewalCadence} IN ('weekly', 'monthly', 'custom_period')`), check('plan_versions_cadence_compatibility', sql`(${table.kind} = 'recurring' AND ${table.renewalCadence} IS NOT NULL AND ((${table.renewalCadence} = 'custom_period' AND ${table.periodDays} IS NOT NULL) OR (${table.renewalCadence} IN ('weekly', 'monthly') AND ${table.periodDays} IS NULL))) OR (${table.kind} = 'session_pack' AND ${table.renewalCadence} IS NULL AND ${table.periodDays} IS NULL)`), check('plan_versions_period_days_range', sql`${table.periodDays} IS NULL OR ${table.periodDays} BETWEEN 1 AND 3660`), check('plan_versions_timezone', sql`char_length(${table.timezone}) BETWEEN 1 AND 80`)]);
+
+export const planServices = pgTable('plan_services', {
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'restrict' }), planVersion: integer('plan_version').notNull(), serviceId: uuid('service_id').notNull().references(() => services.id, { onDelete: 'restrict' }), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [foreignKey({ name: 'plan_services_version_fk', columns: [table.planId, table.planVersion], foreignColumns: [planVersions.planId, planVersions.version] }).onDelete('restrict'), primaryKey({ columns: [table.planId, table.planVersion, table.serviceId] }), index('plan_services_service_idx').on(table.serviceId, table.planId, table.planVersion)]);
 
 export const planRights = pgTable('plan_rights', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
-  rightType: text('right_type').notNull(),
-  quantity: integer('quantity'),
-  period: text('period'),
-  validDays: integer('valid_days'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  index('plan_rights_plan_idx').on(table.planId),
-  check('plan_rights_type_allowed', sql`${table.rightType} IN ('service_access', 'sessions_quota', 'period_quota')`),
-  check('plan_rights_period_allowed', sql`${table.period} IS NULL OR ${table.period} IN ('week', 'month', 'plan_period')`),
-  check('plan_rights_type_quantity', sql`(${table.rightType} = 'service_access' AND ${table.quantity} IS NULL) OR (${table.rightType} <> 'service_access' AND ${table.quantity} > 0)`),
-  check('plan_rights_period_required', sql`(${table.rightType} = 'period_quota' AND ${table.period} IS NOT NULL) OR (${table.rightType} <> 'period_quota')`),
-]);
+  id: uuid('id').defaultRandom().primaryKey(), planId: uuid('plan_id').notNull(), planVersion: integer('plan_version').notNull(), rightType: text('right_type').notNull(), serviceId: uuid('service_id').references(() => services.id, { onDelete: 'restrict' }), quotaScope: text('quota_scope'), quantity: integer('quantity'), period: text('period'), periodMode: text('period_mode'), timezone: text('timezone'), validDays: integer('valid_days'), validDaysStartRule: text('valid_days_start_rule'), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [foreignKey({ name: 'plan_rights_version_fk', columns: [table.planId, table.planVersion], foreignColumns: [planVersions.planId, planVersions.version] }).onDelete('restrict'), index('plan_rights_version_idx').on(table.planId, table.planVersion), uniqueIndex('plan_rights_global_unique').on(table.planId, table.planVersion, table.rightType).where(sql`${table.serviceId} IS NULL`), uniqueIndex('plan_rights_service_unique').on(table.planId, table.planVersion, table.rightType, table.serviceId).where(sql`${table.serviceId} IS NOT NULL`), check('plan_rights_type_allowed', sql`${table.rightType} IN ('service_access', 'sessions_quota', 'period_quota')`), check('plan_rights_scope_allowed', sql`${table.quotaScope} IS NULL OR ${table.quotaScope} IN ('shared', 'per_service')`), check('plan_rights_quantity_range', sql`${table.quantity} IS NULL OR ${table.quantity} BETWEEN 1 AND 100000`), check('plan_rights_period_allowed', sql`${table.period} IS NULL OR ${table.period} IN ('week', 'month', 'plan_period')`), check('plan_rights_period_mode_allowed', sql`${table.periodMode} IS NULL OR ${table.periodMode} IN ('calendar', 'rolling')`), check('plan_rights_valid_days_range', sql`${table.validDays} IS NULL OR ${table.validDays} BETWEEN 1 AND 3660`), check('plan_rights_valid_days_start_rule_allowed', sql`${table.validDaysStartRule} IS NULL OR ${table.validDaysStartRule} IN ('purchase', 'first_use')`), check('plan_rights_type_fields', sql`(${table.rightType} = 'service_access' AND ${table.quantity} IS NULL AND ${table.quotaScope} IS NULL AND ${table.period} IS NULL AND ${table.periodMode} IS NULL AND ${table.timezone} IS NULL) OR (${table.rightType} = 'sessions_quota' AND ${table.quantity} IS NOT NULL AND ${table.quantity} BETWEEN 1 AND 100000 AND ${table.quotaScope} IS NOT NULL AND ${table.period} IS NULL AND ${table.periodMode} IS NULL AND ${table.timezone} IS NULL) OR (${table.rightType} = 'period_quota' AND ${table.quantity} IS NOT NULL AND ${table.quantity} BETWEEN 1 AND 100000 AND ${table.quotaScope} IS NOT NULL AND ((${table.period} = 'plan_period' AND ${table.periodMode} IS NULL AND ${table.timezone} IS NULL) OR (${table.period} IN ('week', 'month') AND ${table.periodMode} IN ('calendar', 'rolling') AND ${table.timezone} IS NOT NULL AND char_length(${table.timezone}) BETWEEN 1 AND 80)))`), check('plan_rights_per_service_scope', sql`${table.quotaScope} <> 'per_service' OR ${table.serviceId} IS NOT NULL`), check('plan_rights_valid_days_rule', sql`(${table.validDays} IS NULL) = (${table.validDaysStartRule} IS NULL)`)]);

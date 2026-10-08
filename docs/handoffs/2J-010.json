@@ -3,21 +3,43 @@
   "task_id": "2J-010",
   "agent": "codex",
   "branch": "agent/codex/2J-010-services-plans-rights",
-  "commits": ["274aa9afcc736495ae11d9a3fafc388ca8d4a43c", "40e199286e7783ffecadad3550686d4f17032a50", "bbfa0b1dafa5b844244db54a7c8549ee4e823add", "2dd0cbbcf3c66e01d5325c58815c2cfdf62a50e3", "8b0a1bf8a7eb6393c1b7c35a9572a1b7d4396bdb"],
-  "files_changed": ["apps/admin-web/**", "apps/api/**", "docker-compose.yml", "README.md", "package.json", "pnpm-lock.yaml", ".github/workflows/quality.yml", "docs/handoffs/2J-010.*"],
-  "tests": [
-    {"name": "Workspace typecheck and build", "command": "corepack pnpm@10.34.6 typecheck && corepack pnpm@10.34.6 build", "result": "PASS", "evidence": "All seven workspace packages typecheck and build successfully on the implementation head."},
-    {"name": "PostgreSQL API integration", "command": "DATABASE_URL=postgres://2j_local@127.0.0.1:54329/2j_platform corepack pnpm@10.34.6 --filter @2j/api test", "result": "PASS", "evidence": "4/4 API tests pass against local PostgreSQL 17, including explicit service state, null price/currency, plan/right creation and readback."},
-    {"name": "Admin web test", "command": "corepack pnpm@10.34.6 --filter @2j/admin-web test", "result": "PASS", "evidence": "1/1 server-rendered accessibility/content contract test passes."},
-    {"name": "Local HTTP smoke test", "command": "GET http://127.0.0.1:3100/health and /api/services", "result": "PASS", "evidence": "Windows development process starts successfully; API returns local-only health and persisted service list on loopback."},
-    {"name": "Dependency audit", "command": "corepack pnpm@10.34.6 audit --audit-level high", "result": "PASS", "evidence": "No known vulnerabilities; Drizzle ORM is at 0.45.2 or later."},
-    {"name": "Hosted quality and secret scans", "command": "GitHub Actions run 63 on 8b0a1bf8a7eb6393c1b7c35a9572a1b7d4396bdb", "result": "PASS", "evidence": "Hosted quality and full-history secret scan completed successfully on the latest implementation head; includes all migrations, typecheck, tests, build and audit."}
-  ],
-  "decisions": ["Services/plans/rights only; no pricing/payment/renewal behavior chosen", "Service state and plan cadence/right type/period are explicitly selected; price and currency remain unset", "Loopback-only until runtime authentication and permissions are reviewed", "No 2jfitnessapp, training or Búnker changes"],
-  "risks": ["API has no runtime authentication and must not be exposed or deployed", "Product decisions for price, renewal, expiration, cancellation and scheduling remain unresolved"],
-  "followups": ["Independent reviewer and QA inspect exact final head", "Complete 2J-020 Clients 360 and 2J-030 Calendar/Bookings/Waitlist in separate branches/PRs", "Do not change 2J-008 from DRY RUN or enable provider LIVE"],
+  "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/6",
   "status": "REVIEW",
-  "summary": "Local-first 2J-010 services, plans and rights UI/API using real PostgreSQL, with no production deployment.",
-  "reviewer_instructions": ["Review migration constraints and transaction behavior", "Verify there is no public binding or pricing/business default", "Check accessibility/token use and exact-head CI before merge"],
+  "review_state": "Awaiting independent Claude backend/domain and Gemini/Antigravity UX reviews on the same final PR head; do not merge.",
+  "scope": ["services", "plans", "plan rights"],
+  "excluded_scope": ["payments", "automatic renewals", "clients", "reservations", "waitlist", "training", "Bunker"],
+  "final_head": "Resolve PR #6 current head SHA after push; both reviewers must inspect this exact SHA.",
+  "evidence": {
+    "visual": [
+      {"viewport": "1440x1000", "file": "docs/evidence/2J-010/desktop-1440.png"},
+      {"viewport": "768x1000", "file": "docs/evidence/2J-010/tablet-768.png"},
+      {"viewport": "390x844", "file": "docs/evidence/2J-010/mobile-390.png"}
+    ],
+    "database": "PostgreSQL 17, isolated local acceptance and visual databases; real database is mandatory in CI."
+  },
+  "tests": [
+    {"name": "Workspace tests", "command": "corepack pnpm@10.34.6 test", "result": "PASS", "evidence": "37/37: 16 PostgreSQL API integration tests, 5 web tests, and all design-token/domain/permissions/auth/audit package tests."},
+    {"name": "Migration repeat/checksum", "command": "corepack pnpm@10.34.6 --filter @2j/api db:migrate", "result": "PASS", "evidence": "Fresh baseline and repeated application verified with SHA-256 checksum and PostgreSQL advisory transaction lock."},
+    {"name": "Typecheck", "command": "corepack pnpm@10.34.6 typecheck", "result": "PASS", "evidence": "All 7 workspace packages."},
+    {"name": "Production build", "command": "corepack pnpm@10.34.6 build", "result": "PASS", "evidence": "All 7 workspace packages."},
+    {"name": "Dependency audit", "command": "corepack pnpm@10.34.6 audit --audit-level high", "result": "PASS", "evidence": "No known vulnerabilities."},
+    {"name": "Visual responsive review", "command": "Chromium screenshots at 1440, 768, and 390 CSS pixels", "result": "PASS", "evidence": "Real seeded PostgreSQL catalog, selected multi-service plan, rights readability, responsive layout, Spanish product copy, modal initial focus/Shift+Tab focus trap/Escape close."},
+    {"name": "Hosted quality and secret scan", "command": "GitHub Actions on final PR #6 head", "result": "PENDING", "evidence": "Must complete against the final pushed SHA before independent re-review."}
+  ],
+  "decisions": [
+    "Plan definitions support multiple services and immutable versions.",
+    "Shared and per-service quotas are distinct; global rights use an explicit NULL target.",
+    "Calendar week/month and rolling periods are distinct; Europe/Canary is explicit.",
+    "Validity expiry explicitly starts at purchase or first use.",
+    "New plans are drafts; no price, payment, billing, renewal automation, client balance or booking behavior was added.",
+    "API remains local-only without runtime authentication; orchestrator LIVE remains disabled."
+  ],
+  "risks": ["API has no runtime authentication and must not be exposed or deployed."],
+  "followups": [
+    "Record and review one final PR head SHA independently with Claude and Gemini/Antigravity.",
+    "Keep PR #6 unmerged until both reviews and hosted gates pass.",
+    "Continue 2J-020 and 2J-030 only in their own tasks, branches and PRs after 2J-010 integration."
+  ],
+  "summary": "Corrected multi-service, versioned services/plans/rights model and premium responsive UI with PostgreSQL integration coverage and browser evidence.",
   "source_commit": "bbc2f601feb79b9c2adda37467c49f8a24cdcd49"
 }
