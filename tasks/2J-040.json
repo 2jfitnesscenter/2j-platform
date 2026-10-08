@@ -3,7 +3,7 @@
   "taskId": "2J-040",
   "title": "Pagos, Caja, Facturación e Impagados",
   "status": "ready-for-independent-review",
-  "pullRequest": null,
+  "pullRequest": "https://github.com/2jfitnesscenter/2j-platform/pull/10",
   "branch": "agent/codex/2J-040-payments-cash-invoicing-debt",
   "base": "main with 2J-010, 2J-020 and 2J-030 integrated",
   "timezone": "Atlantic/Canary",
