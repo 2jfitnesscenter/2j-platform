@@ -3,8 +3,8 @@
   "task_id": "2J-020",
   "agent": "codex",
   "branch": "agent/codex/2J-020-clients-360",
-  "commits": [],
-  "files_changed": [],
+  "commits": ["1edc607885a48b5aceacb46a63d740054a7fb1fe", "e1494a45abb48ab89054ce805f7025149b7f8e44", "4e854bfacb4b0c4e3296d13e97b4316febe9d4bc", "f68f1c180a3284ede41d4c36f28c5a85288be726", "939f88b0d1407c9dea469ec8a7875e186dcdfe91"],
+  "files_changed": ["apps/admin-web/**", "apps/api/**", "packages/permissions/**", "tasks/2J-020.md", "docs/handoffs/2J-020.*"],
   "tests": [
     {
       "name": "git diff --check",
@@ -15,8 +15,8 @@
     {
       "name": "API/UI tests, typecheck, build, PostgreSQL gates",
       "command": "See repository quality workflow",
-      "result": "PENDING",
-      "evidence": "Local pnpm could not install because tldts-core@7.4.18 and tldts@7.4.18 violate the configured minimumReleaseAge policy; the policy was not relaxed."
+      "result": "PASS",
+      "evidence": "GitHub Actions push run 37762484029 on implementation head 939f88b0d1407c9dea469ec8a7875e186dcdfe91: PostgreSQL migration, typecheck, 64/64 tests (0 failures), build for all 7 packages, audit found 0 vulnerabilities, and secret scan passed. Local pnpm remained blocked by minimumReleaseAge for recent transitive packages; policy was not relaxed. The pull_request-triggered run for the same code head was still in progress when recorded."
     }
   ],
   "decisions": [
@@ -39,7 +39,7 @@
     "Do not activate LIVE providers or add real client data."
   ],
   "status": "IMPLEMENTATION",
-  "summary": "First real Clients 360 slice adds PostgreSQL-backed client list/search, profile, basic-data create/archive and own-module history. Other profile tabs are honest source-linked placeholders. All PII routes fail closed without server authorization.",
+  "summary": "Implementation head 939f88b0d1407c9dea469ec8a7875e186dcdfe91 adds PostgreSQL-backed client list/search, profile, basic-data create/archive and own-module history. Other profile tabs are honest source-linked placeholders. All PII routes fail closed without server authorization. Push CI passed; independent review and the pull_request CI event are pending.",
   "reviewer_instructions": [
     "Review this exact PR head independently; do not treat author-side checks as independent approval.",
     "Verify PII is never returned without server-side clients.read and caller-supplied role headers do not authorize.",
