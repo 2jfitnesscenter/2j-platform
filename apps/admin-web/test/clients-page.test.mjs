@@ -35,7 +35,7 @@ test('shows real clients, searches the server, and opens a 360 profile with clea
   fireEvent.click(screen.getByRole('button', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
   for (const label of ['Resumen', 'Reservas', 'Pagos', 'Entrenamiento', 'Progreso', 'Salud', 'Documentos/Formularios', 'Mensajes', 'Historial']) assert.ok(screen.getByRole('tab', { name: label }));
-  assert.ok(screen.getByText('marta@example.test'));
+  assert.equal(screen.getAllByText('marta@example.test').length, 2);
   fireEvent.click(screen.getByRole('tab', { name: 'Entrenamiento' }));
   assert.ok(screen.getByText(/sigue teniendo su fuente de verdad en 2J Fitness App y El Búnker/));
   assert.equal(screen.queryByText(/rutina asignada/), null);
