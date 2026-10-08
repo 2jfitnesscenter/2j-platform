@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { buildServer, mapDatabaseError, planInput, serviceInput } from '../src/server.ts';
+import { createClientInput } from '../src/clients.ts';
 import { migrateDatabase } from '../src/migrate.ts';
 import * as schema from '../src/schema.ts';
 import { getTableConfig } from 'drizzle-orm/pg-core';
@@ -13,8 +14,11 @@ if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: Postgr
 const sql = postgres(process.env.DATABASE_URL, { max: 10, connect_timeout: 5 });
 await migrateDatabase(sql);
 const app = buildServer(process.env.DATABASE_URL);
+const clientsAdminApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }) });
+const clientsTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-trainer', role: 'trainer' }) });
+const clientsAccountantApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-accountant', role: 'accountant' }) });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await app.close(); await sql.end(); });
+after(async () => { await Promise.all([app.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsAccountantApp.close()]); await sql.end(); });
 
 async function createService(name = `Servicio ${randomUUID()}`, status = 'active') {
   const response = await app.inject({ method: 'POST', url: '/api/services', payload: { name, areaId: defaultArea.id, status } });
@@ -57,6 +61,13 @@ test('domain input separates product kind from renewal and defines quota periods
   assert.equal(serviceInput.safeParse({ name: 'Sala', area: 'Sala', status: 'draft' }).success, false);
 });
 
+test('client input keeps its personal-data surface intentionally small and validates email/contact lengths', () => {
+  assert.equal(createClientInput.safeParse({ firstName: ' Ada ', lastName: ' Lovelace ', email: 'ada@example.test', phone: '+34 600 000 000' }).success, true);
+  assert.equal(createClientInput.safeParse({ firstName: 'Ada', lastName: 'Lovelace', dateOfBirth: '1990-01-01' }).success, false);
+  assert.equal(createClientInput.safeParse({ firstName: 'Ada', lastName: 'Lovelace', email: 'not-an-email' }).success, false);
+  assert.equal(createClientInput.safeParse({ firstName: 'Ada', lastName: 'Lovelace', phone: 'x'.repeat(41) }).success, false);
+});
+
 test('DB migration is checksummed, repeatable and unchanged on re-application', async () => {
   const directory = new URL('../migrations/', import.meta.url);
   const names = (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
@@ -76,7 +87,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -105,6 +116,48 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
   const rightIndexes = await sql`SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND indexname IN ('plan_rights_global_unique','plan_rights_service_unique')`;
   assert.equal(rightIndexes.length, 2);
   for (const index of rightIndexes) assert.match(index.indexdef, /COALESCE\(period, ''(?:::text)?\)/, `${index.indexname} must distinguish quota periods`);
+});
+
+test('client PII endpoints deny by default and ignore caller-supplied role headers', async () => {
+  const denied = await app.inject({ method: 'GET', url: '/api/clients', headers: { 'x-2j-role': 'admin' } });
+  assert.equal(denied.statusCode, 401);
+  assert.equal(denied.headers['cache-control'], 'no-store');
+  assert.deepEqual(denied.json(), { error: 'authentication_required' });
+  const created = await clientsAdminApp.inject({ method: 'POST', url: '/api/clients', payload: { firstName: 'Ada', lastName: `Lovelace ${randomUUID()}`, email: ' ADA@example.test ', phone: ' 555 0100 ' } });
+  assert.equal(created.statusCode, 201, created.body);
+  const clientId = created.json().id;
+  const trainer = await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
+  assert.equal(trainer.statusCode, 200, trainer.body);
+  assert.equal(trainer.json().client.email, 'ada@example.test');
+  assert.equal(trainer.json().sections.find((section) => section.id === 'training').access, 'available');
+  assert.equal(trainer.json().sections.find((section) => section.id === 'health').access, 'available');
+  const forbiddenCreate = await clientsTrainerApp.inject({ method: 'POST', url: '/api/clients', payload: { firstName: 'No', lastName: 'Write' } });
+  assert.equal(forbiddenCreate.statusCode, 403);
+  const accountant = await clientsAccountantApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
+  assert.equal(accountant.statusCode, 403);
+  assert.equal(accountant.json().client, undefined);
+});
+
+test('client list searches normalized name/contact, and archive retains profile history', async () => {
+  const created = await clientsAdminApp.inject({ method: 'POST', url: '/api/clients', payload: { firstName: '  Marta  ', lastName: `Prueba ${randomUUID()}`, email: 'marta-search@example.test' } });
+  assert.equal(created.statusCode, 201, created.body);
+  const clientId = created.json().id;
+  const search = await clientsTrainerApp.inject({ method: 'GET', url: '/api/clients?q=MARTA-SEARCH@EXAMPLE.TEST' });
+  assert.equal(search.statusCode, 200, search.body);
+  assert.equal(search.json().items.some((item) => item.id === clientId), true);
+  const profile = await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
+  assert.equal(profile.statusCode, 200);
+  assert.deepEqual(profile.json().history.map((event) => event.eventType), ['client.created']);
+  const archive = await clientsAdminApp.inject({ method: 'PATCH', url: `/api/clients/${clientId}/archive` });
+  assert.equal(archive.statusCode, 200);
+  assert.equal(archive.json().status, 'archived');
+  const activeList = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${encodeURIComponent(created.json().email)}` });
+  assert.equal(activeList.json().items.some((item) => item.id === clientId), false);
+  const history = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
+  assert.deepEqual(history.json().history.map((event) => event.eventType), ['client.archived', 'client.created']);
+  const archivedList = await clientsAdminApp.inject({ method: 'GET', url: '/api/clients?status=archived' });
+  assert.equal(archivedList.json().items.some((item) => item.id === clientId), true);
+  await assert.rejects(sql`DELETE FROM clients WHERE id=${clientId}`, (error) => error.code === '55000');
 });
 
 test('areas can be configured and service records reference their normalized IDs', async () => {

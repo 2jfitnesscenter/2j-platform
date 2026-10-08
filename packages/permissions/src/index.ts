@@ -15,7 +15,7 @@ export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> 
 
 /** Registry of operation identifiers known to the server. New operations must be reviewed here before use. */
 export const knownPermissions: ReadonlySet<string> = new Set([
-  'clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read',
+  'clients.read', 'clients.manage', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read',
   'reservations.manage', 'billing.read-basic', 'billing.validate_transfer', 'scheduling.override_capacity',
   'staff.timeclock.correct', 'settings.manage',
 ]);

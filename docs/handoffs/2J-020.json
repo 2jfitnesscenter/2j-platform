@@ -5,12 +5,45 @@
   "branch": "agent/codex/2J-020-clients-360",
   "commits": [],
   "files_changed": [],
-  "tests": [{"name": "Implementation and independent validation", "command": "See product-research/tasks/2J-020.json; run all required tests when dependencies are met", "result": "NOT_RUN", "evidence": "Task is staged only; implementation waits for 2J-010 integration and exact acceptance criteria remain authoritative in 2j-product-research."}],
-  "decisions": ["2j-product-research/tasks/2J-020.json is the source-of-truth contract", "No training/Búnker data duplication", "Sensitive health, payment and document sections require implemented server-side permissions"],
-  "risks": ["Client identity is personal data and requires access control before non-local exposure", "Implementation depends on 2J-010"],
-  "followups": ["Start implementation only after 2J-010 is integrated", "Keep each module data at its source of truth", "Independent reviewer and QA must differ from implementer"],
-  "status": "READY",
-  "summary": "Reserved isolated branch and draft PR for 2J-020 Clients 360; no implementation yet.",
-  "reviewer_instructions": ["Do not treat this task-registration PR as implementation or approval", "Check source task and dependency status before starting code"],
-  "source_commit": "4cfe216d1c2cdd1d73862c1c4ab0198241cd6072"
+  "tests": [
+    {
+      "name": "git diff --check",
+      "command": "git diff --check",
+      "result": "PASS",
+      "evidence": "No whitespace errors; only CRLF normalization notices."
+    },
+    {
+      "name": "API/UI tests, typecheck, build, PostgreSQL gates",
+      "command": "See repository quality workflow",
+      "result": "PENDING",
+      "evidence": "Local pnpm could not install because tldts-core@7.4.18 and tldts@7.4.18 violate the configured minimumReleaseAge policy; the policy was not relaxed."
+    }
+  ],
+  "decisions": [
+    "2J-010 is integrated at merge commit 0b51c77dc2fd8b7f0e1bc7eceff9e2889a041513; approved PR head was 2f209a5809d1987e772306e79632e24c70fbf5fd.",
+    "The Clients 360 slice stores only basic contact/profile data and its own create/archive history.",
+    "Training, Bunker, progress and health remain in their existing source; connected cross-module records are not duplicated.",
+    "Client PII routes deny by default and require a server-resolved authorization context; caller headers are not trusted.",
+    "clients.manage is Admin-only until write grants for other roles are explicitly decided.",
+    "Production identity/session integration and authorization context remain unconfigured, so production routes fail closed."
+  ],
+  "risks": [
+    "Independent review and PostgreSQL CI are pending for this implementation head.",
+    "Trainer client read scope and permission mapping for future sensitive modules require independent verification against product decisions.",
+    "Calendar/Reservations PR #8 must wait until 2J-020 is integrated."
+  ],
+  "followups": [
+    "Run full hosted CI and PostgreSQL tests on this head.",
+    "Request independent Claude backend/security review and Antigravity/Gemini UX review.",
+    "Keep PR #8 blocked from implementation integration until 2J-020 merges.",
+    "Do not activate LIVE providers or add real client data."
+  ],
+  "status": "IMPLEMENTATION",
+  "summary": "First real Clients 360 slice adds PostgreSQL-backed client list/search, profile, basic-data create/archive and own-module history. Other profile tabs are honest source-linked placeholders. All PII routes fail closed without server authorization.",
+  "reviewer_instructions": [
+    "Review this exact PR head independently; do not treat author-side checks as independent approval.",
+    "Verify PII is never returned without server-side clients.read and caller-supplied role headers do not authorize.",
+    "Confirm no training, Bunker, Health, payment or scheduling data is duplicated or exposed by these placeholders."
+  ],
+  "source_commit": "0b51c77dc2fd8b7f0e1bc7eceff9e2889a041513"
 }

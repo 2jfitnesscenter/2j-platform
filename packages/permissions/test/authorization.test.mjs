@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { can, requirePermission, rolePermissions } from '../src/index.ts';
+import { can, knownPermissions, requirePermission, rolePermissions } from '../src/index.ts';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -18,6 +18,9 @@ test('explicit deny takes precedence over the admin wildcard', () => {
 
 test('admin can perform operations unless explicitly denied', () => {
   assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'settings.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'clients.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'clients.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'clients.manage'), false);
   assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'does.not.exist'), false);
   assert.equal(can({ actorId: 'fixture', role: 'admin', deniedPermissions: ['settings.manage'] }, 'settings.manage'), false);
 });
@@ -25,6 +28,7 @@ test('admin can perform operations unless explicitly denied', () => {
 test('runtime role matrix matches its reviewable JSON contract', async () => {
   const contract = JSON.parse(await readFile(new URL('../role-permissions.json', import.meta.url), 'utf8'));
   assert.deepEqual(contract.roles, rolePermissions);
+  assert.deepEqual(new Set(contract.knownPermissions), knownPermissions);
   assert.ok(contract.unresolved.length > 0);
 });
 
