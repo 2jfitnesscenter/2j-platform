@@ -5,7 +5,7 @@
   "branch": "agent/codex/2J-010-services-plans-rights",
   "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/6",
   "status": "REVIEW",
-  "review_state": "Claude re-review on 3fd1a87 requested changes (P2 only, no P0/P1). Canonical idempotency fixes and expanded invariant/concurrency tests are included; re-review remains required. Keep unmerged.",
+  "review_state": "Claude backend/domain APPROVED on exact SHA d40eb6d064ddc4628f94f13beb9a662ae368d96e; only non-blocking P3 notes remain. Gemini/Antigravity UX re-review is pending. Keep unmerged.",
   "scope": [
     "services",
     "plans",
@@ -21,7 +21,7 @@
     "Bunker"
   ],
   "implementation_head": "8c12c25063299f7bb0c031f3859f8d815486b714",
-  "final_head": "Resolve from PR #6 headRefOid after this handoff-only verification update; code and test changes were verified at 53ca8806fe14e64c9e747567e187b9f89292c647.",
+  "final_head": "d40eb6d064ddc4628f94f13beb9a662ae368d96e (implementation reviewed by Claude; subsequent handoff-only documentation update does not change implementation)",
   "evidence": {
     "visual": [
       {
@@ -78,9 +78,9 @@
     },
     {
       "name": "Hosted quality and secret scan",
-      "command": "GitHub Actions runs 37749780407 and 37749787779",
+      "command": "GitHub Actions runs 37754281138 and 37754287642",
       "result": "PASS",
-      "evidence": "Quality and full-history secret scan passed on code/test SHA 53ca8806fe14e64c9e747567e187b9f89292c647 in GitHub Actions run 37754051016. This handoff evidence update will trigger its own push checks."
+      "evidence": "Quality and full-history secret scan passed on exact reviewed SHA d40eb6d064ddc4628f94f13beb9a662ae368d96e in push run 37754281138 and pull_request run 37754287642."
     }
   ],
   "decisions": [
@@ -94,14 +94,15 @@
   ],
   "risks": [
     "API has no runtime authentication and must not be exposed or deployed.",
-    "Pending Juanjo decision: whether each plan_services entry requires an explicit service_access right or inclusion grants access; do not build booking consumption until resolved."
+    "Pending Juanjo decision: whether each plan_services entry requires an explicit service_access right or inclusion grants access; do not build booking consumption until resolved.",
+    "Claude identified non-blocking P3 database-hardening and error-message items recorded in non_blocking_findings."
   ],
   "followups": [
     "Record and review one final PR head SHA independently with Claude and Gemini/Antigravity.",
     "Keep PR #6 unmerged until both reviews and hosted gates pass.",
     "Continue 2J-020 and 2J-030 only in their own tasks, branches and PRs after 2J-010 integration."
   ],
-  "summary": "Corrective pass for Claude backend/domain and Gemini UX reviews, followed by Claude P2 fixes for deterministic idempotency normalization and expanded PostgreSQL integration coverage. Verification for the new head is pending.",
+  "summary": "Claude approved the backend/domain scope at d40eb6d after deterministic idempotency fixes and expanded PostgreSQL integration coverage. All hosted quality and secret-scan checks passed. Await Gemini/Antigravity UX re-review; do not merge yet.",
   "source_commit": "bbc2f601feb79b9c2adda37467c49f8a24cdcd49",
   "open_decisions": [
     {
@@ -110,5 +111,16 @@
       "question": "Must each plan_services entry be covered by an explicit service_access right, or does inclusion itself grant service access?",
       "impact": "Defines future entitlement and booking authorization semantics."
     }
+  ],
+  "non_blocking_findings": [
+    "Concurrent archive race tests use Promise.all state assertions and could be made deterministic with explicit lock/wait coordination.",
+    "An INSERT into a frozen archived plan version is not separately tested, although frozen INSERT is tested after activation and the same trigger applies.",
+    "Direct SQL can change a service referenced by an active plan from active to draft; the guard currently blocks only archival.",
+    "A service can be reactivated inside an archived area, and plan_services can reference an archived service through direct SQL.",
+    "idempotency_key and request_hash remain mutable on draft and archived plan rows through direct SQL.",
+    "Several distinct 55000 failures share a generic immutable-definition HTTP message.",
+    "Concurrent quota protection relies on alphabetical PostgreSQL trigger ordering; document this dependency or combine the guards.",
+    "The database timezone catalog accepts names such as Factory although the API currently only accepts Atlantic/Canary.",
+    "An active plan cannot advance to a new current_version; the publication/versioning behavior remains a product decision."
   ]
 }
