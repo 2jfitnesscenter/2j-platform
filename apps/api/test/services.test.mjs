@@ -48,6 +48,10 @@ test('domain input separates product kind from renewal and defines quota periods
     { rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantity: 10 },
     { rightType: 'sessions_quota', serviceId: randomUUID(), quotaScope: 'per_service', quantity: 4 },
   ] }).success, false, 'global and targeted quotas of the same type cannot overlap');
+  assert.equal(planInput.safeParse({ ...valid, rights: [
+    { rightType: 'sessions_quota', quotaScope: 'shared', quantity: 10 },
+    { rightType: 'sessions_quota', serviceId: randomUUID(), quotaScope: 'per_service', quantity: 4, period: null },
+  ] }).success, false, 'omitted and null periods have the same database meaning');
   assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'sessions_quota', serviceId: randomUUID(), quotaScope: 'shared', quantity: 4 }] }).success, false, 'shared quotas are global');
   assert.equal(serviceInput.safeParse({ name: ' Sala ', areaId: randomUUID(), status: 'draft' }).success, true);
   assert.equal(serviceInput.safeParse({ name: 'Sala', area: 'Sala', status: 'draft' }).success, false);
@@ -160,6 +164,22 @@ test('multi-service plans allow disjoint service quotas and distinct periods but
   await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,quantity,quota_scope) VALUES (${plan.id},1,'sessions_quota',10,'shared')`, (error) => error.code === '23514');
 });
 
+test('PostgreSQL rejects same-period global quota overlaps and allows distinct services and periods', async () => {
+  const [first, second] = await Promise.all([createService(), createService()]);
+  const firstPlan = await createPlan([first.id, second.id]);
+  const planId = firstPlan.response.json().id;
+  const targeted = (serviceId, period) => sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quota_scope,quantity,period,period_mode,timezone) VALUES (${planId},1,'period_quota',${serviceId},'per_service',3,${period},'calendar','Atlantic/Canary')`;
+  await targeted(first.id, 'month');
+  await targeted(second.id, 'month');
+  await sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,quota_scope,quantity,period,period_mode,timezone) VALUES (${planId},1,'period_quota','shared',8,'week','calendar','Atlantic/Canary')`;
+  await assert.rejects(targeted(first.id, 'month'), (error) => error.code === '23514');
+
+  const globalPlan = await createPlan([first.id]);
+  const globalId = globalPlan.response.json().id;
+  await sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,quota_scope,quantity,period,period_mode,timezone) VALUES (${globalId},1,'period_quota','shared',8,'month','calendar','Atlantic/Canary')`;
+  await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quota_scope,quantity,period,period_mode,timezone) VALUES (${globalId},1,'period_quota',${first.id},'per_service',3,'month','calendar','Atlantic/Canary')`, (error) => error.code === '23514');
+});
+
 test('session packs require a finite session quota and cannot use periodic quotas', async () => {
   const service = await createService();
   const { response } = await createPlan([service.id], { kind: 'session_pack', renewalCadence: null, rights: [
@@ -238,6 +258,26 @@ test('idempotency treats an omitted default timezone and its explicit value as t
   assert.equal(replay.statusCode, 200, replay.body);
 });
 
+test('idempotency canonicalization is independent of omitted/null fields, array order, locale and UUID casing', async () => {
+  const service = await createService();
+  const key = randomUUID();
+  const body = planPayload([service.id], { rights: [
+    { rightType: 'period_quota', quotaScope: 'shared', quantity: 4, period: 'month', periodMode: 'calendar' },
+    { rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 4, period: 'week', periodMode: 'calendar' },
+  ] });
+  const first = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: body });
+  const alternate = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: {
+    ...body, serviceIds: [service.id.toUpperCase()], rights: [
+      { rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 4, period: 'week', periodMode: 'calendar' },
+      { rightType: 'period_quota', quotaScope: 'shared', quantity: 4, period: 'month', periodMode: 'calendar' },
+    ],
+  } });
+  assert.equal(first.statusCode, 201, first.body);
+  assert.equal(alternate.statusCode, 200, alternate.body);
+  assert.equal(alternate.json().id, first.json().id);
+  assert.equal(planInput.safeParse({ ...body, serviceIds: [service.id, service.id.toUpperCase()] }).success, false, 'case variants of the same UUID are duplicate services');
+});
+
 test('concurrent duplicate plan names serialize to one creation and one conflict', async () => {
   const service = await createService();
   const name = `Concurrent ${randomUUID()}`;
@@ -245,6 +285,82 @@ test('concurrent duplicate plan names serialize to one creation and one conflict
   const responses = await Promise.all([submit(), submit()]);
   assert.deepEqual(responses.map((item) => item.statusCode).sort(), [201, 409]);
   assert.equal((await sql`SELECT count(*)::int AS count FROM plans WHERE name=${name}`).at(0).count, 1);
+});
+
+test('concurrent requests with one idempotency key create and return one plan', async () => {
+  const service = await createService();
+  const key = randomUUID();
+  const body = planPayload([service.id]);
+  const submit = () => app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: body });
+  const responses = await Promise.all([submit(), submit()]);
+  assert.deepEqual(responses.map((item) => item.statusCode).sort(), [200, 201]);
+  assert.equal(responses[0].json().id, responses[1].json().id);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM plans WHERE idempotency_key=${key}`).at(0).count, 1);
+});
+
+test('concurrent global and service-specific quota inserts cannot create an overlap', async () => {
+  const service = await createService();
+  const { response } = await createPlan([service.id]);
+  const planId = response.json().id;
+  const inserts = [
+    sql.begin((tx) => tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,quota_scope,quantity,period) VALUES (${planId},1,'sessions_quota','shared',8,NULL)`),
+    sql.begin((tx) => tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quota_scope,quantity,period) VALUES (${planId},1,'sessions_quota',${service.id},'per_service',4,NULL)`),
+  ];
+  const results = await Promise.allSettled(inserts);
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected' && result.reason.code === '23514').length, 1);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM plan_rights WHERE plan_id=${planId} AND right_type='sessions_quota'`).at(0).count, 1);
+});
+
+test('concurrent migration calls serialize safely against the existing migration ledger', async () => {
+  const results = await Promise.all([migrateDatabase(sql), migrateDatabase(sql)]);
+  assert.deepEqual(results[0].map((row) => [row.name, row.checksum.trim()]), results[1].map((row) => [row.name, row.checksum.trim()]));
+});
+
+test('service archival racing plan activation preserves active-plan service integrity', async () => {
+  const service = await createService();
+  const { response } = await createPlan([service.id]);
+  const planId = response.json().id;
+  const [activated, archived] = await Promise.all([
+    app.inject({ method: 'POST', url: `/api/plans/${planId}/activate` }),
+    app.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` }),
+  ]);
+  const [planRow] = await sql`SELECT status FROM plans WHERE id=${planId}`;
+  const [serviceRow] = await sql`SELECT status FROM services WHERE id=${service.id}`;
+  assert.ok((planRow.status === 'active' && serviceRow.status === 'active') || (planRow.status === 'draft' && serviceRow.status === 'archived'));
+  assert.equal(activated.statusCode === 200 && archived.statusCode === 200, false, 'both mutually exclusive state transitions must not succeed');
+});
+
+test('service archival racing plan creation can leave only a non-activatable draft', async () => {
+  const service = await createService();
+  const key = randomUUID();
+  const body = planPayload([service.id]);
+  const [created, archived] = await Promise.all([
+    app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: body }),
+    app.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` }),
+  ]);
+  assert.ok(created.statusCode === 201 || created.statusCode === 404 || created.statusCode === 409);
+  assert.ok(archived.statusCode === 200 || archived.statusCode === 409);
+  if (created.statusCode === 201) {
+    const planId = created.json().id;
+    const [state] = await sql`SELECT p.status AS plan_status,s.status AS service_status FROM plans p JOIN plan_services ps ON ps.plan_id=p.id AND ps.plan_version=p.current_version JOIN services s ON s.id=ps.service_id WHERE p.id=${planId}`;
+    assert.ok(state.plan_status === 'draft' || (state.plan_status === 'active' && state.service_status === 'active'));
+    if (state.service_status === 'archived') assert.equal((await app.inject({ method: 'POST', url: `/api/plans/${planId}/activate` })).statusCode, 409);
+  }
+});
+
+test('service creation racing area archival never creates an available service in an archived area', async () => {
+  const area = await app.inject({ method: 'POST', url: '/api/areas', payload: { name: `Race area ${randomUUID()}` } });
+  assert.equal(area.statusCode, 201);
+  const [created, archived] = await Promise.all([
+    app.inject({ method: 'POST', url: '/api/services', payload: { name: `Race service ${randomUUID()}`, areaId: area.json().id, status: 'active' } }),
+    app.inject({ method: 'PATCH', url: `/api/areas/${area.json().id}/archive` }),
+  ]);
+  const [areaRow] = await sql`SELECT status FROM areas WHERE id=${area.json().id}`;
+  const available = await sql`SELECT count(*)::int AS count FROM services WHERE area_id=${area.json().id} AND status <> 'archived'`;
+  assert.equal(areaRow.status === 'archived' ? available[0].count : 0, 0);
+  assert.ok(created.statusCode === 201 || created.statusCode === 404);
+  assert.ok(archived.statusCode === 200 || archived.statusCode === 409);
 });
 
 test('active plan version and rights are immutable while archival preserves the definition', async () => {
@@ -256,6 +372,10 @@ test('active plan version and rights are immutable while archival preserves the 
   assert.equal(activated.json().status, 'active');
   assert.ok((await sql`SELECT frozen_at FROM plan_versions WHERE plan_id=${plan.id} AND version=1`).at(0).frozen_at);
   await assert.rejects(sql`UPDATE plan_rights SET quantity=9 WHERE plan_id=${plan.id}`, (error) => error.code === '55000');
+  await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quota_scope,quantity) VALUES (${plan.id},1,'sessions_quota',${service.id},'per_service',2)`, (error) => error.code === '55000');
+  await assert.rejects(sql`INSERT INTO plan_services(plan_id,plan_version,service_id) VALUES (${plan.id},1,${service.id})`, (error) => error.code === '55000');
+  await assert.rejects(sql`UPDATE plans SET current_version=2 WHERE id=${plan.id}`, (error) => error.code === '55000');
+  await assert.rejects(sql`UPDATE plan_versions SET frozen_at=NULL WHERE plan_id=${plan.id} AND version=1`, (error) => error.code === '55000');
   await assert.rejects(sql`UPDATE plan_versions SET kind='session_pack' WHERE plan_id=${plan.id} AND version=1`, (error) => error.code === '55000');
   await assert.rejects(sql`DELETE FROM plans WHERE id=${plan.id}`, (error) => error.code === '55000');
   const blockedArchive = await app.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` });
@@ -273,6 +393,7 @@ test('IANA timezone validation rejects malformed zones and area archival preserv
   const { response: plan } = await createPlan([service.id]);
   await assert.rejects(sql`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,timezone) VALUES (${plan.json().id},2,'recurring','monthly','Mars/Olympus')`, (error) => error.code === '23514');
   await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,quantity,quota_scope,period,period_mode,timezone) VALUES (${plan.json().id},1,'period_quota',2,'shared','month','calendar','Mars/Olympus')`, (error) => error.code === '23514');
+  await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,quantity,quota_scope,period,period_mode,timezone) VALUES (${plan.json().id},1,'period_quota',2,'shared','month','calendar','Europe/Canary')`, (error) => error.code === '23514');
   const blocked = await app.inject({ method: 'PATCH', url: `/api/areas/${service.areaId}/archive` });
   assert.equal(blocked.statusCode, 409);
 });
@@ -285,6 +406,9 @@ test('database constraints protect complete versions and catalog tables from tru
   }), (error) => error.code === '23514');
   await assert.rejects(sql`TRUNCATE plan_rights`, (error) => error.code === '55000');
   await assert.rejects(sql`TRUNCATE plan_versions CASCADE`, (error) => error.code === '55000');
+  for (const table of ['areas', 'services', 'plans', 'plan_services']) {
+    await assert.rejects(sql.unsafe(`TRUNCATE ${table}`), (error) => error.code === '55000', `${table} must reject TRUNCATE`);
+  }
 });
 
 test('archiving a draft freezes its definition and preserves its current version pointer', async () => {

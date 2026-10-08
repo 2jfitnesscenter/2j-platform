@@ -11,7 +11,7 @@ const uuid = z.string().uuid();
 const serviceStatus = z.enum(['active', 'draft']);
 const rightInput = z.object({
   rightType: z.enum(['service_access', 'sessions_quota', 'period_quota']),
-  serviceId: uuid.nullable().optional(),
+  serviceId: uuid.transform((value) => value.toLowerCase()).nullable().optional(),
   quotaScope: z.enum(['shared', 'per_service']).nullable().optional(),
   quantity: z.number().int().min(1).max(100_000).nullable().optional(),
   period: z.enum(['week', 'month', 'plan_period']).nullable().optional(),
@@ -32,10 +32,10 @@ const rightInput = z.object({
   if ((right.validDays == null) !== (right.validDaysStartRule == null)) context.addIssue({ code: 'custom', message: 'La caducidad necesita indicar si comienza en la compra o en el primer uso.' });
 });
 
-export const serviceInput = z.object({ name: z.string().trim().min(1).max(100), areaId: uuid, status: serviceStatus }).strict();
+export const serviceInput = z.object({ name: z.string().trim().min(1).max(100), areaId: uuid.transform((value) => value.toLowerCase()), status: serviceStatus }).strict();
 export const areaInput = z.object({ name: z.string().trim().min(1).max(80) }).strict();
 export const planInput = z.object({
-  name: z.string().trim().min(1).max(100), serviceIds: z.array(uuid).min(1).max(20), kind: z.enum(['recurring', 'session_pack']),
+  name: z.string().trim().min(1).max(100), serviceIds: z.array(uuid.transform((value) => value.toLowerCase())).min(1).max(20), kind: z.enum(['recurring', 'session_pack']),
   renewalCadence: z.enum(['weekly', 'monthly', 'custom_period']).nullable().optional(),
   periodDays: z.number().int().min(1).max(3660).nullable().optional(), rights: z.array(rightInput).min(1).max(40),
 }).strict().superRefine((plan, context) => {
@@ -53,8 +53,8 @@ export const planInput = z.object({
   for (const [index, right] of plan.rights.entries()) {
     const scopeKey = `${right.rightType}:${right.period ?? ''}:${right.serviceId ?? '*'}`;
     const overlapping = right.rightType !== 'service_access' && (right.serviceId == null
-      ? plan.rights.some((other, otherIndex) => otherIndex !== index && other.rightType === right.rightType && other.period === right.period && other.serviceId != null)
-      : plan.rights.some((other, otherIndex) => otherIndex !== index && other.rightType === right.rightType && other.period === right.period && other.serviceId == null));
+      ? plan.rights.some((other, otherIndex) => otherIndex !== index && other.rightType === right.rightType && (other.period ?? null) === (right.period ?? null) && other.serviceId != null)
+      : plan.rights.some((other, otherIndex) => otherIndex !== index && other.rightType === right.rightType && (other.period ?? null) === (right.period ?? null) && other.serviceId == null));
     if (scopedRights.has(scopeKey) || overlapping) context.addIssue({ code: 'custom', path: ['rights', index], message: 'No se pueden solapar derechos globales y específicos para el mismo periodo.' });
     scopedRights.add(scopeKey);
   }
@@ -151,15 +151,17 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
     if (typeof idempotencyKey !== 'string' || !uuid.safeParse(idempotencyKey).success) return reply.code(400).send({ error: 'idempotency_key_required' });
     const parsed = planInput.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
-    const body = { ...parsed.data, serviceIds: [...parsed.data.serviceIds].sort(), rights: [...parsed.data.rights].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) };
+    const serviceIds = [...parsed.data.serviceIds].sort(compareCodeUnits);
+    const canonicalRights = parsed.data.rights.map((right) => ({
+      rightType: right.rightType, serviceId: right.serviceId ?? null, quotaScope: right.quotaScope ?? null,
+      quantity: right.quantity ?? null, period: right.period ?? null, periodMode: right.periodMode ?? null,
+      timezone: right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null,
+      validDays: right.validDays ?? null, validDaysStartRule: right.validDaysStartRule ?? null,
+    })).sort((a, b) => compareCodeUnits(JSON.stringify(a), JSON.stringify(b)));
+    const body = { ...parsed.data, serviceIds, rights: parsed.data.rights };
     const canonicalBody = {
       name: body.name, serviceIds: body.serviceIds, kind: body.kind, renewalCadence: body.renewalCadence ?? null, periodDays: body.periodDays ?? null,
-      rights: body.rights.map((right) => ({
-        rightType: right.rightType, serviceId: right.serviceId ?? null, quotaScope: right.quotaScope ?? null,
-        quantity: right.quantity ?? null, period: right.period ?? null, periodMode: right.periodMode ?? null,
-        timezone: right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null,
-        validDays: right.validDays ?? null, validDaysStartRule: right.validDaysStartRule ?? null,
-      })),
+      rights: canonicalRights,
     };
     const requestHash = createHash('sha256').update(JSON.stringify(canonicalBody)).digest('hex');
     try {
@@ -227,6 +229,10 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   return app;
+}
+
+function compareCodeUnits(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 async function listPlans(client: SqlClient, serviceId: string) {
