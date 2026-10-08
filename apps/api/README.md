@@ -1,10 +1,18 @@
 # 2J API
 
-Fastify API for the local services/plans/rights catalog. PostgreSQL is the persistent source of truth. The domain contract and quota semantics live in [`docs/product/services-plans-rights.md`](../../docs/product/services-plans-rights.md).
+Fastify API for services/plans/rights, Clients 360, and the first calendar/reservations vertical. PostgreSQL is the persistent source of truth. The domain contract and quota semantics live in [`docs/product/services-plans-rights.md`](../../docs/product/services-plans-rights.md).
 
 Apply the checksummed baseline with `pnpm --filter @2j/api db:migrate`. The runner takes a PostgreSQL advisory transaction lock and commits each migration separately. CI requires `DATABASE_URL` and runs migrations twice through the test setup; integration tests fail if PostgreSQL is missing.
 
 The API binds to `127.0.0.1` by default. `HOST` and `CORS_ORIGIN` are validated as loopback-only. Runtime authentication is not implemented in this first vertical; do not expose this API publicly or deploy it.
+
+## Calendar and reservations
+
+`/api/calendar/week` reads a Monday-based week in `Atlantic/Canary`. Staff may create punctual sessions and recurring templates; template occurrences are generated explicitly for one date. Session rows and template rows remain separate. Reservation capacity changes lock the session row inside PostgreSQL transactions, so a concurrent race cannot take more ordinary seats than the configured capacity. A full session accepts staff-managed waitlist entries; cancellation never promotes them automatically.
+
+Calendar writes require `reservations.manage`; attendee names additionally require `clients.read`. Reception/management staff and Admin have `scheduling.override_capacity`; trainers and other roles do not. Overbooking is recorded as a distinct immutable audit action. Reservation rows link to `clients.id`; they do not copy client contact data. Critical session, booking, attendance, cancellation, waitlist, and overbooking actions append to `calendar_audit_events`.
+
+The `BookingEligibilityResolver` is the server-side contract for the future client-plan/right/balance module. Its default implementation denies booking and waitlist entry when eligibility cannot be verified. No plan balance is consumed in this task. Until client-plan assignments and available balances are connected, production-like runtime wiring must keep this fail-closed behavior.
 # Client data and local access
 
 `/api/clients` and `/api/clients/:clientId` return personal data only after the server resolves an authorization context and checks `clients.read`. No role header or browser state is trusted. Creation and archival require `clients.manage`, currently granted only to Admin through the approved wildcard; other role write scopes remain gated. Missing context returns 401 and denied roles return 403.

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "1.0.0",
+  "taskId": "2J-030",
+  "title": "Calendario, Reservas y Lista de espera",
+  "status": "implementation-complete-independent-review-required",
+  "pullRequest": "https://github.com/2jfitnesscenter/2j-platform/pull/8",
+  "branch": "agent/codex/2J-030-calendar-bookings-waitlist",
+  "acceptance": {
+    "weekStartsOnMonday": true,
+    "timezone": "Atlantic/Canary",
+    "templatesAndSessionsSeparate": true,
+    "templateGeneration": "explicit-date-only",
+    "capacityEnforcedTransactionally": true,
+    "overbookingPermission": "scheduling.override_capacity for authorized staff/admin roles",
+    "staffManualReservations": true,
+    "cancelAndAttendanceStates": ["reserved", "attended", "no_show", "cancelled"],
+    "waitlist": { "entry": true, "withdrawal": true, "automaticPromotion": false },
+    "clientReference": "clients.id",
+    "serverSidePermissions": true,
+    "appendOnlyAudit": true,
+    "entitlementEligibility": "server-port-fail-closed-until-client-plan-assignment-is-integrated",
+    "financialConsumption": false,
+    "resourcesAndRooms": false,
+    "pushReminders": false
+  },
+  "pendingProductDecisions": [
+    "Automatic waitlist promotion and ordering",
+    "Cancellation windows, penalties, and no-show consequences",
+    "Recurring generation horizon and scheduled automation",
+    "Push reminders"
+  ],
+  "review": {
+    "claude": "pending-final-sha",
+    "antigravity": "pending-final-sha",
+    "qa": "pending-final-local-gates"
+  },
+  "runtimeLimitations": [
+    "Default booking eligibility fails closed until client-plan assignments and balance data are integrated; booking integration tests use an injected resolver."
+  }
+}

@@ -42,7 +42,7 @@ test('renders the catalog with understandable product terms and noninteractive f
   await screen.findByRole('heading', { name: service.name });
   assert.ok(screen.getByRole('button', { name: service.name }));
   assert.ok(screen.getByRole('link', { name: 'Clientes' }));
-  assert.equal(screen.queryByRole('link', { name: /calendario/i }), null);
+  assert.ok(screen.getByRole('link', { name: /calendario/i }));
   assert.equal(screen.queryByText('session_pack'), null);
 });
 

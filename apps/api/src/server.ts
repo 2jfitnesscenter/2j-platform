@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
+import { registerCalendarRoutes } from './calendar.js';
+import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
 const timezone = 'Atlantic/Canary';
@@ -77,6 +79,7 @@ export function mapDatabaseError(error: unknown) {
 
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
+  bookingEligibilityResolver?: BookingEligibilityResolver;
   logger?: FastifyServerOptions['logger'];
 };
 
@@ -107,6 +110,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   });
   app.addHook('onClose', async () => { await client.end(); });
   registerClientRoutes(app, client, options.authorizationResolver ?? (async () => null));
+  registerCalendarRoutes(app, client, options.authorizationResolver ?? (async () => null), options.bookingEligibilityResolver);
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }

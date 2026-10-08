@@ -1,0 +1,183 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+type Session = { id: string; serviceId: string; serviceName: string; areaId: string; areaName: string; templateId: string | null; source: 'manual' | 'template'; startsAt: string; durationMinutes: number; capacity: number; status: 'scheduled' | 'cancelled'; occupiedCount: number; waitlistCount: number; individualClientId: string | null };
+type ClientOption = { id: string; firstName: string; lastName: string };
+type Attendee = { id: string; clientId: string; firstName: string; lastName: string; status: string; createdAt: string };
+type CalendarData = { weekStart: string; sessions: Session[]; areas: { id: string; name: string }[]; services: { id: string; name: string; areaId: string }[]; templates: { id: string; serviceId: string; serviceName: string; areaId: string; areaName: string; weekday: number; localStartTime: string; durationMinutes: number; capacity: number; startsOn: string; endsOn: string | null }[]; capabilities: { manage: boolean; overrideCapacity: boolean } };
+const spanishDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', weekday: 'short', day: 'numeric', month: 'short' });
+const spanishTime = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', hour: '2-digit', minute: '2-digit' });
+const dayNames = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+function dateKey(value: Date) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`; }
+function canaryDateKey(value: Date) { const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value); const part = (type: string) => parts.find((item) => item.type === type)?.value ?? ''; return `${part('year')}-${part('month')}-${part('day')}`; }
+function localDateTimeToCanaryIso(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) throw new Error('Indica una fecha y hora válidas.');
+  const target = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]));
+  let candidate = target;
+  const formatter = new Intl.DateTimeFormat('en-GB', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = formatter.formatToParts(new Date(candidate)); const part = (type: string) => Number(parts.find((item) => item.type === type)?.value ?? '0');
+    candidate += target - Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'));
+  }
+  if (canaryDateKey(new Date(candidate)) !== `${match[1]}-${match[2]}-${match[3]}` || formatter.formatToParts(new Date(candidate)).filter((item) => ['hour','minute'].includes(item.type)).map((item) => item.value).join(':') !== `${match[4]}:${match[5]}`) throw new Error('Esa hora local no existe por el cambio horario. Elige otra hora.');
+  return new Date(candidate).toISOString();
+}
+function weekMonday(from: Date) { const day = new Date(from.getFullYear(), from.getMonth(), from.getDate()); day.setDate(day.getDate() - ((day.getDay() + 6) % 7)); return day; }
+function addDays(value: Date, count: number) { const result = new Date(value); result.setDate(result.getDate() + count); return result; }
+function errorMessage(error: unknown) { return error instanceof Error ? error.message : 'No se pudo completar la operación.'; }
+function humanError(code: string) { return ({ session_cancelled: 'La sesión está cancelada.', capacity_full: 'La sesión está completa. Puedes añadir al cliente a la lista de espera.', client_not_found: 'No se encontró el cliente.', client_archived: 'El cliente está archivado y no puede reservar.', client_already_added: 'El cliente ya está en la sesión o en espera.', entitlement_unavailable: 'No se puede confirmar un derecho o saldo activo para este cliente.', permission_denied: 'Tu perfil no tiene permiso para esta acción.' } as Record<string, string>)[code] ?? code; }
+
+export function CalendarPage() {
+  const [week, setWeek] = useState(() => weekMonday(new Date()));
+  const [data, setData] = useState<CalendarData | null>(null);
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
+  const [selectedDay, setSelectedDay] = useState(0);
+  const [dialog, setDialog] = useState<'session' | 'template' | null>(null);
+  const [createdTemplateId, setCreatedTemplateId] = useState<string | null>(null);
+  const [templateToGenerate, setTemplateToGenerate] = useState<string | null>(null);
+  const [templateDate, setTemplateDate] = useState('');
+  const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+  const [attendees, setAttendees] = useState<{ reservations: Attendee[]; waitlist: Attendee[] } | null>(null);
+  const [attendeeError, setAttendeeError] = useState('');
+  const [clientQuery, setClientQuery] = useState('');
+  const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
+  const [clientBusy, setClientBusy] = useState(false);
+  const [clientSearchError, setClientSearchError] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const modalRef = useRef<HTMLElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const [notice, setNotice] = useState('');
+
+  async function loadWeek() {
+    setState('loading'); setError('');
+    try {
+      const response = await fetch(`${apiUrl}/api/calendar/week?weekStart=${dateKey(week)}`);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(humanError(body.error ?? 'No se pudo cargar la semana.'));
+      setData(body as CalendarData); setState('ready');
+      setSelectedSession((current) => current ? (body.sessions as Session[]).find((item) => item.id === current.id) ?? current : null);
+    } catch (caught) { setError(errorMessage(caught)); setState('error'); }
+  }
+  useEffect(() => { void loadWeek(); }, [week, retry]);
+
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(week, index)), [week]);
+  const sessionsFor = (day: Date) => (data?.sessions ?? []).filter((session) => canaryDateKey(new Date(session.startsAt)) === dateKey(day));
+  const currentDay = weekDays[selectedDay] ?? weekDays[0]!;
+  const weekLabel = `${new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short' }).format(week)} – ${new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short', year: 'numeric' }).format(weekDays[6]!)}`;
+
+  function openSession(session: Session, opener: HTMLElement | null = openerRef.current) {
+    if (opener) openerRef.current = opener;
+    setDialog(null); setSelectedSession(session); setAttendees(null); setAttendeeError(''); setClientId(''); setClientQuery(''); setActionError(''); setNotice('');
+    void fetch(`${apiUrl}/api/calendar/sessions/${session.id}/attendees`).then(async (response) => {
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(humanError(body.error ?? 'No se pudo cargar la sesión.'));
+      setAttendees(body);
+    }).catch((caught: unknown) => setAttendeeError(errorMessage(caught)));
+  }
+
+  useEffect(() => {
+    if ((!selectedSession && dialog !== 'session') || !data?.capabilities.manage || clientQuery.trim().length < 2) { setClientOptions([]); setClientSearchError(''); setClientBusy(false); return; }
+    let current = true;
+    const timer = window.setTimeout(() => {
+      setClientBusy(true); setClientSearchError('');
+      void fetch(`${apiUrl}/api/clients?q=${encodeURIComponent(clientQuery.trim())}&status=active&limit=20`)
+        .then(async (response) => { const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(humanError(body.error ?? 'No se pudo buscar el cliente.')); return body; })
+        .then((body) => { if (current) setClientOptions(body.items ?? []); })
+        .catch((caught: unknown) => { if (current) setClientSearchError(errorMessage(caught)); })
+        .finally(() => { if (current) setClientBusy(false); });
+    }, 250);
+    return () => { current = false; window.clearTimeout(timer); };
+  }, [clientQuery, selectedSession, dialog, data?.capabilities.manage]);
+
+  async function mutate(url: string, method: string, payload?: unknown) {
+    setBusy(true); setActionError(''); setNotice('');
+    try {
+      const response = await fetch(`${apiUrl}${url}`, { method, ...(payload ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) } : {}) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(humanError(body.error ?? 'No se pudo completar la operación.'));
+      setNotice('Cambios guardados.');
+      await loadWeek();
+      if (selectedSession) {
+        const refreshed = await fetch(`${apiUrl}/api/calendar/sessions/${selectedSession.id}/attendees`);
+        if (refreshed.ok) setAttendees(await refreshed.json());
+      }
+      return body;
+    } catch (caught) { setActionError(errorMessage(caught)); return null; }
+    finally { setBusy(false); }
+  }
+
+  async function saveSession(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    const selectedService = data?.services.find((service) => service.id === String(form.get('serviceId')));
+    if (!selectedService) { setActionError('Selecciona un servicio disponible.'); return; }
+    const startsAt = localDateTimeToCanaryIso(String(form.get('startsAt')));
+    const result = await mutate('/api/calendar/sessions', 'POST', { serviceId: selectedService.id, areaId: selectedService.areaId, startsAt, durationMinutes: Number(form.get('durationMinutes')), capacity: clientId ? 1 : Number(form.get('capacity')), ...(clientId ? { individualClientId: clientId } : {}) });
+    if (result) { setDialog(null); await loadWeek(); }
+  }
+  async function saveTemplate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    const selectedService = data?.services.find((service) => service.id === String(form.get('serviceId')));
+    if (!selectedService) { setActionError('Selecciona un servicio disponible.'); return; }
+    const result = await mutate('/api/calendar/templates', 'POST', { serviceId: selectedService.id, areaId: selectedService.areaId, weekday: Number(form.get('weekday')), localStartTime: String(form.get('localStartTime')), durationMinutes: Number(form.get('durationMinutes')), capacity: Number(form.get('capacity')), startsOn: String(form.get('startsOn')), endsOn: String(form.get('endsOn')) || null });
+    if (result) { setCreatedTemplateId(result.id); setNotice('Plantilla guardada. Elige una fecha concreta para generar una sesión.'); }
+  }
+  async function generateTemplateSession(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!createdTemplateId) return;
+    const sessionDate = String(new FormData(event.currentTarget).get('sessionDate'));
+    const result = await mutate(`/api/calendar/templates/${createdTemplateId}/sessions`, 'POST', { sessionDate });
+    if (result) { setDialog(null); setCreatedTemplateId(null); await loadWeek(); }
+  }
+  async function generateFromTemplate(templateId: string) {
+    if (!templateDate) return;
+    const result = await mutate(`/api/calendar/templates/${templateId}/sessions`, 'POST', { sessionDate: templateDate });
+    if (result) { setTemplateToGenerate(null); setNotice('Sesión generada desde la plantilla.'); await loadWeek(); }
+  }
+
+  const manage = data?.capabilities.manage === true;
+  busyRef.current = busy;
+  const modalOpen = Boolean(dialog || selectedSession);
+  useEffect(() => {
+    if (!modalOpen) return;
+    const container = modalRef.current;
+    (container?.querySelector<HTMLElement>('[data-calendar-initial-focus]') ?? container?.querySelector<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled])'))?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !busyRef.current) { setDialog(null); setSelectedSession(null); return; }
+      if (event.key !== 'Tab' || !container) return;
+      const focusable = [...container.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled])')];
+      if (!focusable.length) return;
+      if (event.shiftKey && document.activeElement === focusable[0]) { event.preventDefault(); focusable.at(-1)?.focus(); }
+      else if (!event.shiftKey && document.activeElement === focusable.at(-1)) { event.preventDefault(); focusable[0]?.focus(); }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.removeEventListener('keydown', onKeyDown); if (openerRef.current?.isConnected) openerRef.current.focus(); };
+  }, [modalOpen]);
+  const selectedCapacity = selectedSession ? selectedSession.capacity - selectedSession.occupiedCount : 0;
+  return <div className="shell">
+    <aside className="sidebar"><a className="brand" href="#services" aria-label="2J Platform, inicio"><span className="brand-mark">2J</span><span className="brand-copy">FITNESS CENTER<small>OPERACIONES</small></span></a><div className="nav-label">GESTIÓN</div><nav aria-label="Gestión"><a className="nav-item" href="#services">Servicios y planes</a><a className="nav-item" href="#clients">Clientes</a><a className="nav-item active" href="#calendar" aria-current="page">Calendario</a></nav><div className="sidebar-footer"><span className="status-dot"/> Datos protegidos por permisos</div></aside>
+    <main className="main" id="calendar"><header className="topbar"><div className="crumb">Gestión <span aria-hidden="true">›</span> Calendario</div><div className="local-pill"><span className="status-dot"/> Entorno local</div></header>
+      <section className="page-heading calendar-heading"><div><div className="eyebrow">OPERACIÓN DEL CENTRO</div><h1>Calendario</h1><p>Sesiones, plazas y lista de espera en hora local de Canarias.</p></div>{manage && <div className="calendar-actions"><button className="button secondary" onClick={(event) => { openerRef.current = event.currentTarget; setDialog('template'); setCreatedTemplateId(null); setActionError(''); setSelectedSession(null); }}>Nueva plantilla</button><button className="button primary" data-calendar-initial-focus onClick={(event) => { openerRef.current = event.currentTarget; setDialog('session'); setActionError(''); setSelectedSession(null); setClientId(''); setClientQuery(''); }}>Nueva sesión</button></div>}</section>
+      <section className="calendar-panel panel" aria-label="Calendario semanal" aria-busy={state === 'loading'}>
+        <div className="calendar-toolbar"><div><div className="eyebrow">VISTA SEMANAL</div><h2>{weekLabel}</h2></div><div className="week-controls"><button className="icon-button" aria-label="Semana anterior" onClick={() => setWeek((value) => addDays(value, -7))}>‹</button><button className="button secondary today-button" onClick={() => { setWeek(weekMonday(new Date())); setSelectedDay(0); }}>Hoy</button><button className="icon-button" aria-label="Semana siguiente" onClick={() => setWeek((value) => addDays(value, 7))}>›</button></div></div>
+        {state === 'loading' && <div className="calendar-state" role="status"><span className="spinner"/>Cargando calendario…</div>}
+        {state === 'error' && <div className="calendar-state error-panel" role="alert"><strong>No se pudo cargar la semana</strong><span>{error}</span><button className="button secondary" onClick={() => setRetry((value) => value + 1)}>Reintentar</button></div>}
+        {state === 'ready' && <>
+          <div className="week-strip" role="tablist" aria-label="Días de la semana">{weekDays.map((day, index) => <button key={dateKey(day)} id={`calendar-day-tab-${index}`} role="tab" tabIndex={selectedDay === index ? 0 : -1} aria-selected={selectedDay === index} className={selectedDay === index ? 'selected' : ''} onClick={() => setSelectedDay(index)} onKeyDown={(event) => { const next = event.key === 'ArrowRight' ? (index + 1) % 7 : event.key === 'ArrowLeft' ? (index + 6) % 7 : event.key === 'Home' ? 0 : event.key === 'End' ? 6 : -1; if (next >= 0) { event.preventDefault(); setSelectedDay(next); document.getElementById(`calendar-day-tab-${next}`)?.focus(); } }}><span>{dayNames[index]}</span><strong>{new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric' }).format(day)}</strong><small>{sessionsFor(day).length} sesiones</small></button>)}</div>
+          <div className="week-grid" aria-label={`Sesiones de la semana ${weekLabel}`}>{weekDays.map((day, index) => <section key={dateKey(day)} className={`day-column ${selectedDay === index ? 'day-selected' : ''}`} aria-label={`${dayNames[index]} ${spanishDate.format(day)}`}><header><div><span>{dayNames[index]}</span><strong>{new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric' }).format(day)}</strong></div><small>{sessionsFor(day).length}</small></header><div className="day-sessions">{sessionsFor(day).map((session) => <button key={session.id} className={`session-card ${session.status}`} onClick={(event) => openSession(session, event.currentTarget)} aria-label={`${spanishTime.format(new Date(session.startsAt))}, ${session.serviceName}, ${session.occupiedCount} de ${session.capacity} plazas ocupadas${session.status === 'cancelled' ? ', cancelada' : ''}`}><span className="session-time">{spanishTime.format(new Date(session.startsAt))}</span><strong>{session.serviceName}</strong><span className="session-area">{session.areaName}{session.source === 'template' ? ' · Plantilla' : ''}</span><span className="seat-meter"><span style={{ width: `${Math.min(100, Math.round(session.occupiedCount / session.capacity * 100))}%` }}/></span><span className="seat-count"><strong>{session.occupiedCount}/{session.capacity}</strong><span>{session.capacity - session.occupiedCount > 0 ? `${session.capacity - session.occupiedCount} libres` : 'Completa'}</span></span>{session.waitlistCount > 0 && <span className="waitlist-count">{session.waitlistCount} en espera</span>}{session.status === 'cancelled' && <span className="cancelled-label">Cancelada</span>}</button>)}{sessionsFor(day).length === 0 && <p className="day-empty">Sin sesiones</p>}</div></section>)}</div>
+          {(data?.sessions.length ?? 0) === 0 && <div className="calendar-empty"><strong>Esta semana aún no tiene sesiones</strong><span>Consulta otra semana o crea la primera sesión.</span>{manage && <button className="button secondary" onClick={() => setDialog('session')}>Crear sesión</button>}</div>}
+          {manage && (data?.templates.length ?? 0) > 0 && <details className="recurring-templates"><summary>Plantillas recurrentes <span>{data?.templates.length}</span><small>Las sesiones se generan para una fecha concreta; no hay generación automática.</small></summary><div className="template-list">{data?.templates.map((template) => <article key={template.id}><div><strong>{template.serviceName}</strong><span>{['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'][template.weekday]} · {String(template.localStartTime).slice(0, 5)} · {template.durationMinutes} min · {template.capacity} plazas</span></div>{templateToGenerate === template.id ? <div className="template-generate"><input aria-label={`Fecha para ${template.serviceName}`} type="date" value={templateDate} min={template.startsOn} max={template.endsOn ?? undefined} onChange={(event) => setTemplateDate(event.target.value)}/><button className="button primary" disabled={!templateDate || busy} onClick={() => void generateFromTemplate(template.id)}>Generar sesión</button><button className="text-button" onClick={() => setTemplateToGenerate(null)}>Cancelar</button></div> : <button className="button secondary" onClick={() => { setTemplateDate(template.startsOn > dateKey(currentDay) ? template.startsOn : dateKey(currentDay)); setTemplateToGenerate(template.id); }}>Generar fecha…</button>}</article>)}</div></details>}
+        </>}
+      </section>
+      {notice && <div className="calendar-notice" role="status">{notice}<button className="text-button" onClick={() => setNotice('')}>Cerrar</button></div>}
+      <footer className="footer-note">2J Platform <span>·</span> Calendario y reservas</footer>
+    </main>
+    {dialog && <div className="backdrop"><section ref={modalRef} className="dialog calendar-dialog" role="dialog" aria-modal="true" aria-labelledby="calendar-dialog-title"><button className="icon-button dialog-close" aria-label="Cerrar diálogo" onClick={() => setDialog(null)}>×</button><div className="eyebrow">CALENDARIO</div><h2 id="calendar-dialog-title">{dialog === 'session' ? 'Nueva sesión' : 'Nueva plantilla recurrente'}</h2><p>{dialog === 'session' ? 'La sesión es una fecha concreta y queda separada de cualquier plantilla.' : 'La plantilla no genera sesiones automáticamente. El horizonte recurrente sigue pendiente de decisión.'}</p><form onSubmit={(event) => void (dialog === 'session' ? saveSession(event) : createdTemplateId ? generateTemplateSession(event) : saveTemplate(event))}>{dialog === 'template' && createdTemplateId ? <><p>La plantilla está lista. Genera una sesión para una fecha concreta, siempre bajo revisión manual.</p><label>Fecha concreta<input name="sessionDate" type="date" defaultValue={dateKey(currentDay)} required/></label><div className="dialog-actions"><button type="button" className="button secondary" onClick={() => { setDialog(null); setCreatedTemplateId(null); }}>Cerrar</button><button className="button primary" disabled={busy}>{busy ? 'Generando…' : 'Generar sesión'}</button></div></> : <><label>Servicio<select name="serviceId" required defaultValue="" data-calendar-initial-focus><option value="" disabled>Selecciona un servicio</option>{data?.services.map((service) => <option key={service.id} value={service.id}>{service.name} · {data.areas.find((area) => area.id === service.areaId)?.name}</option>)}</select></label>{dialog === 'session' ? <><label>Fecha y hora<input name="startsAt" type="datetime-local" required defaultValue={`${dateKey(currentDay)}T09:00`}/></label><div className="calendar-form-row"><label>Duración (min)<input name="durationMinutes" type="number" min="5" max="480" defaultValue="60" required/></label><label>Capacidad<input name="capacity" type="number" min="1" max="500" defaultValue="12" required/></label></div><label>Cliente individual (opcional)<input value={clientQuery} onChange={(event) => { setClientQuery(event.target.value); setClientId(''); }} placeholder="Buscar por nombre" aria-describedby="individual-session-note"/><small id="individual-session-note" className="field-note">Si se indica, se crea también su reserva y la capacidad queda fijada en una plaza.</small></label><div className="client-picker" role="listbox" aria-label="Clientes para sesión individual">{clientOptions.map((client) => <button key={client.id} type="button" role="option" aria-selected={client.id === clientId} className={client.id === clientId ? 'selected' : ''} onClick={() => { setClientId(client.id); setClientQuery(`${client.firstName} ${client.lastName}`); }}>{client.firstName} {client.lastName}</button>)}</div></> : <><div className="calendar-form-row"><label>Día<select name="weekday" defaultValue={String((selectedDay + 1) % 7)}>{['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'].map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label>Hora<input name="localStartTime" type="time" defaultValue="09:00" required/></label></div><div className="calendar-form-row"><label>Duración (min)<input name="durationMinutes" type="number" min="5" max="480" defaultValue="60" required/></label><label>Capacidad<input name="capacity" type="number" min="1" max="500" defaultValue="12" required/></label></div><div className="calendar-form-row"><label>Desde<input name="startsOn" type="date" defaultValue={dateKey(currentDay)} required/></label><label>Hasta (opcional)<input name="endsOn" type="date"/></label></div></>}</>}{actionError && <div className="form-error" role="alert">{actionError}</div>}{!(dialog === 'template' && createdTemplateId) && <div className="dialog-actions"><button type="button" className="button secondary" onClick={() => setDialog(null)}>Cancelar</button><button className="button primary" disabled={busy || !data?.services.length}>{busy ? 'Guardando…' : dialog === 'session' ? 'Crear sesión' : 'Guardar plantilla'}</button></div>}</form></section></div>}
+    {selectedSession && <div className="backdrop"><section ref={modalRef} className="dialog calendar-dialog session-dialog" role="dialog" aria-modal="true" aria-labelledby="session-detail-title"><button className="icon-button dialog-close" data-calendar-initial-focus aria-label="Cerrar detalle" onClick={() => setSelectedSession(null)}>×</button><div className="eyebrow">{selectedSession.areaName} · {selectedSession.source === 'template' ? 'Sesión generada' : 'Sesión puntual'}</div><h2 id="session-detail-title">{selectedSession.serviceName}</h2><p>{spanishDate.format(new Date(selectedSession.startsAt))} · {spanishTime.format(new Date(selectedSession.startsAt))} · {selectedSession.durationMinutes} min</p><div className="session-capacity-summary"><div><strong>{selectedSession.occupiedCount}</strong><span>Ocupadas</span></div><div><strong>{Math.max(0, selectedCapacity)}</strong><span>Disponibles</span></div><div><strong>{selectedSession.waitlistCount}</strong><span>En espera</span></div></div>{attendeeError && <div className="form-error" role="alert">{attendeeError}<button className="text-button" onClick={(event) => openSession(selectedSession, openerRef.current ?? event.currentTarget)}>Reintentar</button></div>}{!attendees && !attendeeError && <div className="calendar-inline-state" role="status"><span className="spinner"/>Cargando reservas…</div>}{attendees && <><h3>Reservas</h3>{attendees.reservations.length ? <ul className="attendee-list">{attendees.reservations.map((item) => <li key={item.id}><span><strong>{item.firstName} {item.lastName}</strong><small>{item.status === 'reserved' ? 'Reservado' : item.status === 'attended' ? 'Asistió' : item.status === 'no_show' ? 'No-show' : 'Cancelado'}</small></span><span className="attendee-actions">{item.status === 'reserved' && manage && <><button className="text-button" disabled={busy} onClick={() => void mutate(`/api/calendar/reservations/${item.id}/attendance`, 'PATCH', { status: 'attended' })}>Asistió</button><button className="text-button" disabled={busy} onClick={() => void mutate(`/api/calendar/reservations/${item.id}/attendance`, 'PATCH', { status: 'no_show' })}>No-show</button><button className="text-button danger-text" disabled={busy} onClick={() => void mutate(`/api/calendar/reservations/${item.id}/cancel`, 'PATCH')}>Cancelar</button></>}</span></li>)}</ul> : <p className="calendar-muted">Aún no hay reservas.</p>}<h3>Lista de espera</h3>{attendees.waitlist.length ? <ul className="attendee-list">{attendees.waitlist.map((item) => <li key={item.id}><span><strong>{item.firstName} {item.lastName}</strong><small>En espera · sin promoción automática</small></span>{manage && <button className="text-button danger-text" disabled={busy} onClick={() => void mutate(`/api/calendar/waitlist/${item.id}/cancel`, 'PATCH')}>Retirar</button>}</li>)}</ul> : <p className="calendar-muted">Sin clientes en espera.</p>}{selectedSession.status === 'scheduled' && manage && <div className="booking-box"><h3>Añadir cliente</h3><label>Buscar cliente<input value={clientQuery} onChange={(event) => { setClientQuery(event.target.value); setClientId(''); }} placeholder="Escribe al menos 2 caracteres"/></label>{clientBusy && <small role="status">Buscando clientes…</small>}{clientSearchError && <small className="field-error" role="alert">{clientSearchError}</small>}<div className="client-picker" role="listbox" aria-label="Resultados de clientes">{clientOptions.map((client) => <button key={client.id} type="button" role="option" aria-selected={client.id === clientId} className={clientId === client.id ? 'selected' : ''} onClick={() => { setClientId(client.id); setClientQuery(`${client.firstName} ${client.lastName}`); }}>{client.firstName} {client.lastName}</button>)}</div>{selectedCapacity > 0 ? <button className="button primary" disabled={!clientId || busy} onClick={() => clientId && void mutate(`/api/calendar/sessions/${selectedSession.id}/reservations`, 'POST', { clientId }).then((result) => { if (result) { setClientId(''); setClientQuery(''); setClientOptions([]); } })}>Reservar plaza</button> : <div className="waitlist-actions"><button className="button secondary" disabled={!clientId || busy} onClick={() => clientId && void mutate(`/api/calendar/sessions/${selectedSession.id}/waitlist`, 'POST', { clientId }).then((result) => { if (result) { setClientId(''); setClientQuery(''); setClientOptions([]); } })}>Añadir a lista de espera</button>{data?.capabilities.overrideCapacity && <button className="button danger" disabled={!clientId || busy} onClick={() => clientId && void mutate(`/api/calendar/sessions/${selectedSession.id}/reservations`, 'POST', { clientId, overbook: true }).then((result) => { if (result) { setClientId(''); setClientQuery(''); setClientOptions([]); } })}>Autorizar sobrecupo</button>}</div>}{actionError && <div className="form-error" role="alert">{actionError}</div>}</div>}{manage && selectedSession.status === 'scheduled' && <button className="text-button danger-text cancel-session" onClick={() => window.confirm('¿Cancelar esta sesión? Las reservas existentes permanecerán registradas.') && void mutate(`/api/calendar/sessions/${selectedSession.id}/cancel`, 'PATCH')}>Cancelar sesión</button>}</>}</section></div>}
+  </div>;
+}

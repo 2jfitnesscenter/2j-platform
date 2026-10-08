@@ -3,14 +3,40 @@
   "task_id": "2J-030",
   "agent": "codex",
   "branch": "agent/codex/2J-030-calendar-bookings-waitlist",
+  "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/8",
+  "status": "implementation-complete-independent-review-required",
+  "final_head_sha": "recorded-after-docs-handoff-commit",
+  "base": "main including 2J-010 and 2J-020",
   "commits": [],
-  "files_changed": [],
-  "tests": [{"name": "Implementation and independent validation", "command": "See product-research/tasks/2J-030.json; run all required tests when dependencies are met", "result": "NOT_RUN", "evidence": "Task is staged only; implementation waits for 2J-010 and 2J-020 integration and product rules remain as pending decisions."}],
-  "decisions": ["2j-product-research/tasks/2J-030.json is the source-of-truth contract", "Week view primary; schedules separated from generated sessions", "Waitlist promotion, late cancellation/no-show and booking horizon stay undecided"],
-  "risks": ["Capacity and concurrent bookings require transactional Postgres tests", "Implementation depends on 2J-010 and 2J-020"],
-  "followups": ["Start implementation only after 2J-010 and 2J-020 are integrated", "Do not invent waitlist or late-cancel rules", "Require independent reviewer and QA"],
-  "status": "READY",
-  "summary": "Reserved isolated branch and draft PR for 2J-030 Calendar/Bookings/Waitlist; no implementation yet.",
-  "reviewer_instructions": ["Do not treat this task-registration PR as implementation or approval", "Check source task and dependency status before starting code"],
-  "source_commit": "4cfe216d1c2cdd1d73862c1c4ab0198241cd6072"
+  "tests": [
+    { "name": "Full test suite", "command": "pnpm test", "result": "PASS", "evidence": "91/91 tests; calendar PostgreSQL API race/permissions/audit tests and calendar UI tests included." },
+    { "name": "Typecheck", "command": "pnpm typecheck", "result": "PASS", "evidence": "7/7 packages." },
+    { "name": "Build", "command": "pnpm build", "result": "PASS", "evidence": "7/7 packages." },
+    { "name": "Dependency audit", "command": "pnpm audit --audit-level=moderate", "result": "PASS", "evidence": "No known vulnerabilities found." },
+    { "name": "Migration", "command": "pnpm --filter @2j/api db:migrate", "result": "PASS", "evidence": "All 4 checksummed migrations applied to a fresh PostgreSQL database." },
+    { "name": "Visual evidence", "command": "Playwright Chromium at 1440, 768, and 390 CSS px", "result": "PASS", "evidence": "docs/evidence/2J-030/calendar-{1440,768,390}.png" }
+  ],
+  "migration": "apps/api/migrations/0004_calendar_bookings.sql",
+  "decisions": [
+    "Week view is primary; recurring templates and dated sessions are separate entities.",
+    "Template occurrence generation requires an explicit date; no automatic horizon is assumed.",
+    "Overbooking requires scheduling.override_capacity and is audited.",
+    "Booking eligibility remains server-owned and fails closed by default until client-plan assignments and available-balance data are integrated.",
+    "Reservation eligibility tests use an injected resolver; no real financial consumption is implemented."
+  ],
+  "product_decisions_pending": [
+    "Automatic waitlist ordering and promotion",
+    "Cancellation windows, penalties, and no-show consequences",
+    "Recurring generation horizon and scheduled automation",
+    "Push reminders"
+  ],
+  "review": {
+    "claude": "pending-final-sha",
+    "antigravity": "pending-final-sha",
+    "github_ci": "pending-push"
+  },
+  "reviewer_instructions": [
+    "Review the exact final PR head; do not merge this PR.",
+    "Pay special attention to the fail-closed entitlement boundary, session row locking, PII permission checks, overbooking permission, and audit transaction boundaries."
+  ]
 }

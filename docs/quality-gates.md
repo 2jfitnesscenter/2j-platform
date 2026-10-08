@@ -2,7 +2,7 @@
 
 `Quality and security` is the required workflow name. Its checks are `quality` and `secret scan`. It runs with read-only repository permissions. Third-party actions are pinned to immutable commits, with release tags in comments.
 
-The repository is currently an architecture/bootstrap shell with no application packages. `pnpm typecheck` and `pnpm build` therefore establish that the workspace resolves, but do not claim application coverage. Each package added later must provide its own `lint`, `typecheck`, `test`, and `build` scripts and be included by Turbo. CI must add those package checks and an integration test before application code is considered merge-ready.
+The workspace now contains API and admin-web application packages alongside shared packages. `pnpm typecheck` and `pnpm build` cover all workspaces; `pnpm test` includes PostgreSQL API integration tests, admin-web UI tests, and shared package tests. Calendar integration tests require the PostgreSQL service started by CI and fail if it is missing.
 
 Security gates include lockfile audit at high severity and full-history Gitleaks scanning. A finding blocks the check; do not paste secret values into issues/logs. Revoke/rotate exposed credentials through the owning provider and report only secret type, location, and commit hash. GitHub Dependency Review cannot run on these private repositories without Dependency Graph/GitHub Advanced Security support; enabling that capability may affect subscription cost, so it remains an owner decision. Do not change the plan as part of this task.
 
