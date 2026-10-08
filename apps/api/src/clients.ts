@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { can, type AuthorizationContext } from '../../../packages/permissions/src/index.js';
+import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
@@ -27,7 +27,7 @@ const sectionDefinitions = [
 ] as const;
 
 export function registerClientRoutes(
-  app: FastifyInstance,
+  app: FastifyInstance<any, any, any, any, any>,
   database: SqlClient,
   resolveAuthorization: (request: FastifyRequest) => Promise<AuthorizationContext | null>,
 ) {
@@ -71,6 +71,7 @@ export function registerClientRoutes(
     try {
       const client = await database.begin(async (tx) => {
         const [created] = await tx`INSERT INTO clients(first_name,last_name,email,phone) VALUES (${firstName},${lastName},${email},${phone}) RETURNING id,first_name AS "firstName",last_name AS "lastName",email,phone,status,created_at AS "createdAt"`;
+        if (!created) throw new Error('Client insert returned no row.');
         await tx`INSERT INTO client_events(client_id,event_type,actor_id) VALUES (${created.id},'client.created',${context.actorId})`;
         return created;
       });

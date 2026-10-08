@@ -81,7 +81,7 @@ export type ServerOptions = {
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
   const app = Fastify({
-    logger: { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] : '/' }; } } },
+    logger: { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/' }; } } },
     bodyLimit: 16_384,
   });
   const { client } = createDatabase(databaseUrl);
