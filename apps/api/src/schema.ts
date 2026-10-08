@@ -37,5 +37,10 @@ export const clients = pgTable('clients', {
 
 export const clientEvents = pgTable('client_events', {
   id: uuid('id').defaultRandom().primaryKey(), clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
-  eventType: text('event_type').notNull(), actorId: text('actor_id').notNull(), occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [index('client_events_timeline_idx').on(table.clientId, table.occurredAt.desc(), table.id.desc()), check('client_events_type_allowed', sql`${table.eventType} IN ('client.created', 'client.archived')`), check('client_events_actor_length', sql`char_length(${table.actorId}) BETWEEN 1 AND 120`)]);
+  eventType: text('event_type').notNull(), actorId: text('actor_id').notNull(), actorRole: text('actor_role'), occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('client_events_timeline_idx').on(table.clientId, table.occurredAt.desc(), table.id.desc()), check('client_events_type_allowed', sql`${table.eventType} IN ('client.created', 'client.archived')`), check('client_events_actor_length', sql`char_length(${table.actorId}) BETWEEN 1 AND 120`), check('client_events_actor_role_allowed', sql`${table.actorRole} IS NULL OR ${table.actorRole} IN ('admin', 'trainer', 'reception-management', 'accountant')`)]);
+
+export const clientCreationIdempotency = pgTable('client_creation_idempotency', {
+  idempotencyKey: uuid('idempotency_key').primaryKey(), requestHash: char('request_hash', { length: 64 }).notNull(),
+  clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('client_creation_idempotency_client_idx').on(table.clientId), check('client_creation_idempotency_hash_format', sql`${table.requestHash} ~ '^[0-9a-f]{64}$'`)]);

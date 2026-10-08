@@ -2,6 +2,7 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
+import { Writable } from 'node:stream';
 import { buildServer, mapDatabaseError, planInput, serviceInput } from '../src/server.ts';
 import { createClientInput } from '../src/clients.ts';
 import { migrateDatabase } from '../src/migrate.ts';
@@ -19,6 +20,10 @@ const clientsTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationR
 const clientsAccountantApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-accountant', role: 'accountant' }) });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
 after(async () => { await Promise.all([app.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsAccountantApp.close()]); await sql.end(); });
+
+function createClientRequest(server, payload, key = randomUUID()) {
+  return server.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': key }, payload });
+}
 
 async function createService(name = `Servicio ${randomUUID()}`, status = 'active') {
   const response = await app.inject({ method: 'POST', url: '/api/services', payload: { name, areaId: defaultArea.id, status } });
@@ -62,10 +67,14 @@ test('domain input separates product kind from renewal and defines quota periods
 });
 
 test('client input keeps its personal-data surface intentionally small and validates email/contact lengths', () => {
-  assert.equal(createClientInput.safeParse({ firstName: ' Ada ', lastName: ' Lovelace ', email: 'ada@example.test', phone: '+34 600 000 000' }).success, true);
+  const normalized = createClientInput.safeParse({ firstName: ' Ada ', lastName: ' Lovelace ', email: ' ADA@example.test ', phone: '+34 600 000 000' });
+  assert.equal(normalized.success, true);
+  assert.deepEqual(normalized.data, { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', phone: '+34 600 000 000' });
   assert.equal(createClientInput.safeParse({ firstName: 'Ada', lastName: 'Lovelace', dateOfBirth: '1990-01-01' }).success, false);
   assert.equal(createClientInput.safeParse({ firstName: 'Ada', lastName: 'Lovelace', email: 'not-an-email' }).success, false);
   assert.equal(createClientInput.safeParse({ firstName: 'Ada', lastName: 'Lovelace', phone: 'x'.repeat(41) }).success, false);
+  assert.equal(createClientInput.safeParse({ firstName: '\ufb01'.repeat(41), lastName: 'Test' }).success, false, 'post-NFKC length must be validated');
+  assert.equal(createClientInput.safeParse({ firstName: 'Ada', lastName: 'Test', email: null, phone: '' }).success, true);
 });
 
 test('DB migration is checksummed, repeatable and unchanged on re-application', async () => {
@@ -87,7 +96,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents, schema.clientCreationIdempotency];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -123,7 +132,7 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(denied.statusCode, 401);
   assert.equal(denied.headers['cache-control'], 'no-store');
   assert.deepEqual(denied.json(), { error: 'authentication_required' });
-  const created = await clientsAdminApp.inject({ method: 'POST', url: '/api/clients', payload: { firstName: 'Ada', lastName: `Lovelace ${randomUUID()}`, email: ' ADA@example.test ', phone: ' 555 0100 ' } });
+  const created = await createClientRequest(clientsAdminApp, { firstName: 'Ada', lastName: `Lovelace ${randomUUID()}`, email: ' ADA@example.test ', phone: ' 555 0100 ' });
   assert.equal(created.statusCode, 201, created.body);
   const clientId = created.json().id;
   const trainer = await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
@@ -131,7 +140,16 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(trainer.json().client.email, 'ada@example.test');
   assert.equal(trainer.json().sections.find((section) => section.id === 'training').access, 'available');
   assert.equal(trainer.json().sections.find((section) => section.id === 'health').access, 'available');
-  const forbiddenCreate = await clientsTrainerApp.inject({ method: 'POST', url: '/api/clients', payload: { firstName: 'No', lastName: 'Write' } });
+  assert.equal(trainer.json().summary.payments.access, 'forbidden');
+  assert.equal(trainer.json().summary.payments.data, null);
+  assert.equal(trainer.json().summary.training.access, 'available');
+  assert.equal(trainer.json().summary.health.access, 'available');
+  assert.equal(trainer.json().summary.plans.access, 'forbidden', 'unknown future domain permissions deny by default');
+  assert.equal(trainer.json().summary.documents.access, 'forbidden');
+  assert.equal(trainer.json().summary.messages.data, null);
+  assert.equal(trainer.json().sections.find((section) => section.id === 'payments').sourceLabel, 'Pagos');
+  assert.equal(JSON.stringify(trainer.json()).includes('qa-admin'), false);
+  const forbiddenCreate = await createClientRequest(clientsTrainerApp, { firstName: 'No', lastName: 'Write' });
   assert.equal(forbiddenCreate.statusCode, 403);
   const accountant = await clientsAccountantApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
   assert.equal(accountant.statusCode, 403);
@@ -139,7 +157,7 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
 });
 
 test('client list searches normalized name/contact, and archive retains profile history', async () => {
-  const created = await clientsAdminApp.inject({ method: 'POST', url: '/api/clients', payload: { firstName: '  Marta  ', lastName: `Prueba ${randomUUID()}`, email: 'marta-search@example.test' } });
+  const created = await createClientRequest(clientsAdminApp, { firstName: '  Marta  ', lastName: `Prueba ${randomUUID()}`, email: 'marta-search@example.test' });
   assert.equal(created.statusCode, 201, created.body);
   const clientId = created.json().id;
   const search = await clientsTrainerApp.inject({ method: 'GET', url: '/api/clients?q=MARTA-SEARCH@EXAMPLE.TEST' });
@@ -158,6 +176,118 @@ test('client list searches normalized name/contact, and archive retains profile 
   const archivedList = await clientsAdminApp.inject({ method: 'GET', url: '/api/clients?status=archived' });
   assert.equal(archivedList.json().items.some((item) => item.id === clientId), true);
   await assert.rejects(sql`DELETE FROM clients WHERE id=${clientId}`, (error) => error.code === '55000');
+});
+
+test('every client PII route fails closed without a server-resolved session', async () => {
+  const routes = [
+    ['GET', '/api/clients'], ['HEAD', '/api/clients'], ['POST', '/api/clients'],
+    ['GET', `/api/clients/${randomUUID()}`], ['HEAD', `/api/clients/${randomUUID()}`],
+    ['PATCH', `/api/clients/${randomUUID()}/archive`],
+  ];
+  for (const [method, url] of routes) {
+    const response = await app.inject({ method, url, headers: { 'x-2j-role': 'admin', 'idempotency-key': randomUUID() }, payload: method === 'POST' ? { firstName: 'No', lastName: 'Session', email: 'private@example.test' } : undefined });
+    assert.equal(response.statusCode, 401, `${method} ${url}`);
+    assert.equal(response.headers['cache-control'], 'no-store', `${method} ${url}`);
+    assert.equal(response.body.includes('private@example.test'), false);
+  }
+});
+
+test('malformed JSON returns a fixed error and never echoes or logs personal data', async () => {
+  const logLines = [];
+  const stream = new Writable({ write(chunk, _encoding, callback) { logLines.push(String(chunk)); callback(); } });
+  const capturedApp = buildServer(process.env.DATABASE_URL, {
+    authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }),
+    logger: { level: 'info', stream, serializers: { req(request) { return { method: request.method, url: String(request.url).split('?')[0] }; } } },
+  });
+  try {
+    const secret = 'pii-fragment@example.test';
+    const response = await capturedApp.inject({ method: 'POST', url: '/api/clients', headers: { 'content-type': 'application/json', 'idempotency-key': randomUUID() }, payload: `{"firstName":"${secret}",` });
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), { error: 'invalid_json', message: 'El cuerpo de la solicitud no es JSON válido.' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(response.body.includes(secret), false);
+    assert.equal(logLines.join('').includes(secret), false);
+    assert.equal(logLines.join('').includes('firstName'), false);
+  } finally { await capturedApp.close(); }
+});
+
+test('client creation requires idempotency and replays safely across concurrent retries', async () => {
+  const key = randomUUID();
+  const payload = { firstName: 'Reintento', lastName: `Seguro ${randomUUID()}`, email: `retry-${randomUUID()}@example.test`, phone: '600 000 000' };
+  const [first, retry] = await Promise.all([createClientRequest(clientsAdminApp, payload, key), createClientRequest(clientsAdminApp, payload, key)]);
+  assert.deepEqual([first.statusCode, retry.statusCode].sort(), [200, 201]);
+  assert.equal(first.json().id, retry.json().id);
+  const mismatch = await createClientRequest(clientsAdminApp, { ...payload, firstName: 'Otro' }, key);
+  assert.equal(mismatch.statusCode, 409);
+  assert.equal(mismatch.json().error, 'idempotency_conflict');
+  const rows = await sql`SELECT count(*)::int AS count FROM clients WHERE id=${first.json().id}`;
+  assert.equal(rows[0].count, 1);
+  const missingKey = await clientsAdminApp.inject({ method: 'POST', url: '/api/clients', payload });
+  assert.equal(missingKey.statusCode, 400);
+  assert.equal(missingKey.json().error, 'idempotency_key_required');
+});
+
+test('active normalized email is unique while phone can be shared and archived email can be reused', async () => {
+  const email = `unique-${randomUUID()}@example.test`;
+  const phone = 'shared-family-number';
+  const original = await createClientRequest(clientsAdminApp, { firstName: 'Uno', lastName: `Email ${randomUUID()}`, email: ` ${email.toUpperCase()} `, phone });
+  assert.equal(original.statusCode, 201, original.body);
+  const duplicate = await createClientRequest(clientsAdminApp, { firstName: 'Dos', lastName: `Email ${randomUUID()}`, email, phone });
+  assert.equal(duplicate.statusCode, 409);
+  assert.equal(duplicate.json().error, 'email_conflict');
+  const samePhone = await createClientRequest(clientsAdminApp, { firstName: 'Dos', lastName: `Teléfono ${randomUUID()}`, phone });
+  assert.equal(samePhone.statusCode, 201, samePhone.body);
+  const archived = await clientsAdminApp.inject({ method: 'PATCH', url: `/api/clients/${original.json().id}/archive` });
+  assert.equal(archived.statusCode, 200);
+  const reused = await createClientRequest(clientsAdminApp, { firstName: 'Nuevo', lastName: `Titular ${randomUUID()}`, email });
+  assert.equal(reused.statusCode, 201, reused.body);
+});
+
+test('concurrent client creates with the same normalized active email cannot create duplicates', async () => {
+  const email = `race-${randomUUID()}@example.test`;
+  const submit = (firstName) => createClientRequest(clientsAdminApp, { firstName, lastName: `Duplicado ${randomUUID()}`, email: email.toUpperCase() });
+  const results = await Promise.all([submit('Uno'), submit('Dos')]);
+  assert.deepEqual(results.map((response) => response.statusCode).sort(), [201, 409]);
+  assert.equal(results.find((response) => response.statusCode === 409).json().error, 'email_conflict');
+  assert.equal((await sql`SELECT count(*)::int AS count FROM clients WHERE lower(email)=${email}`).at(0).count, 1);
+});
+
+test('client listing paginates past 100 rows using a stable cursor', async () => {
+  const marker = randomUUID();
+  await sql`INSERT INTO clients(first_name,last_name) SELECT 'Page-' || lpad(n::text,3,'0'),${marker} FROM generate_series(1,125) AS n`;
+  const collected = [];
+  let cursor;
+  let pages = 0;
+  do {
+    const params = new URLSearchParams({ q: marker, limit: '40' });
+    if (cursor) params.set('cursor', cursor);
+    const response = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?${params}` });
+    assert.equal(response.statusCode, 200, response.body);
+    const body = response.json();
+    collected.push(...body.items);
+    cursor = body.nextCursor;
+    assert.equal(body.hasMore, Boolean(cursor));
+    pages += 1;
+    assert.ok(pages <= 4, 'pagination must make progress');
+  } while (cursor);
+  assert.equal(collected.length, 125);
+  assert.equal(new Set(collected.map((item) => item.id)).size, 125);
+  assert.deepEqual(collected.map((item) => `${item.lastName.toLowerCase()}\u0000${item.firstName.toLowerCase()}\u0000${item.id}`), [...collected].map((item) => `${item.lastName.toLowerCase()}\u0000${item.firstName.toLowerCase()}\u0000${item.id}`).sort());
+  const badCursor = await clientsAdminApp.inject({ method: 'GET', url: '/api/clients?cursor=not-a-cursor' });
+  assert.equal(badCursor.statusCode, 400);
+  assert.equal(badCursor.json().error, 'invalid_cursor');
+});
+
+test('concurrent and repeated archive writes one event and keeps history append-only', async () => {
+  const created = await createClientRequest(clientsAdminApp, { firstName: 'Archivo', lastName: randomUUID() });
+  assert.equal(created.statusCode, 201);
+  const url = `/api/clients/${created.json().id}/archive`;
+  const results = await Promise.all([clientsAdminApp.inject({ method: 'PATCH', url }), clientsAdminApp.inject({ method: 'PATCH', url })]);
+  assert.deepEqual(results.map((response) => response.statusCode).sort(), [200, 404]);
+  assert.equal((await clientsAdminApp.inject({ method: 'PATCH', url })).statusCode, 404);
+  const detail = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients/${created.json().id}` });
+  assert.deepEqual(detail.json().history.map((event) => event.eventType).sort(), ['client.archived', 'client.created']);
+  assert.ok(detail.json().history.every((event) => !('actorId' in event) && typeof event.actorLabel === 'string'));
 });
 
 test('areas can be configured and service records reference their normalized IDs', async () => {
