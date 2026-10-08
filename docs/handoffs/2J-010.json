@@ -20,8 +20,8 @@
     "training",
     "Bunker"
   ],
-  "implementation_head": "5ee5883afb17f830d222edcc6fda0e1d28df7a51",
-  "final_head": "Resolve the final PR #6 head OID after committing these review fixes.",
+  "implementation_head": "8c12c25063299f7bb0c031f3859f8d815486b714",
+  "final_head": "PR #6 remote headRefOid after this final handoff update.",
   "evidence": {
     "visual": [
       {
@@ -78,9 +78,9 @@
     },
     {
       "name": "Hosted quality and secret scan",
-      "command": "GitHub Actions run 37743932852",
+      "command": "GitHub Actions runs 37749706935 and 37749713318",
       "result": "PENDING",
-      "evidence": "Run 37743932852 passed on the previous implementation head 5ee5883afb17f830d222edcc6fda0e1d28df7a51; latest corrections need hosted checks on the new PR head."
+      "evidence": "New checks were queued for the current pushed PR head and remain pending."
     }
   ],
   "decisions": [
