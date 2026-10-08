@@ -21,7 +21,7 @@
     "Bunker"
   ],
   "implementation_head": "0fb2876e54ced026b472d967510523dc848b2745",
-  "final_head": "pending handoff update commit",
+  "final_head": "Current PR head; implementation_head records the tested UI correction.",
   "evidence": {
     "visual": [
       {
@@ -44,7 +44,7 @@
       "name": "Workspace tests",
       "command": "corepack pnpm@10.34.6 test",
       "result": "PASS",
-      "evidence": "GitHub Actions run 37754051016 on code/test SHA 53ca8806fe14e64c9e747567e187b9f89292c647: 55/55 workspace tests passed (31 PostgreSQL API, 8 admin UI, 16 design-token/domain/permissions/auth/audit). Extended API coverage includes UUID/null/omission/order idempotency canonicalization, frozen INSERTs, pointer/unfreeze attacks, Europe/Canary, direct SQL quota overlaps, all catalog TRUNCATE CASCADE guards, concurrent idempotency, quota-insert race, archive/activation, archive/create-plan, area-archive/create-service, and concurrent first-run migration in a disposable fresh PostgreSQL database."
+      "evidence": "GitHub Actions push run 37757015801 and pull_request run 37757024318 on head c005256425bf89a9d5b3801fdb19cd8f13956a37: 57/57 tests passed (31 PostgreSQL API, 10 admin UI, 16 design-token/domain/permissions/auth/audit). The two new admin tests verify neutral targetless-access copy in multi-service plans and optional targetless submission with serviceId null."
     },
     {
       "name": "Migration repeat/checksum",
@@ -56,19 +56,19 @@
       "name": "Typecheck",
       "command": "corepack pnpm@10.34.6 typecheck",
       "result": "PASS",
-      "evidence": "GitHub Actions run 37754051016: all 7 workspace packages passed."
+      "evidence": "GitHub Actions push run 37757015801 and pull_request run 37757024318 on head c005256425bf89a9d5b3801fdb19cd8f13956a37 passed."
     },
     {
       "name": "Production build",
       "command": "corepack pnpm@10.34.6 build",
       "result": "PASS",
-      "evidence": "GitHub Actions run 37754051016: all 7 workspace packages passed."
+      "evidence": "GitHub Actions push run 37757015801 and pull_request run 37757024318 on head c005256425bf89a9d5b3801fdb19cd8f13956a37 passed."
     },
     {
       "name": "Dependency audit",
       "command": "corepack pnpm@10.34.6 audit --audit-level high",
       "result": "PASS",
-      "evidence": "GitHub Actions run 37754051016 completed pnpm audit --audit-level high without known vulnerabilities."
+      "evidence": "GitHub Actions push run 37757015801 and pull_request run 37757024318 on head c005256425bf89a9d5b3801fdb19cd8f13956a37 completed pnpm audit --audit-level high without known vulnerabilities."
     },
     {
       "name": "Visual responsive review",
@@ -78,9 +78,9 @@
     },
     {
       "name": "Hosted quality and secret scan",
-      "command": "GitHub Actions runs for implementation SHA 0fb2876e54ced026b472d967510523dc848b2745",
-      "result": "PENDING",
-      "evidence": "The push and pull_request runs were queued/in progress at handoff update time. Previous reviewed SHA d40eb6d064ddc4628f94f13beb9a662ae368d96e passed runs 37754281138 and 37754287642."
+      "command": "GitHub Actions push run 37757015801 and pull_request run 37757024318",
+      "result": "PASS",
+      "evidence": "Quality (migration, typecheck, tests, build, audit) and full-history secret scan passed on PR head c005256425bf89a9d5b3801fdb19cd8f13956a37."
     }
   ],
   "decisions": [
@@ -103,7 +103,7 @@
     "Keep PR #6 unmerged until both reviews and hosted gates pass.",
     "Continue 2J-020 and 2J-030 only in their own tasks, branches and PRs after 2J-010 integration."
   ],
-  "summary": "Claude approved the backend/domain scope at d40eb6d. Antigravity's P1 about targetless service_access was fixed with neutral UI copy and regression tests in 0fb2876. Hosted checks and Antigravity re-review are pending, as are supplemental visual captures; do not merge yet.",
+  "summary": "Claude approved the backend/domain scope at d40eb6d. Antigravity's P1 about targetless service_access was fixed with neutral UI copy and regression tests; 57/57 tests and hosted checks pass on the latest PR head. Antigravity re-review and supplemental visual captures are pending; do not merge yet.",
   "source_commit": "bbc2f601feb79b9c2adda37467c49f8a24cdcd49",
   "open_decisions": [
     {
