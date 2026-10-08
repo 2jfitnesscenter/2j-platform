@@ -7,6 +7,8 @@ import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
 import { registerCalendarRoutes } from './calendar.js';
+import { registerEconomicRoutes } from './economics.js';
+import { registerEconomicExtensions } from './economic-extensions.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
@@ -86,7 +88,7 @@ export type ServerOptions = {
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
   const app = Fastify({
     logger: options.logger ?? { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/' }; } } },
-    bodyLimit: 16_384,
+    bodyLimit: 3_000_000,
   });
   app.setErrorHandler((error, request, reply) => {
     const fastifyError = error as FastifyError;
@@ -103,7 +105,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
   const originHost = new URL(allowedOrigin).hostname.replace(/^\[|\]$/g, '');
   if (!['127.0.0.1', 'localhost', '::1'].includes(originHost)) throw new Error('CORS_ORIGIN must be loopback-only until runtime authentication is approved.');
-  app.register(cors, { origin: allowedOrigin, methods: ['GET', 'POST', 'PATCH', 'OPTIONS'], allowedHeaders: ['content-type', 'idempotency-key'] });
+  app.register(cors, { origin: allowedOrigin, methods: ['GET', 'POST', 'PATCH', 'PUT', 'OPTIONS'], allowedHeaders: ['content-type', 'idempotency-key'] });
   app.addHook('onRequest', async (request, reply) => {
     const host = request.hostname?.replace(/^\[|\]$/g, '').toLowerCase();
     if (!host || !['127.0.0.1', 'localhost', '::1'].includes(host)) return reply.code(400).send({ error: 'invalid_host' });
@@ -111,6 +113,8 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.addHook('onClose', async () => { await client.end(); });
   registerClientRoutes(app, client, options.authorizationResolver ?? (async () => null));
   registerCalendarRoutes(app, client, options.authorizationResolver ?? (async () => null), options.bookingEligibilityResolver);
+  registerEconomicRoutes(app, client, options.authorizationResolver ?? (async () => null));
+  registerEconomicExtensions(app, client, options.authorizationResolver ?? (async () => null));
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }

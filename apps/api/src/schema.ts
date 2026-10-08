@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, char, timestamp, index, uniqueIndex, primaryKey, foreignKey, check, smallint, time, date, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, char, timestamp, index, uniqueIndex, primaryKey, foreignKey, check, smallint, time, date, jsonb, bigint, boolean, customType } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 export const areas = pgTable('areas', {
@@ -64,3 +64,48 @@ export const calendarWaitlistEntries = pgTable('calendar_waitlist_entries', {
 export const calendarAuditEvents = pgTable('calendar_audit_events', {
   id: uuid('id').defaultRandom().primaryKey(), actorId: text('actor_id').notNull(), action: text('action').notNull(), resourceType: text('resource_type').notNull(), resourceId: uuid('resource_id').notNull(), sessionId: uuid('session_id'), clientId: uuid('client_id'), occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(), details: jsonb('details').notNull().default({}),
 }, (table) => [index('calendar_audit_session_timeline_idx').on(table.sessionId, table.occurredAt.desc(), table.id.desc()), check('calendar_audit_actor', sql`char_length(${table.actorId}) BETWEEN 1 AND 120`), check('calendar_audit_action', sql`${table.action} IN ('session.created','session.generated','session.cancelled','template.archived','reservation.created','reservation.cancelled','reservation.overbooked','reservation.attendance_changed','reservation.cancelled_by_center','waitlist.entered','waitlist.cancelled','waitlist.cancelled_by_center')`), check('calendar_audit_details_object', sql`jsonb_typeof(${table.details})='object'`)]);
+
+export const economicSettings = pgTable('economic_settings', {
+  singleton: boolean('singleton').notNull().default(true).primaryKey(), dueDay: smallint('due_day').notNull().default(10), timezone: text('timezone').notNull().default('Atlantic/Canary'), debtBlocksNewReservations: boolean('debt_blocks_new_reservations').notNull().default(false), updatedAt: timestamp('updated_at',{withTimezone:true}).notNull().defaultNow(), updatedBy: text('updated_by'),
+}, (table) => [check('economic_settings_due_day',sql`${table.dueDay} BETWEEN 1 AND 28`),check('economic_settings_timezone',sql`${table.timezone}='Atlantic/Canary'`)]);
+
+export const economicCharges = pgTable('economic_charges', {
+  id: uuid('id').defaultRandom().primaryKey(), clientId: uuid('client_id').notNull().references(()=>clients.id,{onDelete:'restrict'}), planId: uuid('plan_id').references(()=>plans.id,{onDelete:'restrict'}), concept: text('concept').notNull(), amountCents: bigint('amount_cents',{mode:'number'}).notNull(), dueOn: date('due_on').notNull(), state: text('state').notNull().default('pending'), exemptReason: text('exempt_reason'), createdBy: text('created_by').notNull(), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(), idempotencyKey: uuid('idempotency_key').notNull(), requestHash: char('request_hash',{length:64}).notNull(),
+}, (table)=>[uniqueIndex('economic_charges_idempotency_unique').on(table.idempotencyKey),index('economic_charges_client_due_idx').on(table.clientId,table.dueOn.desc(),table.id.desc()),check('economic_charges_amount_positive',sql`${table.amountCents}>0`),check('economic_charges_state',sql`${table.state} IN ('pending','exempt')`)]);
+
+export const economicTransactions = pgTable('economic_transactions', {
+  id: uuid('id').defaultRandom().primaryKey(), chargeId: uuid('charge_id').notNull().references(()=>economicCharges.id,{onDelete:'restrict'}), clientId: uuid('client_id').notNull().references(()=>clients.id,{onDelete:'restrict'}), kind: text('kind').notNull(), amountCents: bigint('amount_cents',{mode:'number'}).notNull(), refundOf: uuid('refund_of'), note: text('note'), actorId: text('actor_id').notNull(), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(), idempotencyKey: uuid('idempotency_key').notNull(), requestHash: char('request_hash',{length:64}).notNull(),
+}, (table)=>[uniqueIndex('economic_transactions_idempotency_unique').on(table.idempotencyKey),uniqueIndex('economic_transactions_id_charge_unique').on(table.id,table.chargeId),foreignKey({name:'economic_transactions_refund_fk',columns:[table.refundOf],foreignColumns:[table.id]}).onDelete('restrict'),index('economic_transactions_charge_idx').on(table.chargeId,table.createdAt,table.id),check('economic_transactions_kind',sql`${table.kind} IN ('payment','refund')`),check('economic_transactions_amount_positive',sql`${table.amountCents}>0`)]);
+
+export const economicPaymentSplits = pgTable('economic_payment_splits', {
+  transactionId: uuid('transaction_id').notNull().references(()=>economicTransactions.id,{onDelete:'restrict'}), method: text('method').notNull(), amountCents: bigint('amount_cents',{mode:'number'}).notNull(),
+}, (table)=>[primaryKey({columns:[table.transactionId,table.method]}),check('economic_payment_splits_method',sql`${table.method} IN ('cash','card','transfer','direct_debit','other')`),check('economic_payment_splits_amount_positive',sql`${table.amountCents}>0`)]);
+
+export const economicCashSessions = pgTable('economic_cash_sessions', {
+  id: uuid('id').defaultRandom().primaryKey(), localDate: date('local_date').notNull(), openingCents: bigint('opening_cents',{mode:'number'}).notNull(), countedCents: bigint('counted_cents',{mode:'number'}), status: text('status').notNull().default('open'), openedBy: text('opened_by').notNull(), openedAt: timestamp('opened_at',{withTimezone:true}).notNull().defaultNow(), closedBy: text('closed_by'), closedAt: timestamp('closed_at',{withTimezone:true}),
+}, (table)=>[uniqueIndex('economic_cash_sessions_local_date_unique').on(table.localDate),check('economic_cash_sessions_status',sql`${table.status} IN ('open','closed')`)]);
+
+export const economicCashAdjustments = pgTable('economic_cash_adjustments', {
+  id: uuid('id').defaultRandom().primaryKey(), cashSessionId: uuid('cash_session_id').notNull().references(()=>economicCashSessions.id,{onDelete:'restrict'}), amountCents: bigint('amount_cents',{mode:'number'}).notNull(), reason: text('reason').notNull(), actorId: text('actor_id').notNull(), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(),
+}, (table)=>[index('economic_cash_adjustments_session_idx').on(table.cashSessionId,table.createdAt),check('economic_cash_adjustments_nonzero',sql`${table.amountCents}<>0`)]);
+
+const bytea = customType<{data:Buffer;driverData:Buffer}>({dataType:()=> 'bytea'});
+export const economicTransferProofs = pgTable('economic_transfer_proofs', {
+  id: uuid('id').defaultRandom().primaryKey(), chargeId: uuid('charge_id').notNull().references(()=>economicCharges.id,{onDelete:'restrict'}), amountCents: bigint('amount_cents',{mode:'number'}).notNull(), contentType: text('content_type').notNull(), fileName: text('file_name').notNull(), fileBytes: bytea('file_bytes').notNull(), sha256: char('sha256',{length:64}).notNull(), status: text('status').notNull().default('pending_validation'), submittedBy: text('submitted_by').notNull(), submittedAt: timestamp('submitted_at',{withTimezone:true}).notNull().defaultNow(), reviewedBy: text('reviewed_by'), reviewedAt: timestamp('reviewed_at',{withTimezone:true}), decisionNote: text('decision_note'), transactionId: uuid('transaction_id').references(()=>economicTransactions.id,{onDelete:'restrict'}),
+}, (table)=>[uniqueIndex('economic_transfer_proofs_charge_hash_unique').on(table.chargeId,table.sha256),check('economic_transfer_proofs_status',sql`${table.status} IN ('pending_validation','validated','rejected')`)]);
+
+export const clientFiscalProfiles = pgTable('client_fiscal_profiles', {
+  clientId: uuid('client_id').primaryKey().references(()=>clients.id,{onDelete:'restrict'}), legalName: text('legal_name').notNull(), taxId: text('tax_id'), billingAddress: text('billing_address'), postalCode: text('postal_code'), locality: text('locality'), countryCode: char('country_code',{length:2}).notNull().default('ES'), updatedBy: text('updated_by').notNull(), updatedAt: timestamp('updated_at',{withTimezone:true}).notNull().defaultNow(),
+});
+
+export const economicInvoiceSeries = pgTable('economic_invoice_series', {
+  id: uuid('id').defaultRandom().primaryKey(), name: text('name').notNull(), prefix: text('prefix').notNull(), nextNumber: bigint('next_number',{mode:'number'}).notNull().default(1), active: boolean('active').notNull().default(true),
+}, (table)=>[uniqueIndex('economic_invoice_series_name_unique').on(table.name),check('economic_invoice_series_next_number',sql`${table.nextNumber}>0`)]);
+
+export const economicInvoiceDrafts = pgTable('economic_invoice_drafts', {
+  id: uuid('id').defaultRandom().primaryKey(), clientId: uuid('client_id').notNull().references(()=>clients.id,{onDelete:'restrict'}), seriesId: uuid('series_id').notNull().references(()=>economicInvoiceSeries.id,{onDelete:'restrict'}), seriesName: text('series_name').notNull(), invoiceNumber: text('invoice_number').notNull(), concept: text('concept').notNull(), netCents: bigint('net_cents',{mode:'number'}).notNull(), taxBasisPoints: integer('tax_basis_points').notNull(), taxCents: bigint('tax_cents',{mode:'number'}).notNull(), grossCents: bigint('gross_cents',{mode:'number'}).notNull(), taxDescription: text('tax_description'), fiscalSnapshot: jsonb('fiscal_snapshot').notNull(), status: text('status').notNull().default('draft'), createdBy: text('created_by').notNull(), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(), idempotencyKey: uuid('idempotency_key').notNull(), requestHash: char('request_hash',{length:64}).notNull(),
+}, (table)=>[uniqueIndex('economic_invoice_drafts_idempotency_unique').on(table.idempotencyKey),uniqueIndex('economic_invoice_drafts_series_number_unique').on(table.seriesId,table.invoiceNumber),check('economic_invoice_drafts_tax_bps',sql`${table.taxBasisPoints} BETWEEN 0 AND 10000`),check('economic_invoice_drafts_gross',sql`${table.grossCents}=${table.netCents}+${table.taxCents}`),check('economic_invoice_drafts_draft_only',sql`${table.status}='draft'`)]);
+
+export const economicAuditEvents = pgTable('economic_audit_events', {
+  id: uuid('id').defaultRandom().primaryKey(), actorId: text('actor_id').notNull(), action: text('action').notNull(), resourceType: text('resource_type').notNull(), resourceId: uuid('resource_id').notNull(), clientId: uuid('client_id').references(()=>clients.id,{onDelete:'restrict'}), details: jsonb('details').notNull().default({}), occurredAt: timestamp('occurred_at',{withTimezone:true}).notNull().defaultNow(),
+}, (table)=>[index('economic_audit_client_timeline_idx').on(table.clientId,table.occurredAt.desc(),table.id.desc())]);

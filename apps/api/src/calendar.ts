@@ -48,6 +48,12 @@ export function registerCalendarRoutes(
     if (area.status !== 'active') return 'area_archived';
     return null;
   }
+  async function debtBlocksNewBooking(tx: SqlTransaction, clientId: string) {
+    const [settings] = await tx`SELECT debt_blocks_new_reservations AS enabled FROM economic_settings WHERE singleton=true`;
+    if (!settings?.enabled) return false;
+    const [debt] = await tx`SELECT EXISTS(SELECT 1 FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true WHERE c.client_id=${clientId} AND c.state='pending' AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date AND c.amount_cents>COALESCE(x.net,0)) AS overdue`;
+    return Boolean(debt?.overdue);
+  }
   async function appendAudit(tx: SqlTransaction, actorId: string, action: string, resourceType: string, resourceId: string, sessionId: string | null, clientId: string | null, details: Record<string, string | number | boolean | null> = {}) {
     await tx`INSERT INTO calendar_audit_events(actor_id,action,resource_type,resource_id,session_id,client_id,details) VALUES (${actorId},${action},${resourceType},${resourceId},${sessionId},${clientId},${JSON.stringify(details)}::jsonb)`;
   }
@@ -102,6 +108,7 @@ export function registerCalendarRoutes(
           if (client.status !== 'active') return { error: 'client_archived' };
           const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: parsed.data.serviceId, startsAt: parsed.data.startsAt });
           if (!eligibility.eligible) return { error: eligibility.reason };
+          if (await debtBlocksNewBooking(tx, client.id)) return { error: 'overdue_balance_blocks_booking' };
           entitlementReference = eligibility.entitlementId;
         }
         const [session] = await tx`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,individual_client_id,created_by) VALUES (${parsed.data.serviceId},${parsed.data.areaId},${parsed.data.startsAt},${parsed.data.durationMinutes},${parsed.data.capacity},${parsed.data.individualClientId ?? null},${context.actorId}) RETURNING id`;
@@ -193,6 +200,7 @@ export function registerCalendarRoutes(
         if (session.individual_client_id && session.individual_client_id !== client.id) return { error: 'individual_session_client_mismatch' };
         const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at) });
         if (!eligibility.eligible) return { error: eligibility.reason };
+        if (await debtBlocksNewBooking(tx, client.id)) return { error: 'overdue_balance_blocks_booking' };
         const [existing] = await tx`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id} AND status IN ('reserved','attended','no_show') UNION ALL SELECT id FROM calendar_waitlist_entries WHERE session_id=${session.id} AND client_id=${client.id} AND status='waiting' LIMIT 1`;
         if (existing) return { error: 'client_already_added' };
         const [count] = await tx`SELECT count(*)::int AS occupied FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show')`;

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0.0",
+  "taskId": "2J-040",
+  "title": "Pagos, Caja, Facturación e Impagados",
+  "status": "ready-for-independent-review",
+  "branch": "agent/codex/2J-040-payments-cash-invoicing-debt",
+  "pullRequest": null,
+  "headSha": null,
+  "base": "main with 2J-010, 2J-020 and 2J-030",
+  "migration": "apps/api/migrations/0006_economics.sql",
+  "timezone": "Atlantic/Canary",
+  "currency": "EUR",
+  "defaultDueDay": 10,
+  "reservationDebtBlockDefault": false,
+  "officialInvoiceIssuance": false,
+  "newPermissions": ["billing.payments.manage", "billing.cash.manage", "billing.invoices.manage", "billing.read-tax"],
+  "implemented": [
+    "idempotent-client-charges",
+    "partial-split-payments",
+    "append-only-refunds",
+    "serialized-overcollection-protection",
+    "daily-cash-open-close-and-reconciliation",
+    "reasoned-cash-adjustments",
+    "duplicate-transfer-proof-detection-and-human-review",
+    "configurable-invoice-series-and-explicit-tax-draft",
+    "client-360-economic-summary-server-permissioned",
+    "optional-new-reservation-debt-policy-default-off",
+    "responsive-payments-charge-and-cash-ui"
+  ],
+  "verification": { "testsPassed": 109, "testsFailed": 0, "typecheck": "passed", "build": "passed", "dependencyAudit": "passed" },
+  "uiScope": ["economic-overview", "overdue-and-charge-list", "charge-creation", "split-partial-payment", "cash-open-close"],
+  "apiOnlyForFollowUpUI": ["refunds", "manual-cash-adjustments", "transfer-proof-upload-and-validation", "fiscal-profile", "invoice-series-and-draft", "economic-settings"],
+  "visualEvidence": {
+    "viewportsInspected": [1440, 768, 390],
+    "syntheticData": true,
+    "pngFilesPersisted": false,
+    "limitation": "Browser screenshots were displayed in task conversation; browser interface did not expose a local export path."
+  },
+  "independentReview": { "claude": "pending", "antigravity": "pending", "qa": "pending" },
+  "productLegalDecisionsPending": ["applicable tax rates", "legal grounds for exemption", "issuer legal details", "official invoice issuance"],
+  "merge": "DO_NOT_MERGE"
+}
