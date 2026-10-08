@@ -317,6 +317,27 @@ test('concurrent migration calls serialize safely against the existing migration
   assert.deepEqual(results[0].map((row) => [row.name, row.checksum.trim()]), results[1].map((row) => [row.name, row.checksum.trim()]));
 });
 
+test('concurrent first-run migrators safely initialize a fresh database', async () => {
+  const databaseName = `migration_race_${randomUUID().replaceAll('-', '')}`;
+  const admin = postgres(process.env.DATABASE_URL, { max: 2, connect_timeout: 5 });
+  const databaseUrl = new URL(process.env.DATABASE_URL);
+  databaseUrl.pathname = `/${databaseName}`;
+  let first;
+  let second;
+  try {
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+    first = postgres(databaseUrl.toString(), { max: 2, connect_timeout: 5 });
+    second = postgres(databaseUrl.toString(), { max: 2, connect_timeout: 5 });
+    const results = await Promise.all([migrateDatabase(first), migrateDatabase(second)]);
+    assert.deepEqual(results[0].map((row) => [row.name, row.checksum.trim()]), results[1].map((row) => [row.name, row.checksum.trim()]));
+    assert.ok(results[0].length > 0);
+  } finally {
+    await Promise.all([first?.end(), second?.end()]);
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+    await admin.end();
+  }
+});
+
 test('service archival racing plan activation preserves active-plan service integrity', async () => {
   const service = await createService();
   const { response } = await createPlan([service.id]);

@@ -5,7 +5,7 @@
   "branch": "agent/codex/2J-010-services-plans-rights",
   "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/6",
   "status": "REVIEW",
-  "review_state": "Claude re-review on 3fd1a87 requested changes (P2 only, no P0/P1). Canonical idempotency fixes and expanded invariant/concurrency tests are in progress on this update; re-review remains required. Keep unmerged.",
+  "review_state": "Claude re-review on 3fd1a87 requested changes (P2 only, no P0/P1). Canonical idempotency fixes and expanded invariant/concurrency tests are included; re-review remains required. Keep unmerged.",
   "scope": [
     "services",
     "plans",
@@ -44,13 +44,13 @@
       "name": "Workspace tests",
       "command": "corepack pnpm@10.34.6 test",
       "result": "PENDING",
-      "evidence": "Previous head passed 46/46. Extended tests cover UUID/null/omission/order idempotency canonicalization, frozen INSERTs, pointer/unfreeze attacks, Europe/Canary, direct SQL quota overlap rules, all catalog TRUNCATE guards, concurrent idempotency, quota insert race, archive/activation, archive/create-plan, area-archive/create-service, and concurrent migrateDatabase against an existing ledger. Local install was stopped by the global minimum-release-age policy for @babel/runtime@7.29.10, tldts-core@7.4.18, and tldts@7.4.18; do not treat previous test result as evidence for this head."
+      "evidence": "Previous head passed 46/46. Extended tests cover UUID/null/omission/order idempotency canonicalization, frozen INSERTs, pointer/unfreeze attacks, Europe/Canary, direct SQL quota overlap rules, all catalog TRUNCATE guards, concurrent idempotency, quota insert race, archive/activation, archive/create-plan, area-archive/create-service, and concurrent first-run migration in a disposable fresh PostgreSQL database. Local install was stopped by the global minimum-release-age policy for @babel/runtime@7.29.10, tldts-core@7.4.18, and tldts@7.4.18; hosted quality gates provide verification for this head."
     },
     {
       "name": "Migration repeat/checksum",
       "command": "corepack pnpm@10.34.6 --filter @2j/api db:migrate",
       "result": "PENDING",
-      "evidence": "Prior head verified a fresh PostgreSQL 17 baseline and concurrent first-run migrators. This update tests concurrent calls against an existing migration ledger; clean-database concurrency requires a dedicated gate."
+      "evidence": "Concurrent calls are tested both against an existing ledger and against a unique temporary fresh PostgreSQL database; temporary database is force-dropped in finally. Hosted quality gate must pass."
     },
     {
       "name": "Typecheck",
