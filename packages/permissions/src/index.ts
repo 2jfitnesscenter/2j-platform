@@ -8,15 +8,15 @@ export interface AuthorizationContext {
 
 export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> = {
   admin: ['*'],
-  trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read', 'reservations.manage', 'reservations.attendance', 'scheduling.override_capacity'],
+  trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read', 'reservations.manage', 'reservations.attendance', 'scheduling.override_capacity', 'billing.validate_transfer', 'billing.debt.override'],
   'reception-management': ['clients.read', 'calendar.read', 'reservations.manage', 'billing.read-basic', 'timeclock.read'],
-  accountant: [],
+  accountant: ['billing.read-basic', 'billing.read-tax', 'billing.export'],
 };
 
 /** Registry of operation identifiers known to the server. New operations must be reviewed here before use. */
 export const knownPermissions: ReadonlySet<string> = new Set([
   'clients.read', 'clients.manage', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read',
-  'reservations.manage', 'reservations.attendance', 'billing.read-basic', 'billing.payments.manage', 'billing.cash.manage', 'billing.invoices.manage', 'billing.read-tax', 'billing.validate_transfer', 'scheduling.override_capacity',
+  'reservations.manage', 'reservations.attendance', 'billing.read-basic', 'billing.payments.manage', 'billing.cash.manage', 'billing.invoices.manage', 'billing.read-tax', 'billing.write-tax', 'billing.export', 'billing.validate_transfer', 'billing.debt.override', 'scheduling.override_capacity',
   'staff.timeclock.correct', 'settings.manage',
 ]);
 

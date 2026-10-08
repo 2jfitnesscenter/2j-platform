@@ -680,6 +680,8 @@ test('economic charges and split payments are permissioned, idempotent, partial 
 
   const paymentKey = randomUUID();
   const paymentPayload = { chargeId: chargeResponse.json().id, splits: [{ method: 'cash', amountCents: 2000 }, { method: 'card', amountCents: 3000 }] };
+  const cashSession = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 0 } });
+  assert.equal(cashSession.statusCode, 201, cashSession.body);
   const payment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': paymentKey }, payload: paymentPayload });
   assert.equal(payment.statusCode, 201, payment.body);
   const paymentReplay = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': paymentKey }, payload: paymentPayload });
@@ -700,6 +702,9 @@ test('economic charges and split payments are permissioned, idempotent, partial 
   assert.equal(Number(balanceAfterRefund.json().items[0].balanceCents), 6000);
   const [audit] = await sql`SELECT count(*)::int AS count FROM economic_audit_events WHERE client_id=${client.id}`;
   assert.equal(audit.count, 3);
+  const cashSnapshot = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  const closedCash = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${cashSession.json().id}/close`, payload: { countedCents: cashSnapshot.json().session.expectedCents } });
+  assert.equal(closedCash.statusCode, 200, closedCash.body);
 });
 
 test('concurrent partial payments serialize at the charge and cannot over-collect', async () => {
@@ -737,6 +742,35 @@ test('optional debt restriction affects new reservations only when explicitly en
   } finally { await eligibleAdmin.close(); }
 });
 
+test('debt restriction permits waitlist and Trainer can make a reasoned audited booking exception', async () => {
+  const eligibleTrainer=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'qa-trainer-debt-override',role:'trainer'}),bookingEligibilityResolver:async()=>({eligible:true,entitlementId:'qa-entitlement'})});
+  const eligibleAdmin=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'qa-admin-debt-override',role:'admin'}),bookingEligibilityResolver:async()=>({eligible:true,entitlementId:'qa-entitlement'})});
+  try {
+    const debtClient=(await createClientRequest(clientsAdminApp,{firstName:'Debt',lastName:`QA ${randomUUID()}`,email:null,phone:null})).json();
+    const first=(await createClientRequest(clientsAdminApp,{firstName:'Seat',lastName:`QA ${randomUUID()}`,email:null,phone:null})).json();
+    await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:debtClient.id,concept:'Deuda vencida',amountCents:1000,dueOn:'2000-01-01'}});
+    const service=await createService();
+    const session=await eligibleAdmin.inject({method:'POST',url:'/api/calendar/sessions',payload:{serviceId:service.id,areaId:defaultArea.id,startsAt:'2099-12-10T10:00:00Z',durationMinutes:45,capacity:1}});
+    assert.equal(session.statusCode,201,session.body);
+    await clientsAdminApp.inject({method:'PATCH',url:'/api/economics/settings',payload:{dueDay:10,debtBlocksNewReservations:true}});
+    const firstBooking=await eligibleAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/reservations`,payload:{clientId:first.id}});
+    assert.equal(firstBooking.statusCode,201,firstBooking.body);
+    const blocked=await eligibleAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/reservations`,payload:{clientId:debtClient.id}});
+    assert.equal(blocked.statusCode,409);
+    assert.equal(blocked.json().error,'overdue_balance_blocks_booking');
+    const waitlist=await eligibleAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/waitlist`,payload:{clientId:debtClient.id}});
+    assert.equal(waitlist.statusCode,201,waitlist.body);
+    await eligibleAdmin.inject({method:'PATCH',url:`/api/calendar/waitlist/${waitlist.json().id}/cancel`,payload:{}});
+    const exception=await eligibleTrainer.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/reservations`,payload:{clientId:debtClient.id,overbook:true,overrideDebt:true,overrideReason:'Excepción aprobada por dirección'}});
+    assert.equal(exception.statusCode,201,exception.body);
+    const [overrideAudit]=await sql`SELECT details->>'reason' AS reason FROM calendar_audit_events WHERE action='reservation.debt_override' AND client_id=${debtClient.id} ORDER BY occurred_at DESC LIMIT 1`;
+    assert.equal(overrideAudit.reason,'Excepción aprobada por dirección');
+  } finally {
+    await clientsAdminApp.inject({method:'PATCH',url:'/api/economics/settings',payload:{dueDay:10,debtBlocksNewReservations:false}});
+    await eligibleTrainer.close();await eligibleAdmin.close();
+  }
+});
+
 test('cash close, human transfer validation, and tax-explicit invoice drafts have guarded transitions', async () => {
   const clientResponse = await createClientRequest(clientsAdminApp, { firstName: 'Fiscal', lastName: `QA ${randomUUID()}`, email: null, phone: null });
   assert.equal(clientResponse.statusCode, 201);
@@ -749,27 +783,153 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   assert.equal(proof.statusCode, 201, proof.body);
   const duplicateProof = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/transfer-proofs', payload: proofPayload });
   assert.equal(duplicateProof.statusCode, 409);
-  const reviewed = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/transfer-proofs/${proof.json().id}/review`, payload: { decision: 'validated', note: 'Revisado por QA' } });
+  const selfReview = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/transfer-proofs/${proof.json().id}/review`, payload: { decision: 'validated', note: 'Revisado por QA' } });
+  assert.equal(selfReview.statusCode, 403);
+  const reviewed = await clientsTrainerApp.inject({ method: 'POST', url: `/api/economics/transfer-proofs/${proof.json().id}/review`, payload: { decision: 'validated', note: 'Revisado por otro miembro del equipo' } });
   assert.equal(reviewed.statusCode, 200, reviewed.body);
   const chargeRows = await clientsAdminApp.inject({ method: 'GET', url: `/api/economics/charges?clientId=${client.id}` });
   assert.equal(chargeRows.json().items[0].status, 'paid');
 
+  const accountantWrite = await clientsAccountantApp.inject({ method: 'PUT', url: `/api/clients/${client.id}/fiscal-profile`, payload: { legalName: 'Cliente de prueba', countryCode: 'ES' } });
+  assert.equal(accountantWrite.statusCode, 403);
+  const invalidTaxId=await clientsAdminApp.inject({method:'PUT',url:`/api/clients/${client.id}/fiscal-profile`,payload:{legalName:'Cliente de prueba',taxId:'no-es-un-nif',countryCode:'ES'}});
+  assert.equal(invalidTaxId.statusCode,400);
   const profile = await clientsAdminApp.inject({ method: 'PUT', url: `/api/clients/${client.id}/fiscal-profile`, payload: { legalName: 'Cliente de prueba', countryCode: 'ES' } });
   assert.equal(profile.statusCode, 200, profile.body);
+  const accountantRead = await clientsAccountantApp.inject({ method: 'GET', url: `/api/clients/${client.id}/fiscal-profile` });
+  assert.equal(accountantRead.statusCode, 200);
+  assert.equal(accountantRead.json().legalName, 'Cliente de prueba');
   const series = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/invoice-series', payload: { name: `QA ${randomUUID()}`, prefix: 'BORR' } });
   assert.equal(series.statusCode, 201, series.body);
-  const draft = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/invoice-drafts', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, seriesId: series.json().id, concept: 'Servicio de prueba', netCents: 10000, taxBasisPoints: 0, taxDescription: 'Sin tasa aplicada por decisión explícita del test' } });
+  const draft = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/invoice-drafts', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, seriesId: series.json().id, sourceChargeId: charge.json().id, concept: 'Servicio de prueba', netCents: 8000, taxTreatment: 'taxable', taxBasisPoints: 0 } });
   assert.equal(draft.statusCode, 201, draft.body);
   assert.equal(draft.json().officiallyIssued, false);
+  assert.equal(draft.json().officialNumber, null);
+  const seriesAfterDraft = await sql`SELECT next_number FROM economic_invoice_series WHERE id=${series.json().id}`;
+  assert.equal(Number(seriesAfterDraft[0].next_number), 1, 'drafts must not consume official numbering');
+  const issueBlocked = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/invoice-drafts/${draft.json().id}/issue`, payload: {} });
+  assert.equal(issueBlocked.statusCode, 423);
+  const nonSubject = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/invoice-drafts', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, seriesId: series.json().id, sourceChargeId: charge.json().id, concept: 'Línea no sujeta QA', netCents: 8000, taxTreatment: 'non_subject', taxDescription: 'Tratamiento pendiente de revisión legal' } });
+  assert.equal(nonSubject.statusCode, 201, nonSubject.body);
+  const [taxDraft] = await sql`SELECT tax_treatment,tax_rate_basis_points,tax_cents FROM economic_invoice_drafts WHERE id=${nonSubject.json().id}`;
+  assert.equal(taxDraft.tax_treatment, 'non_subject');
+  assert.equal(taxDraft.tax_rate_basis_points, null);
+  assert.equal(Number(taxDraft.tax_cents), 0);
+  const exemptDraft = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/invoice-drafts', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, seriesId: series.json().id, sourceChargeId: charge.json().id, concept: 'Línea exenta QA', netCents: 8000, taxTreatment: 'exempt', taxDescription: 'Exención sin base legal determinada por el test' } });
+  assert.equal(exemptDraft.statusCode, 201, exemptDraft.body);
+  const [exemptTaxDraft] = await sql`SELECT tax_treatment,tax_rate_basis_points,tax_cents FROM economic_invoice_drafts WHERE id=${exemptDraft.json().id}`;
+  assert.equal(exemptTaxDraft.tax_treatment, 'exempt');
+  assert.equal(exemptTaxDraft.tax_rate_basis_points, null);
+  assert.equal(Number(exemptTaxDraft.tax_cents), 0);
+  const multiLineDraft=await clientsAdminApp.inject({method:'POST',url:'/api/economics/invoice-drafts',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,seriesId:series.json().id,sourceChargeId:charge.json().id,lines:[{description:'Línea 0%',netCents:2000,taxTreatment:'taxable',taxBasisPoints:0},{description:'Línea exenta',netCents:3000,taxTreatment:'exempt',taxDescription:'Revisión legal pendiente'},{description:'Línea no sujeta',netCents:3000,taxTreatment:'non_subject',taxDescription:'Revisión legal pendiente'}]}});
+  assert.equal(multiLineDraft.statusCode,201,multiLineDraft.body);
+  const [lineData]=await sql`SELECT tax_treatment,line_items FROM economic_invoice_drafts WHERE id=${multiLineDraft.json().id}`;
+  assert.equal(lineData.tax_treatment,'mixed');
+  assert.equal(lineData.line_items.length,3);
 
   const opened = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 20000 } });
   assert.equal(opened.statusCode, 201, opened.body);
+  const secondOpen = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 1000 } });
+  assert.equal(secondOpen.statusCode, 409);
+  const cashCharge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'Pago en caja QA', amountCents: 8000, dueOn: '2099-12-10' } });
+  const cashPayment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: cashCharge.json().id, splits: [{ method: 'cash', amountCents: 3000 }, { method: 'card', amountCents: 2000 }] } });
+  assert.equal(cashPayment.statusCode, 201, cashPayment.body);
+  const cashRefund = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: cashPayment.json().id, amountCents: 500, method: 'cash', note: 'Devolución parcial QA' } });
+  assert.equal(cashRefund.statusCode, 201, cashRefund.body);
+  const [cashLinks] = await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE id IN (${cashPayment.json().id}::uuid,${cashRefund.json().id}::uuid) AND cash_session_id=${opened.json().id}`;
+  assert.equal(cashLinks.count, 2);
   const adjustment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/adjustments', payload: { amountCents: 300, reason: 'Cambio de apertura QA' } });
   assert.equal(adjustment.statusCode, 201, adjustment.body);
-  const closed = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/close', payload: { countedCents: 27000 } });
+  const liveCash = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(Number(liveCash.json().session.expectedCents), 22800);
+  assert.equal(Number(liveCash.json().session.cashPaymentsCents), 3000);
+  assert.equal(Number(liveCash.json().session.cashRefundsCents), 500);
+  const closed = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${opened.json().id}/close`, payload: { countedCents: 23000 } });
   assert.equal(closed.statusCode, 200, closed.body);
+  assert.equal(closed.json().status, 'closed');
+  assert.equal(Number(closed.json().expectedCents), 22800);
+  assert.equal(Number(closed.json().differenceCents), 200);
   const duplicateClose = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/close', payload: { countedCents: 27000 } });
   assert.equal(duplicateClose.statusCode, 409);
+  const [immutableCash] = await sql`SELECT expected_cents,difference_cents FROM economic_cash_sessions WHERE id=${opened.json().id}`;
+  await assert.rejects(sql`UPDATE economic_cash_sessions SET counted_cents=1 WHERE id=${opened.json().id}`, { code: '55000' });
+  assert.equal(Number(immutableCash.expected_cents), 22800);
+  assert.equal(Number(immutableCash.difference_cents), 200);
+});
+
+test('late close preserves the operational date and records the actual closer and timestamp', async () => {
+  const [session] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ('1900-01-01',5000,'qa-late-open') RETURNING id,local_date`;
+  const response = await clientsAdminApp.inject({ method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedCents:5000} });
+  assert.equal(response.statusCode,200,response.body);
+  assert.equal(response.json().status,'late_close');
+  assert.equal(String(response.json().localDate),session.local_date instanceof Date ? session.local_date.toISOString().slice(0,10) : String(session.local_date));
+  assert.equal(response.json().closedBy,'qa-admin');
+  assert.ok(response.json().closedAt);
+});
+
+test('pending charges can be voided once with an audited reason, while charges with money require compensation', async () => {
+  const created = await createClientRequest(clientsAdminApp,{firstName:'Void',lastName:`QA ${randomUUID()}`,email:null,phone:null});
+  const client=created.json();
+  const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Cargo incorrecto',amountCents:5000,dueOn:'2099-12-10'}});
+  assert.equal(charge.statusCode,201,charge.body);
+  const missingReason=await clientsAdminApp.inject({method:'POST',url:`/api/economics/charges/${charge.json().id}/void`,payload:{reason:'  '}});
+  assert.equal(missingReason.statusCode,400);
+  const voided=await clientsAdminApp.inject({method:'POST',url:`/api/economics/charges/${charge.json().id}/void`,payload:{reason:'Alta duplicada por error'}});
+  assert.equal(voided.statusCode,200,voided.body);
+  assert.equal(voided.json().state,'void');
+  const [voidAudit]=await sql`SELECT count(*)::int count FROM economic_audit_events WHERE resource_id=${charge.json().id} AND action='charge.voided'`;
+  assert.equal(voidAudit.count,1);
+
+  const paidCharge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Cargo con movimiento',amountCents:5000,dueOn:'2099-12-10'}});
+  const paid=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:paidCharge.json().id,splits:[{method:'card',amountCents:1000}]}});
+  assert.equal(paid.statusCode,201,paid.body);
+  const blocked=await clientsAdminApp.inject({method:'POST',url:`/api/economics/charges/${paidCharge.json().id}/void`,payload:{reason:'Intento de anular con dinero'}});
+  assert.equal(blocked.statusCode,409);
+  assert.equal(blocked.json().error,'refund_required');
+  const history=await sql`SELECT id,kind,amount_cents FROM economic_transactions WHERE charge_id=${paidCharge.json().id}`;
+  assert.equal(history.length,1);
+  assert.equal(history[0].id,paid.json().id);
+});
+
+test('economic history rejects truncate and destructive row changes', async () => {
+  const created=await createClientRequest(clientsAdminApp,{firstName:'Guards',lastName:`QA ${randomUUID()}`,email:null,phone:null});
+  const client=created.json();
+  const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Histórico protegido',amountCents:2000,dueOn:'2099-12-10'}});
+  const series=await clientsAdminApp.inject({method:'POST',url:'/api/economics/invoice-series',payload:{name:`SER-${randomUUID()}`,prefix:'QA'}});
+  const [session]=await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,closed_at) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date-10,0,0,0,0,'closed','closed','qa-guard','qa-guard',now()) RETURNING id`;
+  await sql`INSERT INTO economic_cash_adjustments(cash_session_id,amount_cents,reason,actor_id) VALUES (${session.id},100,'Movimiento de fixture','qa-guard')`;
+  const [proof]=await sql`INSERT INTO economic_transfer_proofs(charge_id,amount_cents,content_type,file_name,file_bytes,sha256,submitted_by) VALUES (${charge.json().id},100,'application/pdf','fixture.pdf',${Buffer.from('%PDF-1.7')},${createHash('sha256').update('fixture').digest('hex')},'qa-uploader') RETURNING id`;
+  const payment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'card',amountCents:2000}]}});
+  assert.equal(payment.statusCode,201,payment.body);
+  const draft=await clientsAdminApp.inject({method:'POST',url:'/api/economics/invoice-drafts',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,seriesId:series.json().id,sourceChargeId:charge.json().id,concept:'Borrador guardado',netCents:2000,taxTreatment:'taxable',taxBasisPoints:0}});
+  assert.equal(draft.statusCode,201,draft.body);
+  const [document]=await sql`INSERT INTO economic_fiscal_documents(draft_id,document_type,status,series_id,series_name,document_number,source_charge_id,client_id,issuer_snapshot,client_snapshot,lines_snapshot,payment_methods,totals_snapshot,issued_by) VALUES (${draft.json().id},'simplified_ticket','issued',${series.json().id},'QA','QA-001',${charge.json().id},${client.id},'{}'::jsonb,'{}'::jsonb,'[]'::jsonb,'[]'::jsonb,'{}'::jsonb,'qa-issuer') RETURNING id`;
+  const protectedTables=['economic_transactions','economic_payment_splits','economic_audit_events','economic_charges','economic_cash_adjustments','economic_cash_sessions','economic_transfer_proofs','economic_invoice_series','economic_invoice_drafts','economic_fiscal_documents'];
+  for(const table of protectedTables) await assert.rejects(sql.unsafe(`TRUNCATE ${table} CASCADE`),{code:'55000'},`${table} must reject TRUNCATE`);
+  await assert.rejects(sql`DELETE FROM economic_charges WHERE id=${charge.json().id}`,{code:'55000'});
+  await assert.rejects(sql`DELETE FROM economic_invoice_series WHERE id=${series.json().id}`,{code:'55000'});
+  await assert.rejects(sql`DELETE FROM economic_transfer_proofs WHERE id=${proof.id}`,{code:'55000'});
+  await assert.rejects(sql`DELETE FROM economic_cash_adjustments WHERE cash_session_id=${session.id}`,{code:'55000'});
+  await assert.rejects(sql`UPDATE economic_fiscal_documents SET document_number='EDITED' WHERE id=${document.id}`,{code:'55000'});
+  await assert.rejects(sql`DELETE FROM economic_fiscal_documents WHERE id=${document.id}`,{code:'55000'});
+});
+
+test('accountant is economic/fiscal read-only and upload limits stay route-specific', async () => {
+  const created=await createClientRequest(clientsAdminApp,{firstName:'Read',lastName:`QA ${randomUUID()}`,email:null,phone:null});
+  const client=created.json();
+  const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Lectura contable',amountCents:1000,dueOn:'2099-12-10'}});
+  const economicRead=await clientsAccountantApp.inject({method:'GET',url:`/api/clients/${client.id}/economics`});
+  assert.equal(economicRead.statusCode,200,economicRead.body);
+  assert.equal(economicRead.json().items[0].id,charge.json().id);
+  assert.equal((await clientsAccountantApp.inject({method:'GET',url:'/api/economics/export'})).statusCode,200);
+  assert.equal((await clientsAccountantApp.inject({method:'GET',url:'/api/economics/fiscal-export'})).statusCode,200);
+  assert.equal((await clientsAccountantApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'card',amountCents:100}]}})).statusCode,403);
+  assert.equal((await clientsAccountantApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingCents:100}})).statusCode,403);
+  const tooLargeNormal=await clientsAdminApp.inject({method:'POST',url:'/api/economics/cash/open',headers:{'content-type':'application/json'},payload:{openingCents:1,padding:'x'.repeat(20000)}});
+  assert.equal(tooLargeNormal.statusCode,413);
+  const proofBytes=Buffer.concat([Buffer.from('%PDF-1.7\n'),Buffer.alloc(20000,65)]);
+  const acceptedLargeProof=await clientsAdminApp.inject({method:'POST',url:'/api/economics/transfer-proofs',payload:{chargeId:charge.json().id,amountCents:100,contentType:'application/pdf',fileName:'large-fixture.pdf',base64:proofBytes.toString('base64')}});
+  assert.equal(acceptedLargeProof.statusCode,201,acceptedLargeProof.body);
 });
 
 test('local Host handling rejects unexpected hosts while health reports database readiness', async () => {

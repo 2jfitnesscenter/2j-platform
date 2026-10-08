@@ -17,8 +17,9 @@ function mockFetch({ onPayment = () => response({ id: 'txn' }, 201), onCharge = 
     const path = String(url);
     if (path.endsWith('/api/economics/overview')) return response(overview);
     if (path.endsWith('/api/economics/charges') && options.method === 'POST') return onCharge(url, options);
-    if (path.includes('/api/economics/charges')) return response({ items: [charge] });
-    if (path.endsWith('/api/clients?limit=100')) return response({ items: [client] });
+    if (path.includes('/api/economics/charges')) return response({ items: [charge], total: 1 });
+    if (path.endsWith('/api/economics/cash/today')) return response({ session: null });
+    if (path.startsWith('http://127.0.0.1:3100/api/clients?')) return response({ items: [client] });
     if (path.endsWith('/api/economics/payments')) return onPayment(url, options);
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
   };
@@ -47,7 +48,8 @@ test('creates a charge with integer cents and records a partial payment idempote
   const newCharge = await screen.findByRole('button', { name: 'Nuevo cargo' });
   fireEvent.click(newCharge);
   const chargeDialog = await screen.findByRole('dialog', { name: 'Nuevo cargo' });
-  fireEvent.change(within(chargeDialog).getByLabelText('Cliente'), { target: { value: client.id } });
+  fireEvent.change(within(chargeDialog).getByRole('combobox', { name: 'Buscar cliente' }), { target: { value: 'Ada' } });
+  fireEvent.click(await within(chargeDialog).findByRole('option', { name: 'Ada Lovelace' }));
   fireEvent.change(within(chargeDialog).getByLabelText('Concepto'), { target: { value: 'Alta de prueba' } });
   fireEvent.change(within(chargeDialog).getByLabelText('Importe (€)'), { target: { value: '42.35' } });
   fireEvent.click(within(chargeDialog).getByRole('button', { name: 'Registrar cargo' }));
@@ -59,9 +61,15 @@ test('creates a charge with integer cents and records a partial payment idempote
   const paymentDialog = await screen.findByRole('dialog', { name: 'Registrar pago' });
   fireEvent.change(within(paymentDialog).getByLabelText('Importe (€)'), { target: { value: '20.00' } });
   fireEvent.change(within(paymentDialog).getByLabelText('Método'), { target: { value: 'cash' } });
+  fireEvent.click(within(paymentDialog).getByRole('button', { name: 'Añadir método' }));
+  const methods = within(paymentDialog).getAllByLabelText('Método');
+  fireEvent.change(methods[1], { target: { value: 'card' } });
+  const amounts = within(paymentDialog).getAllByLabelText('Importe (€)');
+  fireEvent.change(amounts[1], { target: { value: '22.35' } });
   fireEvent.click(within(paymentDialog).getByRole('button', { name: 'Confirmar pago' }));
   await waitFor(() => assert.equal(paymentRequest?.body.splits[0].amountCents, 2000));
   assert.equal(paymentRequest?.body.splits[0].method, 'cash');
+  assert.deepEqual(paymentRequest?.body.splits, [{ method:'cash',amountCents:2000 },{ method:'card',amountCents:2235 }]);
   assert.match(paymentRequest?.key ?? '', /^[0-9a-f-]{36}$/i);
   assert.ok(await screen.findByRole('status'));
 });

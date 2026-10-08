@@ -17,8 +17,9 @@ const sessionFields = {
   durationMinutes: z.number().int().min(5).max(480),
   capacity: z.number().int().min(1).max(500),
 };
-export const createSessionInput = z.object({ ...sessionFields, individualClientId: uuid.optional() }).strict().superRefine((value, context) => {
+export const createSessionInput = z.object({ ...sessionFields, individualClientId: uuid.optional(), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, context) => {
   if (value.individualClientId && value.capacity !== 1) context.addIssue({ code: 'custom', path: ['capacity'], message: 'Una sesión individual tiene una sola plaza.' });
+  if (value.overrideDebt && !value.overrideReason) context.addIssue({ code: 'custom', path: ['overrideReason'], message: 'Indica el motivo de la excepción.' });
 });
 export const createTemplateInput = z.object({
   serviceId: uuid, areaId: uuid, weekday: z.number().int().min(0).max(6), localStartTime: time,
@@ -98,23 +99,28 @@ export function registerCalendarRoutes(
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     const parsed = createSessionInput.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     if (parsed.data.individualClientId && !can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
+    if (parsed.data.overrideDebt && !can(context, 'billing.debt.override')) return reply.code(403).send({ error: 'permission_denied' });
     try {
       const result = await database.begin(async (tx) => {
         const issue = await checkService(tx, parsed.data.serviceId, parsed.data.areaId); if (issue) return { error: issue };
         let entitlementReference: string | null = null;
+        let debtOverrideApplied = false;
         if (parsed.data.individualClientId) {
           const [client] = await tx`SELECT id,status FROM clients WHERE id=${parsed.data.individualClientId} FOR SHARE`;
           if (!client) return { error: 'client_not_found' };
           if (client.status !== 'active') return { error: 'client_archived' };
           const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: parsed.data.serviceId, startsAt: parsed.data.startsAt });
           if (!eligibility.eligible) return { error: eligibility.reason };
-          if (await debtBlocksNewBooking(tx, client.id)) return { error: 'overdue_balance_blocks_booking' };
+          const overdue = await debtBlocksNewBooking(tx, client.id);
+          if (overdue && !parsed.data.overrideDebt) return { error: 'overdue_balance_blocks_booking' };
+          debtOverrideApplied = overdue && parsed.data.overrideDebt;
           entitlementReference = eligibility.entitlementId;
         }
         const [session] = await tx`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,individual_client_id,created_by) VALUES (${parsed.data.serviceId},${parsed.data.areaId},${parsed.data.startsAt},${parsed.data.durationMinutes},${parsed.data.capacity},${parsed.data.individualClientId ?? null},${context.actorId}) RETURNING id`;
         if (!session) throw new Error('Session insert returned no row.');
         await appendAudit(tx, context.actorId, 'session.created', 'calendar_session', session.id, session.id, parsed.data.individualClientId ?? null, { capacity: parsed.data.capacity, individual: Boolean(parsed.data.individualClientId) });
         if (parsed.data.individualClientId) {
+          if (debtOverrideApplied) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId, { reason: parsed.data.overrideReason ?? '' });
           const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${parsed.data.individualClientId},${entitlementReference},${context.actorId}) RETURNING id`;
           if (!reservation) throw new Error('Reservation insert returned no row.');
           await appendAudit(tx, context.actorId, 'reservation.created', 'calendar_reservation', reservation.id, session.id, parsed.data.individualClientId);
@@ -185,9 +191,12 @@ export function registerCalendarRoutes(
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     if (!can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
     const params = z.object({ sessionId: uuid }).safeParse(request.params);
-    const body = z.object({ clientId: uuid, overbook: z.boolean().optional().default(false) }).strict().safeParse(request.body);
+    const body = z.object({ clientId: uuid, overbook: z.boolean().optional().default(false), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, issue) => {
+      if (value.overrideDebt && !value.overrideReason) issue.addIssue({ code: 'custom', path: ['overrideReason'], message: 'Indica el motivo de la excepción.' });
+    }).safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     if (body.data.overbook && !can(context, 'scheduling.override_capacity')) return reply.code(403).send({ error: 'permission_denied' });
+    if (body.data.overrideDebt && !can(context, 'billing.debt.override')) return reply.code(403).send({ error: 'permission_denied' });
     try {
       const result = await database.begin(async (tx) => {
         const [session] = await tx`SELECT id,status,capacity,service_id,area_id,individual_client_id,starts_at FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
@@ -200,14 +209,16 @@ export function registerCalendarRoutes(
         if (session.individual_client_id && session.individual_client_id !== client.id) return { error: 'individual_session_client_mismatch' };
         const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at) });
         if (!eligibility.eligible) return { error: eligibility.reason };
-        if (await debtBlocksNewBooking(tx, client.id)) return { error: 'overdue_balance_blocks_booking' };
+        const overdue = await debtBlocksNewBooking(tx, client.id);
+        if (overdue && !body.data.overrideDebt) return { error: 'overdue_balance_blocks_booking' };
+        if (overdue && body.data.overrideDebt) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, client.id, { reason: body.data.overrideReason ?? '' });
         const [existing] = await tx`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id} AND status IN ('reserved','attended','no_show') UNION ALL SELECT id FROM calendar_waitlist_entries WHERE session_id=${session.id} AND client_id=${client.id} AND status='waiting' LIMIT 1`;
         if (existing) return { error: 'client_already_added' };
         const [count] = await tx`SELECT count(*)::int AS occupied FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show')`;
         if (!body.data.overbook && (count?.occupied ?? 0) >= session.capacity) return { error: 'capacity_full' };
         const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${client.id},${eligibility.entitlementId},${context.actorId}) RETURNING id`;
         if (!reservation) throw new Error('Reservation insert returned no row.');
-        await appendAudit(tx, context.actorId, body.data.overbook ? 'reservation.overbooked' : 'reservation.created', 'calendar_reservation', reservation.id, session.id, client.id, { overbooked: body.data.overbook });
+        await appendAudit(tx, context.actorId, body.data.overbook ? 'reservation.overbooked' : 'reservation.created', 'calendar_reservation', reservation.id, session.id, client.id, { overbooked: body.data.overbook, debtOverride: overdue && body.data.overrideDebt, debtOverrideReason: overdue && body.data.overrideDebt ? body.data.overrideReason ?? '' : null });
         return { id: reservation.id, overbooked: body.data.overbook };
       });
       if ('error' in result) return reply.code(result.error === 'session_not_found' || result.error === 'client_not_found' ? 404 : 409).send({ error: result.error });
