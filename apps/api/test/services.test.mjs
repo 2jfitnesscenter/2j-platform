@@ -719,6 +719,72 @@ test('concurrent partial payments serialize at the charge and cannot over-collec
   assert.equal(Number(balance.json().items[0].balanceCents), 1000);
 });
 
+test('fully refunded charges are final, excluded from debt, and retain immutable payment history', async () => {
+  const eligibleAdmin = buildServer(process.env.DATABASE_URL, {
+    authorizationResolver: async () => ({ actorId: 'qa-refund-booking', role: 'admin' }),
+    bookingEligibilityResolver: async () => ({ eligible: true, entitlementId: 'qa-entitlement' }),
+  });
+  try {
+    const client = (await createClientRequest(clientsAdminApp, { firstName: 'Refund', lastName: `QA ${randomUUID()}`, email: null, phone: null })).json();
+    const beforeOverview = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/overview' });
+    assert.equal(beforeOverview.statusCode, 200, beforeOverview.body);
+    const charge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'Cargo devuelto', amountCents: 5000, dueOn: '2000-01-01' } });
+    assert.equal(charge.statusCode, 201, charge.body);
+    const payment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 5000 }] } });
+    assert.equal(payment.statusCode, 201, payment.body);
+    const paid = await clientsAdminApp.inject({ method: 'GET', url: `/api/economics/charges?clientId=${client.id}` });
+    assert.equal(paid.json().items[0].status, 'paid');
+
+    const refunds = await Promise.all([1, 2].map(() => clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: payment.json().id, amountCents: 5000, method: 'card', note: 'Devolución total QA' } })));
+    assert.deepEqual(refunds.map(response => response.statusCode).sort(), [201, 409]);
+
+    const charges = await clientsAdminApp.inject({ method: 'GET', url: `/api/economics/charges?clientId=${client.id}` });
+    assert.equal(charges.statusCode, 200);
+    assert.equal(charges.json().items[0].status, 'refunded');
+    assert.equal(Number(charges.json().items[0].balanceCents), 0);
+    const due = await clientsAdminApp.inject({ method: 'GET', url: `/api/economics/charges?clientId=${client.id}&status=due` });
+    assert.equal(due.json().total, 0);
+    const clientEconomics = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients/${client.id}/economics` });
+    assert.equal(Number(clientEconomics.json().balanceCents), 0);
+    assert.equal(Number(clientEconomics.json().overdueCount), 0);
+    assert.equal(clientEconomics.json().items[0].status, 'refunded');
+    assert.equal(Number(clientEconomics.json().items[0].balanceCents), 0);
+    const overview = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/overview' });
+    assert.equal(overview.statusCode, 200, overview.body);
+    assert.equal(overview.json().overdueCount, beforeOverview.json().overdueCount);
+    assert.equal(Number(overview.json().overdueCents), Number(beforeOverview.json().overdueCents));
+
+    const latePayment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 100 }] } });
+    assert.equal(latePayment.statusCode, 409);
+    assert.equal(latePayment.json().error, 'charge_refunded');
+
+    const service = await createService();
+    const session = await eligibleAdmin.inject({ method: 'POST', url: '/api/calendar/sessions', payload: { serviceId: service.id, areaId: defaultArea.id, startsAt: '2099-12-10T10:00:00Z', durationMinutes: 45, capacity: 2 } });
+    assert.equal(session.statusCode, 201, session.body);
+    await clientsAdminApp.inject({ method: 'PATCH', url: '/api/economics/settings', payload: { dueDay: 10, debtBlocksNewReservations: true } });
+    const reservation = await eligibleAdmin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.json().id}/reservations`, payload: { clientId: client.id } });
+    assert.equal(reservation.statusCode, 201, reservation.body);
+
+    const partialCharge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'Cargo parcialmente devuelto', amountCents: 5000, dueOn: '2099-12-10' } });
+    const partialPayment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: partialCharge.json().id, splits: [{ method: 'card', amountCents: 5000 }] } });
+    const partialRefund = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: partialPayment.json().id, amountCents: 2000, method: 'card', note: 'Devolución parcial QA' } });
+    assert.equal(partialRefund.statusCode, 201, partialRefund.body);
+    const partialRead = await clientsAdminApp.inject({ method: 'GET', url: `/api/economics/charges?clientId=${client.id}` });
+    const partial = partialRead.json().items.find(item => item.id === partialCharge.json().id);
+    assert.equal(partial.status, 'pending');
+    assert.equal(Number(partial.balanceCents), 2000);
+
+    const [ledger] = await sql`SELECT count(*)::int AS count, sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint AS net FROM economic_transactions WHERE charge_id=${charge.json().id}`;
+    assert.equal(ledger.count, 2);
+    assert.equal(Number(ledger.net), 0);
+    const [audit] = await sql`SELECT count(*)::int AS count FROM economic_audit_events WHERE client_id=${client.id} AND action IN ('payment.recorded','payment.refunded')`;
+    assert.equal(audit.count, 4);
+  } finally {
+    await clientsAdminApp.inject({ method: 'PATCH', url: '/api/economics/settings', payload: { dueDay: 10, debtBlocksNewReservations: false } });
+    await eligibleAdmin.close();
+  }
+});
+
 test('optional debt restriction affects new reservations only when explicitly enabled', async () => {
   const eligibleAdmin = buildServer(process.env.DATABASE_URL, {
     authorizationResolver: async () => ({ actorId: 'qa-economics-admin', role: 'admin' }),

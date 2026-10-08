@@ -52,7 +52,7 @@ export function registerCalendarRoutes(
   async function debtBlocksNewBooking(tx: SqlTransaction, clientId: string) {
     const [settings] = await tx`SELECT debt_blocks_new_reservations AS enabled FROM economic_settings WHERE singleton=true`;
     if (!settings?.enabled) return false;
-    const [debt] = await tx`SELECT EXISTS(SELECT 1 FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true WHERE c.client_id=${clientId} AND c.state='pending' AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date AND c.amount_cents>COALESCE(x.net,0)) AS overdue`;
+    const [debt] = await tx`SELECT EXISTS(SELECT 1 FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(amount_cents) FILTER(WHERE kind='payment') paid,sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true WHERE c.client_id=${clientId} AND c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0) AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date AND c.amount_cents>COALESCE(x.net,0)) AS overdue`;
     return Boolean(debt?.overdue);
   }
   async function appendAudit(tx: SqlTransaction, actorId: string, action: string, resourceType: string, resourceId: string, sessionId: string | null, clientId: string | null, details: Record<string, string | number | boolean | null> = {}) {
