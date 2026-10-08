@@ -78,9 +78,9 @@
     },
     {
       "name": "Hosted quality and secret scan",
-      "command": "GitHub Actions runs 37749706935 and 37749713318",
-      "result": "PENDING",
-      "evidence": "New checks were queued for the current pushed PR head and remain pending."
+      "command": "GitHub Actions runs 37749780407 and 37749787779",
+      "result": "PASS",
+      "evidence": "Quality and full-history secret scan passed on PR #6 head 922f916dc3cb63115ff9f2f902e472b2f195e1c5."
     }
   ],
   "decisions": [
