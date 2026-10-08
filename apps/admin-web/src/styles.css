@@ -110,6 +110,27 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
 .rights-block li strong { color: var(--2j-color-text-primary); font-size: 14px; font-weight: var(--2j-type-weight-medium); }
 .rights-block li small { color: var(--2j-color-text-secondary); font-size: 12px; }
 .footer-note { padding: 25px 0; color: var(--2j-color-text-secondary); font-size: 13px; text-align: center; }
+.economics-stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin-bottom: 22px; }
+.economics-stats article { min-height: 140px; display: grid; align-content: center; gap: 8px; padding: 21px; }
+.economics-stats article > span, .economics-stats article > small { color: var(--2j-color-text-secondary); font-size: 14px; }
+.economics-stats article > strong { font-size: 28px; letter-spacing: -.035em; }
+.cash-card .text-button { justify-self: start; }
+.economics-list { overflow: hidden; }
+.economics-table-wrap { overflow-x: auto; }
+.mobile-charge-list { display: none; }
+.mobile-charge-card { display: grid; gap: 12px; padding: 16px; border-top: 1px solid var(--2j-color-border); }
+.mobile-charge-top, .mobile-charge-bottom, .mobile-charge-values { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mobile-charge-top > strong { min-width: 0; font-size: 15px; }
+.mobile-client-name, .mobile-charge-bottom > span { color: var(--2j-color-text-secondary); font-size: 13px; }
+.mobile-charge-values > span { display: grid; gap: 4px; }
+.mobile-charge-values small { color: var(--2j-color-text-secondary); font-size: 12px; }
+.mobile-charge-values strong { font-size: 15px; }
+.economics-table-wrap table { width: 100%; min-width: 820px; border-collapse: collapse; }
+.economics-table-wrap th { height: 46px; padding: 8px 13px; border-bottom: 1px solid var(--2j-color-border); color: var(--2j-color-text-secondary); text-align: left; font-size: 12px; }
+.economics-table-wrap td { height: 62px; padding: 8px 13px; border-bottom: 1px solid var(--2j-color-border); color: var(--2j-color-text-primary); font-size: 14px; }
+.form-feedback { margin: -12px 0 18px; padding: 12px 15px; border-radius: var(--2j-radius-sm); background: var(--2j-color-surface-subtle); color: var(--2j-color-text-primary); }
+body:has(#economics) .dialog form > label { display: grid; gap: 7px; font-size: 14px; font-weight: var(--2j-type-weight-medium); }
+body:has(#economics) .dialog input, body:has(#economics) .dialog select { width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--2j-color-border-strong); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); color: var(--2j-color-text-primary); }
 .footer-note span { padding: 0 6px; color: var(--2j-color-border-strong); }
 .backdrop { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; overflow-y: auto; padding: 22px; background: color-mix(in srgb, var(--2j-color-text-primary) 54%, transparent); }
 .dialog { position: relative; width: min(480px, 100%); max-height: min(92vh, 900px); overflow-y: auto; padding: 30px; border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-xl); background: var(--2j-color-surface); box-shadow: var(--2j-elevation-high); }
@@ -156,6 +177,9 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
   .catalog { grid-template-columns: minmax(0, 1fr); }
   .detail-panel { min-height: 320px; }
   .detail-placeholder { min-height: 240px; }
+  .economics-stats article { min-height: 126px; }
+  .economics-table-wrap { display: none; }
+  .mobile-charge-list { display: block; }
 }
 @media (max-width: 680px) {
   body { min-width: 360px; }
@@ -176,6 +200,12 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
   .page-heading h1 { font-size: 29px; }
   .page-heading p { max-width: 34ch; font-size: 14px; }
   .page-heading > .button { width: 100%; }
+  .economics-stats { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .economics-stats article { min-height: 104px; padding: 16px; }
+  .economics-stats .cash-card { grid-column: 1 / -1; }
+  .economics-stats article > strong { font-size: 24px; }
+  .economics-table-wrap { display: none; }
+  .mobile-charge-list { display: block; }
   .panel-heading { min-height: auto; padding: 17px 15px; }
   .panel-heading h2, .detail-heading h2 { font-size: 19px; }
   .panel-heading p { max-width: 27ch; font-size: 13px; }
@@ -459,4 +489,42 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
   .archive-dialog { align-self: end; }
   .archive-dialog .dialog-actions { position: static; padding: 0; }
   .archive-dialog .dialog-actions .button { min-height: 46px; }
+}
+.economic-filters { display: flex; align-items: end; gap: 12px; margin: 14px 0; }
+.economic-filters label { display: grid; gap: 6px; color: var(--2j-color-text-secondary); font-size: 12px; }
+.economic-filters input, .economic-filters select, .dialog input, .dialog select { min-height: 44px; padding: 0 11px; border: 1px solid var(--2j-color-border-strong); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font: inherit; }
+.economic-filters input { min-width: min(330px, 45vw); }
+.pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; color: var(--2j-color-text-secondary); font-size: 13px; }
+.pagination > div { display: flex; gap: 8px; }
+.client-options { display: grid; max-height: 180px; overflow: auto; }
+.client-options button { min-height: 44px; padding: 8px 11px; border: 1px solid var(--2j-color-border); border-top: 0; background: var(--2j-color-surface); color: var(--2j-color-text-primary); text-align: left; }
+.client-options button:hover, .client-options button[aria-selected="true"] { background: var(--2j-color-surface-subtle); }
+.field-hint { margin: 5px 0; color: var(--2j-color-text-secondary); font-size: 13px; }
+.split-rows { display: grid; gap: 10px; }
+.split-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, .7fr) auto; align-items: end; gap: 8px; }
+.split-row label { display: grid; gap: 6px; }
+.split-remove { min-height: 44px; }
+.cash-breakdown { display: grid; gap: 0; margin: 12px 0; }
+.cash-breakdown > div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--2j-color-border); }
+.cash-breakdown dt { color: var(--2j-color-text-secondary); }
+.cash-breakdown dd { margin: 0; font-weight: var(--2j-type-weight-semibold); font-variant-numeric: tabular-nums; }
+.cash-breakdown .cash-total { color: var(--2j-color-text-primary); border-bottom: 0; font-size: 16px; }
+.cash-difference { display: flex; justify-content: space-between; padding: 10px 12px; background: var(--2j-color-surface-subtle); border-radius: var(--2j-radius-sm); }
+.confirm-check { display: flex !important; align-items: flex-start; gap: 9px !important; margin: 12px 0; font-weight: var(--2j-type-weight-regular) !important; }
+.confirm-check input { min-height: 20px !important; width: 20px; margin: 0; }
+.economic-client-list { display: grid; margin: 8px 0 16px; }
+.economic-client-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 8px 0; border-bottom: 1px solid var(--2j-color-border); }
+.economic-client-list > div > span { display: grid; gap: 3px; }
+.economic-client-list small { color: var(--2j-color-text-secondary); font-size: 12px; }
+.economic-client-list strong { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 1120px) { .economics-table-wrap { display: none; } .mobile-charge-list { display: grid; gap: 9px; } }
+@media (min-width: 1121px) { .mobile-charge-list { display: none; } }
+@media (max-width: 680px) {
+  .economic-filters { align-items: stretch; flex-direction: column; }
+  .economic-filters input { min-width: 0; width: 100%; }
+  .pagination { align-items: stretch; flex-direction: column; }
+  .pagination > div { display: grid; grid-template-columns: 1fr 1fr; }
+  .split-row { grid-template-columns: minmax(0, 1fr) minmax(90px, .75fr); }
+  .split-remove { grid-column: 1 / -1; width: 100%; }
+  .cash-breakdown > div { font-size: 13px; }
 }

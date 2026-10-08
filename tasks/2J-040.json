@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1.0.0",
+  "taskId": "2J-040",
+  "title": "Pagos, Caja, Facturación e Impagados",
+  "status": "ready-for-independent-review",
+  "pullRequest": "https://github.com/2jfitnesscenter/2j-platform/pull/10",
+  "branch": "agent/codex/2J-040-payments-cash-invoicing-debt",
+  "base": "main with 2J-010, 2J-020 and 2J-030 integrated",
+  "timezone": "Atlantic/Canary",
+  "currency": "EUR",
+  "permissions": ["billing.read-basic", "billing.payments.manage", "billing.cash.manage", "billing.invoices.manage", "billing.validate_transfer", "billing.read-tax"],
+  "acceptance": {
+    "moneyRepresentation": "integer euro cents",
+    "payments": ["partial", "split-method", "idempotent", "append-only-refunds"],
+    "cash": ["daily-open-close", "expected-counted-difference", "reasoned-adjustments", "method-breakdown"],
+    "debts": ["client-360-summary", "global-overdue-list", "history"],
+    "reservationDebtPolicy": { "scope": "new-class-session-reservations-only", "defaultEnabled": false, "otherAppFunctionsBlocked": false },
+    "dueDay": { "configurable": true, "default": 10 },
+    "invoices": { "seriesConfigurable": true, "draftOnly": true, "taxRateExplicit": true, "officialIssuance": false },
+    "transferProof": { "states": ["pending_validation", "validated", "rejected"], "humanValidationRequired": true, "duplicateDetection": true },
+    "trainerEconomicAccess": false,
+    "accountantGrants": "unchanged-pending-product-decision"
+  },
+  "outOfScope": ["VeriFactu", "regulated e-invoice issuance", "SEPA", "online payment gateway", "auto-charge", "expenses/vendors", "full accounting", "agency integration", "store", "cancellation penalties"],
+  "legalFiscalEscalations": ["IGIC/VAT rates", "statutory exemption grounds", "issuer legal details", "official invoice issuance"],
+  "merge": "DO_NOT_MERGE",
+  "verification": { "tests": "109 passed", "typecheck": "passed", "build": "passed", "dependencyAudit": "passed" },
+  "independentReview": { "claude": "pending-on-final-head", "antigravity": "pending-on-final-head", "qa": "pending" }
+}

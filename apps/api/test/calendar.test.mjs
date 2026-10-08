@@ -183,7 +183,7 @@ test('critical calendar actions append audit records without copying client PII'
   const audit = await sql`SELECT action,resource_type,session_id,client_id,details FROM calendar_audit_events WHERE session_id=${session.id} ORDER BY occurred_at,id`;
   assert.deepEqual(audit.map((row) => row.action), ['session.created', 'reservation.created']);
   assert.equal(audit[1].client_id, client.id);
-  assert.deepEqual(audit[1].details, { overbooked: false });
+  assert.deepEqual(audit[1].details, { overbooked: false, debtOverride: false, debtOverrideReason: null });
   const cancel = await reception.inject({ method: 'PATCH', url: `/api/calendar/reservations/${booking.json().id}/cancel` });
   assert.equal(cancel.statusCode, 200);
   assert.ok((await sql`SELECT id FROM calendar_audit_events WHERE session_id=${session.id} AND action='reservation.cancelled'`).length === 1);
