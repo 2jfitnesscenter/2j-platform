@@ -161,6 +161,8 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         const [charge] = await tx`SELECT id,client_id AS "clientId",amount_cents AS "amountCents",state FROM economic_charges WHERE id=${parsed.data.chargeId} FOR UPDATE`;
         if (!charge) return { error: 'charge_not_found' as const };
         if (charge.state !== 'pending' || parsed.data.amountCents > Number(charge.amountCents)) return { error: 'charge_closed' as const };
+        const [balance] = await tx`SELECT COALESCE(sum(amount_cents) FILTER(WHERE kind='payment'),0)::bigint paid,COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0)::bigint net FROM economic_transactions WHERE charge_id=${charge.id}`;
+        if (Number(balance?.paid ?? 0) > 0 && Number(balance?.net ?? 0) === 0) return { error: 'charge_refunded' as const };
         const [proof] = await tx`INSERT INTO economic_transfer_proofs(charge_id,amount_cents,content_type,file_name,file_bytes,sha256,submitted_by) VALUES (${charge.id},${parsed.data.amountCents},${parsed.data.contentType},${parsed.data.fileName},${bytes},${digest},${context.actorId}) RETURNING id,status`;
         if (!proof) throw new Error('proof insert returned no row');
         await audit(tx, context, 'transfer_proof.submitted', 'transfer_proof', proof.id, charge.clientId, { amountCents: parsed.data.amountCents, sha256: digest });
@@ -200,7 +202,8 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         if (!charge || charge.state !== 'pending') return { error: 'charge_closed' as const };
         let transactionId: string | null = null;
         if (body.data.decision === 'validated') {
-          const [balance] = await tx`SELECT COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0)::bigint cents FROM economic_transactions WHERE charge_id=${charge.id}`;
+          const [balance] = await tx`SELECT COALESCE(sum(amount_cents) FILTER(WHERE kind='payment'),0)::bigint paid,COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0)::bigint cents FROM economic_transactions WHERE charge_id=${charge.id}`;
+          if (Number(balance?.paid ?? 0) > 0 && Number(balance?.cents ?? 0) === 0) return { error: 'charge_refunded' as const };
           if (Number(balance?.cents ?? 0) + Number(proof.amountCents) > Number(charge.amountCents)) return { error: 'amount_exceeds_balance' as const };
           transactionId = randomUUID();
           const requestHash = createHash('sha256').update(`proof:${proof.id}:${proof.amountCents}`).digest('hex');

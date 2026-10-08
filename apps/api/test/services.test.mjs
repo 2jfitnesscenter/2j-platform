@@ -753,6 +753,10 @@ test('fully refunded charges are final, excluded from debt, and retain immutable
     assert.equal(overview.statusCode, 200, overview.body);
     assert.equal(overview.json().overdueCount, beforeOverview.json().overdueCount);
     assert.equal(Number(overview.json().overdueCents), Number(beforeOverview.json().overdueCents));
+    const exportAfterRefund = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/export' });
+    const exportedRefund = exportAfterRefund.json().items.find(item => item.id === charge.json().id);
+    assert.equal(exportedRefund.status, 'refunded');
+    assert.equal(Number(exportedRefund.balanceCents), 0);
 
     const latePayment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 100 }] } });
     assert.equal(latePayment.statusCode, 409);
@@ -773,6 +777,10 @@ test('fully refunded charges are final, excluded from debt, and retain immutable
     const partial = partialRead.json().items.find(item => item.id === partialCharge.json().id);
     assert.equal(partial.status, 'pending');
     assert.equal(Number(partial.balanceCents), 2000);
+    const exportAfterPartial = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/export' });
+    const exportedPartial = exportAfterPartial.json().items.find(item => item.id === partialCharge.json().id);
+    assert.equal(exportedPartial.status, 'pending');
+    assert.equal(Number(exportedPartial.balanceCents), 2000);
 
     const [ledger] = await sql`SELECT count(*)::int AS count, sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint AS net FROM economic_transactions WHERE charge_id=${charge.json().id}`;
     assert.equal(ledger.count, 2);
@@ -783,6 +791,43 @@ test('fully refunded charges are final, excluded from debt, and retain immutable
     await clientsAdminApp.inject({ method: 'PATCH', url: '/api/economics/settings', payload: { dueDay: 10, debtBlocksNewReservations: false } });
     await eligibleAdmin.close();
   }
+});
+
+test('transfer proof cannot collect a fully refunded charge and can still be rejected with intact audit', async () => {
+  const client = (await createClientRequest(clientsAdminApp, { firstName: 'Proof', lastName: `QA ${randomUUID()}`, email: null, phone: null })).json();
+  const charge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'Cargo con justificante', amountCents: 5000, dueOn: '2099-12-10' } });
+  assert.equal(charge.statusCode, 201, charge.body);
+  const pdf = Buffer.from('%PDF-1.7\nJustificante QA').toString('base64');
+  const proofPayload = { chargeId: charge.json().id, amountCents: 5000, contentType: 'application/pdf', fileName: 'justificante-previo.pdf', base64: pdf };
+  const proof = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/transfer-proofs', payload: proofPayload });
+  assert.equal(proof.statusCode, 201, proof.body);
+  const payment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 5000 }] } });
+  assert.equal(payment.statusCode, 201, payment.body);
+  const refund = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: payment.json().id, amountCents: 5000, method: 'card', note: 'Devolución total QA' } });
+  assert.equal(refund.statusCode, 201, refund.body);
+
+  const newProof = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/transfer-proofs', payload: { ...proofPayload, fileName: 'justificante-nuevo.pdf', base64: Buffer.from('%PDF-1.7\nJustificante posterior').toString('base64') } });
+  assert.equal(newProof.statusCode, 409);
+  assert.equal(newProof.json().error, 'charge_refunded');
+  const validate = await clientsTrainerApp.inject({ method: 'POST', url: `/api/economics/transfer-proofs/${proof.json().id}/review`, payload: { decision: 'validated', note: 'Intento posterior a devolución' } });
+  assert.equal(validate.statusCode, 409);
+  assert.equal(validate.json().error, 'charge_refunded');
+  const [beforeReject] = await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${charge.json().id}`;
+  assert.equal(beforeReject.count, 2);
+  const [pending] = await sql`SELECT status,transaction_id AS "transactionId" FROM economic_transfer_proofs WHERE id=${proof.json().id}`;
+  assert.equal(pending.status, 'pending_validation');
+  assert.equal(pending.transactionId, null);
+
+  const reject = await clientsTrainerApp.inject({ method: 'POST', url: `/api/economics/transfer-proofs/${proof.json().id}/review`, payload: { decision: 'rejected', note: 'El cargo ya fue devuelto completamente' } });
+  assert.equal(reject.statusCode, 200, reject.body);
+  assert.equal(reject.json().status, 'rejected');
+  const [afterReject] = await sql`SELECT count(*)::int AS count, sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint AS net FROM economic_transactions WHERE charge_id=${charge.json().id}`;
+  assert.equal(afterReject.count, 2);
+  assert.equal(Number(afterReject.net), 0);
+  const [proofAudit] = await sql`SELECT count(*) FILTER(WHERE action='transfer_proof.submitted')::int AS submitted,count(*) FILTER(WHERE action='transfer_proof.rejected')::int AS rejected,count(*) FILTER(WHERE action='payment.transfer_validated')::int AS validated FROM economic_audit_events WHERE resource_id=${proof.json().id} OR (action IN ('payment.recorded','payment.refunded') AND client_id=${client.id})`;
+  assert.equal(proofAudit.submitted, 1);
+  assert.equal(proofAudit.rejected, 1);
+  assert.equal(proofAudit.validated, 0);
 });
 
 test('optional debt restriction affects new reservations only when explicitly enabled', async () => {

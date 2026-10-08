@@ -22,6 +22,8 @@
     "append-only-refunds",
     "fully-refunded-charges-derived-as-refunded-excluded-from-debt-and-booking-blocks",
     "reject-payments-against-fully-refunded-charges",
+    "reject-transfer-proof-upload-and-validation-after-full-refund",
+    "derive-refunded-status-and-zero-balance-in-economic-export",
     "serialized-overcollection-protection",
     "daily-cash-open-close-and-reconciliation",
     "late-cash-close-preserves-operational-date",
@@ -37,7 +39,7 @@
     "server-paginated-search-and-split-payments-ui",
     "responsive-payments-charge-and-cash-ui"
   ],
-  "verification": { "testsPassed": 115, "testsFailed": 0, "typecheck": "passed", "build": "passed", "dependencyAudit": "passed-no-known-vulnerabilities", "migration": "7 checksummed migrations verified on a fresh PostgreSQL database", "diffCheck": "passed" },
+  "verification": { "testsPassed": 116, "testsFailed": 0, "typecheck": "passed", "build": "passed", "dependencyAudit": "passed-no-known-vulnerabilities", "migration": "7 checksummed migrations verified on a fresh PostgreSQL database", "diffCheck": "passed" },
   "uiScope": ["economic-overview", "overdue-and-charge-list", "charge-creation", "split-partial-payment", "cash-open-close"],
   "apiOnlyForFollowUpUI": ["refunds", "manual-cash-adjustments", "transfer-proof-upload-and-validation", "fiscal-profile", "invoice-series-and-draft", "economic-settings"],
   "visualEvidence": {
