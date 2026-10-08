@@ -3,9 +3,9 @@ import { readdir, readFile } from 'node:fs/promises';
 import { createDatabase } from './db.js';
 
 export async function migrateDatabase(client: ReturnType<typeof createDatabase>['client']) {
-  await client`CREATE TABLE schema_migrations (name text PRIMARY KEY, checksum char(64) NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`.catch((error: unknown) => {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === '42P07') return;
-    throw error;
+  await client.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(2072010)`;
+    await tx`CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, checksum char(64) NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`;
   });
   const directory = new URL('../migrations/', import.meta.url);
   const migrations = (await readdir(directory)).filter((file) => file.endsWith('.sql')).sort();

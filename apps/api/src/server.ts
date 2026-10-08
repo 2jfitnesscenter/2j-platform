@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 
-const timezone = 'Europe/Canary';
+const timezone = 'Atlantic/Canary';
 const uuid = z.string().uuid();
 const serviceStatus = z.enum(['active', 'draft']);
 const rightInput = z.object({
@@ -26,7 +26,8 @@ const rightInput = z.object({
     context.addIssue({ code: 'custom', message: 'Las cuotas necesitan cantidad y alcance.' });
   }
   if (right.quotaScope === 'per_service' && !right.serviceId) context.addIssue({ code: 'custom', message: 'La cuota por servicio debe indicar el servicio de destino.' });
-  if (right.rightType === 'period_quota' && (!right.period || (right.period === 'plan_period' ? right.periodMode != null || right.timezone != null : !right.periodMode || (right.timezone ?? timezone) !== timezone))) context.addIssue({ code: 'custom', message: 'La cuota periódica necesita un modo y zona horaria Europe/Canary, salvo que siga el periodo del plan.' });
+  if (right.quotaScope === 'shared' && right.serviceId) context.addIssue({ code: 'custom', message: 'La cuota compartida debe aplicarse globalmente a los servicios incluidos.' });
+  if (right.rightType === 'period_quota' && (!right.period || (right.period === 'plan_period' ? right.periodMode != null || right.timezone != null : !right.periodMode || (right.timezone ?? timezone) !== timezone))) context.addIssue({ code: 'custom', message: 'La cuota periódica necesita un modo y zona horaria Atlantic/Canary, salvo que siga el periodo del plan.' });
   if (right.rightType !== 'period_quota' && (right.period != null || right.periodMode != null || right.timezone != null)) context.addIssue({ code: 'custom', message: 'Solo las cuotas periódicas admiten periodo y zona horaria.' });
   if ((right.validDays == null) !== (right.validDaysStartRule == null)) context.addIssue({ code: 'custom', message: 'La caducidad necesita indicar si comienza en la compra o en el primer uso.' });
 });
@@ -48,6 +49,15 @@ export const planInput = z.object({
   plan.rights.forEach((right, index) => {
     if (right.serviceId && !plan.serviceIds.includes(right.serviceId)) context.addIssue({ code: 'custom', path: ['rights', index, 'serviceId'], message: 'El derecho debe apuntar a un servicio incluido en el plan.' });
   });
+  const scopedRights = new Set<string>();
+  for (const [index, right] of plan.rights.entries()) {
+    const scopeKey = `${right.rightType}:${right.period ?? ''}:${right.serviceId ?? '*'}`;
+    const overlapping = right.rightType !== 'service_access' && (right.serviceId == null
+      ? plan.rights.some((other, otherIndex) => otherIndex !== index && other.rightType === right.rightType && other.period === right.period && other.serviceId != null)
+      : plan.rights.some((other, otherIndex) => otherIndex !== index && other.rightType === right.rightType && other.period === right.period && other.serviceId == null));
+    if (scopedRights.has(scopeKey) || overlapping) context.addIssue({ code: 'custom', path: ['rights', index], message: 'No se pueden solapar derechos globales y específicos para el mismo periodo.' });
+    scopedRights.add(scopeKey);
+  }
 });
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
@@ -57,7 +67,7 @@ export function mapDatabaseError(error: unknown) {
   const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
   if (code === '23505') return { status: 409, body: { error: 'conflict', message: 'Ya existe una definición con esos datos.' } };
   if (code === '23503') return { status: 409, body: { error: 'reference_conflict', message: 'Un elemento relacionado ya no está disponible.' } };
-  if (['23502', '23514', '22P02', '22003'].includes(code)) return { status: 422, body: { error: 'constraint_violation', message: 'La definición no cumple las reglas del catálogo.' } };
+  if (['23502', '23514', '22P02', '22003', '22023'].includes(code)) return { status: 422, body: { error: 'constraint_violation', message: 'La definición no cumple las reglas del catálogo.' } };
   if (code === '55000') return { status: 409, body: { error: 'definition_immutable', message: 'La definición activa es inmutable; crea una nueva versión.' } };
   if (code.startsWith('08') || ['57P01', '57P02', '57P03', '53300', '53400', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND'].includes(code)) return { status: 503, body: { error: 'database_unavailable', message: 'La base de datos no está disponible.' } };
   return { status: 500, body: { error: 'internal_error', message: 'No se pudo completar la operación.' } };
@@ -104,7 +114,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
   });
   app.get('/api/services', async (_request, reply) => {
     try {
-      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version WHERE s.status <> 'archived' GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
+      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE s.status <> 'archived' GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/services', async (request, reply) => {
@@ -141,10 +151,21 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
     if (typeof idempotencyKey !== 'string' || !uuid.safeParse(idempotencyKey).success) return reply.code(400).send({ error: 'idempotency_key_required' });
     const parsed = planInput.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
-    const body = parsed.data;
-    const requestHash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+    const body = { ...parsed.data, serviceIds: [...parsed.data.serviceIds].sort(), rights: [...parsed.data.rights].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) };
+    const canonicalBody = {
+      name: body.name, serviceIds: body.serviceIds, kind: body.kind, renewalCadence: body.renewalCadence ?? null, periodDays: body.periodDays ?? null,
+      rights: body.rights.map((right) => ({
+        rightType: right.rightType, serviceId: right.serviceId ?? null, quotaScope: right.quotaScope ?? null,
+        quantity: right.quantity ?? null, period: right.period ?? null, periodMode: right.periodMode ?? null,
+        timezone: right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null,
+        validDays: right.validDays ?? null, validDaysStartRule: right.validDaysStartRule ?? null,
+      })),
+    };
+    const requestHash = createHash('sha256').update(JSON.stringify(canonicalBody)).digest('hex');
     try {
       const result = await client.begin(async (tx) => {
+        const [prior] = await tx`SELECT id,request_hash AS "requestHash" FROM plans WHERE idempotency_key=${idempotencyKey}`;
+        if (prior) return prior.requestHash.trim() === requestHash ? { id: prior.id, replay: true as const } : { error: 'idempotency_conflict' as const };
         const services = await tx`SELECT id,status FROM services WHERE id IN ${tx(body.serviceIds)} ORDER BY id FOR SHARE`;
         if (services.length !== body.serviceIds.length) return { error: 'service_not_found' as const };
         if (services.some((item) => item.status === 'archived')) return { error: 'service_archived' as const };
@@ -186,6 +207,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
         if (plan.status !== 'draft') return 'conflict';
         const services = await tx`SELECT s.id,s.status FROM plans p JOIN plan_services ps ON ps.plan_id=p.id AND ps.plan_version=p.current_version JOIN services s ON s.id=ps.service_id WHERE p.id=${planId} ORDER BY s.id FOR SHARE OF s`;
         if (services.length === 0 || services.some((service) => service.status !== 'active')) return 'archived_service';
+        await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${planId} AND version=(SELECT current_version FROM plans WHERE id=${planId}) AND frozen_at IS NULL`;
         await tx`UPDATE plans SET status='active' WHERE id=${planId}`;
         return 'active';
       });

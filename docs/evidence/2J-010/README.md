@@ -1,6 +1,6 @@
 # Visual QA evidence — 2J-010
 
-Captured from the local Chromium browser against the running API and an isolated PostgreSQL 17 database seeded with two active services and one draft plan that spans both services.
+Captured from the local Chromium browser against the running API and an isolated PostgreSQL 17 database seeded with eight active services and a recurring draft plan with explicit service access and a targeted session limit.
 
 | CSS viewport | Screenshot | What it shows |
 | --- | --- | --- |
@@ -8,4 +8,4 @@ Captured from the local Chromium browser against the running API and an isolated
 | 768 × 1000 | [tablet-768.png](tablet-768.png) | Collapsed horizontal navigation and vertically stacked master/detail panels. |
 | 390 × 844 | [mobile-390.png](mobile-390.png) | Compact header, touch-sized controls, service cards and stacked plan detail without a wide table. |
 
-The full-page captures preserve the exact requested viewport width while showing all vertically scrollable content. Keyboard verification in the browser confirmed first-field focus when opening the plan dialog, a contained reverse-Tab cycle, and Escape closing the dialog.
+The full-page captures preserve the exact requested viewport width while showing all vertically scrollable content. Separate interactive checks verified first-field focus for both dialogs, Escape closing, and automated tests verify that focus returns to the opener. The plan dialog was also visually inspected at the narrow viewport; it keeps the selected service visible and communicates when that service is still a draft.

@@ -13,7 +13,7 @@ export const statusLabel: Record<PlanStatus, string> = { active: 'Activo', draft
 export const kindLabel: Record<PlanKind, string> = { recurring: 'Plan recurrente', session_pack: 'Bono de sesiones' };
 export const cadenceLabel: Record<string, string> = { weekly: 'Renovación semanal', monthly: 'Renovación mensual', custom_period: 'Renovación por periodo' };
 export const periodLabel: Record<string, string> = { week: 'semana', month: 'mes', plan_period: 'periodo del plan' };
-export const rightLabel: Record<string, string> = { service_access: 'Acceso al servicio', sessions_quota: 'Bono de sesiones', period_quota: 'Cuota por periodo' };
+export const rightLabel: Record<string, string> = { service_access: 'Acceso al servicio', sessions_quota: 'Límite de sesiones', period_quota: 'Cuota por periodo' };
 
 export function describePlan(plan: { kind: PlanKind; renewalCadence: string | null; periodDays: number | null; rights: ProductRightCopy[] }) {
   const cadence = plan.renewalCadence ? cadenceLabel[plan.renewalCadence] ?? 'Renovación configurada' : 'Sin renovación';

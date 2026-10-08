@@ -25,7 +25,7 @@ button { color: inherit; }
 .nav-item { min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-radius: var(--2j-radius-md); color: var(--2j-color-sidebar-text); font-size: 14px; text-decoration: none; }
 .nav-item.active { background: var(--2j-color-sidebar-active); }
 .nav-item.unavailable { color: var(--2j-color-sidebar-muted); }
-.coming-soon { margin-left: auto; font-size: 11px; }
+.coming-soon { margin-left: auto; font-size: 12px; }
 .sidebar-footer { margin-top: auto; padding: 17px 9px 0; border-top: 1px solid color-mix(in srgb, var(--2j-color-sidebar-text) 24%, transparent); color: var(--2j-color-sidebar-muted); font-size: 13px; }
 .status-dot { width: 8px; height: 8px; display: inline-block; margin-right: 7px; border-radius: 50%; background: var(--2j-color-success); }
 .main { max-width: 1700px; min-height: 100vh; margin-left: 250px; padding: 0 44px; }
@@ -161,10 +161,10 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
   body { min-width: 360px; }
   .sidebar { min-height: 60px; justify-content: space-between; padding: 9px 16px; }
   .brand-mark { width: 36px; height: 36px; }
-  .brand-copy { font-size: 10px; }
-  .brand-copy small { font-size: 10px; }
+  .brand-copy { font-size: 12px; }
+  .brand-copy small { font-size: 12px; }
   .sidebar nav { gap: 0; }
-  .nav-item { min-height: 40px; padding: 0 9px; font-size: 13px; }
+  .nav-item { min-height: 44px; padding: 0 9px; font-size: 13px; }
   .nav-item.unavailable { display: none; }
   .main { padding: 0 16px; }
   .topbar { height: 54px; }
@@ -189,7 +189,7 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
   .mobile-card-copy { flex: 1; display: grid; gap: 5px; min-width: 0; }
   .mobile-card-copy strong { overflow: hidden; color: var(--2j-color-text-primary); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-card-copy > span { color: var(--2j-color-text-secondary); font-size: 12px; }
-  .badge { min-height: 27px; padding: 3px 7px; font-size: 11px; }
+  .badge { min-height: 27px; padding: 3px 7px; font-size: 12px; }
   .state-panel { min-height: 220px; padding: 20px; font-size: 13px; }
   .detail-heading { align-items: flex-start; flex-direction: column; padding: 17px 15px; }
   .detail-heading .button { width: 100%; }

@@ -36,7 +36,7 @@ async function createPlan(serviceIds, overrides = {}, idempotencyKey = randomUUI
 }
 
 test('domain input separates product kind from renewal and defines quota periods explicitly', () => {
-  const valid = planPayload([randomUUID()], { rights: [{ rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 8, period: 'month', periodMode: 'calendar', timezone: 'Europe/Canary' }] });
+      const valid = planPayload([randomUUID()], { rights: [{ rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 8, period: 'month', periodMode: 'calendar', timezone: 'Atlantic/Canary' }] });
   assert.equal(planInput.safeParse(valid).success, true);
   assert.equal(planInput.safeParse({ ...valid, kind: 'session_pack', renewalCadence: 'monthly' }).success, false);
   assert.equal(planInput.safeParse({ ...valid, kind: 'session_pack', renewalCadence: null, rights: [{ rightType: 'service_access' }] }).success, false);
@@ -44,6 +44,11 @@ test('domain input separates product kind from renewal and defines quota periods
   assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'period_quota', quantity: 8, quotaScope: 'shared', period: 'month' }] }).success, false);
   assert.equal(planInput.safeParse({ ...valid, serviceIds: [valid.serviceIds[0], valid.serviceIds[0]] }).success, false);
   assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'service_access', serviceId: randomUUID() }] }).success, false);
+  assert.equal(planInput.safeParse({ ...valid, rights: [
+    { rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantity: 10 },
+    { rightType: 'sessions_quota', serviceId: randomUUID(), quotaScope: 'per_service', quantity: 4 },
+  ] }).success, false, 'global and targeted quotas of the same type cannot overlap');
+  assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'sessions_quota', serviceId: randomUUID(), quotaScope: 'shared', quantity: 4 }] }).success, false, 'shared quotas are global');
   assert.equal(serviceInput.safeParse({ name: ' Sala ', areaId: randomUUID(), status: 'draft' }).success, true);
   assert.equal(serviceInput.safeParse({ name: 'Sala', area: 'Sala', status: 'draft' }).success, false);
 });
@@ -68,17 +73,34 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
   const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights];
-  const databaseTables = await sql`SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
+  const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
   const indexes = new Set((await sql`SELECT indexname FROM pg_indexes WHERE schemaname='public'`).map((row) => row.indexname));
   for (const table of tables) {
     const config = getTableConfig(table);
     assert.deepEqual((dbColumns.get(config.name) ?? []).map((row) => row.column_name).sort(), config.columns.map((column) => column.name).sort(), `${config.name} columns drifted`);
+    for (const column of config.columns) {
+      const databaseColumn = dbColumns.get(config.name).find((row) => row.column_name === column.name);
+      assert.equal(databaseColumn.is_nullable === 'YES', !column.notNull, `${config.name}.${column.name} nullability drifted`);
+      const expectedType = column.getSQLType().replace(/^char\(/, 'character(');
+      assert.ok(databaseColumn.data_type === expectedType || (expectedType.startsWith('character(') && databaseColumn.data_type === 'character'), `${config.name}.${column.name} type drifted: ${databaseColumn.data_type} != ${expectedType}`);
+      assert.equal(databaseColumn.column_default != null, column.hasDefault, `${config.name}.${column.name} default presence drifted`);
+    }
     for (const check of config.checks) assert.ok(checks.has(check.name), `missing SQL check ${check.name}`);
     for (const index of config.indexes) assert.ok(indexes.has(index.config.name), `missing SQL index ${index.config.name}`);
   }
+  const configuredForeignKeys = tables.flatMap((table) => getTableConfig(table).foreignKeys.map((foreignKey) => foreignKey.getName()));
+  const databaseForeignKeys = await sql`SELECT conname,confdeltype FROM pg_constraint WHERE contype='f' AND connamespace='public'::regnamespace`;
+  for (const name of configuredForeignKeys) assert.ok(databaseForeignKeys.some((key) => key.conname === name), `missing SQL foreign key ${name}`);
+  for (const key of databaseForeignKeys.filter((item) => configuredForeignKeys.includes(item.conname))) assert.equal(key.confdeltype, 'r', `${key.conname} must restrict historical deletes`);
   assert.ok((await sql`SELECT 1 FROM pg_constraint WHERE conname='plans_current_version_fk'`).length, 'SQL must retain the deferred active-version foreign key');
+  const planIndexes = await sql`SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename IN ('plans','services')`;
+  assert.match(planIndexes.find((row) => row.indexname === 'plans_active_name_unique').indexdef, /lower\(name\)/);
+  assert.match(planIndexes.find((row) => row.indexname === 'services_updated_idx').indexdef, /updated_at DESC/);
+  const rightIndexes = await sql`SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND indexname IN ('plan_rights_global_unique','plan_rights_service_unique')`;
+  assert.equal(rightIndexes.length, 2);
+  for (const index of rightIndexes) assert.match(index.indexdef, /COALESCE\(period, ''(?:::text)?\)/, `${index.indexname} must distinguish quota periods`);
 });
 
 test('areas can be configured and service records reference their normalized IDs', async () => {
@@ -112,35 +134,36 @@ test('database CHECK constraints reject malformed rights when bypassing HTTP val
   const created = await createPlan([service.id]);
   assert.equal(created.response.statusCode, 201, created.response.body);
   await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quantity,quota_scope) VALUES (${created.response.json().id},1,'sessions_quota',${service.id},NULL,'shared')`, (error) => error.code === '23514');
-  await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quantity,quota_scope,period,period_mode,timezone) VALUES (${created.response.json().id},1,'period_quota',NULL,8,'shared','fortnight','calendar','Europe/Canary')`, (error) => error.code === '23514');
+  await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quantity,quota_scope,period,period_mode,timezone) VALUES (${created.response.json().id},1,'period_quota',NULL,8,'shared','fortnight','calendar','Atlantic/Canary')`, (error) => error.code === '23514');
 });
 
-test('multi-service plans distinguish shared global quota and per-service quota rights', async () => {
+test('multi-service plans allow disjoint service quotas and distinct periods but reject global overlap', async () => {
   const [first, second] = await Promise.all([createService(), createService()]);
   const { response } = await createPlan([first.id, second.id], { rights: [
     { rightType: 'service_access', serviceId: first.id },
-    { rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantity: 10 },
     { rightType: 'sessions_quota', serviceId: first.id, quotaScope: 'per_service', quantity: 4 },
     { rightType: 'sessions_quota', serviceId: second.id, quotaScope: 'per_service', quantity: 6 },
-    { rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 8, period: 'month', periodMode: 'calendar', timezone: 'Europe/Canary', validDays: 30, validDaysStartRule: 'first_use' },
+    { rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 8, period: 'month', periodMode: 'calendar', timezone: 'Atlantic/Canary', validDays: 30, validDaysStartRule: 'first_use' },
+    { rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 3, period: 'week', periodMode: 'calendar', timezone: 'Atlantic/Canary' },
   ] });
   assert.equal(response.statusCode, 201, response.body);
   const plan = response.json();
   assert.equal(plan.services.length, 2);
   const quotas = plan.rights.filter((right) => right.rightType === 'sessions_quota').map((right) => [right.serviceId, right.quotaScope, right.quantity]);
-  assert.deepEqual(quotas[0], [null, 'shared', 10]);
-  assert.deepEqual(quotas.slice(1).sort((a, b) => a[0].localeCompare(b[0])), [[first.id, 'per_service', 4], [second.id, 'per_service', 6]].sort((a, b) => a[0].localeCompare(b[0])));
-  assert.equal(plan.rights.find((right) => right.rightType === 'period_quota').timezone, 'Europe/Canary');
-  assert.equal(plan.rights.find((right) => right.rightType === 'period_quota').validDaysStartRule, 'first_use');
+  assert.deepEqual(quotas.sort((a, b) => a[0].localeCompare(b[0])), [[first.id, 'per_service', 4], [second.id, 'per_service', 6]].sort((a, b) => a[0].localeCompare(b[0])));
+  assert.equal(plan.rights.find((right) => right.rightType === 'period_quota' && right.period === 'month').timezone, 'Atlantic/Canary');
+  assert.equal(plan.rights.filter((right) => right.rightType === 'period_quota').length, 2, 'different quota periods remain independently configurable');
+  assert.equal(plan.rights.find((right) => right.rightType === 'period_quota' && right.period === 'month').validDaysStartRule, 'first_use');
   const listed = await app.inject({ method: 'GET', url: `/api/services/${second.id}/plans` });
   assert.equal(listed.statusCode, 200);
   assert.deepEqual(listed.json()[0].services.map((item) => item.id).sort(), [first.id, second.id].sort());
+  await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,quantity,quota_scope) VALUES (${plan.id},1,'sessions_quota',10,'shared')`, (error) => error.code === '23514');
 });
 
 test('session packs require a finite session quota and cannot use periodic quotas', async () => {
   const service = await createService();
   const { response } = await createPlan([service.id], { kind: 'session_pack', renewalCadence: null, rights: [
-    { rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'shared', quantity: 8 },
+    { rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'per_service', quantity: 8 },
   ] });
   assert.equal(response.statusCode, 201, response.body);
   assert.equal(response.json().kind, 'session_pack');
@@ -156,7 +179,7 @@ test('session packs require a finite session quota and cannot use periodic quota
   assert.equal((await sql`SELECT count(*)::int AS count FROM plans WHERE id=${planId}`).at(0).count, 0);
 });
 
-test('a right failure rolls back the plan, service links and previously inserted rights', async () => {
+test('invalid duplicate rights are rejected before a plan transaction persists', async () => {
   const service = await createService();
   const name = `Rollback ${randomUUID()}`;
   const payload = planPayload([service.id], { name, rights: [
@@ -164,8 +187,8 @@ test('a right failure rolls back the plan, service links and previously inserted
     { rightType: 'service_access', serviceId: service.id },
   ] });
   const response = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': randomUUID() }, payload });
-  assert.equal(response.statusCode, 409);
-  assert.equal(response.json().error, 'conflict');
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.json().error, 'validation_error');
   assert.equal((await sql`SELECT count(*)::int AS count FROM plans WHERE name=${name}`).at(0).count, 0);
 });
 
@@ -181,6 +204,38 @@ test('plan creation idempotency replays identical requests and rejects changed p
   assert.equal(replay.json().id, first.json().id);
   assert.equal(mismatch.statusCode, 409);
   assert.equal(mismatch.json().error, 'idempotency_conflict');
+});
+
+test('idempotency canonicalizes unordered service and rights lists and replays after service archival', async () => {
+  const firstService = await createService();
+  const secondService = await createService();
+  const key = randomUUID();
+  const body = planPayload([firstService.id, secondService.id], { rights: [
+    { rightType: 'service_access', serviceId: firstService.id },
+    { rightType: 'service_access', serviceId: secondService.id },
+  ] });
+  const first = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: body });
+  const reordered = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: { ...body, serviceIds: [...body.serviceIds].reverse(), rights: [...body.rights].reverse() } });
+  assert.equal(first.statusCode, 201);
+  assert.equal(reordered.statusCode, 200);
+  await app.inject({ method: 'POST', url: `/api/plans/${first.json().id}/archive` });
+  await app.inject({ method: 'PATCH', url: `/api/services/${firstService.id}/archive` });
+  const archivedReplay = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: body });
+  assert.equal(archivedReplay.statusCode, 200);
+  assert.equal(archivedReplay.json().id, first.json().id);
+});
+
+test('idempotency treats an omitted default timezone and its explicit value as the same request', async () => {
+  const service = await createService();
+  const key = randomUUID();
+  const body = planPayload([service.id], { rights: [
+    { rightType: 'service_access', serviceId: service.id },
+    { rightType: 'period_quota', serviceId: null, quotaScope: 'shared', quantity: 4, period: 'month', periodMode: 'calendar' },
+  ] });
+  const first = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: body });
+  const replay = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': key }, payload: { ...body, rights: body.rights.map((right) => right.rightType === 'period_quota' ? { ...right, timezone: 'Atlantic/Canary' } : right) } });
+  assert.equal(first.statusCode, 201, first.body);
+  assert.equal(replay.statusCode, 200, replay.body);
 });
 
 test('concurrent duplicate plan names serialize to one creation and one conflict', async () => {
@@ -199,12 +254,62 @@ test('active plan version and rights are immutable while archival preserves the 
   const activated = await app.inject({ method: 'POST', url: `/api/plans/${plan.id}/activate` });
   assert.equal(activated.statusCode, 200);
   assert.equal(activated.json().status, 'active');
+  assert.ok((await sql`SELECT frozen_at FROM plan_versions WHERE plan_id=${plan.id} AND version=1`).at(0).frozen_at);
   await assert.rejects(sql`UPDATE plan_rights SET quantity=9 WHERE plan_id=${plan.id}`, (error) => error.code === '55000');
   await assert.rejects(sql`UPDATE plan_versions SET kind='session_pack' WHERE plan_id=${plan.id} AND version=1`, (error) => error.code === '55000');
   await assert.rejects(sql`DELETE FROM plans WHERE id=${plan.id}`, (error) => error.code === '55000');
+  const blockedArchive = await app.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` });
+  assert.equal(blockedArchive.statusCode, 409);
+  assert.equal((await sql`SELECT status FROM services WHERE id=${service.id}`).at(0).status, 'active');
+  await app.inject({ method: 'POST', url: `/api/plans/${plan.id}/archive` });
+  await assert.rejects(sql`UPDATE plan_rights SET quantity=9 WHERE plan_id=${plan.id}`, (error) => error.code === '55000');
   const archived = await app.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` });
   assert.equal(archived.statusCode, 200);
   assert.equal((await sql`SELECT count(*)::int AS count FROM plan_services WHERE service_id=${service.id}`).at(0).count, 1);
+});
+
+test('IANA timezone validation rejects malformed zones and area archival preserves available services', async () => {
+  const service = await createService();
+  const { response: plan } = await createPlan([service.id]);
+  await assert.rejects(sql`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,timezone) VALUES (${plan.json().id},2,'recurring','monthly','Mars/Olympus')`, (error) => error.code === '23514');
+  await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,quantity,quota_scope,period,period_mode,timezone) VALUES (${plan.json().id},1,'period_quota',2,'shared','month','calendar','Mars/Olympus')`, (error) => error.code === '23514');
+  const blocked = await app.inject({ method: 'PATCH', url: `/api/areas/${service.areaId}/archive` });
+  assert.equal(blocked.statusCode, 409);
+});
+
+test('database constraints protect complete versions and catalog tables from truncate bypass', async () => {
+  const service = await createService();
+  const { response: plan } = await createPlan([service.id]);
+  await assert.rejects(sql.begin(async (tx) => {
+    await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence) VALUES (${plan.json().id},2,'recurring','monthly')`;
+  }), (error) => error.code === '23514');
+  await assert.rejects(sql`TRUNCATE plan_rights`, (error) => error.code === '55000');
+  await assert.rejects(sql`TRUNCATE plan_versions CASCADE`, (error) => error.code === '55000');
+});
+
+test('archiving a draft freezes its definition and preserves its current version pointer', async () => {
+  const service = await createService();
+  const { response: plan } = await createPlan([service.id], { rights: [{ rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'per_service', quantity: 4 }] });
+  const archived = await app.inject({ method: 'POST', url: `/api/plans/${plan.json().id}/archive` });
+  assert.equal(archived.statusCode, 200);
+  assert.ok((await sql`SELECT frozen_at FROM plan_versions WHERE plan_id=${plan.json().id} AND version=1`).at(0).frozen_at);
+  await assert.rejects(sql`UPDATE plan_rights SET quantity=5 WHERE plan_id=${plan.json().id}`, (error) => error.code === '55000');
+  await assert.rejects(sql`UPDATE plans SET current_version=2 WHERE id=${plan.json().id}`, (error) => error.code === '55000');
+});
+
+test('service right counts include only global or service-targeted rights', async () => {
+  const first = await createService();
+  const second = await createService();
+  const created = await createPlan([first.id, second.id], { rights: [
+    { rightType: 'service_access', serviceId: first.id },
+    { rightType: 'sessions_quota', serviceId: first.id, quotaScope: 'per_service', quantity: 3 },
+    { rightType: 'service_access', serviceId: second.id },
+  ] });
+  assert.equal(created.response.statusCode, 201, created.response.body);
+  const rows = await app.inject({ method: 'GET', url: '/api/services' });
+  const byId = new Map(rows.json().map((row) => [row.id, row]));
+  assert.equal(byId.get(first.id).rightCount, 2);
+  assert.equal(byId.get(second.id).rightCount, 1);
 });
 
 test('archived services cannot be linked to new plans and plan reads report UUID and 404 errors', async () => {
@@ -225,6 +330,7 @@ test('database violations map to conflict/validation and availability statuses c
   assert.equal(mapDatabaseError({ code: '23505' }).status, 409);
   assert.equal(mapDatabaseError({ code: '23514' }).status, 422);
   assert.equal(mapDatabaseError({ code: '23502' }).status, 422);
+  assert.equal(mapDatabaseError({ code: '22023' }).status, 422);
   assert.equal(mapDatabaseError({ code: '08006' }).status, 503);
   assert.equal(mapDatabaseError({ code: 'XX000' }).status, 500);
 });

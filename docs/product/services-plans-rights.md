@@ -14,9 +14,10 @@ This first vertical covers the service catalog and commercial definitions only. 
 ## Rights and quota semantics
 
 - `service_id = NULL` means the right is intentionally global across the services in that plan version. A non-null service ID must be linked to that same version.
-- `quota_scope = shared` counts the quantity once for the right's target: across the version's included services when the target is global, or for its explicitly targeted service. `per_service` requires a service target and records a separate quantity for that service.
-- A logical right is unique by plan version, right type and target service. PostgreSQL uses separate partial unique indexes for global and service-targeted rights, so NULL cannot bypass uniqueness.
-- `week` and `month` with `period_mode = calendar` use the ISO week (Monday to Monday) or calendar month boundary in `Europe/Canary`. `rolling` means an elapsed seven-day or thirty-day window from the entitlement start instant. The mode and time zone are stored with the right; future center-level time-zone configuration can replace the present `Europe/Canary` default.
+- `quota_scope = shared` is always a single global balance across the version's included services and therefore requires a null service target. `per_service` requires one explicit service target and records a separate quantity for that service.
+- A global and a service-targeted right of the same type and period cannot coexist in one plan version. Distinct service-targeted rights may coexist for different services, and period quotas may coexist for different periods (for example, weekly and monthly limits). PostgreSQL and API validation both enforce this rule.
+- Within a given target, a right type may have one entry per period. PostgreSQL's unique indexes include the period so distinct period quotas remain representable.
+- `week` and `month` with `period_mode = calendar` use the ISO week (Monday to Monday) or calendar month boundary in `Atlantic/Canary`. `rolling` means an elapsed seven-day or thirty-day window from the entitlement start instant. The mode and time zone are stored with the right; future center-level time-zone configuration can replace the present `Atlantic/Canary` default.
 - `plan_period` follows the recurring plan's version period and has no separate calendar/rolling mode. Period quotas are recurring-plan rights only.
 - `valid_days` must include an explicit `valid_days_start_rule`: `purchase` starts at purchase time; `first_use` starts when the right is first consumed. No implicit expiry is created.
 

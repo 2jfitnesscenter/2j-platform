@@ -45,6 +45,42 @@ test('renders the catalog with understandable product terms and noninteractive f
   assert.equal(screen.queryByRole('link', { name: /clientes|calendario/i }), null);
   assert.equal(screen.queryByText('session_pack'), null);
 });
+
+test('service and plan dialogs focus their first field, close on Escape and restore focus to the opener', async () => {
+  initialFetch();
+  render(React.createElement(ServicesPage));
+  const serviceOpener = screen.getByRole('button', { name: /nuevo servicio/i });
+  fireEvent.click(serviceOpener);
+  const serviceDialog = await screen.findByRole('dialog', { name: 'Nuevo servicio' });
+  const serviceName = within(serviceDialog).getByLabelText('Nombre');
+  assert.equal(document.activeElement, serviceName);
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => assert.equal(document.activeElement, serviceOpener));
+
+  const planOpener = await screen.findByRole('button', { name: /nuevo plan/i });
+  fireEvent.click(planOpener);
+  const planDialog = await screen.findByRole('dialog', { name: 'Nuevo plan' });
+  assert.equal(document.activeElement, within(planDialog).getByLabelText('Nombre del plan'));
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => assert.equal(document.activeElement, planOpener));
+});
+
+test('a selected draft service is visible and clearly labeled in the new plan dialog', async () => {
+  const draftService = { ...service, status: 'draft' };
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/areas')) return response([area]);
+    if (String(url).endsWith('/api/services')) return response([draftService]);
+    if (String(url).endsWith(`/api/services/${draftService.id}/plans`)) return response([]);
+    throw new Error('unexpected request');
+  };
+  render(React.createElement(ServicesPage));
+  await screen.findByRole('heading', { name: draftService.name });
+  fireEvent.click(await screen.findByRole('button', { name: /nuevo plan/i }));
+  const dialog = await screen.findByRole('dialog', { name: 'Nuevo plan' });
+  assert.equal(within(dialog).getByRole('checkbox').checked, true);
+  assert.match(within(dialog).getByText(/Borrador/).textContent, /Borrador/);
+  assert.match(within(dialog).getByText(/también seguirá en borrador/).textContent, /hasta que todos sus servicios estén activos/);
+});
 test('created plan refreshes the visible plan detail and service plan count without reselection', async () => {
   let listRevision = 0;
   let planRevision = 0;
@@ -79,8 +115,38 @@ test('created plan refreshes the visible plan detail and service plan count with
   assert.ok(planReads >= 2, 'selected plan detail should refresh after the save');
 });
 
+test('creating a plan without the currently selected service selects a service that contains the new plan', async () => {
+  const second = { ...service, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Valoración inicial' };
+  const secondPlan = { ...plan, services: [{ id: second.id, name: second.name, area: second.area }] };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith('/api/areas')) return response([area]);
+    if (path.endsWith('/api/services') && options.method === 'POST') return response(service, 201);
+    if (path.endsWith('/api/services')) return response([service, second]);
+    if (path.endsWith('/api/plans') && options.method === 'POST') return response(secondPlan, 201);
+    if (path.endsWith(`/api/services/${service.id}/plans`)) return response([]);
+    if (path.endsWith(`/api/services/${second.id}/plans`)) return response([secondPlan]);
+    throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
+  };
+  render(React.createElement(ServicesPage));
+  const dialog = await openPlanDialog();
+  fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: secondPlan.name } });
+  fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
+  fireEvent.change(within(dialog).getByLabelText('Renovación'), { target: { value: 'monthly' } });
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /Valoración inicial/ }));
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /Entrenamiento funcional/ }));
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Crear borrador' }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  });
+  await waitFor(() => assert.equal(screen.queryByRole('dialog'), null));
+  assert.ok(await screen.findByRole('heading', { name: second.name }));
+  assert.ok(await screen.findByRole('heading', { name: secondPlan.name }));
+});
+
 test('failed save is announced inside the open dialog and leaves the user input intact', async () => {
-  initialFetch({ onPlanCreate: () => response({ error: 'conflict', message: 'Ya existe un plan con ese nombre.' }, 409) });
+  const keys = [];
+  initialFetch({ onPlanCreate: (_url, options) => { keys.push(options.headers['idempotency-key']); return response({ error: 'conflict', message: 'Ya existe un plan con ese nombre.' }, 409); } });
   render(React.createElement(ServicesPage));
   const dialog = await openPlanDialog();
   fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: plan.name } });
@@ -90,6 +156,9 @@ test('failed save is announced inside the open dialog and leaves the user input 
   const alert = await within(dialog).findByRole('alert');
   assert.equal(alert.textContent, 'Ya existe un plan con ese nombre.');
   assert.equal(within(dialog).getByLabelText('Nombre del plan').value, plan.name);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Crear borrador' }));
+  await waitFor(() => assert.equal(keys.length, 2));
+  assert.equal(keys[0], keys[1], 'retry must reuse the dialog idempotency key');
 });
 
 test('plan loading, fetch failure and valid empty response have distinct states with retry', async () => {
