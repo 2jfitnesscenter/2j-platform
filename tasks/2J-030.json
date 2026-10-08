@@ -16,12 +16,12 @@
     "centerSessionCancellation": { "reservations": "cancelled_by_center", "waitlist": "cancelled_by_center", "historyPreserved": true, "laterChangesBlocked": true, "terminal": true },
     "archiveGuards": ["future scheduled sessions", "active future templates"],
     "permissions": {
-      "trainer": ["reservations.manage", "reservations.attendance"],
+      "trainer": ["reservations.manage", "reservations.attendance", "scheduling.override_capacity"],
       "admin": ["reservations.manage", "reservations.attendance", "scheduling.override_capacity"],
       "reception-management": ["reservations.manage"]
     },
     "attendanceReversibleWithAudit": true,
-    "overbook": { "adminOnly": true, "audited": true, "visibleCount": true },
+    "overbook": { "adminOrTrainer": true, "audited": true, "visibleCount": true },
     "waitlist": { "entry": true, "withdrawal": true, "automaticPromotion": false },
     "clientReference": "clients.id",
     "serverSidePermissions": true,
@@ -33,11 +33,12 @@
   "migration": "apps/api/migrations/0005_calendar_review_corrections.sql",
   "visualEvidence": "docs/evidence/2J-030/README.md",
   "verification": {
-    "tests": "100/100 passed; 0 skipped",
+    "tests": "103/103 passed; 0 skipped",
     "typecheck": "7/7 workspace projects passed",
     "build": "7/7 workspace projects passed",
     "dependencyAudit": "no known vulnerabilities",
-    "gitleaks": "pending GitHub secret scan; Go unavailable locally"
+    "gitleaks": "pending GitHub secret scan; Go unavailable locally",
+    "individualSessionScreenshot": "pending: local browser control blocked navigation to the development server; code behavior is asserted by UI tests"
   },
   "runtimeLimitations": [
     "Booking eligibility fails closed until a server-owned plan/right and available-balance source is integrated; integration tests inject a resolver."

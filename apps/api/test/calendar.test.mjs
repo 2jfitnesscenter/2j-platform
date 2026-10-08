@@ -47,6 +47,7 @@ test('creates a session from active service and area and returns it in the Canar
   const row = result.json().sessions.find((item) => item.id === session.id);
   assert.equal(row.occupiedCount, 0);
   assert.equal(row.capacity, 3);
+  assert.equal(row.isIndividual, false);
   assert.equal(row.source, 'manual');
 });
 
@@ -147,12 +148,25 @@ test('calendar management, attendance and attendee PII require server-side permi
   assert.equal(attendance.statusCode, 200);
   assert.equal(attendance.json().status, 'attended');
   const overbookedByTrainer = await trainerEligible.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: secondClient.id, overbook: true } });
-  assert.equal(overbookedByTrainer.statusCode, 403, overbookedByTrainer.body);
+  assert.equal(overbookedByTrainer.statusCode, 201, overbookedByTrainer.body);
   const deniedReceptionOverbook = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: secondClient.id, overbook: true } });
   assert.equal(deniedReceptionOverbook.statusCode, 403);
   const overbooked = await admin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: thirdClient.id, overbook: true } });
   assert.equal(overbooked.statusCode, 201, overbooked.body);
-  assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_audit_events WHERE session_id=${session.id} AND action='reservation.overbooked'`).at(0).total, 1);
+  assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_audit_events WHERE session_id=${session.id} AND action='reservation.overbooked'`).at(0).total, 2);
+});
+
+test('trainer can create and archive templates, cancel group sessions, and override capacity', async () => {
+  const service = await createService();
+  const future = new Date(Date.now() + 3 * 86400000);
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(future);
+  const startsOnIso = `${parts.find((part) => part.type === 'year').value}-${parts.find((part) => part.type === 'month').value}-${parts.find((part) => part.type === 'day').value}`;
+  const weekday = new Date(`${startsOnIso}T00:00:00.000Z`).getUTCDay();
+  const template = await trainerEligible.inject({ method: 'POST', url: '/api/calendar/templates', payload: { serviceId: service.id, areaId: service.areaId, weekday, localStartTime: '10:00', durationMinutes: 60, capacity: 2, startsOn: startsOnIso } });
+  assert.equal(template.statusCode, 201, template.body);
+  assert.equal((await trainerEligible.inject({ method: 'PATCH', url: `/api/calendar/templates/${template.json().id}/archive` })).statusCode, 200);
+  const session = await createSession({ app: trainerEligible });
+  assert.equal((await trainerEligible.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}/cancel` })).statusCode, 200);
 });
 
 test('booking eligibility contract fails closed when no client entitlement resolver is connected', async () => {
@@ -180,6 +194,10 @@ test('individual appointment creates a single client-linked reservation transact
   const service = await createService(); const client = await createClient('Individual');
   const result = await reception.inject({ method: 'POST', url: '/api/calendar/sessions', payload: { serviceId: service.id, areaId: area.id, startsAt: new Date(Date.now() + 86400000).toISOString(), durationMinutes: 60, capacity: 1, individualClientId: client.id } });
   assert.equal(result.statusCode, 201, result.body);
+  const week = await trainer.inject({ method: 'GET', url: `/api/calendar/week?weekStart=${mondayKey(result.json().startsAt)}` });
+  const calendarRow = week.json().sessions.find((item) => item.id === result.json().id);
+  assert.equal(calendarRow.isIndividual, true);
+  assert.equal(Object.hasOwn(calendarRow, 'individualClientId'), false, 'weekly marker must not expose client identity');
   const rows = await reception.inject({ method: 'GET', url: `/api/calendar/sessions/${result.json().id}/attendees` });
   assert.equal(rows.json().reservations.length, 1);
   assert.equal(rows.json().reservations[0].clientId, client.id);

@@ -16,7 +16,7 @@ Captured from the local admin app against an isolated PostgreSQL database popula
 | Full session | [session-completa-1440.png](./session-completa-1440.png) |
 | Active waitlist | [session-lista-espera-1440.png](./session-lista-espera-1440.png) |
 | Audited over-capacity session (`Sobrecupo +N`) | [session-sobrecupo-1440.png](./session-sobrecupo-1440.png) |
-| Individual appointment | [session-individual-1440.png](./session-individual-1440.png) |
+| Individual appointment (historical capture; predates the non-PII weekly `isIndividual` marker) | [session-individual-1440.png](./session-individual-1440.png) |
 | Eligibility blocked by the fail-closed resolver | [session-eligibility-blocked-1440.png](./session-eligibility-blocked-1440.png) |
 
 ## Confirmation and runtime states
@@ -31,3 +31,7 @@ Captured from the local admin app against an isolated PostgreSQL database popula
 | Week load error | [state-error-768.png](./state-error-768.png) |
 
 The eligibility screenshot demonstrates that the default server runtime refuses to reserve when a client's entitlement cannot be verified. API integration tests inject an eligible resolver to exercise reservation, concurrency, waitlist, cancellation, audit, and client-link behavior. Test fixtures never consume or alter a real balance.
+
+## Follow-up review evidence
+
+The current code returns a non-PII `isIndividual` boolean from the weekly API and renders “Cita individual” in both the session card and detail. UI tests assert both visible labels. The older `session-individual-1440.png` predates that API contract and must not be treated as evidence of the updated labels. A fresh browser capture could not be produced in this environment: the available browser control blocked navigation to the local development server (`ERR_BLOCKED_BY_CLIENT`). The updated rendered-state screenshot remains the only evidence item pending re-review.

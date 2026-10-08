@@ -420,7 +420,10 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
   .calendar-form-row { gap: 8px; }
   .session-capacity-summary > div { padding: 9px 4px; }
   .session-capacity-summary strong { font-size: 18px; }
-  .attendee-actions { flex-direction: column; align-items: flex-end; }
+  .attendee-list li { align-items: flex-start; flex-direction: column; gap: 5px; padding: 9px 0; }
+  .attendee-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; gap: 4px; }
+  .attendee-actions .text-button { min-width: 0; padding: 0 5px; white-space: nowrap; }
+  .attendee-actions .danger-text { grid-column: 1 / -1; justify-self: stretch; }
   .waitlist-actions { display: grid; }
   .waitlist-actions .button, .booking-box > .button { width: 100%; min-height: 46px; }
   .calendar-notice { align-items: flex-start; }

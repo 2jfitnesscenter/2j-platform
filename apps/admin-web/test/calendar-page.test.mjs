@@ -33,7 +33,7 @@ test('creates a real staff session using the selected 2J service and capacity', 
   let session = null; let posted = null;
   globalThis.fetch = async (url, options = {}) => {
     if (String(url).includes('/api/calendar/week')) return response({ ...baseData, sessions: session ? [{ ...session, occupiedCount: 0, waitlistCount: 0 }] : [] });
-    if (String(url).endsWith('/api/calendar/sessions') && options.method === 'POST') { posted = JSON.parse(options.body); session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: posted.startsAt, durationMinutes: posted.durationMinutes, capacity: posted.capacity, status: 'scheduled', individualClientId: null }; return response(session, 201); }
+    if (String(url).endsWith('/api/calendar/sessions') && options.method === 'POST') { posted = JSON.parse(options.body); session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: posted.startsAt, durationMinutes: posted.durationMinutes, capacity: posted.capacity, status: 'scheduled', isIndividual: false }; return response(session, 201); }
     throw new Error(`Unexpected request: ${options.method ?? 'GET'} ${url}`);
   };
   render(React.createElement(CalendarPage));
@@ -54,7 +54,7 @@ test('keeps recurring templates separate and requires an explicit occurrence dat
   let templateSaved = false; let generated = false;
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
-    if (path.includes('/api/calendar/week')) return response({ ...baseData, sessions: generated ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', source: 'template', startsAt: `${baseData.weekStart}T09:30:00Z`, durationMinutes: 45, capacity: 8, status: 'scheduled', individualClientId: null, occupiedCount: 0, waitlistCount: 0 }] : [] });
+    if (path.includes('/api/calendar/week')) return response({ ...baseData, sessions: generated ? [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', source: 'template', startsAt: `${baseData.weekStart}T09:30:00Z`, durationMinutes: 45, capacity: 8, status: 'scheduled', isIndividual: false, occupiedCount: 0, waitlistCount: 0 }] : [] });
     if (path.endsWith('/api/calendar/templates') && options.method === 'POST') { templateSaved = true; return response({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', status: 'active' }, 201); }
     if (path.endsWith('/api/calendar/templates/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/sessions') && options.method === 'POST') { generated = true; return response({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' }, 201); }
     throw new Error(`Unexpected request: ${options.method ?? 'GET'} ${url}`);
@@ -99,8 +99,41 @@ test('individual session requires a selected client and hides group capacity', a
   assert.equal(posted.individualClientId, 'ffffffff-ffff-4fff-8fff-ffffffffffff');
 });
 
+test('weekly individual marker labels card and detail without returning client PII', async () => {
+  const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 1, status: 'scheduled', isIndividual: true, occupiedCount: 1, overbookCount: 0, waitlistCount: 0 };
+  globalThis.fetch = async (url) => {
+    const path = String(url);
+    if (path.includes('/api/calendar/week')) return response({ ...baseData, sessions: [session] });
+    if (path.endsWith(`/api/calendar/sessions/${session.id}/attendees`)) return response({ reservations: [], waitlist: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  render(React.createElement(CalendarPage));
+  const card = await screen.findByRole('button', { name: /cita individual/i });
+  assert.equal(within(card).getByText('Cita individual').textContent, 'Cita individual');
+  fireEvent.click(card);
+  assert.equal((await screen.findByText('CITA INDIVIDUAL · Sesión puntual')).textContent, 'CITA INDIVIDUAL · Sesión puntual');
+});
+
+test('reopen reservation is only offered after attendance or no-show', async () => {
+  const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 1, status: 'scheduled', isIndividual: false, occupiedCount: 1, overbookCount: 0, waitlistCount: 0 };
+  const roster = { reservations: [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', clientId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', firstName: 'Lucía', lastName: 'Martín', status: 'reserved' }], waitlist: [] };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.includes('/api/calendar/week')) return response({ ...baseData, sessions: [session] });
+    if (path.endsWith(`/api/calendar/sessions/${session.id}/attendees`)) return response(roster);
+    if (path.endsWith(`/api/calendar/reservations/${roster.reservations[0].id}/attendance`)) { roster.reservations[0].status = JSON.parse(options.body).status; return response({ status: roster.reservations[0].status }); }
+    throw new Error(`Unexpected request: ${options.method ?? 'GET'} ${path}`);
+  };
+  render(React.createElement(CalendarPage));
+  fireEvent.click(await screen.findByRole('button', { name: /Fuerza 2J/ }));
+  await screen.findByText('Lucía Martín');
+  assert.equal(screen.queryByRole('button', { name: 'Reabrir reserva' }), null);
+  fireEvent.click(screen.getByRole('button', { name: 'Asistió' }));
+  assert.ok(await screen.findByRole('button', { name: 'Reabrir reserva' }));
+});
+
 test('session cancellation uses an in-app confirmation dialog', async () => {
-  const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 2, status: 'scheduled', individualClientId: null, occupiedCount: 0, overbookCount: 0, waitlistCount: 0 };
+  const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 2, status: 'scheduled', isIndividual: false, occupiedCount: 0, overbookCount: 0, waitlistCount: 0 };
   let cancelled = false;
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
@@ -119,7 +152,7 @@ test('session cancellation uses an in-app confirmation dialog', async () => {
 });
 
 test('booking cancellation and capacity override require in-app 2J confirmations', async () => {
-  const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 1, status: 'scheduled', individualClientId: null, occupiedCount: 1, overbookCount: 0, waitlistCount: 0 };
+  const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 1, status: 'scheduled', isIndividual: false, occupiedCount: 1, overbookCount: 0, waitlistCount: 0 };
   let cancelled = false; let overbooked = false;
   const roster = { reservations: [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', clientId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', firstName: 'Lucía', lastName: 'Martín', status: 'reserved' }], waitlist: [] };
   globalThis.fetch = async (url, options = {}) => {

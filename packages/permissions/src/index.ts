@@ -8,7 +8,7 @@ export interface AuthorizationContext {
 
 export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> = {
   admin: ['*'],
-  trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read', 'reservations.manage', 'reservations.attendance'],
+  trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read', 'reservations.manage', 'reservations.attendance', 'scheduling.override_capacity'],
   'reception-management': ['clients.read', 'calendar.read', 'reservations.manage', 'billing.read-basic', 'timeclock.read'],
   accountant: [],
 };
