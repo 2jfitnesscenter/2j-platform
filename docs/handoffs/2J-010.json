@@ -8,7 +8,8 @@
   "review_state": "Awaiting independent Claude backend/domain and Gemini/Antigravity UX reviews on the same final PR head; do not merge.",
   "scope": ["services", "plans", "plan rights"],
   "excluded_scope": ["payments", "automatic renewals", "clients", "reservations", "waitlist", "training", "Bunker"],
-  "final_head": "Resolve PR #6 current head SHA after push; both reviewers must inspect this exact SHA.",
+  "implementation_head": "5ee5883afb17f830d222edcc6fda0e1d28df7a51",
+  "final_head": "Resolve the current PR #6 head OID after this handoff update; both reviewers must inspect that exact SHA.",
   "evidence": {
     "visual": [
       {"viewport": "1440x1000", "file": "docs/evidence/2J-010/desktop-1440.png"},
@@ -24,7 +25,7 @@
     {"name": "Production build", "command": "corepack pnpm@10.34.6 build", "result": "PASS", "evidence": "All 7 workspace packages."},
     {"name": "Dependency audit", "command": "corepack pnpm@10.34.6 audit --audit-level high", "result": "PASS", "evidence": "No known vulnerabilities."},
     {"name": "Visual responsive review", "command": "Chromium screenshots at 1440, 768, and 390 CSS pixels", "result": "PASS", "evidence": "Real seeded PostgreSQL catalog, selected multi-service plan, rights readability, responsive layout, Spanish product copy, modal initial focus/Shift+Tab focus trap/Escape close."},
-    {"name": "Hosted quality and secret scan", "command": "GitHub Actions on final PR #6 head", "result": "PENDING", "evidence": "Must complete against the final pushed SHA before independent re-review."}
+    {"name": "Hosted quality and secret scan", "command": "GitHub Actions run 37743932852", "result": "PASS", "evidence": "Quality and full-history secret scan passed on implementation head 5ee5883afb17f830d222edcc6fda0e1d28df7a51. Handoff-only documentation update is on the final PR head."}
   ],
   "decisions": [
     "Plan definitions support multiple services and immutable versions.",
