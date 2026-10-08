@@ -1,10 +1,12 @@
-import Fastify, { type FastifyError } from 'fastify';
+import Fastify, { type FastifyError, type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
+import { registerClientRoutes } from './clients.js';
+import { type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
 const timezone = 'Atlantic/Canary';
 const uuid = z.string().uuid();
@@ -73,8 +75,27 @@ export function mapDatabaseError(error: unknown) {
   return { status: 500, body: { error: 'internal_error', message: 'No se pudo completar la operación.' } };
 }
 
-export function buildServer(databaseUrl = process.env.DATABASE_URL) {
-  const app = Fastify({ logger: true, bodyLimit: 16_384 });
+export type ServerOptions = {
+  authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
+  logger?: FastifyServerOptions['logger'];
+};
+
+export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
+  const app = Fastify({
+    logger: options.logger ?? { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/' }; } } },
+    bodyLimit: 16_384,
+  });
+  app.setErrorHandler((error, request, reply) => {
+    const fastifyError = error as FastifyError;
+    const route = typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/';
+    if (fastifyError.code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
+      app.log.warn({ errorCode: 'invalid_json', method: request.method, route }, 'request body rejected');
+      return reply.code(400).send({ error: 'invalid_json', message: 'El cuerpo de la solicitud no es JSON válido.' });
+    }
+    const statusCode = typeof fastifyError.statusCode === 'number' && fastifyError.statusCode >= 400 && fastifyError.statusCode < 600 ? fastifyError.statusCode : 500;
+    if (statusCode >= 500) app.log.error({ errorCode: fastifyError.code ?? 'unknown', method: request.method, route }, 'request failed');
+    return reply.code(statusCode).send({ error: statusCode < 500 ? 'request_rejected' : 'internal_error' });
+  });
   const { client } = createDatabase(databaseUrl);
   const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
   const originHost = new URL(allowedOrigin).hostname.replace(/^\[|\]$/g, '');
@@ -85,6 +106,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL) {
     if (!host || !['127.0.0.1', 'localhost', '::1'].includes(host)) return reply.code(400).send({ error: 'invalid_host' });
   });
   app.addHook('onClose', async () => { await client.end(); });
+  registerClientRoutes(app, client, options.authorizationResolver ?? (async () => null));
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }
@@ -266,8 +288,13 @@ function getDatabaseCode(error: unknown) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const app = buildServer();
   const host = process.env.HOST ?? '127.0.0.1';
   if (!['127.0.0.1', 'localhost', '::1'].includes(host)) throw new Error('HOST must be loopback-only until runtime authentication is approved.');
+  const localDemoRole = process.env.LOCAL_DEMO_ROLE;
+  if (localDemoRole && process.env.NODE_ENV !== 'development') throw new Error('LOCAL_DEMO_ROLE is only allowed in NODE_ENV=development.');
+  const allowedLocalRoles: ApprovedRole[] = ['admin', 'trainer', 'reception-management', 'accountant'];
+  if (localDemoRole && !allowedLocalRoles.includes(localDemoRole as ApprovedRole)) throw new Error('LOCAL_DEMO_ROLE must be an approved role.');
+  const localContext: AuthorizationContext | null = localDemoRole ? { actorId: `local-demo:${localDemoRole}`, role: localDemoRole as ApprovedRole } : null;
+  const app = buildServer(undefined, { authorizationResolver: async () => localContext });
   await app.listen({ host, port: Number(process.env.PORT ?? 3100) });
 }

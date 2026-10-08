@@ -1,0 +1,96 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2J-020",
+  "agent": "codex",
+  "branch": "agent/codex/2J-020-clients-360",
+  "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/7",
+  "status": "REVIEW",
+  "review_state": "Claude and Antigravity reviewed starting head e0098d7c82b7358d20d637cd2fb1e07c43aabc4f. Consolidated findings corrected in one pass. Independent review of final head is pending; do not merge.",
+  "starting_head": "e0098d7c82b7358d20d637cd2fb1e07c43aabc4f",
+  "implementation_head": "The implementation is the complete PR branch diff; use pull_request headRefOid for its published SHA.",
+  "final_head": "Current headRefOid of pull_request after the final push; exact SHA is included in the task close-out.",
+  "scope": [
+    "PostgreSQL-backed client directory/search with stable cursor pagination",
+    "Client 360 profile, client-owned history, create and archive",
+    "Server-side PII permission checks and future Summary permission boundaries",
+    "Responsive accessible clients UI"
+  ],
+  "excluded_scope": [
+    "Reservations, calendar, waitlist",
+    "Payments and billing implementation",
+    "Training, Bunker, progress and Health data duplication",
+    "Documents, forms and messaging implementation"
+  ],
+  "decisions": [
+    "Email is optional, normalized, and unique among active clients.",
+    "Phone is optional and not unique.",
+    "Client creation uses an idempotency key; same-key retries replay, payload mismatch conflicts.",
+    "Only module-owned client data and events are implemented; connected domains remain outside this TASK.",
+    "Unknown future Summary permissions deny by default; no real provider credentials or LIVE execution are involved."
+  ],
+  "tests": [
+    {
+      "name": "Frozen-lockfile install",
+      "command": "corepack pnpm@10.34.6 install --frozen-lockfile",
+      "result": "PASS"
+    },
+    {
+      "name": "Typecheck",
+      "command": "corepack pnpm@10.34.6 typecheck",
+      "result": "PASS",
+      "evidence": "All 7 workspace packages typechecked."
+    },
+    {
+      "name": "Full workspace test suite",
+      "command": "corepack pnpm@10.34.6 test",
+      "result": "PASS",
+      "evidence": "78/78 tests passed: 3 design-token, 3 domain, 5 permissions, 2 auth, 3 audit, 41 API/PostgreSQL, and 21 admin UI tests. PostgreSQL used an isolated temporary database, which was removed after the run."
+    },
+    {
+      "name": "Production build",
+      "command": "corepack pnpm@10.34.6 build",
+      "result": "PASS",
+      "evidence": "All 7 workspace packages built."
+    },
+    {
+      "name": "Dependency audit",
+      "command": "corepack pnpm@10.34.6 audit --audit-level high",
+      "result": "PASS",
+      "evidence": "No known vulnerabilities found."
+    },
+    {
+      "name": "Whitespace check",
+      "command": "git diff --check",
+      "result": "PASS"
+    },
+    {
+      "name": "Hosted quality and secret scan",
+      "command": "GitHub Actions on final PR head",
+      "result": "PENDING",
+      "evidence": "Runs after pushing final head."
+    }
+  ],
+  "evidence": {
+    "visual": [
+      { "viewport": "1440x1000", "file": "docs/evidence/2J-020/clients-360-1440.png" },
+      { "viewport": "768x1000", "file": "docs/evidence/2J-020/clients-360-768.png" },
+      { "viewport": "390x1000", "file": "docs/evidence/2J-020/clients-360-390.png" },
+      { "viewport": "390x844", "file": "docs/evidence/2J-020/clients-create-390.png" },
+      { "viewport": "390x844", "file": "docs/evidence/2J-020/clients-archive-confirm-390.png" }
+    ],
+    "database": "Local PostgreSQL, isolated temporary test/preview databases; shared pre-existing database left untouched. Synthetic example.test sample only."
+  },
+  "non_blocking_findings": [
+    "Search is NFKC/case normalized but not accent-insensitive.",
+    "Client history currently returns at most 100 events and needs future cursor pagination.",
+    "History labels operators by approved role until production identity is implemented.",
+    "entitlements.read is not yet registered; plans in Summary intentionally deny by default until a permission TASK approves it.",
+    "Manual assistive-technology validation and visual screenshots of loading/error/empty states remain future polish; the functional states have tests."
+  ],
+  "followups": [
+    "Request independent Claude backend/security review and Antigravity UX review on exactly implementation_head.",
+    "Keep PR #8 Calendario/Reservas waiting for 2J-020 integration.",
+    "Do not merge automatically or add Payments, Reservations, Training, Health, Docs or Messages implementation to this TASK."
+  ],
+  "summary": "One-pass correction for 2J-020 Clients 360 is locally verified and has responsive visual evidence. PR #7 remains open and unmerged; hosted checks and independent review are pending on the final published SHA."
+}

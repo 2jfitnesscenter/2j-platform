@@ -54,6 +54,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@2j/permissions':
+        specifier: workspace:*
+        version: link:../../packages/permissions
       '@fastify/cors':
         specifier: ^10.0.1
         version: 10.1.0
