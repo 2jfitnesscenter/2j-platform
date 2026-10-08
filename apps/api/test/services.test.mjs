@@ -407,7 +407,7 @@ test('database constraints protect complete versions and catalog tables from tru
   await assert.rejects(sql`TRUNCATE plan_rights`, (error) => error.code === '55000');
   await assert.rejects(sql`TRUNCATE plan_versions CASCADE`, (error) => error.code === '55000');
   for (const table of ['areas', 'services', 'plans', 'plan_services']) {
-    await assert.rejects(sql.unsafe(`TRUNCATE ${table}`), (error) => error.code === '55000', `${table} must reject TRUNCATE`);
+    await assert.rejects(sql.unsafe(`TRUNCATE ${table} CASCADE`), (error) => error.code === '55000', `${table} must reject TRUNCATE CASCADE`);
   }
 });
 
