@@ -5,6 +5,7 @@
   "status": "implementation-complete-independent-review-required",
   "pullRequest": "https://github.com/2jfitnesscenter/2j-platform/pull/8",
   "branch": "agent/codex/2J-030-calendar-bookings-waitlist",
+  "implementationSha": "daa8099d1b4825bedc4b69cc9f25d63a8d3cb8d1",
   "acceptance": {
     "weekStartsOnMonday": true,
     "timezone": "Atlantic/Canary",
@@ -32,9 +33,9 @@
   "review": {
     "claude": "pending-final-sha",
     "antigravity": "pending-final-sha",
-    "qa": "pending-final-local-gates"
+    "qa": "local-gates-pass-91-of-91"
   },
   "runtimeLimitations": [
     "Default booking eligibility fails closed until client-plan assignments and balance data are integrated; booking integration tests use an injected resolver."
-  }
+  ]
 }

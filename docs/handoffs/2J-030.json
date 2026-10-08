@@ -5,7 +5,7 @@
   "branch": "agent/codex/2J-030-calendar-bookings-waitlist",
   "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/8",
   "status": "implementation-complete-independent-review-required",
-  "final_head_sha": "recorded-after-docs-handoff-commit",
+  "implementation_sha": "daa8099d1b4825bedc4b69cc9f25d63a8d3cb8d1",
   "base": "main including 2J-010 and 2J-020",
   "commits": [],
   "tests": [
@@ -33,7 +33,7 @@
   "review": {
     "claude": "pending-final-sha",
     "antigravity": "pending-final-sha",
-    "github_ci": "pending-push"
+    "github_ci": "pending-final-documentation-head"
   },
   "reviewer_instructions": [
     "Review the exact final PR head; do not merge this PR.",
