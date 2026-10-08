@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0.0",
+  "taskId": "2J-030",
+  "title": "Calendario, Reservas y Lista de espera",
+  "status": "implementation-complete-independent-review-required",
+  "pullRequest": "https://github.com/2jfitnesscenter/2j-platform/pull/8",
+  "branch": "agent/codex/2J-030-calendar-bookings-waitlist",
+  "acceptance": {
+    "weekStartsOnMonday": true,
+    "timezone": "Atlantic/Canary",
+    "templatesAndSessionsSeparate": true,
+    "templateGeneration": "explicit-date-only",
+    "templateArchive": "explicit-and-audited",
+    "capacityEnforcedTransactionally": true,
+    "individualSession": { "clientLinked": true, "clientImmutable": true, "capacity": 1, "otherClientReservationsAllowed": false },
+    "centerSessionCancellation": { "reservations": "cancelled_by_center", "waitlist": "cancelled_by_center", "historyPreserved": true, "laterChangesBlocked": true, "terminal": true },
+    "archiveGuards": ["future scheduled sessions", "active future templates"],
+    "permissions": {
+      "trainer": ["reservations.manage", "reservations.attendance", "scheduling.override_capacity"],
+      "admin": ["reservations.manage", "reservations.attendance", "scheduling.override_capacity"],
+      "reception-management": ["reservations.manage"]
+    },
+    "attendanceReversibleWithAudit": true,
+    "overbook": { "adminOrTrainer": true, "audited": true, "visibleCount": true },
+    "waitlist": { "entry": true, "withdrawal": true, "automaticPromotion": false },
+    "clientReference": "clients.id",
+    "serverSidePermissions": true,
+    "appendOnlyAudit": true,
+    "financialConsumption": false,
+    "resourcesAndRooms": false,
+    "pushReminders": false
+  },
+  "migration": "apps/api/migrations/0005_calendar_review_corrections.sql",
+  "visualEvidence": "docs/evidence/2J-030/README.md",
+  "verification": {
+    "tests": "103/103 passed; 0 skipped",
+    "typecheck": "7/7 workspace projects passed",
+    "build": "7/7 workspace projects passed",
+    "dependencyAudit": "no known vulnerabilities",
+    "gitleaks": "pending GitHub secret scan; Go unavailable locally",
+    "individualSessionScreenshot": "pending: local browser control blocked navigation to the development server; code behavior is asserted by UI tests"
+  },
+  "runtimeLimitations": [
+    "Booking eligibility fails closed until a server-owned plan/right and available-balance source is integrated; integration tests inject a resolver."
+  ],
+  "pendingProductDecisions": [
+    "Automatic waitlist promotion",
+    "Penalties and cancellation windows",
+    "Recurring generation horizon or scheduled automation",
+    "Push reminders"
+  ],
+  "review": { "claude": "pending-final-live-sha", "antigravity": "pending-final-live-sha", "githubCi": "pending-final-live-sha" },
+  "merge": "DO_NOT_MERGE"
+}

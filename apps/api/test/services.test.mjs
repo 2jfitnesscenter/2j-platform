@@ -96,7 +96,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents, schema.clientCreationIdempotency];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarAuditEvents];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -107,7 +107,8 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
     for (const column of config.columns) {
       const databaseColumn = dbColumns.get(config.name).find((row) => row.column_name === column.name);
       assert.equal(databaseColumn.is_nullable === 'YES', !column.notNull, `${config.name}.${column.name} nullability drifted`);
-      const expectedType = column.getSQLType().replace(/^char\(/, 'character(');
+      const rawType = column.getSQLType();
+      const expectedType = rawType.replace(/^char\(/, 'character(').replace(/^time$/, 'time without time zone');
       assert.ok(databaseColumn.data_type === expectedType || (expectedType.startsWith('character(') && databaseColumn.data_type === 'character'), `${config.name}.${column.name} type drifted: ${databaseColumn.data_type} != ${expectedType}`);
       assert.equal(databaseColumn.column_default != null, column.hasDefault, `${config.name}.${column.name} default presence drifted`);
     }

@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
+import { registerCalendarRoutes } from './calendar.js';
+import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
 const timezone = 'Atlantic/Canary';
@@ -77,6 +79,7 @@ export function mapDatabaseError(error: unknown) {
 
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
+  bookingEligibilityResolver?: BookingEligibilityResolver;
   logger?: FastifyServerOptions['logger'];
 };
 
@@ -107,6 +110,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   });
   app.addHook('onClose', async () => { await client.end(); });
   registerClientRoutes(app, client, options.authorizationResolver ?? (async () => null));
+  registerCalendarRoutes(app, client, options.authorizationResolver ?? (async () => null), options.bookingEligibilityResolver);
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }
@@ -129,9 +133,18 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const { areaId } = request.params as { areaId: string };
     if (!uuid.safeParse(areaId).success) return reply.code(400).send({ error: 'invalid_area_id' });
     try {
-      const [row] = await client`UPDATE areas SET status='archived' WHERE id=${areaId} AND status='active' RETURNING id,name,status`;
-      if (!row) return reply.code(404).send({ error: 'area_not_found' });
-      return row;
+      const result = await client.begin(async (tx) => {
+        const [area] = await tx`SELECT id,status FROM areas WHERE id=${areaId} FOR UPDATE`;
+        if (!area || area.status !== 'active') return { error: 'area_not_found' as const };
+        const [operational] = await tx`SELECT
+          EXISTS (SELECT 1 FROM calendar_sessions WHERE area_id=${areaId} AND status='scheduled' AND starts_at > now()) OR
+          EXISTS (SELECT 1 FROM recurring_session_templates WHERE area_id=${areaId} AND status='active' AND (ends_on IS NULL OR ends_on >= (now() AT TIME ZONE 'Atlantic/Canary')::date)) AS exists`;
+        if (operational?.exists) return { error: 'future_calendar_items_exist' as const };
+        const [row] = await tx`UPDATE areas SET status='archived' WHERE id=${areaId} AND status='active' RETURNING id,name,status`;
+        return row ? { row } : { error: 'area_not_found' as const };
+      });
+      if ('error' in result) return reply.code(result.error === 'future_calendar_items_exist' ? 409 : 404).send({ error: result.error });
+      return result.row;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.get('/api/services', async (_request, reply) => {
@@ -152,9 +165,18 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const { serviceId } = request.params as { serviceId: string };
     if (!uuid.safeParse(serviceId).success) return reply.code(400).send({ error: 'invalid_service_id' });
     try {
-      const [row] = await client`UPDATE services SET status='archived' WHERE id=${serviceId} AND status <> 'archived' RETURNING id,name,status`;
-      if (!row) return reply.code(404).send({ error: 'service_not_found' });
-      return row;
+      const result = await client.begin(async (tx) => {
+        const [service] = await tx`SELECT id,status FROM services WHERE id=${serviceId} FOR UPDATE`;
+        if (!service || service.status === 'archived') return { error: 'service_not_found' as const };
+        const [operational] = await tx`SELECT
+          EXISTS (SELECT 1 FROM calendar_sessions WHERE service_id=${serviceId} AND status='scheduled' AND starts_at > now()) OR
+          EXISTS (SELECT 1 FROM recurring_session_templates WHERE service_id=${serviceId} AND status='active' AND (ends_on IS NULL OR ends_on >= (now() AT TIME ZONE 'Atlantic/Canary')::date)) AS exists`;
+        if (operational?.exists) return { error: 'future_calendar_items_exist' as const };
+        const [row] = await tx`UPDATE services SET status='archived' WHERE id=${serviceId} AND status <> 'archived' RETURNING id,name,status`;
+        return row ? { row } : { error: 'service_not_found' as const };
+      });
+      if ('error' in result) return reply.code(result.error === 'future_calendar_items_exist' ? 409 : 404).send({ error: result.error });
+      return result.row;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.get('/api/services/:serviceId/plans', async (request, reply) => {

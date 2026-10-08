@@ -161,12 +161,17 @@ export function registerClientRoutes(
         const access: 'available' | 'forbidden' = can(context, permission) ? 'available' : 'forbidden';
         return [id, { access, dataState: 'not_connected', data: null }] as const;
       }));
+      const reservations = can(context, 'calendar.read') ? await database`
+        SELECT r.id,r.status,s.starts_at AS "startsAt",s.duration_minutes AS "durationMinutes",s.status AS "sessionStatus",svc.name AS "serviceName",a.name AS "areaName"
+        FROM calendar_reservations r JOIN calendar_sessions s ON s.id=r.session_id JOIN services svc ON svc.id=s.service_id JOIN areas a ON a.id=s.area_id
+        WHERE r.client_id=${params.data.clientId} ORDER BY s.starts_at DESC,r.created_at DESC,r.id DESC LIMIT 100` : [];
       summary.profile = { access: 'available', dataState: 'ready', data: { status: client.status } };
       return {
         client,
         capabilities: { manage: can(context, 'clients.manage') },
         summary,
-        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history'].includes(section.id) ? 'ready' : 'not_connected' })),
+        reservations,
+        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) ? 'ready' : 'not_connected' })),
         history: events.map((event) => ({ id: event.id, eventType: event.eventType, actorLabel: actorLabel(event.actorRole), occurredAt: event.occurredAt })),
       };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId' }, 'client detail failed'); return reply.code(500).send({ error: 'internal_error' }); }
