@@ -8,15 +8,15 @@ export interface AuthorizationContext {
 
 export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> = {
   admin: ['*'],
-  trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read'],
-  'reception-management': ['clients.read', 'calendar.read', 'reservations.manage', 'scheduling.override_capacity', 'billing.read-basic', 'timeclock.read'],
+  trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read', 'reservations.manage', 'reservations.attendance'],
+  'reception-management': ['clients.read', 'calendar.read', 'reservations.manage', 'billing.read-basic', 'timeclock.read'],
   accountant: [],
 };
 
 /** Registry of operation identifiers known to the server. New operations must be reviewed here before use. */
 export const knownPermissions: ReadonlySet<string> = new Set([
   'clients.read', 'clients.manage', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read',
-  'reservations.manage', 'billing.read-basic', 'billing.validate_transfer', 'scheduling.override_capacity',
+  'reservations.manage', 'reservations.attendance', 'billing.read-basic', 'billing.validate_transfer', 'scheduling.override_capacity',
   'staff.timeclock.correct', 'settings.manage',
 ]);
 

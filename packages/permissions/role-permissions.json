@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1.0.0",
   "source": "DECISIONS_2J.md; final action-level scope remains a product gate",
-  "knownPermissions": ["clients.read", "clients.manage", "health.read", "training.read", "calendar.read", "communication.read", "timeclock.read", "reservations.manage", "billing.read-basic", "billing.validate_transfer", "scheduling.override_capacity", "staff.timeclock.correct", "settings.manage"],
+  "knownPermissions": ["clients.read", "clients.manage", "health.read", "training.read", "calendar.read", "communication.read", "timeclock.read", "reservations.manage", "reservations.attendance", "billing.read-basic", "billing.validate_transfer", "scheduling.override_capacity", "staff.timeclock.correct", "settings.manage"],
   "roles": {
     "admin": ["*"],
-    "trainer": ["clients.read", "health.read", "training.read", "calendar.read", "communication.read", "timeclock.read"],
-    "reception-management": ["clients.read", "calendar.read", "reservations.manage", "scheduling.override_capacity", "billing.read-basic", "timeclock.read"],
+    "trainer": ["clients.read", "health.read", "training.read", "calendar.read", "communication.read", "timeclock.read", "reservations.manage", "reservations.attendance"],
+    "reception-management": ["clients.read", "calendar.read", "reservations.manage", "billing.read-basic", "timeclock.read"],
     "accountant": []
   },
   "unresolved": [

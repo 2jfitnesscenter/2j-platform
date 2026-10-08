@@ -315,11 +315,13 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
 .session-area { overflow: hidden; color: var(--2j-color-text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .seat-meter { height: 4px; overflow: hidden; border-radius: var(--2j-radius-pill); background: var(--2j-color-surface-subtle); }
 .seat-meter > span { height: 100%; display: block; border-radius: inherit; background: var(--2j-color-brand-strong); }
-.seat-count { display: flex; justify-content: space-between; gap: 3px; font-size: 10px; }
-.seat-count strong { color: var(--2j-color-text-primary); font-size: 11px; }
+.seat-count { display: flex; justify-content: space-between; gap: 3px; font-size: 12px; }
+.seat-count strong { color: var(--2j-color-text-primary); font-size: 12px; }
 .seat-count span { color: var(--2j-color-text-secondary); text-align: right; }
-.waitlist-count, .cancelled-label { color: var(--2j-color-warning); font-size: 10px; }
+.waitlist-count, .cancelled-label { color: var(--2j-color-warning); font-size: 12px; }
 .cancelled-label { color: var(--2j-color-danger); }
+.session-card.overbooked { border-left-color: var(--2j-color-danger); }
+.overbook-banner { padding: 9px 12px; border: 1px solid var(--2j-color-danger); border-radius: var(--2j-radius-sm); color: var(--2j-color-danger); font-size: 13px; font-weight: var(--2j-type-weight-semibold); }
 .day-empty { margin: 0; padding: 14px 3px; color: var(--2j-color-text-secondary); font-size: 11px; text-align: center; }
 .calendar-empty, .calendar-state { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; color: var(--2j-color-text-secondary); text-align: center; }
 .calendar-empty strong, .calendar-state strong { color: var(--2j-color-text-primary); font-size: 16px; }
@@ -361,12 +363,25 @@ tbody tr.selected-row { background: var(--2j-color-surface-subtle); }
 .booking-box > label { display: grid; gap: 7px; font-size: 13px; font-weight: var(--2j-type-weight-medium); }
 .booking-box input { width: 100%; min-height: 44px; padding: 0 11px; border: 1px solid var(--2j-color-border-strong); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); color: var(--2j-color-text-primary); }
 .client-picker { display: grid; max-height: 150px; overflow-y: auto; }
+.client-picker[role="listbox"] { margin: 0; padding: 0; list-style: none; }
+.client-picker li { min-height: 44px; display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--2j-color-border); border-bottom: 0; background: var(--2j-color-surface); cursor: pointer; }
+.client-picker li:last-child { border-bottom: 1px solid var(--2j-color-border); }
+.client-picker li.selected { background: var(--2j-color-brand); color: var(--2j-color-text-on-brand); }
 .client-picker button { min-height: 44px; padding: 0 10px; border: 1px solid var(--2j-color-border); border-bottom: 0; background: var(--2j-color-surface); text-align: left; cursor: pointer; }
 .client-picker button:last-child { border-bottom: 1px solid var(--2j-color-border); }
 .client-picker button.selected { background: var(--2j-color-brand); color: var(--2j-color-text-on-brand); }
 .waitlist-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .button.danger { background: var(--2j-color-danger); }
 .cancel-session { justify-self: start; margin-top: 14px; }
+.individual-client-field { display: grid; gap: 6px; }
+.individual-client-field > label { display: block; }
+.field-error { color: var(--2j-color-danger); font-size: 12px; }
+.inline-feedback { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface-raised); color: var(--2j-color-text-primary); font-size: 13px; }
+.confirmation-backdrop { z-index: 9; }
+.confirmation-dialog { width: min(480px, 100%); }
+.confirmation-dialog h2 { margin: 5px 0 10px; }
+.confirmation-dialog p { color: var(--2j-color-text-secondary); line-height: var(--2j-type-line-height-normal); }
+.attendee-list small { font-size: 12px; }
 @media (max-width: 1120px) {
   .week-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .day-column { border-bottom: 1px solid var(--2j-color-border); }

@@ -7,8 +7,11 @@ test('approved role matrix grants only named operations and denies by default', 
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'clients.read'), true);
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'billing.refund'), false);
   assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'billing.read-basic'), true);
-  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'scheduling.override_capacity'), true);
-  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'scheduling.override_capacity'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'reservations.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'reservations.attendance'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'scheduling.override_capacity'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'scheduling.override_capacity'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'reservations.attendance'), false);
   assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'health.read'), false);
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.read-basic'), false);
   assert.throws(() => requirePermission({ actorId: 'fixture', role: 'accountant' }, 'billing.refund'), { code: 'FORBIDDEN', statusCode: 403 });

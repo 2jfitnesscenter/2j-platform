@@ -14,10 +14,11 @@ const reception = buildServer(process.env.DATABASE_URL, { authorizationResolver:
 const receptionNoOverride = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-reception-restricted', role: 'reception-management', deniedPermissions: ['scheduling.override_capacity'] }), bookingEligibilityResolver: eligible });
 const failClosed = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-fail-closed', role: 'reception-management' }) });
 const trainer = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-trainer', role: 'trainer' }) });
+const trainerEligible = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-trainer-eligible', role: 'trainer' }), bookingEligibilityResolver: eligible });
 const accountant = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-accountant', role: 'accountant' }) });
 const anonymous = buildServer(process.env.DATABASE_URL);
 const [area] = await sql`SELECT id FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([admin.close(), reception.close(), receptionNoOverride.close(), failClosed.close(), trainer.close(), accountant.close(), anonymous.close()]); await sql.end(); });
+after(async () => { await Promise.all([admin.close(), reception.close(), receptionNoOverride.close(), failClosed.close(), trainer.close(), trainerEligible.close(), accountant.close(), anonymous.close()]); await sql.end(); });
 
 async function createClient(firstName) {
   const result = await admin.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': randomUUID() }, payload: { firstName, lastName: `Calendar ${randomUUID().slice(0, 8)}` } });
@@ -31,7 +32,7 @@ async function createService() {
 }
 async function createSession({ capacity = 3, startsAt = new Date(Date.now() + 86400000).toISOString(), service = null, app = reception } = {}) {
   const selectedService = service ?? await createService();
-  const result = await app.inject({ method: 'POST', url: '/api/calendar/sessions', payload: { serviceId: selectedService.id, areaId: area.id, startsAt, durationMinutes: 60, capacity } });
+  const result = await app.inject({ method: 'POST', url: '/api/calendar/sessions', payload: { serviceId: selectedService.id, areaId: selectedService.areaId, startsAt, durationMinutes: 60, capacity } });
   assert.equal(result.statusCode, 201, result.body);
   return { ...result.json(), service: selectedService };
 }
@@ -85,8 +86,9 @@ test('a full session accepts a waitlist entry, supports withdrawal and re-entry,
   const reentered = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`, payload: { clientId: clients[1].id } });
   assert.equal(reentered.statusCode, 201, reentered.body);
   const data = await admin.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}/attendees` });
-  assert.equal(data.json().waitlist.length, 1);
-  assert.equal(data.json().waitlist[0].clientId, clients[1].id);
+  assert.equal(data.json().waitlist.filter((item) => item.status === 'waiting').length, 1);
+  assert.equal(data.json().waitlist.find((item) => item.status === 'waiting').clientId, clients[1].id);
+  assert.equal(data.json().waitlist.filter((item) => item.status === 'cancelled').length, 1);
 });
 
 test('calendar template and generated session are distinct entities and generation is explicit and idempotent', async () => {
@@ -133,19 +135,24 @@ test('calendar management, attendance and attendee PII require server-side permi
   const secondClient = await createClient('Overbook reception'); const thirdClient = await createClient('Overbook admin');
   assert.equal((await anonymous.inject({ method: 'GET', url: '/api/calendar/week?weekStart=2026-10-05' })).statusCode, 401);
   assert.equal((await accountant.inject({ method: 'GET', url: '/api/calendar/week?weekStart=2026-10-05' })).statusCode, 403);
-  assert.equal((await trainer.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: client.id } })).statusCode, 403);
+  assert.equal((await trainerEligible.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: client.id } })).statusCode, 201);
   assert.equal((await receptionNoOverride.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: secondClient.id, overbook: true } })).statusCode, 403);
   assert.equal((await accountant.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}/attendees` })).statusCode, 403);
   const booked = await reserve(session.id, client.id);
-  assert.equal(booked.statusCode, 201);
-  const attendance = await reception.inject({ method: 'PATCH', url: `/api/calendar/reservations/${booked.json().id}/attendance`, payload: { status: 'attended' } });
+  assert.equal(booked.statusCode, 409); // the trainer already created the reservation
+  const trainerBooking = await sql`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id}`;
+  const bookedId = trainerBooking[0].id;
+  assert.equal((await reception.inject({ method: 'PATCH', url: `/api/calendar/reservations/${bookedId}/attendance`, payload: { status: 'attended' } })).statusCode, 403);
+  const attendance = await trainerEligible.inject({ method: 'PATCH', url: `/api/calendar/reservations/${bookedId}/attendance`, payload: { status: 'attended' } });
   assert.equal(attendance.statusCode, 200);
   assert.equal(attendance.json().status, 'attended');
-  const overbookedByStaff = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: secondClient.id, overbook: true } });
-  assert.equal(overbookedByStaff.statusCode, 201, overbookedByStaff.body);
+  const overbookedByTrainer = await trainerEligible.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: secondClient.id, overbook: true } });
+  assert.equal(overbookedByTrainer.statusCode, 403, overbookedByTrainer.body);
+  const deniedReceptionOverbook = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: secondClient.id, overbook: true } });
+  assert.equal(deniedReceptionOverbook.statusCode, 403);
   const overbooked = await admin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: thirdClient.id, overbook: true } });
   assert.equal(overbooked.statusCode, 201, overbooked.body);
-  assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_audit_events WHERE session_id=${session.id} AND action='reservation.overbooked'`).at(0).total, 2);
+  assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_audit_events WHERE session_id=${session.id} AND action='reservation.overbooked'`).at(0).total, 1);
 });
 
 test('booking eligibility contract fails closed when no client entitlement resolver is connected', async () => {
@@ -176,4 +183,109 @@ test('individual appointment creates a single client-linked reservation transact
   const rows = await reception.inject({ method: 'GET', url: `/api/calendar/sessions/${result.json().id}/attendees` });
   assert.equal(rows.json().reservations.length, 1);
   assert.equal(rows.json().reservations[0].clientId, client.id);
+  const other = await createClient('Other individual');
+  assert.equal((await reserve(result.json().id, other.id)).json().error, 'individual_session_client_mismatch');
+  assert.equal((await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${result.json().id}/waitlist`, payload: { clientId: other.id } })).json().error, 'individual_session_client_mismatch');
+  await assert.rejects(sql`UPDATE calendar_sessions SET individual_client_id=NULL WHERE id=${result.json().id}`, (error) => error.code === '55000');
+  await assert.rejects(sql`UPDATE calendar_sessions SET capacity=2 WHERE id=${result.json().id}`, (error) => error.code === '23514');
+  await assert.rejects(sql`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${result.json().id},${other.id},'direct','test')`, (error) => error.code === '23514');
+});
+
+test('template validity boundaries compare Canary-local ISO dates and API returns date strings', async () => {
+  const service = await createService();
+  const start = new Date(); start.setUTCDate(start.getUTCDate() + 14);
+  const startsOn = start.toISOString().slice(0, 10); const weekday = start.getUTCDay();
+  const created = await reception.inject({ method: 'POST', url: '/api/calendar/templates', payload: { serviceId: service.id, areaId: area.id, weekday, localStartTime: '10:00', durationMinutes: 45, capacity: 4, startsOn, endsOn: startsOn } });
+  assert.equal(created.statusCode, 201, created.body);
+  const listed = await trainer.inject({ method: 'GET', url: `/api/calendar/week?weekStart=${mondayKey(start)}` });
+  const template = listed.json().templates.find((item) => item.id === created.json().id);
+  assert.equal(template.startsOn, startsOn); assert.equal(template.endsOn, startsOn);
+  for (const delta of [-7, 7]) {
+    const outside = new Date(start); outside.setUTCDate(outside.getUTCDate() + delta);
+    const denied = await reception.inject({ method: 'POST', url: `/api/calendar/templates/${created.json().id}/sessions`, payload: { sessionDate: outside.toISOString().slice(0, 10) } });
+    assert.equal(denied.statusCode, 409); assert.equal(denied.json().error, 'template_inactive');
+  }
+  const within = await reception.inject({ method: 'POST', url: `/api/calendar/templates/${created.json().id}/sessions`, payload: { sessionDate: startsOn } });
+  assert.equal(within.statusCode, 201, within.body);
+});
+
+test('session cancellation preserves cancelled-by-center history and blocks later attendance changes', async () => {
+  const session = await createSession({ capacity: 1 }); const clients = await Promise.all([createClient('Cancel reserved'), createClient('Cancel waiting')]);
+  const booked = await reserve(session.id, clients[0].id); assert.equal(booked.statusCode, 201);
+  const waiting = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`, payload: { clientId: clients[1].id } }); assert.equal(waiting.statusCode, 201);
+  const cancelled = await reception.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}/cancel` }); assert.equal(cancelled.statusCode, 200, cancelled.body);
+  await assert.rejects(sql`UPDATE calendar_sessions SET status='scheduled' WHERE id=${session.id}`, (error) => error.code === '55000');
+  const rows = await admin.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}/attendees` });
+  assert.equal(rows.json().reservations[0].status, 'cancelled_by_center');
+  assert.equal(rows.json().waitlist[0].status, 'cancelled_by_center');
+  assert.equal((await trainerEligible.inject({ method: 'PATCH', url: `/api/calendar/reservations/${booked.json().id}/attendance`, payload: { status: 'attended' } })).json().error, 'session_cancelled');
+  assert.equal((await reception.inject({ method: 'PATCH', url: `/api/calendar/reservations/${booked.json().id}/cancel` })).statusCode, 409);
+  assert.equal((await reception.inject({ method: 'PATCH', url: `/api/calendar/waitlist/${waiting.json().id}/cancel` })).statusCode, 409);
+  const audit = await sql`SELECT action,actor_id,details,occurred_at FROM calendar_audit_events WHERE session_id=${session.id} AND action IN ('reservation.cancelled_by_center','waitlist.cancelled_by_center') ORDER BY action`;
+  assert.equal(audit.length, 2); assert.ok(audit.every((item) => item.actor_id === 'calendar-reception' && item.occurred_at));
+  assert.deepEqual(audit.map((item) => item.details.newStatus).sort(), ['cancelled_by_center','cancelled_by_center']);
+});
+
+test('attendance and no-show are reversible and audit each old/new status, actor and time', async () => {
+  const session = await createSession({ capacity: 1 }); const client = await createClient('Reversible attendance');
+  const booking = await reserve(session.id, client.id);
+  const states = ['attended','no_show','reserved'];
+  for (const status of states) {
+    const changed = await trainerEligible.inject({ method: 'PATCH', url: `/api/calendar/reservations/${booking.json().id}/attendance`, payload: { status } });
+    assert.equal(changed.statusCode, 200, changed.body); assert.equal(changed.json().status, status);
+  }
+  const audit = await sql`SELECT actor_id,details,occurred_at FROM calendar_audit_events WHERE session_id=${session.id} AND action='reservation.attendance_changed' ORDER BY occurred_at,id`;
+  assert.equal(audit.length, 3);
+  assert.deepEqual(audit.map((row) => [row.details.previousStatus,row.details.newStatus]), [['reserved','attended'],['attended','no_show'],['no_show','reserved']]);
+  assert.ok(audit.every((row) => row.actor_id === 'calendar-trainer-eligible' && row.occurred_at));
+});
+
+test('future scheduled sessions block service and area archival, including under direct SQL', async () => {
+  const uniqueArea = await admin.inject({ method: 'POST', url: '/api/areas', payload: { name: `Calendar area ${randomUUID()}` } });
+  assert.equal(uniqueArea.statusCode, 201, uniqueArea.body);
+  const selected = await admin.inject({ method: 'POST', url: '/api/services', payload: { name: `Calendar archive ${randomUUID()}`, areaId: uniqueArea.json().id, status: 'active' } });
+  const session = await createSession({ service: selected.json(), app: reception });
+  assert.equal((await admin.inject({ method: 'PATCH', url: `/api/services/${selected.json().id}/archive` })).statusCode, 409);
+  assert.equal((await admin.inject({ method: 'PATCH', url: `/api/areas/${uniqueArea.json().id}/archive` })).statusCode, 409);
+  await assert.rejects(sql`UPDATE services SET status='archived' WHERE id=${selected.json().id}`, (error) => error.code === '23514');
+  await assert.rejects(sql`UPDATE areas SET status='archived' WHERE id=${uniqueArea.json().id}`, (error) => error.code === '23514');
+  await reception.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}/cancel` });
+  assert.equal((await admin.inject({ method: 'PATCH', url: `/api/services/${selected.json().id}/archive` })).statusCode, 200);
+  assert.equal((await admin.inject({ method: 'PATCH', url: `/api/areas/${uniqueArea.json().id}/archive` })).statusCode, 200);
+});
+
+test('archiving a recurring template is audited and releases its service archival blocker', async () => {
+  const service = await createService(); const start = new Date(); start.setUTCDate(start.getUTCDate() + 20); const date = start.toISOString().slice(0, 10);
+  const template = await reception.inject({ method: 'POST', url: '/api/calendar/templates', payload: { serviceId: service.id, areaId: area.id, weekday: start.getUTCDay(), localStartTime: '11:00', durationMinutes: 60, capacity: 8, startsOn: date, endsOn: null } });
+  assert.equal(template.statusCode, 201, template.body);
+  assert.equal((await admin.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 409);
+  const archived = await reception.inject({ method: 'PATCH', url: `/api/calendar/templates/${template.json().id}/archive` });
+  assert.equal(archived.statusCode, 200, archived.body); assert.equal(archived.json().status, 'archived');
+  const generation = await reception.inject({ method: 'POST', url: `/api/calendar/templates/${template.json().id}/sessions`, payload: { sessionDate: date } });
+  assert.equal(generation.statusCode, 409); assert.equal(generation.json().error, 'template_inactive');
+  assert.equal((await admin.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 200);
+  const audit = await sql`SELECT actor_id,action FROM calendar_audit_events WHERE resource_id=${template.json().id}`;
+  assert.deepEqual(audit.map((row) => [row.actor_id,row.action]), [['calendar-reception','template.archived']]);
+});
+
+test('reservation and waitlist revalidate service and area status at write time', async () => {
+  const service = await createService(); const session = await createSession({ service, capacity: 2 });
+  await sql`UPDATE calendar_sessions SET starts_at=now()-interval '1 minute' WHERE id=${session.id}`;
+  assert.equal((await admin.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 200);
+  await sql`UPDATE calendar_sessions SET starts_at=now()+interval '1 day' WHERE id=${session.id}`;
+  const reserveResponse = await reserve(session.id, (await createClient('Archived at reserve')).id);
+  assert.equal(reserveResponse.statusCode, 409); assert.equal(reserveResponse.json().error, 'service_archived');
+
+  const areaResponse = await admin.inject({ method: 'POST', url: '/api/areas', payload: { name: `Calendar recheck ${randomUUID()}` } });
+  const areaService = await admin.inject({ method: 'POST', url: '/api/services', payload: { name: `Calendar recheck ${randomUUID()}`, areaId: areaResponse.json().id, status: 'active' } });
+  const areaSession = await createSession({ service: areaService.json(), capacity: 1 });
+  await sql`UPDATE calendar_sessions SET starts_at=now()-interval '1 minute' WHERE id=${areaSession.id}`;
+  assert.equal((await admin.inject({ method: 'PATCH', url: `/api/services/${areaService.json().id}/archive` })).statusCode, 200);
+  const areaArchive = await admin.inject({ method: 'PATCH', url: `/api/areas/${areaResponse.json().id}/archive` });
+  assert.equal(areaArchive.statusCode, 200, areaArchive.body);
+  // Simulate legacy/corrupt data to verify the reservation path independently checks the area too.
+  await sql`UPDATE services SET status='active' WHERE id=${areaService.json().id}`;
+  await sql`UPDATE calendar_sessions SET starts_at=now()+interval '1 day' WHERE id=${areaSession.id}`;
+  const waitlist = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${areaSession.id}/waitlist`, payload: { clientId: (await createClient('Archived at waitlist')).id } });
+  assert.equal(waitlist.statusCode, 409); assert.equal(waitlist.json().error, 'area_archived');
 });

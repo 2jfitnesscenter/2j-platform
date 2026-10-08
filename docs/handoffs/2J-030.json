@@ -4,39 +4,43 @@
   "agent": "codex",
   "branch": "agent/codex/2J-030-calendar-bookings-waitlist",
   "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/8",
-  "status": "implementation-complete-independent-review-required",
-  "implementation_sha": "daa8099d1b4825bedc4b69cc9f25d63a8d3cb8d1",
+  "status": "corrections-complete-independent-review-required",
+  "review_target": "exact live PR head after this handoff commit; keep Claude and Antigravity on the same headRefOid",
   "base": "main including 2J-010 and 2J-020",
-  "commits": [],
+  "migration": "apps/api/migrations/0005_calendar_review_corrections.sql",
+  "delivered": [
+    "Canary-local template date boundaries; explicit template archival and audit",
+    "Individual sessions enforce capacity 1, immutable client binding and client-matched reservations/waitlist in PostgreSQL",
+    "Center session cancellation preserves history as cancelled_by_center, blocks subsequent changes and cannot be reversed",
+    "Future-session/template archive guards for services and areas; service/area revalidation for reservations and waitlist",
+    "Trainer reservation/waitlist/attendance permissions; Admin-only capacity override; Reception/Management reservation/waitlist only",
+    "Reversible attendance/no-show changes with old/new state, actor and timestamp audit",
+    "2J confirmation dialogs, overbook indicator, accessible client search, inline feedback, responsive states and human error copy"
+  ],
   "tests": [
-    { "name": "Full test suite", "command": "pnpm test", "result": "PASS", "evidence": "91/91 tests; calendar PostgreSQL API race/permissions/audit tests and calendar UI tests included." },
-    { "name": "Typecheck", "command": "pnpm typecheck", "result": "PASS", "evidence": "7/7 packages." },
-    { "name": "Build", "command": "pnpm build", "result": "PASS", "evidence": "7/7 packages." },
-    { "name": "Dependency audit", "command": "pnpm audit --audit-level=moderate", "result": "PASS", "evidence": "No known vulnerabilities found." },
-    { "name": "Migration", "command": "pnpm --filter @2j/api db:migrate", "result": "PASS", "evidence": "All 4 checksummed migrations applied to a fresh PostgreSQL database." },
-    { "name": "Visual evidence", "command": "Playwright Chromium at 1440, 768, and 390 CSS px", "result": "PASS", "evidence": "docs/evidence/2J-030/calendar-{1440,768,390}.png" }
+    { "name": "Full test suite", "command": "pnpm test", "result": "PASS", "evidence": "100/100: 57 API/PostgreSQL, 27 admin UI, 16 domain/security/token tests; 0 skipped." },
+    { "name": "Typecheck", "command": "pnpm typecheck", "result": "PASS", "evidence": "7/7 workspace projects." },
+    { "name": "Build", "command": "pnpm build", "result": "PASS", "evidence": "7/7 workspace projects." },
+    { "name": "Dependency audit", "command": "pnpm audit --audit-level high", "result": "PASS", "evidence": "No known vulnerabilities found." },
+    { "name": "PostgreSQL migrations", "command": "pnpm --filter @2j/api db:migrate", "result": "PASS", "evidence": "5 checksummed migrations applied to a fresh PostgreSQL database." },
+    { "name": "Visual evidence", "command": "Chromium at 1440, 768 and 390 CSS px", "result": "PASS", "evidence": "docs/evidence/2J-030/ includes requested session, confirmation, eligibility, loading and error states." },
+    { "name": "Diff whitespace", "command": "git diff --check", "result": "PASS", "evidence": "No whitespace errors." },
+    { "name": "Secret scan", "command": "GitHub quality workflow", "result": "PENDING_PUSH", "evidence": "Go/gitleaks unavailable locally; GitHub secret scan is required on exact PR head." }
   ],
-  "migration": "apps/api/migrations/0004_calendar_bookings.sql",
-  "decisions": [
-    "Week view is primary; recurring templates and dated sessions are separate entities.",
-    "Template occurrence generation requires an explicit date; no automatic horizon is assumed.",
-    "Overbooking requires scheduling.override_capacity and is audited.",
-    "Booking eligibility remains server-owned and fails closed by default until client-plan assignments and available-balance data are integrated.",
-    "Reservation eligibility tests use an injected resolver; no real financial consumption is implemented."
+  "runtime_boundary": "Default booking eligibility fails closed until a server-side client-plan/right and available-balance source is integrated; integration tests inject an eligible resolver and do not consume balances.",
+  "out_of_scope": [
+    "Automatic waitlist promotion",
+    "Penalties and cancellation windows",
+    "Recurring generation horizon or scheduled automation",
+    "Push reminders",
+    "Resources or rooms",
+    "Full payment and balance consumption"
   ],
-  "product_decisions_pending": [
-    "Automatic waitlist ordering and promotion",
-    "Cancellation windows, penalties, and no-show consequences",
-    "Recurring generation horizon and scheduled automation",
-    "Push reminders"
-  ],
+  "visual_evidence": "docs/evidence/2J-030/README.md",
   "review": {
-    "claude": "pending-final-sha",
-    "antigravity": "pending-final-sha",
-    "github_ci": "pending-final-documentation-head"
+    "claude": "pending-final-live-sha",
+    "antigravity": "pending-final-live-sha",
+    "github_ci": "pending-final-live-sha"
   },
-  "reviewer_instructions": [
-    "Review the exact final PR head; do not merge this PR.",
-    "Pay special attention to the fail-closed entitlement boundary, session row locking, PII permission checks, overbooking permission, and audit transaction boundaries."
-  ]
+  "merge": "DO_NOT_MERGE"
 }

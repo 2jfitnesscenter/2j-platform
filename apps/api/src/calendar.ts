@@ -62,6 +62,7 @@ export function registerCalendarRoutes(
         SELECT cs.id,cs.service_id AS "serviceId",s.name AS "serviceName",cs.area_id AS "areaId",a.name AS "areaName",
           cs.template_id AS "templateId",cs.source,cs.starts_at AS "startsAt",cs.duration_minutes AS "durationMinutes",cs.capacity,cs.status,
           (SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show')) AS "occupiedCount",
+          GREATEST((SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show'))-cs.capacity,0)::int AS "overbookCount",
           (SELECT count(*)::int FROM calendar_waitlist_entries w WHERE w.session_id=cs.id AND w.status='waiting') AS "waitlistCount"
         FROM calendar_sessions cs JOIN services s ON s.id=cs.service_id JOIN areas a ON a.id=cs.area_id
         WHERE cs.starts_at >= (${weekStart}::date::timestamp AT TIME ZONE 'Atlantic/Canary')
@@ -69,8 +70,8 @@ export function registerCalendarRoutes(
         ORDER BY cs.starts_at,cs.id`;
       const areas = await database`SELECT id,name FROM areas WHERE status='active' ORDER BY normalized_name,id`;
       const services = await database`SELECT id,name,area_id AS "areaId" FROM services WHERE status='active' ORDER BY lower(name),id`;
-      const templates = await database`SELECT t.id,t.service_id AS "serviceId",s.name AS "serviceName",t.area_id AS "areaId",a.name AS "areaName",t.weekday,t.local_start_time AS "localStartTime",t.duration_minutes AS "durationMinutes",t.capacity,t.starts_on AS "startsOn",t.ends_on AS "endsOn" FROM recurring_session_templates t JOIN services s ON s.id=t.service_id JOIN areas a ON a.id=t.area_id WHERE t.status='active' ORDER BY t.weekday,t.local_start_time,t.id`;
-      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, templates, capabilities: { manage: can(context, 'reservations.manage'), overrideCapacity: can(context, 'scheduling.override_capacity') } };
+      const templates = await database`SELECT t.id,t.service_id AS "serviceId",s.name AS "serviceName",t.area_id AS "areaId",a.name AS "areaName",t.weekday,t.local_start_time AS "localStartTime",t.duration_minutes AS "durationMinutes",t.capacity,to_char(t.starts_on,'YYYY-MM-DD') AS "startsOn",CASE WHEN t.ends_on IS NULL THEN NULL ELSE to_char(t.ends_on,'YYYY-MM-DD') END AS "endsOn" FROM recurring_session_templates t JOIN services s ON s.id=t.service_id JOIN areas a ON a.id=t.area_id WHERE t.status='active' ORDER BY t.weekday,t.local_start_time,t.id`;
+      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity') } };
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/week' }, 'calendar week failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
@@ -81,7 +82,7 @@ export function registerCalendarRoutes(
     const params = z.object({ sessionId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error: 'invalid_session_id' });
     try {
       const reservations = await database`SELECT r.id,r.client_id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",r.status,r.created_at AS "createdAt" FROM calendar_reservations r JOIN clients c ON c.id=r.client_id WHERE r.session_id=${params.data.sessionId} ORDER BY r.created_at,r.id`;
-      const waitlist = await database`SELECT w.id,w.client_id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",w.status,w.created_at AS "createdAt" FROM calendar_waitlist_entries w JOIN clients c ON c.id=w.client_id WHERE w.session_id=${params.data.sessionId} AND w.status='waiting' ORDER BY w.created_at,w.id`;
+      const waitlist = await database`SELECT w.id,w.client_id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",w.status,w.created_at AS "createdAt" FROM calendar_waitlist_entries w JOIN clients c ON c.id=w.client_id WHERE w.session_id=${params.data.sessionId} ORDER BY w.created_at,w.id`;
       return { reservations, waitlist };
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/sessions/:sessionId/attendees' }, 'session attendees failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
@@ -133,6 +134,23 @@ export function registerCalendarRoutes(
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/templates' }, 'template create failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
+  app.patch('/api/calendar/templates/:templateId/archive', async (request, reply) => {
+    const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
+    const params = z.object({ templateId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error: 'invalid_template_id' });
+    try {
+      const result = await database.begin(async (tx) => {
+        const [template] = await tx`SELECT id,status FROM recurring_session_templates WHERE id=${params.data.templateId} FOR UPDATE`;
+        if (!template) return { error: 'template_not_found' };
+        if (template.status !== 'active') return { error: 'template_not_active' };
+        await tx`UPDATE recurring_session_templates SET status='archived' WHERE id=${template.id}`;
+        await appendAudit(tx, context.actorId, 'template.archived', 'calendar_template', template.id, null, null);
+        return { id: template.id, status: 'archived' };
+      });
+      if ('error' in result) return reply.code(result.error === 'template_not_found' ? 404 : 409).send({ error: result.error });
+      return result;
+    } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'PATCH /api/calendar/templates/:templateId/archive' }, 'template archive failed'); return reply.code(500).send({ error: 'internal_error' }); }
+  });
+
   app.post('/api/calendar/templates/:templateId/sessions', async (request, reply) => {
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     const params = z.object({ templateId: uuid }).safeParse(request.params);
@@ -140,7 +158,7 @@ export function registerCalendarRoutes(
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     try {
       const result = await database.begin(async (tx) => {
-        const [template] = await tx`SELECT * FROM recurring_session_templates WHERE id=${params.data.templateId} FOR UPDATE`;
+        const [template] = await tx`SELECT id,service_id,area_id,weekday,local_start_time,duration_minutes,capacity,status,to_char(starts_on,'YYYY-MM-DD') AS starts_on,CASE WHEN ends_on IS NULL THEN NULL ELSE to_char(ends_on,'YYYY-MM-DD') END AS ends_on FROM recurring_session_templates WHERE id=${params.data.templateId} FOR UPDATE`;
         if (!template) return { error: 'template_not_found' };
         if (template.status !== 'active' || body.data.sessionDate < template.starts_on || (template.ends_on && body.data.sessionDate > template.ends_on)) return { error: 'template_inactive' };
         const weekday = new Date(`${body.data.sessionDate}T00:00:00Z`).getUTCDay();
@@ -165,12 +183,14 @@ export function registerCalendarRoutes(
     if (body.data.overbook && !can(context, 'scheduling.override_capacity')) return reply.code(403).send({ error: 'permission_denied' });
     try {
       const result = await database.begin(async (tx) => {
-        const [session] = await tx`SELECT id,status,capacity,service_id,starts_at FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
+        const [session] = await tx`SELECT id,status,capacity,service_id,area_id,individual_client_id,starts_at FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
         if (!session) return { error: 'session_not_found' };
         if (session.status !== 'scheduled') return { error: 'session_cancelled' };
+        const serviceIssue = await checkService(tx, session.service_id, session.area_id); if (serviceIssue) return { error: serviceIssue };
         const [client] = await tx`SELECT id,status FROM clients WHERE id=${body.data.clientId} FOR SHARE`;
         if (!client) return { error: 'client_not_found' };
         if (client.status !== 'active') return { error: 'client_archived' };
+        if (session.individual_client_id && session.individual_client_id !== client.id) return { error: 'individual_session_client_mismatch' };
         const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at) });
         if (!eligibility.eligible) return { error: eligibility.reason };
         const [existing] = await tx`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id} AND status IN ('reserved','attended','no_show') UNION ALL SELECT id FROM calendar_waitlist_entries WHERE session_id=${session.id} AND client_id=${client.id} AND status='waiting' LIMIT 1`;
@@ -195,12 +215,14 @@ export function registerCalendarRoutes(
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     try {
       const result = await database.begin(async (tx) => {
-        const [session] = await tx`SELECT id,status,capacity,service_id,starts_at FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
+        const [session] = await tx`SELECT id,status,capacity,service_id,area_id,individual_client_id,starts_at FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
         if (!session) return { error: 'session_not_found' };
         if (session.status !== 'scheduled') return { error: 'session_cancelled' };
+        const serviceIssue = await checkService(tx, session.service_id, session.area_id); if (serviceIssue) return { error: serviceIssue };
         const [client] = await tx`SELECT id,status FROM clients WHERE id=${body.data.clientId} FOR SHARE`;
         if (!client) return { error: 'client_not_found' };
         if (client.status !== 'active') return { error: 'client_archived' };
+        if (session.individual_client_id && session.individual_client_id !== client.id) return { error: 'individual_session_client_mismatch' };
         const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at) });
         if (!eligibility.eligible) return { error: eligibility.reason };
         const [existing] = await tx`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id} AND status IN ('reserved','attended','no_show') UNION ALL SELECT id FROM calendar_waitlist_entries WHERE session_id=${session.id} AND client_id=${client.id} AND status='waiting' LIMIT 1`;
@@ -254,19 +276,23 @@ export function registerCalendarRoutes(
   });
 
   app.patch('/api/calendar/reservations/:reservationId/attendance', async (request, reply) => {
-    const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
+    const context = await authorized(request, reply, 'reservations.attendance'); if (!context) return;
     const params = z.object({ reservationId: uuid }).safeParse(request.params);
-    const body = z.object({ status: z.enum(['attended','no_show']) }).strict().safeParse(request.body);
+    const body = z.object({ status: z.enum(['reserved','attended','no_show']) }).strict().safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     try {
       const result = await database.begin(async (tx) => {
-        const [row] = await tx`SELECT id,session_id AS "sessionId",client_id AS "clientId" FROM calendar_reservations WHERE id=${params.data.reservationId}`;
-        if (!row) return { error: 'reservation_not_found' };
-        await tx`SELECT id FROM calendar_sessions WHERE id=${row.sessionId} FOR UPDATE`;
-        const [updated] = await tx`UPDATE calendar_reservations SET status=${body.data.status},updated_at=now() WHERE id=${row.id} AND status IN ('reserved','attended','no_show') RETURNING id,status`;
+        const [reference] = await tx`SELECT session_id AS "sessionId" FROM calendar_reservations WHERE id=${params.data.reservationId}`;
+        if (!reference) return { error: 'reservation_not_found' };
+        const [session] = await tx`SELECT id,status FROM calendar_sessions WHERE id=${reference.sessionId} FOR UPDATE`;
+        if (!session || session.status !== 'scheduled') return { error: 'session_cancelled' };
+        const [row] = await tx`SELECT id,session_id AS "sessionId",client_id AS "clientId",status FROM calendar_reservations WHERE id=${params.data.reservationId} FOR UPDATE`;
+        if (!row || !['reserved','attended','no_show'].includes(row.status)) return { error: 'reservation_not_active' };
+        if (row.status === body.data.status) return { id: row.id, status: row.status, previousStatus: row.status };
+        const [updated] = await tx`UPDATE calendar_reservations SET status=${body.data.status},updated_at=now() WHERE id=${row.id} RETURNING id,status,updated_at AS "updatedAt"`;
         if (!updated) return { error: 'reservation_not_active' };
-        await appendAudit(tx, context.actorId, 'reservation.attendance_changed', 'calendar_reservation', row.id, row.sessionId, row.clientId, { status: body.data.status });
-        return updated;
+        await appendAudit(tx, context.actorId, 'reservation.attendance_changed', 'calendar_reservation', row.id, row.sessionId, row.clientId, { previousStatus: row.status, newStatus: body.data.status });
+        return { ...updated, previousStatus: row.status };
       });
       if ('error' in result) return reply.code(result.error === 'reservation_not_found' ? 404 : 409).send({ error: result.error });
       return result;
@@ -278,10 +304,17 @@ export function registerCalendarRoutes(
     const params = z.object({ sessionId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error: 'invalid_session_id' });
     try {
       const result = await database.begin(async (tx) => {
-        const [session] = await tx`UPDATE calendar_sessions SET status='cancelled' WHERE id=${params.data.sessionId} AND status='scheduled' RETURNING id`;
-        if (!session) return { error: 'session_not_found_or_cancelled' };
-        await appendAudit(tx, context.actorId, 'session.cancelled', 'calendar_session', session.id, session.id, null);
-        return { id: session.id };
+        const [session] = await tx`SELECT id,status FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
+        if (!session || session.status !== 'scheduled') return { error: 'session_not_found_or_cancelled' };
+        const reservations = await tx`SELECT id,client_id AS "clientId",status FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show') FOR UPDATE`;
+        const waitlist = await tx`SELECT id,client_id AS "clientId" FROM calendar_waitlist_entries WHERE session_id=${session.id} AND status='waiting' FOR UPDATE`;
+        await tx`UPDATE calendar_sessions SET status='cancelled' WHERE id=${session.id}`;
+        await tx`UPDATE calendar_reservations SET status='cancelled_by_center',updated_at=now() WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show')`;
+        await tx`UPDATE calendar_waitlist_entries SET status='cancelled_by_center',cancelled_at=now() WHERE session_id=${session.id} AND status='waiting'`;
+        for (const row of reservations) await appendAudit(tx, context.actorId, 'reservation.cancelled_by_center', 'calendar_reservation', row.id, session.id, row.clientId, { previousStatus: row.status, newStatus: 'cancelled_by_center' });
+        for (const row of waitlist) await appendAudit(tx, context.actorId, 'waitlist.cancelled_by_center', 'calendar_waitlist_entry', row.id, session.id, row.clientId, { previousStatus: 'waiting', newStatus: 'cancelled_by_center' });
+        await appendAudit(tx, context.actorId, 'session.cancelled', 'calendar_session', session.id, session.id, null, { reservationsCancelled: reservations.length, waitlistCancelled: waitlist.length });
+        return { id: session.id, reservationsCancelled: reservations.length, waitlistCancelled: waitlist.length };
       });
       if ('error' in result) return reply.code(409).send({ error: result.error });
       return result;

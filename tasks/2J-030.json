@@ -5,37 +5,49 @@
   "status": "implementation-complete-independent-review-required",
   "pullRequest": "https://github.com/2jfitnesscenter/2j-platform/pull/8",
   "branch": "agent/codex/2J-030-calendar-bookings-waitlist",
-  "implementationSha": "daa8099d1b4825bedc4b69cc9f25d63a8d3cb8d1",
   "acceptance": {
     "weekStartsOnMonday": true,
     "timezone": "Atlantic/Canary",
     "templatesAndSessionsSeparate": true,
     "templateGeneration": "explicit-date-only",
+    "templateArchive": "explicit-and-audited",
     "capacityEnforcedTransactionally": true,
-    "overbookingPermission": "scheduling.override_capacity for authorized staff/admin roles",
-    "staffManualReservations": true,
-    "cancelAndAttendanceStates": ["reserved", "attended", "no_show", "cancelled"],
+    "individualSession": { "clientLinked": true, "clientImmutable": true, "capacity": 1, "otherClientReservationsAllowed": false },
+    "centerSessionCancellation": { "reservations": "cancelled_by_center", "waitlist": "cancelled_by_center", "historyPreserved": true, "laterChangesBlocked": true, "terminal": true },
+    "archiveGuards": ["future scheduled sessions", "active future templates"],
+    "permissions": {
+      "trainer": ["reservations.manage", "reservations.attendance"],
+      "admin": ["reservations.manage", "reservations.attendance", "scheduling.override_capacity"],
+      "reception-management": ["reservations.manage"]
+    },
+    "attendanceReversibleWithAudit": true,
+    "overbook": { "adminOnly": true, "audited": true, "visibleCount": true },
     "waitlist": { "entry": true, "withdrawal": true, "automaticPromotion": false },
     "clientReference": "clients.id",
     "serverSidePermissions": true,
     "appendOnlyAudit": true,
-    "entitlementEligibility": "server-port-fail-closed-until-client-plan-assignment-is-integrated",
     "financialConsumption": false,
     "resourcesAndRooms": false,
     "pushReminders": false
   },
-  "pendingProductDecisions": [
-    "Automatic waitlist promotion and ordering",
-    "Cancellation windows, penalties, and no-show consequences",
-    "Recurring generation horizon and scheduled automation",
-    "Push reminders"
-  ],
-  "review": {
-    "claude": "pending-final-sha",
-    "antigravity": "pending-final-sha",
-    "qa": "local-gates-pass-91-of-91"
+  "migration": "apps/api/migrations/0005_calendar_review_corrections.sql",
+  "visualEvidence": "docs/evidence/2J-030/README.md",
+  "verification": {
+    "tests": "100/100 passed; 0 skipped",
+    "typecheck": "7/7 workspace projects passed",
+    "build": "7/7 workspace projects passed",
+    "dependencyAudit": "no known vulnerabilities",
+    "gitleaks": "pending GitHub secret scan; Go unavailable locally"
   },
   "runtimeLimitations": [
-    "Default booking eligibility fails closed until client-plan assignments and balance data are integrated; booking integration tests use an injected resolver."
-  ]
+    "Booking eligibility fails closed until a server-owned plan/right and available-balance source is integrated; integration tests inject a resolver."
+  ],
+  "pendingProductDecisions": [
+    "Automatic waitlist promotion",
+    "Penalties and cancellation windows",
+    "Recurring generation horizon or scheduled automation",
+    "Push reminders"
+  ],
+  "review": { "claude": "pending-final-live-sha", "antigravity": "pending-final-live-sha", "githubCi": "pending-final-live-sha" },
+  "merge": "DO_NOT_MERGE"
 }
