@@ -3,10 +3,11 @@
   "task_id": "2J-050",
   "agent": "codex",
   "branch": "agent/codex/2J-050-staff-team-timeclock",
-  "pull_request": "Created after pushing final implementation branch; see final PR URL in close-out.",
-  "status": "REVIEW_PENDING_PUBLICATION",
+  "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/11",
+  "status": "REVIEW",
   "starting_head": "a2b63c07cccae87454700f5df6c0dad745af9bb9",
-  "implementation_head": "The published PR head is the reviewed implementation SHA; use the current headRefOid for independent review.",
+  "implementation_head": "42888297ad99db4f508a447b6a33c47eaba0bee9",
+  "final_head": "Use current PR #11 headRefOid after the handoff update commit; the exact SHA is in the task close-out.",
   "scope": [
     "Staff professional records, role metadata, archival and account linking",
     "Capability-based team access and calendar availability integration",
@@ -29,7 +30,7 @@
     "build": { "result": "PASS", "packages": 7 },
     "dependency_audit": { "result": "PASS", "evidence": "No known vulnerabilities found." },
     "diff_check": { "result": "PASS" },
-    "github_quality_secret_scan": { "result": "PENDING_PR" }
+    "github_quality_secret_scan": { "result": "PENDING_FINAL_PR_HEAD" }
   },
   "evidence": {
     "visual_reviewed": ["1440x1000", "768x1024", "390x844"],
