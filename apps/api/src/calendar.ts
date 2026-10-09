@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
 import type { TransactionSql } from 'postgres';
-import { unavailableBookingEligibility, type BookingEligibilityResolver } from './booking-eligibility.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { createBookingEligibilityResolver, type BookingEntitlementOption, type BookingEligibilityResolver, type BookingEligibilityResult } from './booking-eligibility.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
 type SqlTransaction = TransactionSql<Record<string, unknown>>;
@@ -17,7 +18,7 @@ const sessionFields = {
   durationMinutes: z.number().int().min(5).max(480),
   capacity: z.number().int().min(1).max(500),
 };
-export const createSessionInput = z.object({ ...sessionFields, individualClientId: uuid.optional(), professionalId: uuid.optional(), overrideAvailability: z.boolean().optional().default(false), availabilityReason: z.string().trim().min(3).max(240).optional(), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional(), overrideDocuments: z.boolean().optional().default(false), documentOverrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, context) => {
+export const createSessionInput = z.object({ ...sessionFields, individualClientId: uuid.optional(), entitlementAssignmentId: uuid.optional(), professionalId: uuid.optional(), overrideAvailability: z.boolean().optional().default(false), availabilityReason: z.string().trim().min(3).max(240).optional(), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional(), overrideDocuments: z.boolean().optional().default(false), documentOverrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, context) => {
   if (value.individualClientId && value.capacity !== 1) context.addIssue({ code: 'custom', path: ['capacity'], message: 'Una sesión individual tiene una sola plaza.' });
   if (value.overrideDebt && !value.overrideReason) context.addIssue({ code: 'custom', path: ['overrideReason'], message: 'Indica el motivo de la excepción.' });
   if (value.overrideAvailability && !value.availabilityReason) context.addIssue({ code: 'custom', path: ['availabilityReason'], message: 'Indica el motivo de la excepción.' });
@@ -44,7 +45,7 @@ export function registerCalendarRoutes(
   app: FastifyInstance<any, any, any, any, any>,
   database: SqlClient,
   resolveAuthorization: (request: FastifyRequest) => Promise<AuthorizationContext | null>,
-  resolveBookingEligibility: BookingEligibilityResolver = unavailableBookingEligibility,
+  resolveBookingEligibility: BookingEligibilityResolver = createBookingEligibilityResolver(),
 ) {
   async function authorized(request: FastifyRequest, reply: any, permission: string) {
     const context = await resolveAuthorization(request);
@@ -103,6 +104,97 @@ export function registerCalendarRoutes(
   async function appendAudit(tx: SqlTransaction, actorId: string, action: string, resourceType: string, resourceId: string, sessionId: string | null, clientId: string | null, details: Record<string, string | number | boolean | null> = {}) {
     await tx`INSERT INTO calendar_audit_events(actor_id,action,resource_type,resource_id,session_id,client_id,details) VALUES (${actorId},${action},${resourceType},${resourceId},${sessionId},${clientId},${JSON.stringify(details)}::jsonb)`;
   }
+  function selectEntitlement(result: BookingEligibilityResult, assignmentId?: string): BookingEntitlementOption | null {
+    if (!result.eligible) return null;
+    if (assignmentId) return result.availableAlternatives?.find((item) => item.assignmentId === assignmentId) ?? null;
+    return result.selectedEntitlement ?? null;
+  }
+  async function storeReservationRights(tx: SqlTransaction, reservationId: string, clientId: string, entitlement: BookingEntitlementOption, actorId: string) {
+    await tx`SELECT id FROM client_plan_assignments WHERE id=${entitlement.assignmentId} AND client_id=${clientId} FOR UPDATE`;
+    const rightIds = [entitlement.accessRightId, ...entitlement.quotaRightIds];
+    const rights = await tx`SELECT id,right_type AS "rightType" FROM plan_rights WHERE id=ANY(${rightIds}::uuid[]) ORDER BY id`;
+    for (const right of rights) {
+      let ledgerEntryId: string | null = null;
+      if (right.rightType === 'sessions_quota') {
+        const [ledger] = await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash)
+          VALUES (${clientId},${entitlement.assignmentId},${right.id}::text,'consume',-1,'Reserva confirmada',${`calendar_reservation:${reservationId}`},${actorId},${randomUUID()},${createHash('sha256').update(`consume:${reservationId}:${right.id}`).digest('hex')}) RETURNING id`;
+        ledgerEntryId = ledger!.id;
+        await appendAudit(tx, actorId, 'reservation.entitlement_consumed', 'calendar_reservation', reservationId, null, clientId, { rightId: right.id, ledgerEntryId });
+      }
+      await tx`INSERT INTO calendar_reservation_rights(reservation_id,assignment_id,client_id,right_id,right_type,ledger_entry_id)
+        VALUES (${reservationId},${entitlement.assignmentId},${clientId},${right.id},${right.rightType},${ledgerEntryId})`;
+    }
+  }
+  const operationIdempotencyHeader = (request: FastifyRequest) => z.string().uuid().safeParse(request.headers['idempotency-key']);
+  function requestHash(value: unknown) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+  async function replayOperation(tx: SqlTransaction, key: string | undefined, operation: string, payload: unknown) {
+    if (!key) return { replay: null as Record<string, unknown> | null, error: null as string | null };
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${key},0))`;
+    const [previous] = await tx`SELECT operation,request_hash AS "requestHash",response FROM calendar_booking_operations WHERE idempotency_key=${key}`;
+    if (!previous) return { replay: null, error: null };
+    if (previous.operation !== operation || previous.requestHash !== requestHash(payload)) return { replay: null, error: 'idempotency_conflict' };
+    return { replay: previous.response as Record<string, unknown>, error: null };
+  }
+  async function saveOperation(tx: SqlTransaction, key: string | undefined, operation: string, payload: unknown, response: Record<string, unknown>, actorId: string) {
+    if (!key) return;
+    await tx`INSERT INTO calendar_booking_operations(idempotency_key,operation,request_hash,response,actor_id)
+      VALUES (${key},${operation},${requestHash(payload)},${JSON.stringify(response)}::jsonb,${actorId})`;
+  }
+  async function promoteEligibleWaitlist(tx: SqlTransaction, session: any, actorId: string) {
+    const promoted: string[] = [];
+    const sessionServiceId=session.service_id??session.serviceId;
+    const sessionStartsAt=session.starts_at??session.startsAt;
+    const entries = await tx`SELECT id,client_id AS "clientId",entitlement_assignment_id AS "assignmentId"
+      FROM calendar_waitlist_entries WHERE session_id=${session.id} AND status='waiting' ORDER BY created_at,id FOR UPDATE`;
+    for (const entry of entries) {
+      const [client] = await tx`SELECT id,status FROM clients WHERE id=${entry.clientId} FOR UPDATE`;
+      if (!client || client.status !== 'active') {
+        await appendAudit(tx,actorId,'waitlist.promotion_skipped','calendar_waitlist_entry',entry.id,session.id,entry.clientId,{reason:'client_inactive'});
+        continue;
+      }
+      const eligibility=await resolveBookingEligibility({tx,clientId:entry.clientId,serviceId:sessionServiceId,startsAt:sessionStartsAt instanceof Date?sessionStartsAt.toISOString():String(sessionStartsAt),sessionId:session.id,ignoreWaitlistId:entry.id});
+      if(!eligibility.eligible){
+        if(eligibility.reason==='session_full')break;
+        await appendAudit(tx,actorId,'waitlist.promotion_skipped','calendar_waitlist_entry',entry.id,session.id,entry.clientId,{reason:eligibility.reason});
+        continue;
+      }
+      const entitlement=selectEntitlement(eligibility,entry.assignmentId??undefined);
+      if(!entitlement){
+        await appendAudit(tx,actorId,'waitlist.promotion_skipped','calendar_waitlist_entry',entry.id,session.id,entry.clientId,{reason:'entitlement_selection_required'});
+        continue;
+      }
+      if(await debtBlocksNewBooking(tx,entry.clientId)){
+        await appendAudit(tx,actorId,'waitlist.promotion_skipped','calendar_waitlist_entry',entry.id,session.id,entry.clientId,{reason:'debt_restriction'});
+        continue;
+      }
+      const missing=await missingDocuments(tx,entry.clientId,sessionServiceId,entitlement.planId);
+      if(missing.length){
+        await appendAudit(tx,actorId,'waitlist.promotion_skipped','calendar_waitlist_entry',entry.id,session.id,entry.clientId,{reason:'required_document_missing'});
+        continue;
+      }
+      const [reservation]=await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,entitlement_assignment_id,idempotency_key,created_by)
+        VALUES (${session.id},${entry.clientId},${entitlement.accessRightId},${entitlement.assignmentId},${randomUUID()},${actorId}) RETURNING id`;
+      if(!reservation)throw new Error('Waitlist promotion reservation insert returned no row.');
+      await storeReservationRights(tx,reservation.id,entry.clientId,entitlement,actorId);
+      await tx`UPDATE calendar_waitlist_entries SET status='promoted',promoted_reservation_id=${reservation.id},cancelled_at=now() WHERE id=${entry.id} AND status='waiting'`;
+      await appendAudit(tx,actorId,'reservation.created','calendar_reservation',reservation.id,session.id,entry.clientId,{source:'waitlist_promotion'});
+      await appendAudit(tx,actorId,'waitlist.promoted','calendar_waitlist_entry',entry.id,session.id,entry.clientId,{reservationId:reservation.id});
+      promoted.push(reservation.id);
+    }
+    return promoted;
+  }
+  async function restoreReservationEntitlements(tx: SqlTransaction, reservationId: string, clientId: string, actorId: string, reason: string) {
+    const consumed=await tx`SELECT cr.assignment_id AS "assignmentId",cr.right_id AS "rightId"
+      FROM calendar_reservation_rights cr WHERE cr.reservation_id=${reservationId} AND cr.right_type='sessions_quota' AND cr.ledger_entry_id IS NOT NULL ORDER BY cr.assignment_id,cr.right_id FOR UPDATE`;
+    for(const item of consumed){
+      await tx`SELECT id FROM client_plan_assignments WHERE id=${item.assignmentId} AND client_id=${clientId} FOR UPDATE`;
+      const [prior]=await tx`SELECT id FROM client_entitlement_ledger WHERE external_reference=${`calendar_reservation_restore:${reservationId}:${item.rightId}`}`;
+      if(prior)continue;
+      const [entry]=await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash)
+        VALUES (${clientId},${item.assignmentId},${item.rightId}::text,'restore',1,${reason},${`calendar_reservation_restore:${reservationId}:${item.rightId}`},${actorId},${randomUUID()},${createHash('sha256').update(`restore:${reservationId}:${item.rightId}`).digest('hex')}) RETURNING id`;
+      await appendAudit(tx,actorId,'reservation.entitlement_restored','calendar_reservation',reservationId,null,clientId,{rightId:item.rightId,ledgerEntryId:entry!.id});
+    }
+  }
 
   app.get('/api/calendar/week', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -113,8 +205,8 @@ export function registerCalendarRoutes(
       const sessions = await database`
         SELECT cs.id,cs.service_id AS "serviceId",s.name AS "serviceName",cs.area_id AS "areaId",a.name AS "areaName",
           cs.template_id AS "templateId",cs.professional_id AS "professionalId",sp.display_name AS "professionalName",cs.source,cs.starts_at AS "startsAt",cs.duration_minutes AS "durationMinutes",cs.capacity,cs.status,(cs.individual_client_id IS NOT NULL) AS "isIndividual",
-          (SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show')) AS "occupiedCount",
-          GREATEST((SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show'))-cs.capacity,0)::int AS "overbookCount",
+          (SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show','cancelled_late')) AS "occupiedCount",
+          GREATEST((SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show','cancelled_late'))-cs.capacity,0)::int AS "overbookCount",
           (SELECT count(*)::int FROM calendar_waitlist_entries w WHERE w.session_id=cs.id AND w.status='waiting') AS "waitlistCount"
         FROM calendar_sessions cs JOIN services s ON s.id=cs.service_id JOIN areas a ON a.id=cs.area_id LEFT JOIN staff_professionals sp ON sp.id=cs.professional_id
         WHERE cs.starts_at >= (${weekStart}::date::timestamp AT TIME ZONE 'Atlantic/Canary')
@@ -124,7 +216,7 @@ export function registerCalendarRoutes(
       const services = await database`SELECT id,name,area_id AS "areaId" FROM services WHERE status='active' ORDER BY lower(name),id`;
       const professionals = await database`SELECT id,display_name AS "displayName",calendar_color AS "calendarColor" FROM staff_professionals WHERE status='active' ORDER BY lower(display_name),id`;
       const templates = await database`SELECT t.id,t.service_id AS "serviceId",s.name AS "serviceName",t.area_id AS "areaId",a.name AS "areaName",t.weekday,t.local_start_time AS "localStartTime",t.duration_minutes AS "durationMinutes",t.capacity,to_char(t.starts_on,'YYYY-MM-DD') AS "startsOn",CASE WHEN t.ends_on IS NULL THEN NULL ELSE to_char(t.ends_on,'YYYY-MM-DD') END AS "endsOn" FROM recurring_session_templates t JOIN services s ON s.id=t.service_id JOIN areas a ON a.id=t.area_id WHERE t.status='active' ORDER BY t.weekday,t.local_start_time,t.id`;
-      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, professionals, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity'), overrideAvailability: can(context, 'staff.schedule.override'), overrideDocuments: can(context, 'documents.requirement.override') } };
+      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, professionals, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity'), overrideAvailability: can(context, 'staff.schedule.override'), overrideDocuments: can(context, 'documents.requirement.override'),overrideDebt:can(context,'billing.debt.override') } };
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/week' }, 'calendar week failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
@@ -140,6 +232,52 @@ export function registerCalendarRoutes(
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/sessions/:sessionId/attendees' }, 'session attendees failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
+  app.get('/api/calendar/sessions/:sessionId/booking-eligibility', async (request, reply) => {
+    reply.header('Cache-Control','no-store');
+    const context = await authorized(request, reply, 'calendar.read'); if (!context) return;
+    if (!can(context,'clients.read')) return reply.code(403).send({ error:'permission_denied' });
+    const params=z.object({sessionId:uuid}).safeParse(request.params);
+    const query=z.object({clientId:uuid}).strict().safeParse(request.query);
+    if(!params.success||!query.success)return reply.code(400).send({error:'validation_error'});
+    try {
+      const result=await database.begin(async tx=>{
+        const [session]=await tx`SELECT id,status,service_id AS "serviceId",area_id AS "areaId",starts_at AS "startsAt",capacity FROM calendar_sessions WHERE id=${params.data.sessionId}`;
+        if(!session)return {error:'session_not_found'};
+        const serviceIssue=await checkService(tx,session.serviceId,session.areaId);
+        const eligibility=serviceIssue?null:await resolveBookingEligibility({tx,clientId:query.data.clientId,serviceId:session.serviceId,startsAt:session.startsAt instanceof Date?session.startsAt.toISOString():String(session.startsAt),sessionId:session.id,allowFullSession:true});
+        const debt=await debtBlocksNewBooking(tx,query.data.clientId);
+        const entitlement=eligibility?.eligible?selectEntitlement(eligibility):null;
+        const missing=eligibility?.eligible&&entitlement?await missingDocuments(tx,query.data.clientId,session.serviceId,entitlement.planId):[];
+        const reasons:string[]=[];
+        if(session.status!=='scheduled')reasons.push('session_cancelled');
+        if(serviceIssue)reasons.push(serviceIssue);
+        if(eligibility&&!eligibility.eligible)reasons.push(...(eligibility.blockingReasons??[eligibility.reason]));
+        if(debt)reasons.push('debt_restriction');
+        if(missing.length)reasons.push('required_document_missing');
+        const full=(eligibility?.capacity?.available??0)<=0;
+        if(full)reasons.push('session_full');
+        const entitlementReady=Boolean(eligibility?.eligible);
+        return {allowed:reasons.length===0,decision:reasons.length?'blocked':full?'waitlist_only':'allowed',blockingReasons:[...new Set(reasons)],selectedEntitlement:entitlement,availableAlternatives:eligibility?.availableAlternatives??[],capacity:eligibility?.capacity??null,waitlistAllowed:full&&entitlementReady,overridePossible:{debt:debt&&can(context,'billing.debt.override'),documents:missing.length>0&&can(context,'documents.requirement.override'),capacity:full&&can(context,'scheduling.override_capacity')},requiredDocuments:missing.map((item:any)=>({requirementId:item.requirementId,requirementType:item.requirementType,label:item.label}))};
+      });
+      if('error'in result)return reply.code(404).send({error:result.error});
+      return result;
+    } catch(error){app.log.error({databaseCode:dbCode(error),route:'GET /api/calendar/sessions/:sessionId/booking-eligibility'},'booking eligibility preview failed');return reply.code(500).send({error:'internal_error'});}
+  });
+
+  app.get('/api/calendar/reservations/:reservationId/cancellation-preview', async (request, reply) => {
+    reply.header('Cache-Control','no-store');
+    const context=await authorized(request,reply,'calendar.read');if(!context)return;
+    const params=z.object({reservationId:uuid}).safeParse(request.params);if(!params.success)return reply.code(400).send({error:'invalid_reservation_id'});
+    try {
+      const [row]=await database`SELECT r.id,r.status,s.starts_at AS "startsAt",s.duration_minutes AS "durationMinutes",sv.cancellation_window_minutes AS "windowMinutes",sv.late_cancellation_policy AS "latePolicy" FROM calendar_reservations r JOIN calendar_sessions s ON s.id=r.session_id JOIN services sv ON sv.id=s.service_id WHERE r.id=${params.data.reservationId}`;
+      if(!row)return reply.code(404).send({error:'reservation_not_found'});
+      const minutes=Math.floor((new Date(String(row.startsAt)).getTime()-Date.now())/60000);
+      const late=minutes<Number(row.windowMinutes);
+      const restoresEntitlement=!late||row.latePolicy==='restore';
+      return {reservationId:row.id,status:row.status,canCancel:row.status==='reserved',cancellation:{late,minutesUntilStart:minutes,policy:row.latePolicy,restoresEntitlement,summary:late&&!restoresEntitlement?'Cancelación tardía: la sesión seguirá consumida.':'Si cancelas ahora, recuperarás la sesión.'}};
+    }catch(error){app.log.error({databaseCode:dbCode(error),route:'GET /api/calendar/reservations/:reservationId/cancellation-preview'},'cancellation preview failed');return reply.code(500).send({error:'internal_error'});}
+  });
+
   app.post('/api/calendar/sessions', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
@@ -153,21 +291,25 @@ export function registerCalendarRoutes(
         const availability = await checkProfessional(tx, parsed.data.professionalId, parsed.data.startsAt, parsed.data.durationMinutes, parsed.data.overrideAvailability, parsed.data.availabilityReason, context);
         if (availability.error) return { error: availability.error, warnings: availability.warnings };
         let entitlementReference: string | null = null;
+        let selectedIndividualEntitlement: BookingEntitlementOption | null = null;
         let debtOverrideApplied = false;
         let documentRequirementIds: string[] = [];
         if (parsed.data.individualClientId) {
-          const [client] = await tx`SELECT id,status FROM clients WHERE id=${parsed.data.individualClientId} FOR SHARE`;
+          const [client] = await tx`SELECT id,status FROM clients WHERE id=${parsed.data.individualClientId} FOR UPDATE`;
           if (!client) return { error: 'client_not_found' };
           if (client.status !== 'active') return { error: 'client_archived' };
           const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: parsed.data.serviceId, startsAt: parsed.data.startsAt });
           if (!eligibility.eligible) return { error: eligibility.reason };
-          const missing = await missingDocuments(tx, client.id, parsed.data.serviceId, eligibility.planId);
+          const entitlement=selectEntitlement(eligibility,parsed.data.entitlementAssignmentId);
+          if(eligibility.availableAlternatives?.length&&!entitlement)return {error:parsed.data.entitlementAssignmentId?'entitlement_selection_invalid':'entitlement_selection_required',alternatives:eligibility.availableAlternatives};
+          const missing = await missingDocuments(tx, client.id, parsed.data.serviceId, entitlement?.planId??eligibility.planId);
           if (missing.length && !parsed.data.overrideDocuments) return { error: 'required_documents_pending', missing };
           if (missing.length && parsed.data.overrideDocuments) documentRequirementIds = missing.map((item:any) => String(item.requirementId));
           const overdue = await debtBlocksNewBooking(tx, client.id);
           if (overdue && !parsed.data.overrideDebt) return { error: 'overdue_balance_blocks_booking' };
           debtOverrideApplied = overdue && parsed.data.overrideDebt;
-          entitlementReference = eligibility.entitlementId;
+          entitlementReference = entitlement?.accessRightId??eligibility.entitlementId;
+          selectedIndividualEntitlement=entitlement;
         }
         const [session] = await tx`INSERT INTO calendar_sessions(service_id,area_id,professional_id,starts_at,duration_minutes,capacity,individual_client_id,created_by) VALUES (${parsed.data.serviceId},${parsed.data.areaId},${parsed.data.professionalId ?? null},${parsed.data.startsAt},${parsed.data.durationMinutes},${parsed.data.capacity},${parsed.data.individualClientId ?? null},${context.actorId}) RETURNING id`;
         if (!session) throw new Error('Session insert returned no row.');
@@ -176,8 +318,9 @@ export function registerCalendarRoutes(
         if (availability.warnings.length) await appendAudit(tx, context.actorId, 'session.availability_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId ?? null, { warnings: availability.warnings.join(','), reason: parsed.data.availabilityReason ?? '' });
         if (parsed.data.individualClientId) {
           if (debtOverrideApplied) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId, { reason: parsed.data.overrideReason ?? '' });
-          const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${parsed.data.individualClientId},${entitlementReference},${context.actorId}) RETURNING id`;
+          const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,entitlement_assignment_id,created_by) VALUES (${session.id},${parsed.data.individualClientId},${entitlementReference},${selectedIndividualEntitlement?.assignmentId??null},${context.actorId}) RETURNING id`;
           if (!reservation) throw new Error('Reservation insert returned no row.');
+          if(selectedIndividualEntitlement)await storeReservationRights(tx,reservation.id,parsed.data.individualClientId,selectedIndividualEntitlement,context.actorId);
           await appendAudit(tx, context.actorId, 'reservation.created', 'calendar_reservation', reservation.id, session.id, parsed.data.individualClientId);
         }
         return { id: session.id };
@@ -292,11 +435,13 @@ export function registerCalendarRoutes(
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     if (!can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
     const params = z.object({ sessionId: uuid }).safeParse(request.params);
-    const body = z.object({ clientId: uuid, overbook: z.boolean().optional().default(false), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional(), overrideDocuments: z.boolean().optional().default(false), documentOverrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, issue) => {
+    const body = z.object({ clientId: uuid, entitlementAssignmentId: uuid.optional(), overbook: z.boolean().optional().default(false), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional(), overrideDocuments: z.boolean().optional().default(false), documentOverrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, issue) => {
       if (value.overrideDebt && !value.overrideReason) issue.addIssue({ code: 'custom', path: ['overrideReason'], message: 'Indica el motivo de la excepción.' });
       if (value.overrideDocuments && !value.documentOverrideReason) issue.addIssue({ code: 'custom', path: ['documentOverrideReason'], message: 'Indica el motivo de la excepción documental.' });
     }).safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
+    const idemHeader = operationIdempotencyHeader(request); if (request.headers['idempotency-key'] !== undefined && !idemHeader.success) return reply.code(400).send({ error: 'invalid_idempotency_key' });
+    const idempotencyKey = idemHeader.success ? idemHeader.data : undefined;
     if (body.data.overbook && !can(context, 'scheduling.override_capacity')) return reply.code(403).send({ error: 'permission_denied' });
     if (body.data.overrideDebt && !can(context, 'billing.debt.override')) return reply.code(403).send({ error: 'permission_denied' });
     if (body.data.overrideDocuments && !can(context, 'documents.requirement.override')) return reply.code(403).send({ error: 'permission_denied' });
@@ -304,29 +449,40 @@ export function registerCalendarRoutes(
       const result = await database.begin(async (tx) => {
         const [session] = await tx`SELECT id,status,capacity,service_id,area_id,individual_client_id,starts_at FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
         if (!session) return { error: 'session_not_found' };
+        const operationPayload = { sessionId: params.data.sessionId, ...body.data };
+        const replay = await replayOperation(tx, idempotencyKey, 'reserve', operationPayload);
+        if (replay.error) return { error: replay.error };
+        if (replay.replay) return { replay: replay.replay };
         if (session.status !== 'scheduled') return { error: 'session_cancelled' };
         const serviceIssue = await checkService(tx, session.service_id, session.area_id); if (serviceIssue) return { error: serviceIssue };
-        const [client] = await tx`SELECT id,status FROM clients WHERE id=${body.data.clientId} FOR SHARE`;
+        const [client] = await tx`SELECT id,status FROM clients WHERE id=${body.data.clientId} FOR UPDATE`;
         if (!client) return { error: 'client_not_found' };
         if (client.status !== 'active') return { error: 'client_archived' };
         if (session.individual_client_id && session.individual_client_id !== client.id) return { error: 'individual_session_client_mismatch' };
-        const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at) });
+        const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at), sessionId: session.id, allowFullSession: body.data.overbook });
         if (!eligibility.eligible) return { error: eligibility.reason };
+        const entitlement = selectEntitlement(eligibility, body.data.entitlementAssignmentId);
+        if (eligibility.availableAlternatives?.length && !entitlement) return { error: body.data.entitlementAssignmentId ? 'entitlement_selection_invalid' : 'entitlement_selection_required', alternatives: eligibility.availableAlternatives };
         const missing = await missingDocuments(tx, client.id, session.service_id, eligibility.planId);
         if (missing.length && !body.data.overrideDocuments) return { error: 'required_documents_pending', missing };
         const overdue = await debtBlocksNewBooking(tx, client.id);
         if (overdue && !body.data.overrideDebt) return { error: 'overdue_balance_blocks_booking' };
         if (overdue && body.data.overrideDebt) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, client.id, { reason: body.data.overrideReason ?? '' });
-        const [existing] = await tx`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id} AND status IN ('reserved','attended','no_show') UNION ALL SELECT id FROM calendar_waitlist_entries WHERE session_id=${session.id} AND client_id=${client.id} AND status='waiting' LIMIT 1`;
+        const [existing] = await tx`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id} AND status IN ('reserved','attended','no_show','cancelled_late') UNION ALL SELECT id FROM calendar_waitlist_entries WHERE session_id=${session.id} AND client_id=${client.id} AND status='waiting' LIMIT 1`;
         if (existing) return { error: 'client_already_added' };
-        const [count] = await tx`SELECT count(*)::int AS occupied FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show')`;
+        const [count] = await tx`SELECT count(*)::int AS occupied FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show','cancelled_late')`;
         if (!body.data.overbook && (count?.occupied ?? 0) >= session.capacity) return { error: 'capacity_full' };
-        const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${client.id},${eligibility.entitlementId},${context.actorId}) RETURNING id`;
+        const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,entitlement_assignment_id,idempotency_key,created_by)
+          VALUES (${session.id},${client.id},${entitlement?.accessRightId ?? eligibility.entitlementId},${entitlement?.assignmentId ?? null},${idempotencyKey ?? randomUUID()},${context.actorId}) RETURNING id`;
         if (!reservation) throw new Error('Reservation insert returned no row.');
+        if (entitlement) await storeReservationRights(tx, reservation.id, client.id, entitlement, context.actorId);
         if (missing.length && body.data.overrideDocuments) await appendAudit(tx, context.actorId, 'reservation.document_override', 'calendar_reservation', reservation.id, session.id, client.id, { requirementIds: missing.map((item:any) => String(item.requirementId)).join(','), reason: body.data.documentOverrideReason! });
         await appendAudit(tx, context.actorId, body.data.overbook ? 'reservation.overbooked' : 'reservation.created', 'calendar_reservation', reservation.id, session.id, client.id, { overbooked: body.data.overbook, debtOverride: overdue && body.data.overrideDebt, debtOverrideReason: overdue && body.data.overrideDebt ? body.data.overrideReason ?? '' : null });
-        return { id: reservation.id, overbooked: body.data.overbook };
+        const response = { id: reservation.id, overbooked: body.data.overbook, ...(entitlement ? { entitlementAssignmentId: entitlement.assignmentId, entitlementRightIds: entitlement.quotaRightIds } : {}) };
+        await saveOperation(tx, idempotencyKey, 'reserve', operationPayload, response, context.actorId);
+        return response;
       });
+      if ('replay' in result) return reply.code(200).send(result.replay);
       if ('error' in result) return reply.code(result.error === 'session_not_found' || result.error === 'client_not_found' ? 404 : 409).send({ error: result.error, ...('missing' in result ? { missing: result.missing } : {}) });
       return reply.code(201).send(result);
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/sessions/:sessionId/reservations' }, 'reservation create failed'); return reply.code(500).send({ error: 'internal_error' }); }
@@ -336,29 +492,41 @@ export function registerCalendarRoutes(
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     if (!can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
     const params = z.object({ sessionId: uuid }).safeParse(request.params);
-    const body = z.object({ clientId: uuid }).strict().safeParse(request.body);
+    const body = z.object({ clientId: uuid, entitlementAssignmentId: uuid.optional() }).strict().safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
+    const idemHeader = operationIdempotencyHeader(request); if (request.headers['idempotency-key'] !== undefined && !idemHeader.success) return reply.code(400).send({ error: 'invalid_idempotency_key' });
+    const idempotencyKey = idemHeader.success ? idemHeader.data : undefined;
     try {
       const result = await database.begin(async (tx) => {
         const [session] = await tx`SELECT id,status,capacity,service_id,area_id,individual_client_id,starts_at FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
         if (!session) return { error: 'session_not_found' };
+        const operationPayload = { sessionId: params.data.sessionId, ...body.data };
+        const replay = await replayOperation(tx, idempotencyKey, 'waitlist_join', operationPayload);
+        if (replay.error) return { error: replay.error };
+        if (replay.replay) return { replay: replay.replay };
         if (session.status !== 'scheduled') return { error: 'session_cancelled' };
         const serviceIssue = await checkService(tx, session.service_id, session.area_id); if (serviceIssue) return { error: serviceIssue };
-        const [client] = await tx`SELECT id,status FROM clients WHERE id=${body.data.clientId} FOR SHARE`;
+        const [client] = await tx`SELECT id,status FROM clients WHERE id=${body.data.clientId} FOR UPDATE`;
         if (!client) return { error: 'client_not_found' };
         if (client.status !== 'active') return { error: 'client_archived' };
         if (session.individual_client_id && session.individual_client_id !== client.id) return { error: 'individual_session_client_mismatch' };
-        const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at) });
+        const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at), sessionId: session.id, allowFullSession: true, ignoreDebt: true });
         if (!eligibility.eligible) return { error: eligibility.reason };
-        const [existing] = await tx`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id} AND status IN ('reserved','attended','no_show') UNION ALL SELECT id FROM calendar_waitlist_entries WHERE session_id=${session.id} AND client_id=${client.id} AND status='waiting' LIMIT 1`;
+        const entitlement = selectEntitlement(eligibility, body.data.entitlementAssignmentId);
+        if (eligibility.availableAlternatives?.length && !entitlement) return { error: body.data.entitlementAssignmentId ? 'entitlement_selection_invalid' : 'entitlement_selection_required', alternatives: eligibility.availableAlternatives };
+        const [existing] = await tx`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${client.id} AND status IN ('reserved','attended','no_show','cancelled_late') UNION ALL SELECT id FROM calendar_waitlist_entries WHERE session_id=${session.id} AND client_id=${client.id} AND status='waiting' LIMIT 1`;
         if (existing) return { error: 'client_already_added' };
-        const [count] = await tx`SELECT count(*)::int AS occupied FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show')`;
+        const [count] = await tx`SELECT count(*)::int AS occupied FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show','cancelled_late')`;
         if ((count?.occupied ?? 0) < session.capacity) return { error: 'space_available' };
-        const [entry] = await tx`INSERT INTO calendar_waitlist_entries(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${client.id},${eligibility.entitlementId},${context.actorId}) RETURNING id`;
+        const [entry] = await tx`INSERT INTO calendar_waitlist_entries(session_id,client_id,entitlement_reference,entitlement_assignment_id,idempotency_key,created_by)
+          VALUES (${session.id},${client.id},${entitlement?.accessRightId ?? eligibility.entitlementId},${entitlement?.assignmentId ?? null},${idempotencyKey ?? randomUUID()},${context.actorId}) RETURNING id`;
         if (!entry) throw new Error('Waitlist insert returned no row.');
         await appendAudit(tx, context.actorId, 'waitlist.entered', 'calendar_waitlist_entry', entry.id, session.id, client.id);
-        return { id: entry.id };
+        const response = { id: entry.id, status: 'waiting', entitlementAssignmentId: entitlement?.assignmentId ?? null };
+        await saveOperation(tx, idempotencyKey, 'waitlist_join', operationPayload, response, context.actorId);
+        return response;
       });
+      if ('replay' in result) return reply.code(200).send(result.replay);
       if ('error' in result) return reply.code(result.error === 'session_not_found' || result.error === 'client_not_found' ? 404 : 409).send({ error: result.error, ...('missing' in result ? { missing: result.missing } : {}) });
       return reply.code(201).send(result);
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/sessions/:sessionId/waitlist' }, 'waitlist entry failed'); return reply.code(500).send({ error: 'internal_error' }); }
@@ -367,16 +535,30 @@ export function registerCalendarRoutes(
   app.patch('/api/calendar/reservations/:reservationId/cancel', async (request, reply) => {
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     const params = z.object({ reservationId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error: 'invalid_reservation_id' });
+    const idemHeader=operationIdempotencyHeader(request);if(request.headers['idempotency-key']!==undefined&&!idemHeader.success)return reply.code(400).send({error:'invalid_idempotency_key'});const idempotencyKey=idemHeader.success?idemHeader.data:undefined;
     try {
       const result = await database.begin(async (tx) => {
         const [row] = await tx`SELECT session_id AS "sessionId",client_id AS "clientId" FROM calendar_reservations WHERE id=${params.data.reservationId}`;
         if (!row) return { error: 'reservation_not_found' };
-        await tx`SELECT id FROM calendar_sessions WHERE id=${row.sessionId} FOR UPDATE`;
-        const [updated] = await tx`UPDATE calendar_reservations SET status='cancelled',updated_at=now() WHERE id=${params.data.reservationId} AND status='reserved' RETURNING id`;
+        const [session] = await tx`SELECT s.id,s.status,s.starts_at AS "startsAt",s.service_id AS "serviceId",s.area_id AS "areaId",s.capacity,sv.cancellation_window_minutes AS "windowMinutes",sv.late_cancellation_policy AS "latePolicy"
+          FROM calendar_sessions s JOIN services sv ON sv.id=s.service_id WHERE s.id=${row.sessionId} FOR UPDATE OF s`;
+        const operationPayload={reservationId:params.data.reservationId};const replay=await replayOperation(tx,idempotencyKey,'cancel',operationPayload);
+        if(replay.error)return {error:replay.error};if(replay.replay)return {replay:replay.replay};
+        if(!session||session.status!=='scheduled')return {error:'session_cancelled'};
+        const [reservation] = await tx`SELECT id,status FROM calendar_reservations WHERE id=${params.data.reservationId} FOR UPDATE`;
+        if(reservation?.status!=='reserved')return { error: 'reservation_not_active' };
+        const startsAt=new Date(String(session.startsAt)).getTime();const late=(startsAt-Date.now())<Number(session.windowMinutes)*60_000;
+        const consumeLate=late&&session.latePolicy==='consume';const newStatus=consumeLate?'cancelled_late':'cancelled';
+        const [updated] = await tx`UPDATE calendar_reservations SET status=${newStatus},cancelled_at=now(),cancelled_by=${context.actorId},updated_at=now() WHERE id=${params.data.reservationId} AND status='reserved' RETURNING id`;
         if (!updated) return { error: 'reservation_not_active' };
-        await appendAudit(tx, context.actorId, 'reservation.cancelled', 'calendar_reservation', updated.id, row.sessionId, row.clientId);
-        return { id: updated.id };
+        if(!consumeLate)await restoreReservationEntitlements(tx,updated.id,row.clientId,context.actorId,late?'Cancelación tardía con restauración':'Cancelación dentro de ventana');
+        await appendAudit(tx, context.actorId, consumeLate?'reservation.cancelled_late':'reservation.cancelled', 'calendar_reservation', updated.id, row.sessionId, row.clientId,{previousStatus:'reserved',newStatus,late,restored:!consumeLate});
+        const promoted=await promoteEligibleWaitlist(tx,session,context.actorId);
+        const response={id:updated.id,status:newStatus,restored:!consumeLate,promotedReservationIds:promoted};
+        await saveOperation(tx,idempotencyKey,'cancel',operationPayload,response,context.actorId);
+        return response;
       });
+      if('replay'in result)return reply.code(200).send(result.replay);
       if ('error' in result) return reply.code(result.error === 'reservation_not_found' ? 404 : 409).send({ error: result.error });
       return result;
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'PATCH /api/calendar/reservations/:reservationId/cancel' }, 'reservation cancel failed'); return reply.code(500).send({ error: 'internal_error' }); }
@@ -385,16 +567,19 @@ export function registerCalendarRoutes(
   app.patch('/api/calendar/waitlist/:entryId/cancel', async (request, reply) => {
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     const params = z.object({ entryId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error: 'invalid_waitlist_id' });
+    const idemHeader=operationIdempotencyHeader(request);if(request.headers['idempotency-key']!==undefined&&!idemHeader.success)return reply.code(400).send({error:'invalid_idempotency_key'});const idempotencyKey=idemHeader.success?idemHeader.data:undefined;
     try {
       const result = await database.begin(async (tx) => {
         const [row] = await tx`SELECT id,session_id AS "sessionId",client_id AS "clientId" FROM calendar_waitlist_entries WHERE id=${params.data.entryId}`;
         if (!row) return { error: 'waitlist_not_found' };
         await tx`SELECT id FROM calendar_sessions WHERE id=${row.sessionId} FOR UPDATE`;
+        const operationPayload={entryId:row.id};const replay=await replayOperation(tx,idempotencyKey,'waitlist_leave',operationPayload);if(replay.error)return {error:replay.error};if(replay.replay)return {replay:replay.replay};
         const [updated] = await tx`UPDATE calendar_waitlist_entries SET status='cancelled',cancelled_at=now() WHERE id=${row.id} AND status='waiting' RETURNING id`;
         if (!updated) return { error: 'waitlist_not_active' };
         await appendAudit(tx, context.actorId, 'waitlist.cancelled', 'calendar_waitlist_entry', row.id, row.sessionId, row.clientId);
-        return { id: row.id };
+        const response={id:row.id,status:'cancelled'};await saveOperation(tx,idempotencyKey,'waitlist_leave',operationPayload,response,context.actorId);return response;
       });
+      if('replay'in result)return reply.code(200).send(result.replay);
       if ('error' in result) return reply.code(result.error === 'waitlist_not_found' ? 404 : 409).send({ error: result.error });
       return result;
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'PATCH /api/calendar/waitlist/:entryId/cancel' }, 'waitlist cancel failed'); return reply.code(500).send({ error: 'internal_error' }); }
@@ -427,20 +612,28 @@ export function registerCalendarRoutes(
   app.patch('/api/calendar/sessions/:sessionId/cancel', async (request, reply) => {
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     const params = z.object({ sessionId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error: 'invalid_session_id' });
+    const idemHeader=operationIdempotencyHeader(request);if(request.headers['idempotency-key']!==undefined&&!idemHeader.success)return reply.code(400).send({error:'invalid_idempotency_key'});const idempotencyKey=idemHeader.success?idemHeader.data:undefined;
     try {
       const result = await database.begin(async (tx) => {
         const [session] = await tx`SELECT id,status FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
-        if (!session || session.status !== 'scheduled') return { error: 'session_not_found_or_cancelled' };
-        const reservations = await tx`SELECT id,client_id AS "clientId",status FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show') FOR UPDATE`;
+        if (!session) return { error: 'session_not_found_or_cancelled' };
+        const operationPayload={sessionId:session.id};const replay=await replayOperation(tx,idempotencyKey,'center_cancel',operationPayload);if(replay.error)return {error:replay.error};if(replay.replay)return {replay:replay.replay};
+        if(session.status!=='scheduled')return {error:'session_not_found_or_cancelled'};
+        const reservations = await tx`SELECT id,client_id AS "clientId",status FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show','cancelled_late') FOR UPDATE`;
         const waitlist = await tx`SELECT id,client_id AS "clientId" FROM calendar_waitlist_entries WHERE session_id=${session.id} AND status='waiting' FOR UPDATE`;
         await tx`UPDATE calendar_sessions SET status='cancelled' WHERE id=${session.id}`;
-        await tx`UPDATE calendar_reservations SET status='cancelled_by_center',updated_at=now() WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show')`;
+        await tx`UPDATE calendar_reservations SET status='cancelled_by_center',updated_at=now() WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show','cancelled_late')`;
         await tx`UPDATE calendar_waitlist_entries SET status='cancelled_by_center',cancelled_at=now() WHERE session_id=${session.id} AND status='waiting'`;
-        for (const row of reservations) await appendAudit(tx, context.actorId, 'reservation.cancelled_by_center', 'calendar_reservation', row.id, session.id, row.clientId, { previousStatus: row.status, newStatus: 'cancelled_by_center' });
+        for (const row of reservations) {
+          await restoreReservationEntitlements(tx,row.id,row.clientId,context.actorId,'Sesión cancelada por el centro');
+          await appendAudit(tx, context.actorId, 'reservation.cancelled_by_center', 'calendar_reservation', row.id, session.id, row.clientId, { previousStatus: row.status, newStatus: 'cancelled_by_center' });
+        }
         for (const row of waitlist) await appendAudit(tx, context.actorId, 'waitlist.cancelled_by_center', 'calendar_waitlist_entry', row.id, session.id, row.clientId, { previousStatus: 'waiting', newStatus: 'cancelled_by_center' });
         await appendAudit(tx, context.actorId, 'session.cancelled', 'calendar_session', session.id, session.id, null, { reservationsCancelled: reservations.length, waitlistCancelled: waitlist.length });
-        return { id: session.id, reservationsCancelled: reservations.length, waitlistCancelled: waitlist.length };
+        const response={ id: session.id, reservationsCancelled: reservations.length, waitlistCancelled: waitlist.length };
+        await saveOperation(tx,idempotencyKey,'center_cancel',operationPayload,response,context.actorId);return response;
       });
+      if('replay'in result)return reply.code(200).send(result.replay);
       if ('error' in result) return reply.code(409).send({ error: result.error });
       return result;
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'PATCH /api/calendar/sessions/:sessionId/cancel' }, 'session cancel failed'); return reply.code(500).send({ error: 'internal_error' }); }
