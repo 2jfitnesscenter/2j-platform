@@ -44,7 +44,7 @@ test('Command Center denies anonymous access and filters each domain on the serv
 test('Command Center aggregates today occupancy and waitlist from calendar source tables', async () => {
   const [area] = await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;
   const [client] = await sql`INSERT INTO clients(first_name,last_name) VALUES ('Demo','Dashboard QA') RETURNING id`;
-  const [service] = await sql`INSERT INTO services(name,area_id,status) VALUES (${`Dashboard ${randomUUID()}`},${area.id},'active') RETURNING id`;
+  const [service] = await sql`INSERT INTO services(name,area_id,status) VALUES (${`Dashboard ${randomUUID()}`},${area.id},'active') RETURNING id,name`;
   const [professional] = await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,created_by) VALUES ('Equipo','QA',${`Profesional ${randomUUID()}`},'trainer','2J-070-test') RETURNING id`;
   const [session] = await sql`INSERT INTO calendar_sessions(service_id,area_id,professional_id,starts_at,duration_minutes,capacity,created_by) VALUES (${service.id},${area.id},${professional.id},date_trunc('day',now() AT TIME ZONE 'Atlantic/Canary') AT TIME ZONE 'Atlantic/Canary'+interval '23 hours',45,4,'2J-070-test') RETURNING id`;
   await sql`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${client.id},'qa-entitlement','2J-070-test')`;
@@ -56,6 +56,16 @@ test('Command Center aggregates today occupancy and waitlist from calendar sourc
   assert.ok(response.json().today.capacity >= 4);
   assert.ok(response.json().today.occupied >= 1);
   assert.ok(response.json().today.waitlistCount >= 1);
+  const agenda = response.json().today.sessions;
+  assert.ok(Array.isArray(agenda));
+  const todayRow = agenda.find((item) => item.id === session.id);
+  assert.equal(todayRow.serviceName, service.name);
+  assert.equal(todayRow.professionalName.startsWith('Profesional '), true);
+  assert.equal(todayRow.occupied, 1);
+  assert.equal(todayRow.capacity, 4);
+  assert.equal(todayRow.free, 3);
+  assert.equal(todayRow.waitlistCount, 1);
+  assert.equal(agenda.some((item, index) => index > 0 && new Date(agenda[index - 1].startsAt) > new Date(item.startsAt)), false);
 });
 
 test('global search groups only entities the role can read and rejects anonymous access', async () => {

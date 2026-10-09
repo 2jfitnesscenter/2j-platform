@@ -6,7 +6,7 @@ import React from 'react';
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://127.0.0.1:5173/#home' });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
-const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
+const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 const { AppShell } = await import('../src/app-shell.tsx');
 const { CommandCenter } = await import('../src/command-center.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
@@ -63,4 +63,23 @@ test('navigation stays available from independent capabilities when Command Cent
   assert.ok(screen.getByRole('link',{name:'Clientes'}));
   assert.equal(screen.queryByRole('link',{name:'Economía'}),null);
   assert.equal(screen.queryByRole('link',{name:'Equipo'}),null);
+});
+
+test('permitted Communications navigation remains visible while moving between modules', async () => {
+  globalThis.fetch = async (url) => String(url).includes('/api/session/capabilities')
+    ? response({calendar:true,clients:true,communications:true,billing:true,staff:true})
+    : String(url).includes('/api/dashboard/command-center') ? response(model) : response({groups:[]});
+  render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
+  await screen.findByText('0 sesiones hoy');
+  const nav = document.querySelector('.app-navigation');
+  assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
+  for (const label of ['Servicios', 'Agenda', 'Clientes', 'Economía', 'Equipo']) {
+    const link = within(nav).getByRole('link', { name: new RegExp(label) });
+    fireEvent.click(link);
+    await waitFor(() => assert.equal(within(nav).getByRole('link', { name: new RegExp(label) }).getAttribute('aria-current'), 'page'));
+    assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
+  }
+  assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
+  fireEvent.click(within(nav).getByRole('link', { name: /Comunicación/ }));
+  await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Comunicación/ }).getAttribute('aria-current'), 'page'));
 });

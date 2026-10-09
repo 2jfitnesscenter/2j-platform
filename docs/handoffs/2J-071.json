@@ -1,0 +1,31 @@
+{
+  "taskId": "2J-071",
+  "title": "Inicio operativo, arranque limpio y configuración rápida de horarios",
+  "status": "awaiting_independent_review",
+  "baseSha": "916b33af57e46a6772a36f66b16ad4bdb340d6ee",
+  "branch": "codex/2j071-empty-start-dashboard-bulk-schedules",
+  "pullRequest": null,
+  "scope": ["clean local quickstart", "today agenda", "bulk recurring templates", "communications navigation regression", "useful calendar empty state"],
+  "migrations": ["apps/api/migrations/0015_bulk_template_audit.sql"],
+  "decisions": {
+    "cleanStart": "Fresh 2j_platform_local has no synthetic business activity. Existing databases are never deleted or cleaned automatically.",
+    "demo": "Existing additive seed remains opt-in, dev/test-only, loopback-only, and restricted to database 2j_demo.",
+    "scheduleModel": "Reuse recurring_session_templates; batch create templates only; session generation remains explicit.",
+    "conflicts": "Reject internal and active-template overlapping intervals for the same service or assigned professional; batch is atomic and serialized.",
+    "dashboard": "Today sessions are ordered by start time and contain service/professional labels and aggregate seat/waitlist counts only; no client PII."
+  },
+  "verification": {
+    "uiTests": {"status": "PASS", "count": 50},
+    "apiTests": {"status": "PASS", "count": 109, "database": "PostgreSQL 17 disposable database"},
+    "totalTests": {"status": "PASS", "count": 175},
+    "typecheck": {"status": "PASS", "packages": 7},
+    "build": {"status": "PASS", "packages": 7},
+    "migration": {"status": "PASS", "count": 15, "name": "0015_bulk_template_audit.sql"},
+    "cleanDatabase": {"status": "PASS", "emptyTables": ["clients", "staff_professionals", "calendar_sessions", "calendar_reservations", "calendar_waitlist_entries", "communication_messages", "economic_charges"]},
+    "dependencyAudit": "PASS_NO_KNOWN_VULNERABILITIES",
+    "secretScan": "PENDING_GITHUB_CI",
+    "diffCheck": "PASS",
+    "browserEvidence": {"status": "DESKTOP_INSPECTED_NO_CAPTURE_SAVED", "responsiveReview": "PENDING_INDEPENDENT_REVIEW", "viewports": [1440, 768, 390], "file": "docs/evidence/2J-071/README.md"}
+  },
+  "scopeGuard": "No 2jfitnessapp changes, no product vertical expansion, no deletion of existing database data, no automatic session generation, no auto-merge."
+}

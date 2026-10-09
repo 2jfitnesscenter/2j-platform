@@ -64,6 +64,19 @@ export function registerDashboardRoutes(
           COALESCE(sum(r.occupied) FILTER (WHERE s.status='scheduled'),0)::int AS occupied,
           COALESCE(sum(w.waiting) FILTER (WHERE s.status='scheduled'),0)::int AS "waitlistCount",
           count(*) FILTER (WHERE s.status='scheduled' AND s.professional_id IS NULL)::int AS "unassignedCount",
+          (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+              'id',day.id,'serviceName',day.service_name,'professionalName',day.professional_name,'startsAt',day.starts_at,
+              'occupied',day.occupied,'capacity',day.capacity,'free',GREATEST(day.capacity-day.occupied,0),
+              'waitlistCount',day.waitlist_count,'isNow',day.starts_at<=now() AND day.ends_at>now()
+            ) ORDER BY day.starts_at,day.id),'[]'::jsonb)
+            FROM (SELECT cs.id,s.name AS service_name,sp.display_name AS professional_name,cs.starts_at,
+                cs.starts_at+cs.duration_minutes*interval '1 minute' AS ends_at,cs.capacity,
+                (SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show')) AS occupied,
+                (SELECT count(*)::int FROM calendar_waitlist_entries w WHERE w.session_id=cs.id AND w.status='waiting') AS waitlist_count
+              FROM calendar_sessions cs JOIN services s ON s.id=cs.service_id LEFT JOIN staff_professionals sp ON sp.id=cs.professional_id
+              WHERE cs.status='scheduled' AND cs.starts_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone})
+                AND cs.starts_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})) day
+          ) AS sessions,
           (SELECT jsonb_build_object('id',n.id,'serviceName',ns.name,'startsAt',n.starts_at,'professionalName',np.display_name)
             FROM calendar_sessions n JOIN services ns ON ns.id=n.service_id LEFT JOIN staff_professionals np ON np.id=n.professional_id
             WHERE n.status='scheduled' AND n.starts_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone})

@@ -27,6 +27,17 @@ export const createTemplateInput = z.object({
   serviceId: uuid, areaId: uuid, professionalId: uuid.optional(), weekday: z.number().int().min(0).max(6), localStartTime: time,
   durationMinutes: z.number().int().min(5).max(480), capacity: z.number().int().min(1).max(500), startsOn: date, endsOn: date.nullable().optional(),
 }).strict().refine((value) => !value.endsOn || value.endsOn >= value.startsOn, { message: 'La fecha final no puede ser anterior a la inicial.', path: ['endsOn'] });
+export const createTemplateBatchInput = z.object({
+  serviceId: uuid, areaId: uuid, professionalId: uuid.optional(), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+  blocks: z.array(z.object({ localStartTime: time, durationMinutes: z.number().int().min(5).max(480), capacity: z.number().int().min(1).max(500) }).strict()).min(1).max(12),
+  startsOn: date, endsOn: date.nullable().optional(),
+}).strict().superRefine((value, context) => {
+  if (new Set(value.weekdays).size !== value.weekdays.length) context.addIssue({ code: 'custom', path: ['weekdays'], message: 'No repitas días.' });
+  if (value.endsOn && value.endsOn < value.startsOn) context.addIssue({ code: 'custom', path: ['endsOn'], message: 'La fecha final no puede ser anterior a la inicial.' });
+  const candidateCount = value.weekdays.length * value.blocks.length;
+  if (candidateCount > 50) context.addIssue({ code: 'custom', path: ['blocks'], message: 'Puedes crear hasta 50 horarios de una vez.' });
+  if (value.blocks.some((block) => Number(block.localStartTime.slice(0, 2)) * 60 + Number(block.localStartTime.slice(3)) + block.durationMinutes > 1440)) context.addIssue({ code: 'custom', path: ['blocks'], message: 'Una franja no puede terminar al día siguiente.' });
+});
 const weekQuery = z.object({ weekStart: date }).strict().refine(({ weekStart }) => new Date(`${weekStart}T00:00:00Z`).getUTCDay() === 1, { message: 'La semana debe comenzar en lunes.', path: ['weekStart'] });
 
 export function registerCalendarRoutes(
@@ -190,6 +201,45 @@ export function registerCalendarRoutes(
       if ('error' in result) return reply.code(result.error === 'service_not_found' || result.error === 'area_not_found' ? 404 : 409).send({ error: result.error });
       return reply.code(201).send({ id: result.id, status: 'active' });
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/templates' }, 'template create failed'); return reply.code(500).send({ error: 'internal_error' }); }
+  });
+
+  app.post('/api/calendar/templates/batch', async (request, reply) => {
+    const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
+    const parsed = createTemplateBatchInput.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    const input = parsed.data;
+    const candidates = input.weekdays.flatMap((weekday) => input.blocks.map((block) => ({ ...block, weekday, startMinute: Number(block.localStartTime.slice(0, 2)) * 60 + Number(block.localStartTime.slice(3)), endMinute: Number(block.localStartTime.slice(0, 2)) * 60 + Number(block.localStartTime.slice(3)) + block.durationMinutes })));
+    const overlaps = (a: { weekday: number; startMinute: number; endMinute: number; startsOn: string; endsOn: string | null }, b: { weekday: number; startMinute: number; endMinute: number; startsOn: string; endsOn: string | null }) => {
+      if (a.weekday !== b.weekday || a.startMinute >= b.endMinute || b.startMinute >= a.endMinute) return false;
+      const from = new Date(`${a.startsOn > b.startsOn ? a.startsOn : b.startsOn}T00:00:00Z`);
+      const endA = a.endsOn ?? '9999-12-31'; const endB = b.endsOn ?? '9999-12-31';
+      const through = new Date(`${endA < endB ? endA : endB}T00:00:00Z`);
+      if (from > through) return false;
+      from.setUTCDate(from.getUTCDate() + ((a.weekday - from.getUTCDay() + 7) % 7));
+      return from <= through;
+    };
+    const range = { startsOn: input.startsOn, endsOn: input.endsOn ?? null };
+    if (candidates.some((candidate, index) => candidates.slice(index + 1).some((other) => overlaps({ ...candidate, ...range }, { ...other, ...range })))) return reply.code(409).send({ error: 'schedule_conflict' });
+    try {
+      const result = await database.begin(async (tx) => {
+        // Serialize schedule writes so two concurrent batches cannot both pass the conflict check.
+        await tx`SELECT pg_advisory_xact_lock(710030071)`;
+        const issue = await checkService(tx, input.serviceId, input.areaId); if (issue) return { error: issue };
+        if (input.professionalId) { const [professional] = await tx`SELECT id FROM staff_professionals WHERE id=${input.professionalId} AND status='active' FOR SHARE`; if (!professional) return { error: 'professional_unavailable' }; }
+        const existing = await tx`SELECT service_id AS "serviceId",professional_id AS "professionalId",weekday,local_start_time AS "localStartTime",duration_minutes AS "durationMinutes",starts_on AS "startsOn",ends_on AS "endsOn" FROM recurring_session_templates WHERE status='active' AND (service_id=${input.serviceId} OR (${input.professionalId ?? null}::uuid IS NOT NULL AND professional_id=${input.professionalId ?? null}))`;
+        const conflict = existing.some((row: any) => (row.serviceId === input.serviceId || (input.professionalId && row.professionalId === input.professionalId)) && candidates.some((candidate) => overlaps({ ...candidate, ...range }, { weekday: Number(row.weekday), startMinute: Number(String(row.localStartTime).slice(0, 2)) * 60 + Number(String(row.localStartTime).slice(3, 5)), endMinute: Number(String(row.localStartTime).slice(0, 2)) * 60 + Number(String(row.localStartTime).slice(3, 5)) + Number(row.durationMinutes), startsOn: String(row.startsOn).slice(0, 10), endsOn: row.endsOn ? String(row.endsOn).slice(0, 10) : null })));
+        if (conflict) return { error: 'schedule_conflict' };
+        const created: string[] = [];
+        for (const candidate of candidates) {
+          const [template] = await tx`INSERT INTO recurring_session_templates(service_id,area_id,professional_id,weekday,local_start_time,duration_minutes,capacity,starts_on,ends_on,created_by) VALUES (${input.serviceId},${input.areaId},${input.professionalId ?? null},${candidate.weekday},${candidate.localStartTime},${candidate.durationMinutes},${candidate.capacity},${input.startsOn},${input.endsOn ?? null},${context.actorId}) RETURNING id`;
+          if (!template) throw new Error('Template batch insert returned no row.');
+          created.push(template.id);
+          await appendAudit(tx, context.actorId, 'template.created', 'calendar_template', template.id, null, null, { weekday: candidate.weekday, localStartTime: candidate.localStartTime });
+        }
+        return { templates: created.map((id) => ({ id, status: 'active' })) };
+      });
+      if ('error' in result) return reply.code(result.error === 'service_not_found' || result.error === 'area_not_found' ? 404 : 409).send({ error: result.error });
+      return reply.code(201).send({ templates: result.templates });
+    } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/templates/batch' }, 'template batch create failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
   app.patch('/api/calendar/templates/:templateId/archive', async (request, reply) => {
