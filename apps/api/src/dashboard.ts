@@ -2,9 +2,17 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
+import { countLabel } from './text.js';
 
 type Database = ReturnType<typeof createDatabase>['client'];
 const zone = 'Atlantic/Canary';
+
+type AttentionRecord = { id: string; kind: string; ageAt: string | Date | null };
+export function sortAttentionItems<T extends AttentionRecord>(items: T[]): T[] {
+  const priority: Record<string, number> = { sensitive_review: 0, overdue_payments: 1, pending_transfers: 2, consent_pending: 3, document_pending: 4, absence_sessions: 5, open_timeclock: 6, unassigned_session: 7, overdue_checkin: 8, waitlist: 9 };
+  const epoch = (value: AttentionRecord['ageAt']) => value === null ? Number.POSITIVE_INFINITY : value instanceof Date ? value.getTime() : Date.parse(value);
+  return [...items].sort((a, b) => (priority[a.kind] ?? 10) - (priority[b.kind] ?? 10) || epoch(a.ageAt) - epoch(b.ageAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
 
 export function registerDashboardRoutes(
   app: FastifyInstance<any, any, any, any, any>,
@@ -16,6 +24,19 @@ export function registerDashboardRoutes(
     if (!context) { reply.code(401).send({ error: 'authentication_required' }); return null; }
     return context;
   }
+
+  app.get('/api/session/capabilities', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const context = await contextFor(request, reply);
+    if (!context) return;
+    return {
+      calendar: can(context, 'calendar.read'),
+      clients: can(context, 'clients.read'),
+      communications: can(context, 'communication.read'),
+      billing: can(context, 'billing.read-basic'),
+      staff: can(context, 'staff.read'),
+    };
+  });
 
   app.get('/api/dashboard/command-center', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -45,14 +66,14 @@ export function registerDashboardRoutes(
           count(*) FILTER (WHERE s.status='scheduled' AND s.professional_id IS NULL)::int AS "unassignedCount",
           (SELECT jsonb_build_object('id',n.id,'serviceName',ns.name,'startsAt',n.starts_at,'professionalName',np.display_name)
             FROM calendar_sessions n JOIN services ns ON ns.id=n.service_id LEFT JOIN staff_professionals np ON np.id=n.professional_id
-            WHERE n.status='scheduled' AND n.starts_at >= date_trunc('day',now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone}
-              AND n.starts_at < date_trunc('day',now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone} + interval '1 day'
+            WHERE n.status='scheduled' AND n.starts_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone})
+              AND n.starts_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})
             ORDER BY n.starts_at LIMIT 1) AS "nextSession"
           FROM calendar_sessions s
           LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE status IN ('reserved','attended','no_show'))::int AS occupied FROM calendar_reservations WHERE session_id=s.id) r ON true
           LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE status='waiting')::int AS waiting FROM calendar_waitlist_entries WHERE session_id=s.id) w ON true
-          WHERE s.starts_at >= date_trunc('day',now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone}
-            AND s.starts_at < date_trunc('day',now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone} + interval '1 day'` : Promise.resolve(null),
+          WHERE s.starts_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone})
+            AND s.starts_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})` : Promise.resolve(null),
         permissions.clients ? db`SELECT
           count(*) FILTER (WHERE status='active')::int AS active,
           count(*) FILTER (WHERE status='active' AND created_at >= now() - interval '30 days')::int AS "recentSignups"
@@ -87,14 +108,18 @@ export function registerDashboardRoutes(
             WHERE f.category='check_in' AND a.status='assigned' AND a.due_at < now()
             ORDER BY a.due_at LIMIT 8` : Promise.resolve([]),
           permissions.transfers ? db`SELECT count(*)::int AS count FROM economic_transfer_proofs WHERE status='pending_validation'` : Promise.resolve(null),
-          permissions.timeclock ? db`SELECT p.id AS "professionalId",p.display_name AS "professionalName",e.occurred_at AS "occurredAt"
-            FROM staff_timeclock_events e JOIN staff_professionals p ON p.id=e.professional_id
-            WHERE e.event_type='clock_in' AND e.local_date=(now() AT TIME ZONE ${zone})::date
-              AND NOT EXISTS (SELECT 1 FROM staff_timeclock_events x WHERE x.professional_id=e.professional_id AND x.event_type='clock_out' AND x.occurred_at>e.occurred_at)
-            ORDER BY e.occurred_at LIMIT 8` : Promise.resolve([]),
+          permissions.timeclock ? db`SELECT e.professional_id AS "professionalId",p.display_name AS "professionalName",e.at AS "occurredAt"
+            FROM (SELECT DISTINCT ON (event.professional_id) event.professional_id,event.event_type,event.at
+              FROM (SELECT e.professional_id,e.event_type,COALESCE(c.corrected_occurred_at,e.occurred_at) AS at,e.id
+                FROM staff_timeclock_events e
+                LEFT JOIN LATERAL (SELECT corrected_occurred_at FROM staff_timeclock_corrections WHERE event_id=e.id ORDER BY revision DESC LIMIT 1)c ON true) event
+              ORDER BY event.professional_id,event.at DESC,event.id DESC) e
+            JOIN staff_professionals p ON p.id=e.professional_id AND p.status='active'
+            WHERE e.event_type='clock_in' AND (e.at AT TIME ZONE ${zone})::date < (now() AT TIME ZONE ${zone})::date
+            ORDER BY e.at,e.professional_id LIMIT 8` : Promise.resolve([]),
           permissions.staff && can(context, 'staff.absence.read') && permissions.calendar ? db`SELECT x.id,p.display_name AS "professionalName",x.starts_at AS "startsAt",count(s.id)::int AS "affectedSessions"
             FROM staff_exceptions x JOIN staff_professionals p ON p.id=x.professional_id LEFT JOIN calendar_sessions s ON s.professional_id=x.professional_id AND s.status='scheduled' AND s.starts_at>=now() AND s.starts_at<x.ends_at AND s.starts_at+s.duration_minutes*interval '1 minute'>x.starts_at
-            WHERE x.status='active' AND x.ends_at>now() GROUP BY x.id,p.display_name,x.starts_at HAVING count(s.id)>0 ORDER BY x.starts_at LIMIT 8` : Promise.resolve([]),
+            WHERE x.status='active' AND x.kind<>'extra_availability' AND p.status='active' AND x.ends_at>now() GROUP BY x.id,p.display_name,x.starts_at HAVING count(s.id)>0 ORDER BY x.starts_at LIMIT 8` : Promise.resolve([]),
         ]),
         permissions.billing ? db`WITH charge_balances AS (
           SELECT c.id,c.state,c.due_on,c.amount_cents,COALESCE(x.paid,0) AS paid,COALESCE(x.net,0) AS net,
@@ -103,19 +128,24 @@ export function registerDashboardRoutes(
         ) SELECT
           COALESCE(sum(balance) FILTER (WHERE state='pending'),0)::bigint AS "pendingCents",
           count(*) FILTER (WHERE state='pending' AND balance>0 AND due_on < (now() AT TIME ZONE ${zone})::date)::int AS "overdueCount",
-          COALESCE((SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint FROM economic_transactions WHERE created_at >= date_trunc('day',now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone} AND created_at < date_trunc('day',now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone}+interval '1 day'),0)::bigint AS "collectedTodayCents",
+          COALESCE((SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint FROM economic_transactions WHERE created_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone}) AND created_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})),0)::bigint AS "collectedTodayCents",
           CASE WHEN ${permissions.cash} THEN COALESCE((SELECT jsonb_build_object('status',s.status,'openingCents',s.opening_cents,'expectedCents',COALESCE(s.expected_cents,s.opening_cents+COALESCE(cash.amount,0)+COALESCE(adj.amount,0)),'countedCents',s.counted_cents,'differenceCents',s.difference_cents)
             FROM economic_cash_sessions s
             LEFT JOIN LATERAL (SELECT COALESCE(sum(CASE WHEN t.kind='payment' THEN ps.amount_cents ELSE -ps.amount_cents END),0)::bigint AS amount FROM economic_transactions t JOIN economic_payment_splits ps ON ps.transaction_id=t.id WHERE t.cash_session_id=s.id AND ps.method='cash') cash ON true
             LEFT JOIN LATERAL (SELECT COALESCE(sum(amount_cents),0)::bigint AS amount FROM economic_cash_adjustments WHERE cash_session_id=s.id) adj ON true
-            WHERE s.local_date=(now() AT TIME ZONE ${zone})::date),'null'::jsonb) ELSE 'null'::jsonb END AS "cashSession"
+            WHERE s.status='open' OR s.local_date=(now() AT TIME ZONE ${zone})::date
+            ORDER BY (s.status='open') DESC,s.opened_at DESC LIMIT 1),'null'::jsonb) ELSE 'null'::jsonb END AS "cashSession"
           FROM charge_balances` : Promise.resolve(null),
         permissions.staff ? db`SELECT
-          count(*) FILTER (WHERE p.status='active')::int AS active,
-          count(*) FILTER (WHERE e.event_type='clock_in' AND NOT EXISTS (SELECT 1 FROM staff_timeclock_events o WHERE o.professional_id=p.id AND o.event_type='clock_out' AND o.occurred_at>e.occurred_at))::int AS "workingNow",
-          (SELECT count(*)::int FROM staff_exceptions x WHERE x.status='active' AND x.starts_at<=now() AND x.ends_at>now()) AS "activeAbsences",
+          count(*) FILTER (WHERE p.status='active' AND latest.event_type='clock_in' AND (latest.at AT TIME ZONE ${zone})::date=(now() AT TIME ZONE ${zone})::date)::int AS "workingNow",
+          (SELECT count(*)::int FROM staff_exceptions x JOIN staff_professionals active_staff ON active_staff.id=x.professional_id AND active_staff.status='active' WHERE x.status='active' AND x.kind<>'extra_availability' AND x.starts_at<=now() AND x.ends_at>now()) AS "activeAbsences",
+          (SELECT count(*) FILTER (WHERE s.status='active')::int FROM staff_professionals s) AS active,
           (SELECT count(*)::int FROM staff_substitutions s WHERE s.status='active' AND s.starts_at<=now() AND s.ends_at>now()) AS substitutions
-          FROM staff_professionals p LEFT JOIN LATERAL (SELECT event_type,occurred_at FROM staff_timeclock_events t WHERE t.professional_id=p.id ORDER BY occurred_at DESC,id DESC LIMIT 1)e ON true` : Promise.resolve(null),
+          FROM staff_professionals p LEFT JOIN LATERAL (
+            SELECT e.event_type,COALESCE(c.corrected_occurred_at,e.occurred_at) AS at
+            FROM staff_timeclock_events e LEFT JOIN LATERAL (SELECT corrected_occurred_at FROM staff_timeclock_corrections WHERE event_id=e.id ORDER BY revision DESC LIMIT 1)c ON true
+            WHERE e.professional_id=p.id ORDER BY COALESCE(c.corrected_occurred_at,e.occurred_at) DESC,e.id DESC LIMIT 1
+          )latest ON true` : Promise.resolve(null),
         permissions.communications ? db`SELECT count(*)::int AS count FROM communication_messages m WHERE m.sender_kind='client' AND NOT EXISTS (SELECT 1 FROM communication_message_reads r WHERE r.message_id=m.id AND r.reader_kind='center' AND r.is_read=true)` : Promise.resolve(null),
       ]);
 
@@ -128,7 +158,7 @@ export function registerDashboardRoutes(
       const teamSummary = Array.isArray(team) ? team[0] ?? null : team;
       const unreadSummary = Array.isArray(unread) ? unread[0] ?? null : unread;
       const attentionItems: Array<Record<string, unknown>> = [];
-      if (overdueRow && Number(overdueRow.count) > 0) attentionItems.push({ id: 'overdue-payments', kind: 'overdue_payments', title: `${overdueRow.count} cargos vencidos`, summary: 'Revisar saldos pendientes', href: '#economics', ageAt: null });
+      if (overdueRow && Number(overdueRow.count) > 0) attentionItems.push({ id: 'overdue-payments', kind: 'overdue_payments', title: countLabel(Number(overdueRow.count), 'cargo vencido', 'cargos vencidos'), summary: 'Revisar saldos pendientes', href: '#economics', ageAt: null });
       for (const item of documentRows as any[]) attentionItems.push({
         id: `form-${item.id}`,
         kind: item.kind,
@@ -141,13 +171,10 @@ export function registerDashboardRoutes(
       for (const item of unassignedRows as any[]) attentionItems.push({ id: `unassigned-${item.id}`, kind: 'unassigned_session', title: 'Sesión sin profesional', summary: `${item.serviceName} · ${new Date(item.startsAt).toISOString()}`, href: '#calendar', ageAt: item.startsAt });
       for (const item of waitlistRows as any[]) attentionItems.push({ id: `waitlist-${item.sessionId}`, kind: 'waitlist', title: 'Lista de espera por resolver', summary: `${item.count} ${Number(item.count) === 1 ? 'persona' : 'personas'} · ${item.serviceName}`, href: '#calendar', ageAt: item.startsAt });
       for (const item of overdueCheckinRows as any[]) attentionItems.push({ id: `checkin-${item.clientId}-${item.name}`, kind: 'overdue_checkin', title: 'Seguimiento vencido', summary: `${item.firstName} ${item.lastName} · ${item.name}`, href: `#clients?clientId=${item.clientId}&tab=followup`, ageAt: item.dueAt });
-      if (transferRow && Number(transferRow.count) > 0) attentionItems.push({ id: 'pending-transfers', kind: 'pending_transfers', title: `${transferRow.count} transferencias por validar`, summary: 'Revisar justificantes recibidos', href: '#economics', ageAt: null });
+      if (transferRow && Number(transferRow.count) > 0) attentionItems.push({ id: 'pending-transfers', kind: 'pending_transfers', title: countLabel(Number(transferRow.count), 'transferencia por validar', 'transferencias por validar'), summary: 'Revisar justificantes recibidos', href: '#economics', ageAt: null });
       for (const item of openTimeclockRows as any[]) attentionItems.push({ id: `timeclock-${item.professionalId}`, kind: 'open_timeclock', title: 'Fichaje abierto', summary: item.professionalName, href: '#staff', ageAt: item.occurredAt });
       for (const item of affectedAbsenceRows as any[]) attentionItems.push({ id: `absence-${item.id}`, kind: 'absence_sessions', title: 'Ausencia con sesiones afectadas', summary: `${item.professionalName} · ${item.affectedSessions} ${Number(item.affectedSessions)===1?'sesión':'sesiones'}`, href: '#staff', ageAt: item.startsAt });
-      attentionItems.sort((a, b) => {
-        const rank = (kind: unknown) => ({ sensitive_review: 0, overdue_payments: 1, pending_transfers: 2, consent_pending: 3, document_pending: 4, absence_sessions: 5, open_timeclock: 6, unassigned_session: 7, overdue_checkin: 8, waitlist: 9 } as Record<string, number>)[String(kind)] ?? 10;
-        return rank(a.kind) - rank(b.kind) || String(a.ageAt ?? '').localeCompare(String(b.ageAt ?? ''));
-      });
+      const orderedAttention = sortAttentionItems(attentionItems as AttentionRecord[]);
       const canManageReservations = can(context, 'reservations.manage');
       const canCreateClient = can(context, 'clients.manage');
       const canSend = can(context, 'communication.send');
@@ -164,7 +191,7 @@ export function registerDashboardRoutes(
         permissions,
         today: todaySummary ?? { sessionCount: 0, upcomingCount: 0, capacity: 0, occupied: 0, waitlistCount: 0, unassignedCount: 0, nextSession: null },
         clients: clientsSummary,
-        attention: attentionItems.slice(0, 12),
+        attention: orderedAttention.slice(0, 12),
         economics: economicsSummary,
         team: teamSummary,
         unread: unreadSummary?.count ?? 0,
@@ -186,9 +213,9 @@ export function registerDashboardRoutes(
     const term = parsed.data.q.normalize('NFKC').toLocaleLowerCase('es');
     try {
       const [clients, staff, services] = await Promise.all([
-        can(context, 'clients.read') ? db`SELECT id,concat_ws(' ',first_name,last_name) AS label FROM clients WHERE status='active' AND strpos(lower(concat_ws(' ',first_name,last_name)),${term})>0 ORDER BY lower(last_name),lower(first_name),id LIMIT 5` : Promise.resolve([]),
-        can(context, 'staff.read') ? db`SELECT id,display_name AS label FROM staff_professionals WHERE status='active' AND strpos(lower(display_name),${term})>0 ORDER BY lower(display_name),id LIMIT 5` : Promise.resolve([]),
-        can(context, 'calendar.read') ? db`SELECT id,name AS label FROM services WHERE status='active' AND strpos(lower(name),${term})>0 ORDER BY lower(name),id LIMIT 5` : Promise.resolve([]),
+        can(context, 'clients.read') ? db`SELECT id,concat_ws(' ',first_name,last_name) AS label FROM clients WHERE status='active' AND strpos(unaccent(lower(concat_ws(' ',first_name,last_name))),unaccent(${term}))>0 ORDER BY lower(last_name),lower(first_name),id LIMIT 5` : Promise.resolve([]),
+        can(context, 'staff.read') ? db`SELECT id,display_name AS label FROM staff_professionals WHERE status='active' AND strpos(unaccent(lower(display_name)),unaccent(${term}))>0 ORDER BY lower(display_name),id LIMIT 5` : Promise.resolve([]),
+        can(context, 'calendar.read') ? db`SELECT id,name AS label FROM services WHERE status='active' AND strpos(unaccent(lower(name)),unaccent(${term}))>0 ORDER BY lower(name),id LIMIT 5` : Promise.resolve([]),
       ]);
       return { groups: [
         ...(can(context, 'clients.read') ? [{ type: 'clients', label: 'Clientes', items: clients }] : []),

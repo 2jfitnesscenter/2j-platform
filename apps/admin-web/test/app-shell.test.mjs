@@ -19,9 +19,10 @@ const model = {
   clients:{active:12,recentSignups:2},attention:[],economics:null,team:{active:3,workingNow:1,activeAbsences:0,substitutions:0},unread:2,
   quickActions:[{id:'clients',label:'Ver clientes',href:'#clients'}],
 };
+const capabilities = {calendar:true,clients:true,communications:true,billing:false,staff:true};
 
 test('unified shell shows only permitted areas and renders a calm empty Command Center', async () => {
-  globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : response({groups:[]});
+  globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : String(url).includes('/api/session/capabilities') ? response(capabilities) : response({groups:[]});
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByText('0 sesiones hoy');
   assert.ok(screen.getByRole('link',{name:'Agenda'}));
@@ -38,7 +39,7 @@ test('global search opens with Ctrl+K, groups permitted results and closes with 
     requests.push(String(url));
     return String(url).includes('/api/search')
       ? response({groups:[{type:'clients',label:'Clientes',items:[{id:'c-1',label:'María González'}]},{type:'team',label:'Equipo',items:[{id:'p-1',label:'María Pérez'}]}]})
-      : response(model);
+      : String(url).includes('/api/session/capabilities') ? response(capabilities) : response(model);
   };
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByText('0 sesiones hoy');
@@ -50,4 +51,16 @@ test('global search opens with Ctrl+K, groups permitted results and closes with 
   await waitFor(()=>assert.ok(requests.some(url=>url.includes('/api/search?q='))));
   fireEvent.keyDown(window,{key:'Escape'});
   await waitFor(()=>assert.equal(screen.queryByRole('dialog',{name:'Búsqueda global'}),null));
+});
+
+test('navigation stays available from independent capabilities when Command Center content fails', async () => {
+  globalThis.fetch = async (url) => String(url).includes('/api/session/capabilities')
+    ? response({calendar:true,clients:true,communications:false,billing:false,staff:false})
+    : response({error:'internal_error'},500);
+  render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
+  await screen.findByText('No se pudo abrir el Command Center');
+  assert.ok(screen.getByRole('link',{name:'Agenda'}));
+  assert.ok(screen.getByRole('link',{name:'Clientes'}));
+  assert.equal(screen.queryByRole('link',{name:'Economía'}),null);
+  assert.equal(screen.queryByRole('link',{name:'Equipo'}),null);
 });

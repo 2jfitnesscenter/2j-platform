@@ -14,6 +14,7 @@ export type CommandCenterModel = {
 };
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void}>({data:null,state:'loading',error:'',reload:()=>{}});
 export const useCommandCenter = () => React.useContext(CommandContext);
+type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'>;
 
 const nav = [
   {id:'home',label:'Inicio',href:'#home',permission:null,group:'OPERACIÓN'},
@@ -29,6 +30,7 @@ const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
 export function AppShell({children}:{children:React.ReactNode}) {
   const [route,setRoute] = React.useState(routeId);
   const [data,setData] = React.useState<CommandCenterModel|null>(null);
+  const [capabilities,setCapabilities] = React.useState<NavigationCapabilities|null>(null);
   const [state,setState] = React.useState<'loading'|'ready'|'error'>('loading');
   const [error,setError] = React.useState('');
   const [query,setQuery] = React.useState('');
@@ -42,10 +44,11 @@ export function AppShell({children}:{children:React.ReactNode}) {
     catch(cause){setData(null);setError(cause instanceof Error?cause.message:'No se pudo cargar el inicio.');setState('error');}
   },[]);
   React.useEffect(()=>{ void reload();const change=()=>setRoute(routeId());window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change);},[reload]);
+  React.useEffect(()=>{let current=true;void fetch(`${api}/api/session/capabilities`).then(async response=>{if(!response.ok)throw new Error();const body=await response.json() as NavigationCapabilities;if(current)setCapabilities(body);}).catch(()=>{if(current)setCapabilities(null);});return()=>{current=false;};},[]);
   React.useEffect(()=>{if(!searchOpen)return;searchRef.current?.focus();},[searchOpen]);
   React.useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();setSearchOpen(true);}if(event.key==='Escape'){setSearchOpen(false);setQuery('');}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
   React.useEffect(()=>{if(!searchOpen||query.trim().length<2){setResults([]);return;}const controller=new AbortController();const timer=window.setTimeout(async()=>{setSearchBusy(true);try{const response=await fetch(`${api}/api/search?q=${encodeURIComponent(query.trim())}`,{signal:controller.signal});if(!response.ok)throw new Error();const body=await response.json();setResults(body.groups??[]);}catch{if(!controller.signal.aborted)setResults([]);}finally{if(!controller.signal.aborted)setSearchBusy(false);}},220);return()=>{window.clearTimeout(timer);controller.abort();};},[searchOpen,query]);
-  const permissions=data?.permissions;
+  const permissions=capabilities;
   const groups=[...new Set(nav.map(item=>item.group))];
   return <CommandContext.Provider value={{data,state,error,reload}}><div className="app-frame">
     <aside className="app-sidebar" aria-label="Navegación principal">
