@@ -41,7 +41,9 @@
     "build": "7/7 packages",
     "audit": "no known vulnerabilities",
     "diffCheck": "pass",
-    "localSecretScan": "not_run_go_unavailable; GitHub workflow pending"
+    "localSecretScan": "not_run_go_unavailable",
+    "githubSecretScan": "pass_push_and_pull_request",
+    "githubQuality": "blocked_before_checkout: Docker Hub timed out then rate-limited postgres:17-alpine; failed again on retry"
   },
   "visualEvidence": "pending_real_capture_browser_url_verification_stopped; documented in docs/evidence/2J-073/README.md",
   "independentReview": "pending"
