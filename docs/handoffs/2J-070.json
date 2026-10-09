@@ -35,8 +35,8 @@
     "demoSeed": { "status": "PASS", "repeatRuns": 2, "evidence": "12 clients, 12 client events, 1 session, 3 reservations, 1 waitlist row after both runs." },
     "dependencyAudit": { "status": "PASS", "evidence": "pnpm audit --audit-level high: no known vulnerabilities." },
     "diffCheck": { "status": "PASS", "evidence": "git diff --check returned clean." },
-    "secretScan": { "status": "PENDING_CI" },
-    "githubCi": { "status": "PENDING_FINAL_SHA" },
+    "secretScan": { "status": "PASS", "evidence": "Both push and pull_request secret scan jobs succeeded on implementation SHA 0e7a0340d8b18cfa01818b2fb99f9ad3be136270." },
+    "githubCi": { "status": "PASS_ON_IMPLEMENTATION_SHA", "sha": "0e7a0340d8b18cfa01818b2fb99f9ad3be136270", "evidence": "Quality and secret scan succeeded for both push and pull_request events; handoff update is documentation-only and triggers a fresh CI run." },
     "visualResponsive": {
       "status": "PENDING_REAL_BROWSER_CAPTURE",
       "viewports": [1440, 768, 390],
