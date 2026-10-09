@@ -11,7 +11,7 @@
     "merged": false
   },
   "reviewedStartingSha": "93b394aab3eb473fda45d51ce7bad8a9618f2285",
-  "finalSha": null,
+  "codeCommitSha": "fba0624122c376372e4fac5939b2cab0433c895a",
   "mergePolicy": "Do not merge before independent Claude and Antigravity reviews, visual evidence, and green CI on the same final SHA.",
   "migrations": ["apps/api/migrations/0014_unaccent_search.sql"],
   "implementation": {
@@ -40,8 +40,8 @@
     "demoSeed": { "status": "PASS", "repeatRuns": 2, "evidence": "After migration 0014: 12 synthetic clients, 1 session, 3 reservations and 1 waitlist row after both runs." },
     "dependencyAudit": { "status": "PASS", "evidence": "pnpm audit --audit-level high: no known vulnerabilities." },
     "diffCheck": { "status": "PASS", "evidence": "git diff --check returned clean." },
-    "secretScan": { "status": "PENDING_FINAL_SHA" },
-    "githubCi": { "status": "PENDING_FINAL_SHA", "sha": null },
+    "secretScan": { "status": "PASS", "sha": "fba0624122c376372e4fac5939b2cab0433c895a", "evidence": "Push and pull_request secret scan jobs succeeded." },
+    "githubCi": { "status": "PASS_ON_CODE_COMMIT", "sha": "fba0624122c376372e4fac5939b2cab0433c895a", "evidence": "Quality and secret scan succeeded for both push and pull_request; the subsequent handoff-only commit triggers fresh checks." },
     "visualResponsive": {
       "status": "PENDING_REAL_BROWSER_CAPTURE",
       "viewports": [1440, 768, 390],
