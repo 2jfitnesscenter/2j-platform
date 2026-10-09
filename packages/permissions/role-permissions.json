@@ -52,7 +52,9 @@
     "timeclock.manage",
     "timeclock.audit",
     "staff.timeclock.correct",
-    "settings.manage"
+    "settings.manage",
+    "entitlements.read",
+    "entitlements.manage"
   ],
   "roles": {
     "admin": [

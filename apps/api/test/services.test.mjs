@@ -96,7 +96,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -134,12 +134,13 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(denied.statusCode, 401);
   assert.equal(denied.headers['cache-control'], 'no-store');
   assert.deepEqual(denied.json(), { error: 'authentication_required' });
-  const created = await createClientRequest(clientsAdminApp, { firstName: 'Ada', lastName: `Lovelace ${randomUUID()}`, email: ' ADA@example.test ', phone: ' 555 0100 ' });
+  const testEmail = ` ADA-${randomUUID()}@example.test `;
+  const created = await createClientRequest(clientsAdminApp, { firstName: 'Ada', lastName: `Lovelace ${randomUUID()}`, email: testEmail, phone: ' 555 0100 ' });
   assert.equal(created.statusCode, 201, created.body);
   const clientId = created.json().id;
   const trainer = await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
   assert.equal(trainer.statusCode, 200, trainer.body);
-  assert.equal(trainer.json().client.email, 'ada@example.test');
+  assert.equal(trainer.json().client.email, testEmail.trim().toLowerCase());
   assert.equal(trainer.json().sections.find((section) => section.id === 'training').access, 'available');
   assert.equal(trainer.json().sections.find((section) => section.id === 'health').access, 'available');
   assert.equal(trainer.json().summary.payments.access, 'forbidden');
@@ -184,6 +185,7 @@ test('every client PII route fails closed without a server-resolved session', as
   const routes = [
     ['GET', '/api/clients'], ['HEAD', '/api/clients'], ['POST', '/api/clients'],
     ['GET', `/api/clients/${randomUUID()}`], ['HEAD', `/api/clients/${randomUUID()}`],
+    ['GET', `/api/clients/${randomUUID()}/plans`], ['POST', `/api/clients/${randomUUID()}/plans`],
     ['PATCH', `/api/clients/${randomUUID()}/archive`],
   ];
   for (const [method, url] of routes) {
@@ -192,6 +194,9 @@ test('every client PII route fails closed without a server-resolved session', as
     assert.equal(response.headers['cache-control'], 'no-store', `${method} ${url}`);
     assert.equal(response.body.includes('private@example.test'), false);
   }
+  const catalog = await app.inject({ method:'GET',url:'/api/plans/assignable',headers:{'x-2j-role':'admin'} });
+  assert.equal(catalog.statusCode,401);
+  assert.equal(catalog.headers['cache-control'],'no-store');
 });
 
 test('malformed JSON returns a fixed error and never echoes or logs personal data', async () => {
@@ -1060,4 +1065,61 @@ test('GET plan database connectivity failures return a structured 503', async ()
     assert.equal(response.statusCode, 503);
     assert.equal(response.json().error, 'database_unavailable');
   } finally { await unavailable.close(); }
+});
+
+test('client plan sale atomically assigns the frozen catalog version, charge and optional payment with server permissions', async () => {
+  const service=await createService(`Plan venta ${randomUUID()}`);
+  const createdPlan=await createPlan([service.id]);
+  assert.equal(createdPlan.response.statusCode,201,createdPlan.response.body);
+  const planId=createdPlan.response.json().id;
+  const activated=await app.inject({method:'POST',url:`/api/plans/${planId}/activate`});
+  assert.equal(activated.statusCode,200,activated.body);
+  const assignable=await clientsAdminApp.inject({method:'GET',url:'/api/plans/assignable'});
+  assert.ok(assignable.json().some(item=>item.id===planId));
+  assert.equal((await clientsTrainerApp.inject({method:'GET',url:'/api/plans/assignable'})).statusCode,403);
+  const created=await createClientRequest(clientsAdminApp,{firstName:'Venta',lastName:`Integración ${randomUUID()}`,email:null,phone:null});
+  assert.equal(created.statusCode,201,created.body);
+  const clientId=created.json().id;
+  const key=randomUUID();
+  const payload={planId,startsOn:'2026-10-09',endsOn:null,dueOn:'2026-10-09',amountCents:5900,paymentAmountCents:5900,paymentMethod:'card'};
+  const response=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':key},payload});
+  assert.equal(response.statusCode,201,response.body);
+  const replay=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':key},payload});
+  assert.equal(replay.statusCode,200,replay.body);
+  assert.equal(replay.json().id,response.json().id);
+  const conflict=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':key},payload:{...payload,amountCents:6000}});
+  assert.equal(conflict.statusCode,409,conflict.body);
+  assert.equal(conflict.json().error,'idempotency_conflict');
+  const [counts]=await sql`SELECT (SELECT count(*)::int FROM client_plan_assignments WHERE client_id=${clientId}) assignments,(SELECT count(*)::int FROM economic_charges WHERE client_id=${clientId} AND plan_id=${planId}) charges,(SELECT count(*)::int FROM economic_transactions WHERE client_id=${clientId} AND kind='payment') payments,(SELECT count(*)::int FROM economic_audit_events WHERE client_id=${clientId} AND action IN ('client_plan.assigned','charge.created','payment.recorded')) audit_events,(SELECT count(*)::int FROM client_events WHERE client_id=${clientId} AND event_type='client.plan_assigned') AS client_events`;
+  assert.deepEqual(counts,{assignments:1,charges:1,payments:1,audit_events:3,client_events:1});
+  const profile=await clientsAdminApp.inject({method:'GET',url:`/api/clients/${clientId}`});
+  assert.equal(profile.statusCode,200,profile.body);
+  assert.equal(profile.json().summary.plans.data[0].planName,createdPlan.body.name);
+  assert.equal(profile.json().summary.plans.data[0].derivedStatus,'active');
+  assert.equal((await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${clientId}/plans`})).statusCode,403);
+  const forbidden=await clientsTrainerApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':randomUUID()},payload});
+  assert.equal(forbidden.statusCode,403);
+});
+
+test('client plan sale leaves only an unpaid charge when no money is collected and rolls back if cash cannot be recorded', async () => {
+  const service=await createService(`Plan pendiente ${randomUUID()}`);
+  const createdPlan=await createPlan([service.id]);
+  const planId=createdPlan.response.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+  const create=async()=>{const response=await createClientRequest(clientsAdminApp,{firstName:'Cargo',lastName:`Pendiente ${randomUUID()}`,email:null,phone:null});assert.equal(response.statusCode,201);return response.json().id;};
+  const clientId=await create();
+  const key=randomUUID();
+  const payload={planId,startsOn:'2026-10-09',dueOn:'2026-10-09',amountCents:2500};
+  const response=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':key},payload});
+  assert.equal(response.statusCode,201,response.body);
+  const [charge]=await sql`SELECT state,amount_cents::int AS "amountCents",plan_id AS "planId" FROM economic_charges WHERE client_id=${clientId}`;
+  assert.deepEqual(charge,{state:'pending',amountCents:2500,planId});
+  const clientId2=await create();
+  const before=await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${clientId2}`;
+  const failed=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${clientId2}/plans`,headers:{'idempotency-key':randomUUID()},payload:{...payload,paymentAmountCents:2500,paymentMethod:'cash'}});
+  assert.equal(failed.statusCode,409,failed.body);
+  const after=await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${clientId2}`;
+  assert.equal(after[0].count,before[0].count,'cash validation happens before sale writes; no partial charge or assignment');
+  const assignments=await sql`SELECT count(*)::int AS count FROM client_plan_assignments WHERE client_id=${clientId2}`;
+  assert.equal(assignments[0].count,0);
 });

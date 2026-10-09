@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
+import { registerClientPlanRoutes } from './client-plans.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
@@ -116,6 +117,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   });
   app.addHook('onClose', async () => { await client.end(); });
   registerClientRoutes(app, client, options.authorizationResolver ?? (async () => null));
+  registerClientPlanRoutes(app, client, options.authorizationResolver ?? (async () => null));
   registerCalendarRoutes(app, client, options.authorizationResolver ?? (async () => null), options.bookingEligibilityResolver);
   registerEconomicRoutes(app, client, options.authorizationResolver ?? (async () => null));
   registerEconomicExtensions(app, client, options.authorizationResolver ?? (async () => null));

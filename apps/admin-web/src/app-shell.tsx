@@ -4,7 +4,7 @@ const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 export type CommandCenterModel = {
   timezone: string;
   permissions: { calendar:boolean; clients:boolean; communications:boolean; documents:boolean; sensitiveReview:boolean; followup:boolean; billing:boolean; cash:boolean; transfers:boolean; staff:boolean; absences:boolean; timeclock:boolean };
-  today: { sessionCount:number; upcomingCount:number; capacity:number; occupied:number; waitlistCount:number; unassignedCount:number; sessions:Array<{id:string;serviceName:string;professionalName:string|null;startsAt:string;occupied:number;capacity:number;free:number;waitlistCount:number;isNow:boolean}>; nextSession:{id:string;serviceName:string;startsAt:string;professionalName:string|null}|null };
+  today: { sessionCount:number; upcomingCount:number; capacity:number; occupied:number; waitlistCount:number; unassignedCount:number; sessions:Array<{id:string;serviceName:string;professionalName:string|null;startsAt:string;occupied:number;capacity:number;free:number;waitlistCount:number;isNow:boolean;state:'upcoming'|'in_progress'|'finished'}>; nextSession:{id:string;serviceName:string;startsAt:string;professionalName:string|null}|null };
   clients: { active:number; recentSignups:number }|null;
   attention: Array<{id:string;kind:string;title:string;summary:string;href:string;ageAt:string|null}>;
   economics: {pendingCents:number;overdueCount:number;collectedTodayCents:number;cashSession:{status:string;openingCents:number;expectedCents:number;countedCents:number|null;differenceCents:number|null}|null}|null;
@@ -25,6 +25,7 @@ const nav = [
   {id:'economics',label:'Economía',href:'#economics',permission:'billing',group:'GESTIÓN'},
   {id:'services',label:'Servicios',href:'#services',permission:'calendar',group:'GESTIÓN'},
 ] as const;
+const navGlyph:Record<string,string>={home:'⌂',calendar:'▦',clients:'◉',staff:'♙',communications:'✉',economics:'€',services:'◇'};
 const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
 
 export function AppShell({children}:{children:React.ReactNode}) {
@@ -37,6 +38,8 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const [searchOpen,setSearchOpen] = React.useState(false);
   const [results,setResults] = React.useState<Array<{type:string;label:string;items:Array<{id:string;label:string}>}>>([]);
   const [searchBusy,setSearchBusy] = React.useState(false);
+  const [compact,setCompact] = React.useState(()=>{try{return localStorage.getItem('2j.nav.compact.v1')!=='false';}catch{return true;}});
+  React.useEffect(()=>{try{localStorage.setItem('2j.nav.compact.v1',String(compact));}catch{}},[compact]);
   const searchRef = React.useRef<HTMLInputElement>(null);
   const reload = React.useCallback(async()=>{
     setState('loading');setError('');
@@ -50,13 +53,13 @@ export function AppShell({children}:{children:React.ReactNode}) {
   React.useEffect(()=>{if(!searchOpen||query.trim().length<2){setResults([]);return;}const controller=new AbortController();const timer=window.setTimeout(async()=>{setSearchBusy(true);try{const response=await fetch(`${api}/api/search?q=${encodeURIComponent(query.trim())}`,{signal:controller.signal});if(!response.ok)throw new Error();const body=await response.json();setResults(body.groups??[]);}catch{if(!controller.signal.aborted)setResults([]);}finally{if(!controller.signal.aborted)setSearchBusy(false);}},220);return()=>{window.clearTimeout(timer);controller.abort();};},[searchOpen,query]);
   const permissions=capabilities;
   const groups=[...new Set(nav.map(item=>item.group))];
-  return <CommandContext.Provider value={{data,state,error,reload}}><div className="app-frame">
+  return <CommandContext.Provider value={{data,state,error,reload}}><div className={`app-frame ${compact?'is-compact':''}`}>
     <aside className="app-sidebar" aria-label="Navegación principal">
-      <a className="brand" href="#home" aria-label="2J Platform, inicio"><span className="brand-mark">2J</span><span className="brand-copy">FITNESS CENTER<small>OPERACIONES</small></span></a>
+      <div className="app-sidebar-brand"><a className="brand" href="#home" aria-label="2J Platform, Inicio"><span className="brand-mark">2J</span><span className="brand-copy">FITNESS CENTER<small>OPERACIONES</small></span></a><button className="sidebar-toggle" type="button" onClick={()=>setCompact(value=>!value)} aria-label={compact?'Expandir menú':'Compactar menú'} title={compact?'Expandir menú':'Compactar menú'}>{compact?'»':'«'}</button></div>
       <nav className="app-navigation" aria-label="Secciones">
-        {groups.map(group=><div className="app-nav-group" key={group}><span className="app-nav-label">{group}</span>{nav.filter(item=>item.group===group).filter(item=>item.permission===null||permissions?.[item.permission]===true).map(item=><a key={item.id} className={`app-nav-item ${route===item.id?'active':''}`} href={item.href} aria-current={route===item.id?'page':undefined}>{item.label}{item.id==='communications'&&data?.unread? <span className="nav-count">{data.unread>99?'99+':data.unread}</span>:null}</a>)}</div>)}
+        {groups.map(group=><div className="app-nav-group" key={group}><span className="app-nav-label">{group}</span>{nav.filter(item=>item.group===group).filter(item=>item.permission===null||permissions?.[item.permission]===true).map(item=><a key={item.id} className={`app-nav-item ${route===item.id?'active':''}`} href={item.href} aria-label={item.label} title={item.label} aria-current={route===item.id?'page':undefined}><span className="nav-glyph" aria-hidden="true">{navGlyph[item.id]}</span><span className="nav-item-label">{item.label}</span>{item.id==='communications'&&data?.unread? <span className="nav-count">{data.unread>99?'99+':data.unread}</span>:null}</a>)}</div>)}
       </nav>
-      <div className="app-sidebar-foot"><span className="status-dot"/> Datos protegidos por permisos</div>
+      <div className="app-sidebar-foot" title="Datos protegidos por permisos"><span className="status-dot"/><span>Datos protegidos por permisos</span></div>
     </aside>
     <div className="app-content"><header className="app-topbar"><div className="app-brand-mobile"><span className="brand-mark">2J</span><strong>{nav.find(item=>item.id===route)?.label??'2J Platform'}</strong></div><button className="global-search-trigger" onClick={()=>setSearchOpen(true)} aria-label="Buscar en 2J"><span aria-hidden="true">⌕</span><span>Buscar clientes, equipo o servicios</span><kbd>Ctrl K</kbd></button><span className="local-pill"><span className="status-dot"/> Entorno local</span></header>
       <div className="app-page">{children}</div>

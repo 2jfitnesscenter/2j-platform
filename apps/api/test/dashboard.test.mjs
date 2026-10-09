@@ -41,6 +41,20 @@ test('Command Center denies anonymous access and filters each domain on the serv
   assert.equal(adminData.headers['cache-control'], 'no-store');
 });
 
+test('Home layout preferences persist per authenticated actor and reject duplicate or unknown blocks',async()=>{
+  const actor=`dashboard-layout-${randomUUID()}`;const owner=make('admin',actor);const stranger=make('admin',`dashboard-layout-other-${randomUUID()}`);
+  try{
+    const anonymousRead=await anonymous.inject({method:'GET',url:'/api/dashboard/preferences'});assert.equal(anonymousRead.statusCode,401);
+    const initial=await owner.inject({method:'GET',url:'/api/dashboard/preferences'});assert.equal(initial.statusCode,200);assert.equal(initial.json().order[0],'agenda');
+    const layout={order:['clients','agenda','shortcuts'],hidden:['communication']};
+    const saved=await owner.inject({method:'PUT',url:'/api/dashboard/preferences',payload:layout});assert.equal(saved.statusCode,200,saved.body);assert.deepEqual(saved.json(),layout);
+    const reread=await owner.inject({method:'GET',url:'/api/dashboard/preferences'});assert.deepEqual(reread.json(),layout);
+    const isolated=await stranger.inject({method:'GET',url:'/api/dashboard/preferences'});assert.equal(isolated.json().order[0],'agenda');
+    const duplicate=await owner.inject({method:'PUT',url:'/api/dashboard/preferences',payload:{order:['agenda','agenda'],hidden:[]}});assert.equal(duplicate.statusCode,400);
+    const unknown=await owner.inject({method:'PUT',url:'/api/dashboard/preferences',payload:{order:['agenda','billing'],hidden:[]}});assert.equal(unknown.statusCode,400);
+  }finally{await Promise.all([owner.close(),stranger.close()]);}
+});
+
 test('Command Center aggregates today occupancy and waitlist from calendar source tables', async () => {
   const [area] = await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;
   const [client] = await sql`INSERT INTO clients(first_name,last_name) VALUES ('Demo','Dashboard QA') RETURNING id`;

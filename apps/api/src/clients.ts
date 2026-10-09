@@ -25,6 +25,7 @@ export const createClientInput = z.object({
 
 const sectionDefinitions = [
   { id: 'summary', label: 'Resumen', permission: 'clients.read', sourceLabel: 'Datos del perfil' },
+  { id: 'plans', label: 'Cuotas', permission: 'entitlements.read', sourceLabel: 'Planes asignados' },
   { id: 'reservations', label: 'Reservas', permission: 'calendar.read', sourceLabel: 'Calendario' },
   { id: 'payments', label: 'Pagos', permission: 'billing.read-basic', sourceLabel: 'Pagos' },
   { id: 'training', label: 'Entrenamiento', permission: 'training.read', sourceLabel: 'Entrenamiento en 2J Fitness App' },
@@ -115,7 +116,7 @@ export function registerClientRoutes(
       const items = rows.slice(0, query.data.limit).map(({ cursorLastName: _last, cursorFirstName: _first, ...row }) => row);
       const last = rows[Math.min(rows.length, query.data.limit) - 1];
       const nextCursor = hasMore && last ? encodeCursor({ lastName: last.cursorLastName, firstName: last.cursorFirstName, id: last.id }) : null;
-      return { items, limit: query.data.limit, nextCursor, hasMore, capabilities: { manage: can(context, 'clients.manage') } };
+      return { items, limit: query.data.limit, nextCursor, hasMore, capabilities: { manage: can(context, 'clients.manage'), assignPlans: can(context, 'entitlements.manage') && can(context, 'billing.payments.manage'), collectPayments: can(context, 'billing.payments.manage') } };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients' }, 'client list failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
@@ -186,12 +187,20 @@ export function registerClientRoutes(
         const movements = await database`SELECT t.id,t.charge_id AS "chargeId",c.concept,t.kind,t.amount_cents AS "amountCents",t.note,t.created_at AS "createdAt",COALESCE(jsonb_agg(jsonb_build_object('method',s.method,'amountCents',s.amount_cents)) FILTER(WHERE s.transaction_id IS NOT NULL),'[]'::jsonb) AS splits FROM economic_transactions t JOIN economic_charges c ON c.id=t.charge_id LEFT JOIN economic_payment_splits s ON s.transaction_id=t.id WHERE t.client_id=${params.data.clientId} GROUP BY t.id,c.concept ORDER BY t.created_at DESC,t.id DESC LIMIT 50`;
         summary.payments = { access: 'available', dataState: 'ready', data: { ...economicSummary, charges, movements } };
       }
+      if (can(context, 'entitlements.read')) {
+        const assignments = await database`SELECT x.id,x.plan_id AS "planId",x.plan_version AS "planVersion",p.name AS "planName",v.kind,x.starts_on AS "startsOn",x.ends_on AS "endsOn",x.status,
+          CASE WHEN x.status='cancelled' THEN 'cancelled' WHEN x.starts_on>(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'scheduled' WHEN x.ends_on<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'expired' ELSE 'active' END AS "derivedStatus",
+          x.charge_id AS "chargeId",c.concept,c.amount_cents AS "amountCents",c.due_on AS "dueOn",
+          (SELECT COALESCE(jsonb_agg(jsonb_build_object('rightType',r.right_type,'serviceName',s.name,'quantity',r.quantity,'period',r.period,'quotaScope',r.quota_scope) ORDER BY r.right_type,r.service_id NULLS FIRST,r.id),'[]'::jsonb) FROM plan_rights r LEFT JOIN services s ON s.id=r.service_id WHERE r.plan_id=x.plan_id AND r.plan_version=x.plan_version) AS rights
+          FROM client_plan_assignments x JOIN plans p ON p.id=x.plan_id JOIN plan_versions v ON v.plan_id=x.plan_id AND v.version=x.plan_version JOIN economic_charges c ON c.id=x.charge_id WHERE x.client_id=${params.data.clientId} ORDER BY x.starts_on DESC,x.created_at DESC,x.id DESC LIMIT 100`;
+        summary.plans = { access: 'available', dataState: 'ready', data: assignments };
+      }
       return {
         client,
-        capabilities: { manage: can(context, 'clients.manage') },
+        capabilities: { manage: can(context, 'clients.manage'), assignPlans: can(context, 'entitlements.manage') && can(context, 'billing.payments.manage'), collectPayments: can(context, 'billing.payments.manage') },
         summary,
         reservations,
-        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history', 'messages', 'documents', 'followup'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) ? 'ready' : 'not_connected' })),
+        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) ? 'ready' : 'not_connected' })),
         history: events.map((event) => ({ id: event.id, eventType: event.eventType, actorLabel: actorLabel(event.actorRole), occurredAt: event.occurredAt })),
       };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId' }, 'client detail failed'); return reply.code(500).send({ error: 'internal_error' }); }

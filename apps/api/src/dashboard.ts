@@ -6,6 +6,12 @@ import { countLabel } from './text.js';
 
 type Database = ReturnType<typeof createDatabase>['client'];
 const zone = 'Atlantic/Canary';
+const homeBlock = z.enum(['agenda','attention','clients','communication','economics','team','shortcuts']);
+const dashboardLayoutInput = z.object({order:z.array(homeBlock).max(7),hidden:z.array(homeBlock).max(7)}).strict().superRefine((value,context)=>{
+  if(new Set(value.order).size!==value.order.length)context.addIssue({code:'custom',path:['order'],message:'El orden no puede repetir bloques.'});
+  if(new Set(value.hidden).size!==value.hidden.length)context.addIssue({code:'custom',path:['hidden'],message:'La lista de bloques ocultos no puede repetir elementos.'});
+});
+const defaultDashboardLayout={order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]};
 
 type AttentionRecord = { id: string; kind: string; ageAt: string | Date | null };
 export function sortAttentionItems<T extends AttentionRecord>(items: T[]): T[] {
@@ -24,6 +30,19 @@ export function registerDashboardRoutes(
     if (!context) { reply.code(401).send({ error: 'authentication_required' }); return null; }
     return context;
   }
+
+  app.get('/api/dashboard/preferences',async(request,reply)=>{
+    reply.header('Cache-Control','no-store');const context=await contextFor(request,reply);if(!context)return;
+    const [row]=await db`SELECT layout FROM dashboard_preferences WHERE actor_id=${context.actorId}`;
+    return row?.layout??defaultDashboardLayout;
+  });
+  app.put('/api/dashboard/preferences',async(request,reply)=>{
+    reply.header('Cache-Control','no-store');const context=await contextFor(request,reply);if(!context)return;
+    const parsed=dashboardLayoutInput.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:'validation_error'});
+    const layout={order:parsed.data.order,hidden:parsed.data.hidden};
+    const [row]=await db`INSERT INTO dashboard_preferences(actor_id,layout,updated_at) VALUES (${context.actorId},${JSON.stringify(layout)}::jsonb,now()) ON CONFLICT(actor_id) DO UPDATE SET layout=EXCLUDED.layout,updated_at=now() RETURNING layout`;
+    return row?.layout??defaultDashboardLayout;
+  });
 
   app.get('/api/session/capabilities', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -67,7 +86,8 @@ export function registerDashboardRoutes(
           (SELECT COALESCE(jsonb_agg(jsonb_build_object(
               'id',day.id,'serviceName',day.service_name,'professionalName',day.professional_name,'startsAt',day.starts_at,
               'occupied',day.occupied,'capacity',day.capacity,'free',GREATEST(day.capacity-day.occupied,0),
-              'waitlistCount',day.waitlist_count,'isNow',day.starts_at<=now() AND day.ends_at>now()
+              'waitlistCount',day.waitlist_count,'isNow',day.starts_at<=now() AND day.ends_at>now(),
+              'state',CASE WHEN day.starts_at<=now() AND day.ends_at>now() THEN 'in_progress' WHEN day.ends_at<=now() THEN 'finished' ELSE 'upcoming' END
             ) ORDER BY day.starts_at,day.id),'[]'::jsonb)
             FROM (SELECT cs.id,s.name AS service_name,sp.display_name AS professional_name,cs.starts_at,
                 cs.starts_at+cs.duration_minutes*interval '1 minute' AS ends_at,cs.capacity,
@@ -129,7 +149,7 @@ export function registerDashboardRoutes(
               ORDER BY event.professional_id,event.at DESC,event.id DESC) e
             JOIN staff_professionals p ON p.id=e.professional_id AND p.status='active'
             WHERE e.event_type='clock_in' AND (e.at AT TIME ZONE ${zone})::date < (now() AT TIME ZONE ${zone})::date
-            ORDER BY e.at,e.professional_id LIMIT 8` : Promise.resolve([]),
+            ORDER BY e.at DESC,e.professional_id LIMIT 8` : Promise.resolve([]),
           permissions.staff && can(context, 'staff.absence.read') && permissions.calendar ? db`SELECT x.id,p.display_name AS "professionalName",x.starts_at AS "startsAt",count(s.id)::int AS "affectedSessions"
             FROM staff_exceptions x JOIN staff_professionals p ON p.id=x.professional_id LEFT JOIN calendar_sessions s ON s.professional_id=x.professional_id AND s.status='scheduled' AND s.starts_at>=now() AND s.starts_at<x.ends_at AND s.starts_at+s.duration_minutes*interval '1 minute'>x.starts_at
             WHERE x.status='active' AND x.kind<>'extra_availability' AND p.status='active' AND x.ends_at>now() GROUP BY x.id,p.display_name,x.starts_at HAVING count(s.id)>0 ORDER BY x.starts_at LIMIT 8` : Promise.resolve([]),
