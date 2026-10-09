@@ -15,7 +15,7 @@ La TASK requiere evidencia visual de:
 
 ## Verificación automática
 
-El handoff `docs/handoffs/2J-072.md` registra 183/183 tests, migraciones 16/16, typecheck y build en 7/7 paquetes, y auditoría sin vulnerabilidades conocidas. La corrección de idempotencia solo afecta a la lógica del formulario y no cambia el diseño; los tests cubren su comportamiento. Los tests de componentes no sustituyen capturas de navegador.
+El handoff `docs/handoffs/2J-072.md` registra 183/183 tests, migraciones 16/16, typecheck y build en 7/7 paquetes, auditoría sin vulnerabilidades conocidas y Quality/secret scan remotos verdes sobre el SHA funcional final. La corrección de idempotencia solo afecta a la lógica del formulario y no cambia el diseño; los tests cubren su comportamiento. Los tests de componentes no sustituyen capturas de navegador.
 
 ## Datos de captura
 

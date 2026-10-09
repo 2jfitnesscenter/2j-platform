@@ -1,7 +1,7 @@
 {
   "taskId": "2J-072",
   "title": "Home V2, compact navigation and operational Client 360",
-  "status": "awaiting_final_ci_and_independent_review",
+  "status": "awaiting_independent_review",
   "baseSha": "eac22896d93ca18970a1998b8e450dbb735e27ac",
   "branch": "agent/codex/2J-072-home-v2-client-360",
   "implementationSha": "407c222e46c621f61b747914510566e69adff3ac",
@@ -18,8 +18,9 @@
   "finalCorrection": {
     "finding": "A quota sale used a new idempotency key for every submit, so a retry after a lost response could create duplicate economic records.",
     "behavior": "Same logical sale retries reuse the same key and payload. The key rotates for a changed client/payload, and is cleared on confirmed success, explicit cancel/close/reset, or a new sale.",
-    "reviewSha": "94f3f944084ff29e3b48a3865372ece1197c9e7c",
-    "ci": "PENDING_FINAL_SHA"
+    "baseHeadSha": "94f3f944084ff29e3b48a3865372ece1197c9e7c",
+    "codeSha": "296b5d55237fffff5f2bd501e8d66d08e699a128",
+    "ci": "PASS_PUSH_AND_PULL_REQUEST"
   },
   "verification": {
     "uiTests": {"status": "PASS", "count": 55},
@@ -29,8 +30,8 @@
     "build": {"status": "PASS", "packages": 7},
     "migration": {"status": "PASS", "count": 16, "name": "0016_client_plan_assignments.sql"},
     "dependencyAudit": "PASS_NO_KNOWN_VULNERABILITIES",
-    "secretScan": "PENDING_FINAL_SHA",
-    "githubChecks": "PENDING_FINAL_SHA_PUSH_AND_PULL_REQUEST",
+    "secretScan": "PASS_ON_296b5d55237fffff5f2bd501e8d66d08e699a128_PUSH_AND_PULL_REQUEST",
+    "githubChecks": "PASS_ON_296b5d55237fffff5f2bd501e8d66d08e699a128_PUSH_AND_PULL_REQUEST",
     "diffCheck": "PASS",
     "browserEvidence": {"status": "NOT_CAPTURED", "viewports": [1440, 768, 390], "requiredViews": ["home", "client-summary", "client-plans", "new-client-plan", "mobile-home", "mobile-client", "mobile-plan"]}
   },
