@@ -5,54 +5,44 @@
   "branch": "agent/codex/2J-050-staff-team-timeclock",
   "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/11",
   "status": "REVIEW",
-  "starting_head": "a2b63c07cccae87454700f5df6c0dad745af9bb9",
-  "implementation_head": "42888297ad99db4f508a447b6a33c47eaba0bee9",
-  "final_head": "Use current PR #11 headRefOid after the handoff update commit; the exact SHA is in the task close-out.",
+  "starting_head": "b47da41ab7669d4baabc8bac35ff0203932d6c6a",
+  "base_head": "a2b63c07cccae87454700f5df6c0dad745af9bb9",
   "scope": [
-    "Staff professional records, role metadata, archival and account linking",
-    "Capability-based team access and calendar availability integration",
-    "Weekly working schedules, exceptions and explicit substitutions",
-    "Append-only timeclock events, corrections, audit and day/week/month observed-hour summaries",
-    "Responsive team dashboard and professional profile"
+    "Staff professional records, capability-based permissions and PII minimization",
+    "Schedules, Canary exceptions, availability integration and explicit substitutions",
+    "Append-only timeclock events, serialized chronological corrections and audit",
+    "Responsive staff administration, accessible tabs and substitution reassignment UI"
   ],
-  "permissions": [
-    "staff.read", "staff.manage", "staff.schedule.read", "staff.schedule.manage",
-    "staff.schedule.override", "staff.absence.read", "staff.absence.manage",
-    "staff.substitution.manage", "timeclock.self", "timeclock.manage",
-    "timeclock.audit", "staff.timeclock.correct"
-  ],
-  "migration": "apps/api/migrations/0008_staff_team_timeclock.sql",
+  "permissions": {
+    "admin": "full staff administration",
+    "reception_management": "operational schedules, absences, substitutions and necessary contact access",
+    "trainer": "team availability and own clocking; no other-profile management, account linking, internal notes or staff audit",
+    "accountant": "no staff operational access",
+    "capabilities": ["staff.read", "staff.manage", "staff.profile.sensitive.read", "staff.audit.read", "staff.schedule.read", "staff.schedule.manage", "staff.schedule.override", "staff.absence.read", "staff.absence.manage", "staff.substitution.manage", "timeclock.self", "timeclock.manage", "timeclock.audit", "staff.timeclock.correct"]
+  },
+  "migration": ["apps/api/migrations/0008_staff_team_timeclock.sql", "apps/api/migrations/0009_staff_domain_safety.sql"],
   "timezone": "Atlantic/Canary",
   "verification": {
-    "database_migrations": { "result": "PASS", "evidence": "8 checksummed migrations applied to a disposable PostgreSQL 17 instance." },
-    "full_test_suite": { "result": "PASS", "count": 126, "evidence": "3 token, 3 domain, 5 permission, 2 auth, 3 audit, 77 API/PostgreSQL, 33 admin UI; PostgreSQL started empty." },
-    "typecheck": { "result": "PASS", "packages": 7 },
-    "build": { "result": "PASS", "packages": 7 },
-    "dependency_audit": { "result": "PASS", "evidence": "No known vulnerabilities found." },
-    "diff_check": { "result": "PASS" },
-    "github_quality_secret_scan": { "result": "PENDING_FINAL_PR_HEAD" }
+    "database_migrations": {"result": "PASS", "evidence": "9 checksummed migrations verified on disposable PostgreSQL 17; API suite ran against a fresh database."},
+    "full_test_suite": {"result": "PASS", "count": 140, "evidence": "3 tokens, 3 domain, 5 permissions, 2 auth, 3 audit, 85 API/PostgreSQL, 39 admin UI; 0 failures, 0 skips."},
+    "typecheck": {"result": "PASS", "packages": 7},
+    "build": {"result": "PASS", "packages": 7},
+    "dependency_audit": {"result": "PASS", "evidence": "No known vulnerabilities found."},
+    "diff_check": {"result": "PASS"},
+    "github_quality_secret_scan": {"result": "PENDING_FINAL_PR_HEAD"}
   },
   "evidence": {
-    "visual_reviewed": ["1440x1000", "768x1024", "390x844"],
-    "horizontal_document_overflow": false,
+    "visual_reviewed": ["local browser screenshot after corrections"],
+    "responsive_dimensions": ["1440x1000", "768x1024", "390x844"],
     "persistent_screenshots": false,
-    "note": "Captured and inspected with the local browser during this task. Current browser runtime exposes screenshots inline but not as a workspace file."
+    "note": "The browser runtime displays screenshots inline but does not expose them as persistent workspace files. Responsive measurements need fresh confirmation on the final head if viewport control is available; do not overstate this evidence."
   },
-  "out_of_scope": [
-    "Payroll, salaries, contracts, legal overtime, collective agreements and accrued vacation calculations",
-    "Biometrics, GPS, geofencing, facial recognition and invasive monitoring",
-    "Automatic cancellation or reassignment of calendar sessions",
-    "Production SSO or identity-provider provisioning"
-  ],
   "known_findings": [
-    "Admin UI exposes creation and self clocking plus profile sections, but not every API management action (role editing, status/archive, account linking, exception cancellation, schedule archive, substitution reassign/cancel, manual timeclock and correction). Follow-up UX pass recommended.",
-    "Staff base role remains profile metadata; production authentication-provider integration is not part of this TASK.",
-    "Manual screen-reader validation and persistent PNG evidence remain pending."
+    "Admin account-link API is protected and audited, but an account picker cannot be built until the identity provider exposes a searchable user directory; no raw authActorId form was added.",
+    "Manual screen-reader validation and versioned PNG evidence remain follow-up polish.",
+    "Editing or cancelling a substitution itself is outside this correction pass; explicit eligible future-session reassignment is implemented."
   ],
-  "reviews": {
-    "claude_backend_security": "PENDING_FINAL_SHA",
-    "antigravity_ux_accessibility": "PENDING_FINAL_SHA",
-    "merge": "DO_NOT_MERGE"
-  },
-  "legal_hr_decision": "No legal calculation is implemented. Escalate any concrete labor-law rule as LEGAL/HR DECISION REQUIRED."
+  "out_of_scope": ["Payroll, salaries, contracts and definitive labor-law calculations", "Biometrics, GPS and invasive monitoring", "Automatic session cancellation or reassignment", "Identity-provider directory/SSO integration"],
+  "reviews": {"claude_backend_security": "PENDING_FINAL_SHA", "antigravity_ux_accessibility": "PENDING_FINAL_SHA", "merge": "DO_NOT_MERGE"},
+  "legal_hr_decision": "No legal calculation or definitive labor-timekeeping interpretation is implemented. Escalate any concrete labor-law rule as LEGAL/HR DECISION REQUIRED."
 }

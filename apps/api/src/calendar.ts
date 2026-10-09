@@ -59,10 +59,17 @@ export function registerCalendarRoutes(
     if (conflict?.conflict) return { error: 'professional_session_conflict', warnings: [] as string[] };
     const local = await tx`SELECT extract(dow FROM ${startsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::int AS weekday,(${startsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::date AS local_date,(${startsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::time AS local_time,(${endsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::time AS local_end`;
     const day = local[0]!;
-    const [schedule] = await tx`SELECT EXISTS(SELECT 1 FROM staff_schedule_slots WHERE professional_id=${professionalId} AND status='active' AND weekday=${day.weekday} AND valid_from<=${day.local_date} AND (valid_until IS NULL OR valid_until>=${day.local_date}) AND starts_at<=${day.local_time} AND ends_at>=${day.local_end}) AS covered`;
+    const slots = await tx`SELECT starts_at AS "startsAt",ends_at AS "endsAt" FROM staff_schedule_slots WHERE professional_id=${professionalId} AND status='active' AND weekday=${day.weekday} AND valid_from<=${day.local_date} AND (valid_until IS NULL OR valid_until>=${day.local_date}) ORDER BY starts_at`;
+    const [coverage] = await tx`SELECT ${day.local_time}::time AS starts,${day.local_end}::time AS ends`;
+    const minute = (value: string) => { const [hour, minutes] = String(value).slice(0, 5).split(':').map(Number); return hour! * 60 + minutes!; };
+    let coveredUntil = minute(coverage!.starts);
+    const requestedEnd = minute(coverage!.ends);
+    for (const slot of slots) { const start = minute(slot.startsAt); const end = minute(slot.endsAt); if (start > coveredUntil) break; if (end > coveredUntil) coveredUntil = end; }
+    const [extraAvailability] = await tx`SELECT EXISTS(SELECT 1 FROM staff_exceptions WHERE professional_id=${professionalId} AND status='active' AND kind='extra_availability' AND starts_at<=${startsAt} AND ends_at>=${endsAt}) AS covered`;
+    const scheduleCovered = coveredUntil >= requestedEnd || Boolean(extraAvailability?.covered);
     const [absence] = await tx`SELECT EXISTS(SELECT 1 FROM staff_exceptions WHERE professional_id=${professionalId} AND status='active' AND kind<>'extra_availability' AND starts_at<${endsAt} AND ends_at>${startsAt}) AS unavailable`;
     const [substitution] = await tx`SELECT id,substitute_professional_id AS "substituteProfessionalId" FROM staff_substitutions WHERE source_professional_id=${professionalId} AND status='active' AND starts_at<${endsAt} AND ends_at>${startsAt} ORDER BY starts_at LIMIT 1`;
-    const warnings = [...(!schedule?.covered?['outside_working_hours']:[]),...(absence?.unavailable?['professional_absent']:[]),...(substitution?['substitution_available']:[])];
+    const warnings = [...(!scheduleCovered?['outside_working_hours']:[]),...(absence?.unavailable?['professional_absent']:[]),...(substitution?['substitution_available']:[])];
     if (!warnings.length) return { error: null as string | null, warnings };
     if (!override) return { error: 'professional_availability_confirmation_required', warnings };
     if (!can(context,'staff.schedule.override')) return { error: 'permission_denied', warnings };

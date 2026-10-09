@@ -598,3 +598,15 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
   .split-remove { grid-column: 1 / -1; width: 100%; }
   .cash-breakdown > div { font-size: 13px; }
 }
+.staff-profile-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--2j-space-2); }
+.staff-profile-heading h2:focus { outline:3px solid var(--2j-color-focus); outline-offset:4px; }
+.staff-tabs [role="tab"] { min-height:44px; }
+.staff-reassignment { display:grid; gap:var(--2j-space-2); padding:var(--2j-space-3); border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); }
+.staff-reassignment label { display:flex; align-items:flex-start; gap:var(--2j-space-2); min-height:44px; }
+@media (max-width: 768px) {
+  .staff-profile { scroll-margin-top:16px; }
+  .staff-profile-actions { justify-content:flex-start; }
+  .staff-profile-actions .button { min-height:44px; }
+  .staff-tabs { overflow-x:auto; }
+  .staff-reassignment { width:100%; }
+}
