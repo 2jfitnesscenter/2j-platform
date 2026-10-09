@@ -24,12 +24,12 @@
   "timezone": "Atlantic/Canary",
   "verification": {
     "database_migrations": {"result": "PASS", "evidence": "9 checksummed migrations verified on disposable PostgreSQL 17; API suite ran against a fresh database."},
-    "full_test_suite": {"result": "PASS", "count": 140, "evidence": "3 tokens, 3 domain, 5 permissions, 2 auth, 3 audit, 85 API/PostgreSQL, 39 admin UI; 0 failures, 0 skips."},
+    "full_test_suite": {"result": "PASS", "count": 141, "evidence": "3 tokens, 3 domain, 5 permissions, 2 auth, 3 audit, 86 API/PostgreSQL, 39 admin UI; 0 failures, 0 skips. The timeline validator now requires the first effective event to be clock_in for manual entries and corrections."},
     "typecheck": {"result": "PASS", "packages": 7},
     "build": {"result": "PASS", "packages": 7},
     "dependency_audit": {"result": "PASS", "evidence": "No known vulnerabilities found."},
     "diff_check": {"result": "PASS"},
-    "github_quality_secret_scan": {"result": "PASS", "evidence": "Push and pull_request quality + secret scan passed for implementation SHA 187cd72d7faa49bce9f278054ad678f30d58705d; rerun required if the documentation commit changes the PR head."}
+    "github_quality_secret_scan": {"result": "PENDING_FINAL_SHA", "evidence": "Rerun is required for the current correction and documentation commits."}
   },
   "evidence": {
     "visual_reviewed": ["local browser screenshot after corrections"],

@@ -150,6 +150,31 @@ test('manual timeclock insertion checks both neighbors and rejects future instan
  const future=await admin.inject({method:'POST',url:`/api/staff/${p.id}/timeclock/manual`,payload:{eventType:'clock_out',occurredAt:'2099-01-01T10:00:00Z',reason:'Fecha futura'}});assert.equal(future.statusCode,409);assert.equal(future.json().error,'future_timeclock_event');
 });
 
+test('effective timeclock timeline must begin with clock_in for manual entries and corrections',async()=>{
+ const date='2026-10-08';
+ const empty=await professional();
+ const firstOut=await admin.inject({method:'POST',url:`/api/staff/${empty.id}/timeclock/manual`,payload:{eventType:'clock_out',occurredAt:`${date}T07:00:00Z`,reason:'Cierre manual'}});
+ assert.equal(firstOut.statusCode,409);assert.equal(firstOut.json().error,'invalid_shift_transition');
+ assert.equal((await sql`SELECT count(*)::int AS n FROM staff_timeclock_events WHERE professional_id=${empty.id}`)[0].n,0);
+
+ const inserted=await professional();
+ for(const [eventType,time] of [['clock_in','08:00'],['clock_out','12:00']])await sql`INSERT INTO staff_timeclock_events(professional_id,event_type,occurred_at,actor_id,origin,note) VALUES (${inserted.id},${eventType},${`${date}T${time}:00Z`},'qa','manual_admin','fixture')`;
+ const outBeforeFirst=await admin.inject({method:'POST',url:`/api/staff/${inserted.id}/timeclock/manual`,payload:{eventType:'clock_out',occurredAt:`${date}T07:00:00Z`,reason:'Fichaje intercalado'}});
+ assert.equal(outBeforeFirst.statusCode,409);assert.equal(outBeforeFirst.json().error,'invalid_shift_transition');
+
+ const corrected=await professional();
+ const [clockIn]=await sql`INSERT INTO staff_timeclock_events(professional_id,event_type,occurred_at,actor_id,origin,note) VALUES (${corrected.id},'clock_in',${`${date}T08:00:00Z`},'qa','manual_admin','fixture') RETURNING id`;
+ await sql`INSERT INTO staff_timeclock_events(professional_id,event_type,occurred_at,actor_id,origin,note) VALUES (${corrected.id},'clock_out',${`${date}T12:00:00Z`},'qa','manual_admin','fixture')`;
+ const firstInMovedAfterOut=await admin.inject({method:'POST',url:`/api/staff/timeclock/${clockIn.id}/corrections`,payload:{correctedOccurredAt:`${date}T13:00:00Z`,reason:'Corrección inválida'}});
+ assert.equal(firstInMovedAfterOut.statusCode,409);assert.equal(firstInMovedAfterOut.json().error,'timeclock_chronology_conflict');
+ assert.equal((await sql`SELECT occurred_at FROM staff_timeclock_events WHERE id=${clockIn.id}`)[0].occurred_at.toISOString(),`${date}T08:00:00.000Z`);
+
+ const valid=await professional();
+ const validIn=await admin.inject({method:'POST',url:`/api/staff/${valid.id}/timeclock/manual`,payload:{eventType:'clock_in',occurredAt:`${date}T08:00:00Z`,reason:'Entrada válida'}});
+ const validOut=await admin.inject({method:'POST',url:`/api/staff/${valid.id}/timeclock/manual`,payload:{eventType:'clock_out',occurredAt:`${date}T12:00:00Z`,reason:'Salida válida'}});
+ assert.equal(validIn.statusCode,201,validIn.body);assert.equal(validOut.statusCode,201,validOut.body);
+});
+
 test('timeclock corrections chain effective values, allow restoration and serialize concurrent edits',async()=>{
  const p=await professional();const [event]=await sql`INSERT INTO staff_timeclock_events(professional_id,event_type,occurred_at,actor_id,origin,note) VALUES (${p.id},'clock_in','2026-10-08T08:00:00Z','qa','manual_admin','fixture') RETURNING id`;
  for(const [minute,expectedPrevious] of [['08:10','08:00'],['08:20','08:10'],['08:00','08:20']]){const r=await admin.inject({method:'POST',url:`/api/staff/timeclock/${event.id}/corrections`,payload:{correctedOccurredAt:`2026-10-08T${minute}:00Z`,reason:'Revisión de jornada'}});assert.equal(r.statusCode,201,r.body);const row=(await sql`SELECT previous_occurred_at FROM staff_timeclock_corrections WHERE id=${r.json().id}`)[0];assert.equal(row.previous_occurred_at.toISOString().slice(11,16),expectedPrevious);}
