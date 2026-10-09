@@ -76,6 +76,39 @@ test('fails closed when the server has no authorized session', async () => {
   assert.equal(screen.queryByRole('button', { name: /nuevo cliente/i }), null);
 });
 
+test('Client 360 pauses an entitlement with reason and idempotency key, then refreshes its effective status', async () => {
+  const assignment={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',planId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',planName:'Funcional 2 días',kind:'recurring',startsOn:'2026-10-01',endsOn:'2026-10-31',derivedStatus:'active',concept:'Funcional · Cuota',amountCents:4500,salePriceCents:4500,dueOn:'2026-10-01',rights:[{id:'right-1',rightType:'period_quota',serviceName:'La Sala',quantity:2,period:'week',quotaScope:'per_service'}],modules:[{module:'training',accessLevel:'limited',capabilities:['training.routines.read']}]};
+  const taskProfile={...profile,capabilities:{manage:true,readEntitlements:true,pauseEntitlements:true,cancelEntitlements:true,adjustEntitlements:true,renewEntitlements:true,assignPlans:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[assignment]}}};
+  let posted;
+  globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`))return response(taskProfile);if(path.endsWith(`/api/clients/${client.id}/plans/${assignment.id}/pause`)&&options.method==='POST'){posted={body:JSON.parse(options.body),key:options.headers['idempotency-key']};return response({status:'paused'},201);}throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:'Cuotas'}));assert.ok(screen.getByRole('heading',{name:'Activas'}));assert.ok(screen.getByText('Entrenamiento: Limitado'));fireEvent.click(await screen.findByRole('button',{name:'Pausar'}));
+  const dialog=await screen.findByRole('dialog',{name:'Pausar cuota'});fireEvent.change(within(dialog).getByLabelText('Motivo obligatorio'),{target:{value:'Pausa solicitada por cliente'}});fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar pausa'}));await screen.findByText('Cuota pausada.');assert.equal(posted.body.reason,'Pausa solicitada por cliente');assert.match(posted.key,/^[0-9a-f-]{36}$/i);
+});
+
+test('Reception can open a base-price sale while Trainer remains read-only', async () => {
+  const plan = { id:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',name:'Plan Sala',kind:'recurring',basePriceCents:3200,services:[{name:'La Sala'}],rights:[{rightType:'service_access',serviceName:'La Sala'}] };
+  const receptionProfile={...profile,capabilities:{manage:false,readEntitlements:true,assignPlans:true,manageCatalogPrice:false,collectPayments:false,pauseEntitlements:true,cancelEntitlements:true,renewEntitlements:true,adjustEntitlements:false},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
+  globalThis.fetch=async(url)=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse([client],{capabilities:{manage:false,assignPlans:true}}));if(path.endsWith(`/api/clients/${client.id}`))return response(receptionProfile);if(path.endsWith('/api/plans/assignable'))return response([plan]);throw new Error(`Unexpected request ${path}`);};
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
+  await screen.findByRole('heading',{name:'Marta Santos'});
+  fireEvent.click(screen.getAllByRole('button',{name:'Añadir cuota'})[0]);
+  const dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
+  await screen.findByRole('option',{name:/Plan Sala/});
+  const price=within(dialog).getByLabelText('Precio de venta (€)');
+  assert.equal(price.readOnly,true);
+  assert.equal(price.value,'32.00');
+  assert.equal(within(dialog).queryByLabelText('Cobrar ahora el importe completo'),null,'the payment action is hidden without billing permission');
+  cleanup();
+
+  const trainerProfile={...receptionProfile,capabilities:{manage:false,readEntitlements:true,assignPlans:false,manageCatalogPrice:false,collectPayments:false,pauseEntitlements:false,cancelEntitlements:false,renewEntitlements:false,adjustEntitlements:false}};
+  globalThis.fetch=async(url)=>String(url).includes('/api/clients?')?response(listResponse([client],{capabilities:{manage:false,assignPlans:false}})):String(url).endsWith(`/api/clients/${client.id}`)?response(trainerProfile):Promise.reject(new Error(`Unexpected request ${url}`));
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
+  await screen.findByRole('heading',{name:'Marta Santos'});
+  assert.equal(screen.queryByRole('button',{name:'Añadir cuota'}),null);
+});
+
 test('client list exposes distinct loading, error and empty states with retry', async () => {
   const pending = [];
   globalThis.fetch = () => new Promise((resolve) => pending.push(resolve));
@@ -123,9 +156,9 @@ test('create dialog focuses its first field, traps keyboard focus, and restores 
 
 test('Guardar y añadir cuota creates the client, assigns the active plan and records an immediate charge payment',async()=>{
   const assigned={id:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',planName:'Fuerza 3 días',kind:'recurring',startsOn:'2026-10-09',endsOn:null,derivedStatus:'active',concept:'Fuerza 3 días · Cuota',amountCents:5900,dueOn:'2026-10-09',rights:[{rightType:'sessions_quota',serviceName:'Fuerza',quantity:12,period:null,quotaScope:'shared'}]};
-  const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,services:[{id:'service-1',name:'Fuerza',area:'Sala'}],rights:[{rightType:'sessions_quota',serviceName:'Fuerza',quantity:12,period:null,quotaScope:'shared'}]};
+  const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,basePriceCents:5900,services:[{id:'service-1',name:'Fuerza',area:'Sala'}],rights:[{rightType:'sessions_quota',serviceName:'Fuerza',quantity:12,period:null,quotaScope:'shared'}]};
   const created={...client,id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',firstName:'Ada',lastName:'Lovelace'};
-  const saleProfile={...profile,client:created,capabilities:{manage:true,assignPlans:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
+  const saleProfile={...profile,client:created,capabilities:{manage:true,assignPlans:true,manageCatalogPrice:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
   const requests=[];let assignmentPayload;let assignmentKey;
   globalThis.fetch=async(url,options={})=>{
     const path=String(url);requests.push({path,method:options.method??'GET'});
@@ -145,13 +178,13 @@ test('Guardar y añadir cuota creates the client, assigns the active plan and re
   assert.equal(assignmentPayload.amountCents,5900);assert.equal(assignmentPayload.paymentAmountCents,5900);assert.equal(assignmentPayload.paymentMethod,'card');assert.equal(assignmentPayload.planId,plan.id);
   assert.match(assignmentKey,/^[0-9a-f-]{36}$/i);
   assert.ok(requests.some(item=>item.path.endsWith('/api/clients')&&item.method==='POST'));
-  assert.equal(screen.getByRole('tab',{name:'Cuotas'}).getAttribute('aria-selected'),'true');
   await screen.findByText('Fuerza 3 días');
+  await waitFor(()=>assert.equal(screen.getByRole('tab',{name:'Cuotas'}).getAttribute('aria-selected'),'true'));
 });
 
 test('plan sale retries reuse one key after a lost response, while success and cancel start fresh operations',async()=>{
   const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,services:[],rights:[]};
-  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,collectPayments:true}};
+  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,manageCatalogPrice:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}]};
   const saleRequests=[];let loseFirstResponse=true;
   globalThis.fetch=async(url,options={})=>{
     const path=String(url);
@@ -181,6 +214,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
   assert.equal(saleRequests[0].key,saleRequests[1].key,'a retry after a lost response must reuse the operation key');
   assert.equal(saleRequests[0].payload,saleRequests[1].payload);
 
+  await screen.findByRole('tab',{name:'Cuotas'});
   fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
@@ -190,6 +224,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
   await screen.findByText('Cuota asignada; el cargo queda pendiente.');
   assert.notEqual(saleRequests[2].key,saleRequests[1].key,'the next sale after success must have a fresh key');
 
+  await screen.findByRole('tab',{name:'Cuotas'});
   fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   fireEvent.click(within(dialog).getByRole('button',{name:'Cancelar'}));
@@ -205,7 +240,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
 
 test('changing a failed sale payload rotates its idempotency key',async()=>{
   const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,services:[],rights:[]};
-  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,collectPayments:true}};
+  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,manageCatalogPrice:true,collectPayments:true}};
   const saleRequests=[];let first=true;
   globalThis.fetch=async(url,options={})=>{
     const path=String(url);

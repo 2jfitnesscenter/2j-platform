@@ -36,6 +36,16 @@ test('approved role matrix grants only named operations and denies by default', 
   assert.throws(() => requirePermission({ actorId: 'fixture', role: 'accountant' }, 'billing.refund'), { code: 'FORBIDDEN', statusCode: 403 });
 });
 
+test('2J-073 entitlement operations follow the approved Reception, Trainer, Accountant and Admin matrix', () => {
+  const has = (role, permission) => can({ actorId: 'fixture', role }, permission);
+  for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel']) assert.equal(has('reception-management', permission), true, `${permission} should be granted to Reception`);
+  for (const permission of ['entitlements.adjust','catalog.pricing.manage','billing.payments.manage']) assert.equal(has('reception-management', permission), false, `${permission} should remain denied to Reception`);
+  assert.equal(has('trainer','entitlements.read'), true);
+  for (const permission of ['entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage','billing.payments.manage']) assert.equal(has('trainer', permission), false, `${permission} should remain denied to Trainer`);
+  for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage']) assert.equal(has('accountant', permission), false, `${permission} should remain denied to Accountant`);
+  for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage']) assert.equal(has('admin', permission), true, `${permission} should remain available to Admin`);
+});
+
 test('explicit deny takes precedence over the admin wildcard', () => {
   assert.equal(can({ actorId: 'fixture', role: 'admin', deniedPermissions: ['configuration.manage'] }, 'configuration.manage'), false);
 });

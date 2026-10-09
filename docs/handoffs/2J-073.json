@@ -1,0 +1,55 @@
+{
+  "taskId": "2J-073",
+  "title": "Cuotas, Bonos, Derechos y Accesos por Módulo V2",
+  "status": "draft_pr_open_corrective_fixes_ci_passed_independent_review_pending",
+  "repository": "2jfitnesscenter/2j-platform",
+  "baseRef": "main",
+  "baseSha": "868b0c5fc120a4f57624bc5b87008aced46bee4b",
+  "branch": "agent/codex/2J-073-entitlements-v2",
+  "pullRequest": 16,
+  "implementationSha": "0e333cfad28075ea2921a38fe1040539c4be9dc2",
+  "verifiedHeadSha": "0fee608924720ffdbe78e2c4559cba519e0fb991",
+  "pullRequestUrl": "https://github.com/2jfitnesscenter/2j-platform/pull/16",
+  "mergeAllowed": false,
+  "timezone": "Atlantic/Canary",
+  "migrations": ["0017_entitlements_v2.sql", "0018_service_access_requires_target.sql"],
+  "apis": [
+    {"method":"POST","path":"/api/plans","permission":"catalog.pricing.manage"},
+    {"method":"POST","path":"/api/plans/:planId/versions","permission":"catalog.pricing.manage"},
+    {"method":"POST","path":"/api/plans/:planId/activate","permission":"catalog.pricing.manage"},
+    {"method":"POST","path":"/api/plans/:planId/archive","permission":"catalog.pricing.manage"},
+    {"method":"POST","path":"/api/clients/:clientId/plans","permission":"entitlements.manage"},
+    {"method":"GET","path":"/api/clients/:clientId/entitlements/effective","permission":"entitlements.read"},
+    {"method":"GET","path":"/api/clients/:clientId/plans/:assignmentId/movements","permission":"entitlements.read"},
+    {"method":"POST","path":"/api/clients/:clientId/plans/:assignmentId/pause|resume","permission":"entitlements.pause"},
+    {"method":"POST","path":"/api/clients/:clientId/plans/:assignmentId/cancel","permission":"entitlements.cancel"},
+    {"method":"POST","path":"/api/clients/:clientId/plans/:assignmentId/adjustments","permission":"entitlements.adjust"}
+  ],
+  "roleChanges": {
+    "reception-management": ["entitlements.read","entitlements.manage","entitlements.renew","entitlements.pause","entitlements.cancel"],
+    "trainer": ["entitlements.read"],
+    "accountant": "unchanged_no_entitlement_permissions",
+    "admin": "unchanged_full"
+  },
+  "decisions": {
+    "serviceAccessWithoutTarget": "rejected_for_new_definitions; legacy_rights_filtered_from_effective_read_model; target_must_be_service_id",
+    "pauseExtendsTerm": false,
+    "renewal": "manual_new_assignment_and_charge",
+    "calendarConsumesLedger": false,
+    "childModulesOwnClientIdentity": false
+  },
+  "outOfScope": ["2jfitnessapp changes","reservation consumption","automatic payment","payment gateway","client app","nutrition UI","training or Bunker data duplication"],
+  "checks": {
+    "migrations": "18/18 checksummed on isolated PostgreSQL",
+    "tests": {"designTokens": "3/3", "domain": "3/3", "permissions": "6/6", "auth": "2/2", "audit": "3/3", "apiPostgresCi": "123/123", "apiPostgresLocal": "122/123; unrelated Windows dashboard timeclock attention fixture/limit discrepancy; services module 65/65", "adminWeb": "57/57", "totalCi": "197/197", "totalLocal": "196/197"},
+    "typecheck": "7/7 packages",
+    "build": "7/7 packages",
+    "audit": "no known vulnerabilities",
+    "diffCheck": "pass",
+    "localSecretScan": "not_run_go_unavailable",
+    "githubSecretScan": "pass_push_and_pull_request_sha_0fee608924720ffdbe78e2c4559cba519e0fb991",
+    "githubQuality": "pass_push_and_pull_request_sha_0fee608924720ffdbe78e2c4559cba519e0fb991; 18_migrations; 197_tests; typecheck_build_audit_pass"
+  },
+  "visualEvidence": "pending_real_capture_browser_url_verification_stopped; documented in docs/evidence/2J-073/README.md",
+  "independentReview": "pending"
+}
