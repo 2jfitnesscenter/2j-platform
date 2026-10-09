@@ -83,3 +83,33 @@ test('permitted Communications navigation remains visible while moving between m
   fireEvent.click(within(nav).getByRole('link', { name: /Comunicación/ }));
   await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Comunicación/ }).getAttribute('aria-current'), 'page'));
 });
+
+test('compact sidebar preserves accessible navigation and can expand without losing the active section',async()=>{
+  dom.window.localStorage.clear();
+  globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response(capabilities):String(url).includes('/api/dashboard/command-center')?response(model):String(url).includes('/api/dashboard/preferences')?response({order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]}):response({groups:[]});
+  window.location.hash='#home';
+  render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  await screen.findByText('0 sesiones hoy');
+  const frame=document.querySelector('.app-frame');assert.ok(frame.classList.contains('is-compact'));
+  const comm=screen.getByRole('link',{name:'Comunicación'});assert.ok(comm);assert.equal(comm.getAttribute('title'),'Comunicación');
+  fireEvent.click(screen.getByRole('button',{name:'Expandir menú'}));
+  await waitFor(()=>assert.equal(frame.classList.contains('is-compact'),false));
+  fireEvent.click(screen.getByRole('link',{name:'Clientes'}));
+  await waitFor(()=>assert.equal(screen.getByRole('link',{name:'Clientes'}).getAttribute('aria-current'),'page'));
+  assert.ok(screen.getByRole('link',{name:'Comunicación'}));
+});
+
+test('Home layout controls persist actor preferences and restore the default layout',async()=>{
+  dom.window.localStorage.clear();const writes=[];
+  globalThis.fetch=async(url,options={})=>{
+    if(String(url).includes('/api/dashboard/preferences')&&options.method==='PUT'){const layout=JSON.parse(options.body);writes.push(layout);return response(layout);}
+    if(String(url).includes('/api/dashboard/preferences'))return response({order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]});
+    return String(url).includes('/api/session/capabilities')?response(capabilities):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
+  };
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  await screen.findByText('0 sesiones hoy');fireEvent.click(screen.getByRole('button',{name:'Personalizar inicio'}));
+  const row=screen.getAllByText('Clientes').map(item=>item.closest('.home-layout-row')).find(Boolean);fireEvent.click(within(row).getByRole('button',{name:'Ocultar'}));
+  await waitFor(()=>assert.ok(writes.at(-1).hidden.includes('clients')));
+  fireEvent.click(screen.getByRole('button',{name:'Restaurar disposición por defecto'}));
+  await waitFor(()=>assert.deepEqual(writes.at(-1).hidden,[]));
+});

@@ -117,12 +117,12 @@ test('unlinked self clock returns no PII and requires admin to link professional
 });
 
 test('staff summary redacts contact and internal notes for trainers while management sees them',async()=>{
- const p=await professional();await sql`UPDATE staff_professionals SET email='private@example.test',phone='+34600000000',internal_notes='Nota interna sensible' WHERE id=${p.id}`;
+ const p=await professional();const privateEmail=`private-${randomUUID()}@example.test`;await sql`UPDATE staff_professionals SET email=${privateEmail},phone='+34600000000',internal_notes='Nota interna sensible' WHERE id=${p.id}`;
  const [slot]=await sql`INSERT INTO staff_schedule_slots(professional_id,weekday,starts_at,ends_at,valid_from,created_by) VALUES (${p.id},1,'08:00','12:00','2026-01-01','qa') RETURNING id`;
  await sql`INSERT INTO staff_exceptions(professional_id,kind,starts_at,ends_at,local_start_date,local_end_date,note,created_by) VALUES (${p.id},'leave',now()+interval '2 days',now()+interval '2 days 1 hour',(now() AT TIME ZONE 'Atlantic/Canary')::date,(now() AT TIME ZONE 'Atlantic/Canary')::date,'Private health details','qa')`;
  const trainerView=await trainer.inject({method:'GET',url:`/api/staff/${p.id}`});assert.equal(trainerView.statusCode,200);assert.equal('email'in trainerView.json().professional,false);assert.equal('phone'in trainerView.json().professional,false);assert.equal('internalNotes'in trainerView.json().professional,false);assert.ok(trainerView.json().schedule.some(x=>x.id===slot.id));
  const trainerAbsence=await trainer.inject({method:'GET',url:`/api/staff/${p.id}/exceptions`});assert.equal(trainerAbsence.statusCode,200);assert.equal('note'in trainerAbsence.json()[0],false);
- const receptionView=await reception.inject({method:'GET',url:`/api/staff/${p.id}`});assert.equal(receptionView.json().professional.email,'private@example.test');assert.equal(receptionView.json().professional.internalNotes,'Nota interna sensible');const receptionAbsence=await reception.inject({method:'GET',url:`/api/staff/${p.id}/exceptions`});assert.equal(receptionAbsence.json()[0].note,'Private health details');
+ const receptionView=await reception.inject({method:'GET',url:`/api/staff/${p.id}`});assert.equal(receptionView.json().professional.email,privateEmail);assert.equal(receptionView.json().professional.internalNotes,'Nota interna sensible');const receptionAbsence=await reception.inject({method:'GET',url:`/api/staff/${p.id}/exceptions`});assert.equal(receptionAbsence.json()[0].note,'Private health details');
 });
 
 test('base-role and account-link changes record before and after values and cannot silently replace identity',async()=>{

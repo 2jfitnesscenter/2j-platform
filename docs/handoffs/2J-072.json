@@ -1,0 +1,31 @@
+{
+  "taskId": "2J-072",
+  "title": "Home V2, compact navigation and operational Client 360",
+  "status": "awaiting_pull_request_and_independent_review",
+  "baseSha": "eac22896d93ca18970a1998b8e450dbb735e27ac",
+  "branch": "agent/codex/2J-072-home-v2-client-360",
+  "pullRequest": {"number": null, "url": null, "draft": true, "merged": false},
+  "migrations": ["apps/api/migrations/0016_client_plan_assignments.sql"],
+  "scope": ["home layout preferences", "compact capability-filtered sidebar", "wide client profile", "idempotent plan assignment and charge", "optional immediate payment"],
+  "decisions": {
+    "permissions": "No role grants changed; new entitlements permissions are granted only where the current matrix already authorizes them.",
+    "catalogPrice": "Price and due date are captured manually because the current plan catalog has no sale price.",
+    "rights": "The assignment records the frozen plan version and rights; it does not consume or reserve entitlements.",
+    "activityFeed": "Omitted until there is a safe cross-module read model; no synthetic activity is shown.",
+    "scopeGuard": "No 2jfitnessapp changes, no duplicated Training/Health, no recurring charge automation, no auto-merge."
+  },
+  "verification": {
+    "uiTests": {"status": "PASS", "count": 53},
+    "apiTests": {"status": "PASS", "count": 112, "database": "disposable PostgreSQL 17"},
+    "totalTests": {"status": "PASS", "count": 181},
+    "typecheck": {"status": "PASS", "packages": 7},
+    "build": {"status": "PASS", "packages": 7},
+    "migration": {"status": "PASS", "count": 16, "name": "0016_client_plan_assignments.sql"},
+    "dependencyAudit": "PASS_NO_KNOWN_VULNERABILITIES",
+    "secretScan": "PENDING_GITHUB_WORKFLOW_GITLEAKS_UNAVAILABLE_LOCALLY",
+    "githubChecks": "pending",
+    "diffCheck": "PASS",
+    "browserEvidence": {"status": "NOT_CAPTURED", "viewports": [1440, 768, 390], "requiredViews": ["home", "client-summary", "client-plans", "new-client-plan", "mobile-home", "mobile-client", "mobile-plan"]}
+  },
+  "sourceOfTruth": ["AGENTS.md", "tasks/2J-072.md", "2j-product-research/RULES.md", "2j-product-research/DECISIONS_2J.md", "2j-product-research/ROADMAP.md", "2j-product-research/TASKS.md", "2j-product-research/TECH_ARCHITECTURE.md", "2j-product-research/REPO_ARCHITECTURE.md", "2j-product-research/ORCHESTRATOR_CONTRACT.md", "2j-product-research/AGENT_HANDOFFS.md"]
+}
