@@ -23,7 +23,7 @@
     "migration": {"status": "PASS", "count": 15, "name": "0015_bulk_template_audit.sql"},
     "cleanDatabase": {"status": "PASS", "emptyTables": ["clients", "staff_professionals", "calendar_sessions", "calendar_reservations", "calendar_waitlist_entries", "communication_messages", "economic_charges"]},
     "dependencyAudit": "PASS_NO_KNOWN_VULNERABILITIES",
-    "secretScan": "PENDING_GITHUB_CI",
+    "githubChecks": "Quality and secret scan are required; the linked PR checks are the live source of truth.",
     "diffCheck": "PASS",
     "browserEvidence": {"status": "DESKTOP_INSPECTED_NO_CAPTURE_SAVED", "responsiveReview": "PENDING_INDEPENDENT_REVIEW", "viewports": [1440, 768, 390], "file": "docs/evidence/2J-071/README.md"}
   },
