@@ -1,0 +1,67 @@
+{
+  "taskId": "2J-060",
+  "title": "Comunicación, formularios, consentimientos y seguimiento básico",
+  "status": "ready_for_draft_pr",
+  "baseSha": "a64de6b1eb56f87d0fb000758fa3c0394f324a79",
+  "branch": "agent/codex/2J-060-communications-forms-consents-followup",
+  "pullRequest": null,
+  "headSha": null,
+  "mergePolicy": "No merge; independent review required from Claude and Antigravity on exact head SHA.",
+  "migrations": [
+    "0010_communications_documents_followup.sql",
+    "0011_consent_archive_audit.sql",
+    "0012_immutable_message_history.sql"
+  ],
+  "permissions": [
+    "communication.read",
+    "communication.send",
+    "communication.manage_templates",
+    "communication.internal_notes.read",
+    "communication.internal_notes.write",
+    "forms.read",
+    "forms.manage",
+    "forms.assign",
+    "forms.review",
+    "forms.responses.sensitive.read",
+    "consents.read",
+    "consents.manage",
+    "consents.accept.assisted",
+    "documents.read",
+    "documents.manage",
+    "documents.requirement.override",
+    "followup.read",
+    "followup.manage"
+  ],
+  "areas": {
+    "communication": "One center-client conversation, staff/client messages, read/unread, manual unread, templates, separate internal notes, transaction-backed audit and idempotency.",
+    "forms": "Draft/active/archived forms, immutable versions and responses, per-client assignments, validated answers, PAR-Q manual review only.",
+    "consents": "Version hashes, immutable acceptance snapshots, client acceptance and separately authorized staff-assisted acceptance.",
+    "documentsAndBooking": "Center/client/service/plan requirements checked for new bookings only; actionable missing-document response; audited override; waitlist and existing cancellations remain compatible.",
+    "followup": "Per-client check-in assignment, due/overdue state, history, and sensitive response gating. No medical inference.",
+    "client360": "Unread, required form/consent, review and overdue check-in indicators; messages/documents/follow-up links and panels."
+  },
+  "verification": {
+    "postgres": { "status": "PASS", "evidence": "12 checksummed migrations applied and re-applied on disposable PostgreSQL 17." },
+    "tests": { "status": "PASS", "count": 148, "apiPostgres": 92, "adminUi": 40 },
+    "typecheck": { "status": "PASS", "packages": 7 },
+    "build": { "status": "PASS", "packages": 7 },
+    "dependencyAudit": { "status": "PASS", "evidence": "pnpm audit --audit-level high: no known vulnerabilities." },
+    "diffCheck": { "status": "PASS" },
+    "secretScan": { "status": "PENDING_FINAL_SCAN" },
+    "githubCi": { "status": "PENDING_PUSH" },
+    "visualResponsive": {
+      "status": "PARTIAL",
+      "viewports": ["1440", "768", "390"],
+      "captures": ["docs/evidence/2J-060/communications-1440.png"],
+      "evidenceFile": "docs/evidence/2J-060/README.md"
+    }
+  },
+  "pendingIndependentReview": ["Claude backend/domain/privacy/security", "Antigravity UX/accessibility/responsive"],
+  "remaining": [
+    "P2: visual Admin builders for forms/consents/requirements and check-in assignment.",
+    "P2: capture and inspect 768px and 390px browser layouts; complete independent assistive-technology QA.",
+    "LEGAL/PRIVACY DECISION REQUIRED: approved PAR-Q and consent content, acceptance/assisted acceptance language, retention, requirement obligations, sensitive response visibility.",
+    "External integration pending: client identity, message provider, object storage; no provider or credentials configured."
+  ],
+  "scopeGuard": "No bulk campaigns, WhatsApp/SMS/email provider, AI, community, video, diagnosis, full clinical history, nutrition, qualified e-signature, automation engine, training routines or 2jfitnessapp integration."
+}
