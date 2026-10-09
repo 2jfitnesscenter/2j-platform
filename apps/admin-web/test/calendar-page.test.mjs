@@ -73,6 +73,27 @@ test('keeps recurring templates separate and requires an explicit occurrence dat
   await screen.findByRole('button', { name: /Fuerza 2J/ });
 });
 
+test('bulk schedule previews and submits a three-day by three-block matrix once', async () => {
+  let posted = null;
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.includes('/api/calendar/week')) return response(baseData);
+    if (path.endsWith('/api/calendar/templates/batch') && options.method === 'POST') { posted = JSON.parse(options.body); return response({ templates: Array.from({ length: 9 }, (_, index) => ({ id: `template-${index}`, status: 'active' })) }, 201); }
+    throw new Error(`Unexpected request: ${options.method ?? 'GET'} ${path}`);
+  };
+  render(React.createElement(CalendarPage));
+  await screen.findByText('Esta semana aún no tiene sesiones');
+  fireEvent.click(screen.getByRole('button', { name: 'Configurar horarios' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Configurar horarios' });
+  fireEvent.change(within(dialog).getByLabelText('Servicio'), { target: { value: service.id } });
+  assert.match(within(dialog).getByText('Se crearán 9 plantillas').textContent, /9/);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Crear horarios' }));
+  await screen.findByText(/9 horarios creados/);
+  assert.deepEqual(posted.weekdays.sort(), [1, 3, 5]);
+  assert.deepEqual(posted.blocks.map((block) => block.localStartTime), ['07:00', '08:00', '09:00']);
+  assert.equal(posted.serviceId, service.id);
+});
+
 test('individual session requires a selected client and hides group capacity', async () => {
   let posted = null;
   globalThis.fetch = async (url, options = {}) => {

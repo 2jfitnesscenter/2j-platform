@@ -107,6 +107,33 @@ test('calendar template and generated session are distinct entities and generati
   assert.equal((await sql`SELECT count(*)::int AS total FROM recurring_session_templates WHERE id=${created.json().id}`).at(0).total, 1);
 });
 
+test('bulk schedule creates the selected weekday and time matrix as reusable templates', async () => {
+  const selected = await createService();
+  const from = new Date(Date.now() + 14 * 86400000); from.setUTCHours(0, 0, 0, 0); from.setUTCDate(from.getUTCDate() + ((1 - from.getUTCDay() + 7) % 7));
+  const startsOn = from.toISOString().slice(0, 10);
+  const created = await reception.inject({ method: 'POST', url: '/api/calendar/templates/batch', payload: { serviceId: selected.id, areaId: selected.areaId, weekdays: [1, 3, 5], blocks: ['07:00', '08:00', '09:00'].map((localStartTime) => ({ localStartTime, durationMinutes: 60, capacity: 12 })), startsOn, endsOn: null } });
+  assert.equal(created.statusCode, 201, created.body);
+  assert.equal(created.json().templates.length, 9);
+  assert.equal((await sql`SELECT count(*)::int AS total FROM recurring_session_templates WHERE service_id=${selected.id} AND status='active'`).at(0).total, 9);
+  assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_sessions WHERE service_id=${selected.id}`).at(0).total, 0);
+  assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_audit_events WHERE resource_type='calendar_template' AND resource_id IN (SELECT id FROM recurring_session_templates WHERE service_id=${selected.id})`).at(0).total, 9);
+});
+
+test('bulk schedule detects internal and existing template conflicts without partial writes', async () => {
+  const selected = await createService();
+  const from = new Date(Date.now() + 21 * 86400000); from.setUTCHours(0, 0, 0, 0); from.setUTCDate(from.getUTCDate() + ((1 - from.getUTCDay() + 7) % 7));
+  const startsOn = from.toISOString().slice(0, 10);
+  const base = { serviceId: selected.id, areaId: selected.areaId, weekdays: [1], blocks: [{ localStartTime: '07:00', durationMinutes: 60, capacity: 10 }], startsOn, endsOn: null };
+  const first = await reception.inject({ method: 'POST', url: '/api/calendar/templates/batch', payload: base });
+  assert.equal(first.statusCode, 201, first.body);
+  const before = Number((await sql`SELECT count(*)::int AS total FROM recurring_session_templates WHERE service_id=${selected.id}`).at(0).total);
+  const existingConflict = await reception.inject({ method: 'POST', url: '/api/calendar/templates/batch', payload: { ...base, blocks: [{ localStartTime: '07:30', durationMinutes: 60, capacity: 10 }] } });
+  assert.equal(existingConflict.statusCode, 409); assert.equal(existingConflict.json().error, 'schedule_conflict');
+  const internalConflict = await reception.inject({ method: 'POST', url: '/api/calendar/templates/batch', payload: { ...base, weekdays: [1, 3], blocks: [{ localStartTime: '07:00', durationMinutes: 60, capacity: 10 }, { localStartTime: '07:30', durationMinutes: 60, capacity: 10 }] } });
+  assert.equal(internalConflict.statusCode, 409); assert.equal(internalConflict.json().error, 'schedule_conflict');
+  assert.equal(Number((await sql`SELECT count(*)::int AS total FROM recurring_session_templates WHERE service_id=${selected.id}`).at(0).total), before);
+});
+
 test('rejects missing clients, archived services, invalid attendance transitions, and bookings in cancelled sessions', async () => {
   const session = await createSession({ capacity: 2 });
   const missing = await reserve(session.id, randomUUID());
