@@ -32,6 +32,7 @@ const sectionDefinitions = [
   { id: 'health', label: 'Salud', permission: 'health.read', sourceLabel: 'Salud en 2J Fitness App' },
   { id: 'documents', label: 'Documentos/Formularios', permission: 'documents.read', sourceLabel: 'Documentos y formularios' },
   { id: 'messages', label: 'Mensajes', permission: 'communication.read', sourceLabel: 'Comunicación' },
+  { id: 'followup', label: 'Seguimiento', permission: 'followup.read', sourceLabel: 'Seguimiento' },
   { id: 'history', label: 'Historial', permission: 'clients.read', sourceLabel: 'Historial del perfil' },
 ] as const;
 
@@ -45,6 +46,7 @@ const summaryDomains = [
   { id: 'health', permission: 'health.read' },
   { id: 'documents', permission: 'documents.read' },
   { id: 'messages', permission: 'communication.read' },
+  { id: 'followup', permission: 'followup.read' },
 ] as const;
 
 const listQuery = z.object({
@@ -166,6 +168,18 @@ export function registerClientRoutes(
         FROM calendar_reservations r JOIN calendar_sessions s ON s.id=r.session_id JOIN services svc ON svc.id=s.service_id JOIN areas a ON a.id=s.area_id
         WHERE r.client_id=${params.data.clientId} ORDER BY s.starts_at DESC,r.created_at DESC,r.id DESC LIMIT 100` : [];
       summary.profile = { access: 'available', dataState: 'ready', data: { status: client.status } };
+      if (can(context, 'communication.read')) {
+        const [communication] = await database`SELECT co.last_message_at AS "lastMessageAt",(SELECT count(*)::int FROM communication_messages m LEFT JOIN communication_message_reads r ON r.message_id=m.id AND r.reader_kind='center' WHERE m.conversation_id=co.id AND m.sender_kind='client' AND COALESCE(r.is_read,false)=false) AS "unreadCount" FROM communication_conversations co WHERE co.client_id=${params.data.clientId} AND co.center_key='2j'`;
+        summary.messages = { access: 'available', dataState: 'ready', data: { unreadCount: communication?.unreadCount ?? 0, lastMessageAt: communication?.lastMessageAt ?? null } };
+      }
+      if (can(context, 'documents.read')) {
+        const [documents] = await database`SELECT (SELECT count(*)::int FROM client_form_assignments a WHERE a.client_id=${params.data.clientId} AND a.required AND a.status IN ('assigned','rejected','review_required')) AS "pendingForms",(SELECT count(*)::int FROM client_consent_versions v JOIN client_consents d ON d.id=v.consent_id AND d.active_version_id=v.id WHERE d.status='active' AND d.required AND NOT EXISTS(SELECT 1 FROM client_consent_acceptances ac WHERE ac.client_id=${params.data.clientId} AND ac.consent_version_id=v.id)) AS "pendingConsents",(SELECT count(*)::int FROM client_form_assignments a WHERE a.client_id=${params.data.clientId} AND a.status='review_required') AS "reviewsRequired"`;
+        summary.documents = { access: 'available', dataState: 'ready', data: documents };
+      }
+      if (can(context, 'followup.read')) {
+        const [followup] = await database`SELECT (SELECT max(r.submitted_at) FROM client_form_responses r JOIN client_forms f ON f.id=(SELECT form_id FROM client_form_versions WHERE id=r.form_version_id) WHERE r.client_id=${params.data.clientId} AND f.category='check_in') AS "lastCheckinAt",(SELECT count(*)::int FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id WHERE a.client_id=${params.data.clientId} AND f.category='check_in' AND a.status='assigned' AND a.due_at<now()) AS "overdueCheckins"`;
+        summary.followup = { access: 'available', dataState: 'ready', data: followup };
+      }
       if (can(context, 'billing.read-basic')) {
         const [economicSummary] = await database`SELECT COALESCE(sum(c.amount_cents-COALESCE(x.net,0)) FILTER(WHERE c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0)),0)::bigint AS "balanceCents",count(*) FILTER(WHERE c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0) AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date AND c.amount_cents>COALESCE(x.net,0))::int AS "overdueCount" FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(amount_cents) FILTER(WHERE kind='payment') paid,sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true WHERE c.client_id=${params.data.clientId}`;
         const charges = await database`SELECT c.id,c.concept,c.amount_cents AS "amountCents",c.due_on AS "dueOn",c.state,COALESCE(x.paid,0)::bigint AS "paidCents",CASE WHEN COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0 THEN 0 ELSE (c.amount_cents-COALESCE(x.net,0)) END::bigint AS "balanceCents",CASE WHEN c.state='void' THEN 'void' WHEN c.state='exempt' THEN 'exempt' WHEN COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0 THEN 'refunded' WHEN COALESCE(x.net,0)>=c.amount_cents THEN 'paid' WHEN c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'unpaid' ELSE 'pending' END AS status FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(amount_cents) FILTER(WHERE kind='payment') paid,sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true WHERE c.client_id=${params.data.clientId} ORDER BY c.created_at DESC,c.id DESC LIMIT 50`;
@@ -177,7 +191,7 @@ export function registerClientRoutes(
         capabilities: { manage: can(context, 'clients.manage') },
         summary,
         reservations,
-        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) ? 'ready' : 'not_connected' })),
+        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history', 'messages', 'documents', 'followup'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) ? 'ready' : 'not_connected' })),
         history: events.map((event) => ({ id: event.id, eventType: event.eventType, actorLabel: actorLabel(event.actorRole), occurredAt: event.occurredAt })),
       };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId' }, 'client detail failed'); return reply.code(500).send({ error: 'internal_error' }); }

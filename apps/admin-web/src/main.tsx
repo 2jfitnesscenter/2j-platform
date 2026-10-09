@@ -7,6 +7,7 @@ import { ClientsPage } from './clients-page.js';
 import { CalendarPage } from './calendar-page.js';
 import { EconomicsPage } from './economics-page.js';
 import { StaffPage } from './staff-page.js';
+import { CommunicationsPage } from './communications-page.js';
 
 function App() {
   const [route, setRoute] = React.useState(() => window.location.hash.slice(1) || 'services');
@@ -15,7 +16,7 @@ function App() {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
-  return route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : <ServicesPage/>;
+  return route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : <ServicesPage/>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

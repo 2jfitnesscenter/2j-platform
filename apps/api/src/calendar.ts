@@ -17,10 +17,11 @@ const sessionFields = {
   durationMinutes: z.number().int().min(5).max(480),
   capacity: z.number().int().min(1).max(500),
 };
-export const createSessionInput = z.object({ ...sessionFields, individualClientId: uuid.optional(), professionalId: uuid.optional(), overrideAvailability: z.boolean().optional().default(false), availabilityReason: z.string().trim().min(3).max(240).optional(), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, context) => {
+export const createSessionInput = z.object({ ...sessionFields, individualClientId: uuid.optional(), professionalId: uuid.optional(), overrideAvailability: z.boolean().optional().default(false), availabilityReason: z.string().trim().min(3).max(240).optional(), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional(), overrideDocuments: z.boolean().optional().default(false), documentOverrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, context) => {
   if (value.individualClientId && value.capacity !== 1) context.addIssue({ code: 'custom', path: ['capacity'], message: 'Una sesión individual tiene una sola plaza.' });
   if (value.overrideDebt && !value.overrideReason) context.addIssue({ code: 'custom', path: ['overrideReason'], message: 'Indica el motivo de la excepción.' });
   if (value.overrideAvailability && !value.availabilityReason) context.addIssue({ code: 'custom', path: ['availabilityReason'], message: 'Indica el motivo de la excepción.' });
+  if (value.overrideDocuments && !value.documentOverrideReason) context.addIssue({ code: 'custom', path: ['documentOverrideReason'], message: 'Indica el motivo de la excepción documental.' });
 });
 export const createTemplateInput = z.object({
   serviceId: uuid, areaId: uuid, professionalId: uuid.optional(), weekday: z.number().int().min(0).max(6), localStartTime: time,
@@ -82,6 +83,12 @@ export function registerCalendarRoutes(
     const [debt] = await tx`SELECT EXISTS(SELECT 1 FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(amount_cents) FILTER(WHERE kind='payment') paid,sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true WHERE c.client_id=${clientId} AND c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0) AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date AND c.amount_cents>COALESCE(x.net,0)) AS overdue`;
     return Boolean(debt?.overdue);
   }
+  async function missingDocuments(tx: SqlTransaction, clientId: string, serviceId: string, planId?: string) {
+    const missing = await tx`SELECT dr.id AS "requirementId",dr.requirement_type AS "requirementType",COALESCE(f.name,cv.title) AS label FROM document_requirements dr LEFT JOIN client_forms f ON f.id=dr.form_id LEFT JOIN client_consents c ON c.id=dr.consent_id LEFT JOIN client_consent_versions cv ON cv.id=c.active_version_id WHERE dr.active AND dr.required AND ((dr.scope_type='center' AND dr.scope_id IS NULL) OR (dr.scope_type='service' AND dr.scope_id=${serviceId}) OR (dr.scope_type='client' AND dr.scope_id=${clientId}) OR (dr.scope_type='plan' AND ${Boolean(planId)}::boolean AND dr.scope_id=${planId ?? '00000000-0000-0000-0000-000000000000'}::uuid)) AND ((dr.requirement_type='form' AND NOT EXISTS(SELECT 1 FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id WHERE a.client_id=${clientId} AND v.form_id=dr.form_id AND a.status IN ('submitted','approved'))) OR (dr.requirement_type='consent' AND NOT EXISTS(SELECT 1 FROM client_consent_acceptances ac JOIN client_consents cc ON cc.active_version_id=ac.consent_version_id WHERE ac.client_id=${clientId} AND cc.id=dr.consent_id))) ORDER BY label,dr.id`;
+    if (planId) return missing;
+    const unresolved = await tx`SELECT dr.id AS "requirementId",dr.requirement_type AS "requirementType",COALESCE(f.name,cv.title,'Requisito de plan') AS label FROM document_requirements dr LEFT JOIN client_forms f ON f.id=dr.form_id LEFT JOIN client_consents c ON c.id=dr.consent_id LEFT JOIN client_consent_versions cv ON cv.id=c.active_version_id WHERE dr.active AND dr.required AND dr.scope_type='plan' AND NOT ((dr.requirement_type='form' AND EXISTS(SELECT 1 FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id WHERE a.client_id=${clientId} AND v.form_id=dr.form_id AND a.status IN ('submitted','approved'))) OR (dr.requirement_type='consent' AND EXISTS(SELECT 1 FROM client_consent_acceptances ac JOIN client_consents cc ON cc.active_version_id=ac.consent_version_id WHERE ac.client_id=${clientId} AND cc.id=dr.consent_id))) ORDER BY label,dr.id`;
+    return [...missing,...unresolved];
+  }
   async function appendAudit(tx: SqlTransaction, actorId: string, action: string, resourceType: string, resourceId: string, sessionId: string | null, clientId: string | null, details: Record<string, string | number | boolean | null> = {}) {
     await tx`INSERT INTO calendar_audit_events(actor_id,action,resource_type,resource_id,session_id,client_id,details) VALUES (${actorId},${action},${resourceType},${resourceId},${sessionId},${clientId},${JSON.stringify(details)}::jsonb)`;
   }
@@ -106,7 +113,7 @@ export function registerCalendarRoutes(
       const services = await database`SELECT id,name,area_id AS "areaId" FROM services WHERE status='active' ORDER BY lower(name),id`;
       const professionals = await database`SELECT id,display_name AS "displayName",calendar_color AS "calendarColor" FROM staff_professionals WHERE status='active' ORDER BY lower(display_name),id`;
       const templates = await database`SELECT t.id,t.service_id AS "serviceId",s.name AS "serviceName",t.area_id AS "areaId",a.name AS "areaName",t.weekday,t.local_start_time AS "localStartTime",t.duration_minutes AS "durationMinutes",t.capacity,to_char(t.starts_on,'YYYY-MM-DD') AS "startsOn",CASE WHEN t.ends_on IS NULL THEN NULL ELSE to_char(t.ends_on,'YYYY-MM-DD') END AS "endsOn" FROM recurring_session_templates t JOIN services s ON s.id=t.service_id JOIN areas a ON a.id=t.area_id WHERE t.status='active' ORDER BY t.weekday,t.local_start_time,t.id`;
-      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, professionals, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity'), overrideAvailability: can(context, 'staff.schedule.override') } };
+      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, professionals, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity'), overrideAvailability: can(context, 'staff.schedule.override'), overrideDocuments: can(context, 'documents.requirement.override') } };
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/week' }, 'calendar week failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
@@ -128,6 +135,7 @@ export function registerCalendarRoutes(
     const parsed = createSessionInput.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     if (parsed.data.individualClientId && !can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
     if (parsed.data.overrideDebt && !can(context, 'billing.debt.override')) return reply.code(403).send({ error: 'permission_denied' });
+    if (parsed.data.overrideDocuments && !can(context, 'documents.requirement.override')) return reply.code(403).send({ error: 'permission_denied' });
     try {
       const result = await database.begin(async (tx) => {
         const issue = await checkService(tx, parsed.data.serviceId, parsed.data.areaId); if (issue) return { error: issue };
@@ -135,12 +143,16 @@ export function registerCalendarRoutes(
         if (availability.error) return { error: availability.error, warnings: availability.warnings };
         let entitlementReference: string | null = null;
         let debtOverrideApplied = false;
+        let documentRequirementIds: string[] = [];
         if (parsed.data.individualClientId) {
           const [client] = await tx`SELECT id,status FROM clients WHERE id=${parsed.data.individualClientId} FOR SHARE`;
           if (!client) return { error: 'client_not_found' };
           if (client.status !== 'active') return { error: 'client_archived' };
           const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: parsed.data.serviceId, startsAt: parsed.data.startsAt });
           if (!eligibility.eligible) return { error: eligibility.reason };
+          const missing = await missingDocuments(tx, client.id, parsed.data.serviceId, eligibility.planId);
+          if (missing.length && !parsed.data.overrideDocuments) return { error: 'required_documents_pending', missing };
+          if (missing.length && parsed.data.overrideDocuments) documentRequirementIds = missing.map((item:any) => String(item.requirementId));
           const overdue = await debtBlocksNewBooking(tx, client.id);
           if (overdue && !parsed.data.overrideDebt) return { error: 'overdue_balance_blocks_booking' };
           debtOverrideApplied = overdue && parsed.data.overrideDebt;
@@ -149,6 +161,7 @@ export function registerCalendarRoutes(
         const [session] = await tx`INSERT INTO calendar_sessions(service_id,area_id,professional_id,starts_at,duration_minutes,capacity,individual_client_id,created_by) VALUES (${parsed.data.serviceId},${parsed.data.areaId},${parsed.data.professionalId ?? null},${parsed.data.startsAt},${parsed.data.durationMinutes},${parsed.data.capacity},${parsed.data.individualClientId ?? null},${context.actorId}) RETURNING id`;
         if (!session) throw new Error('Session insert returned no row.');
         await appendAudit(tx, context.actorId, 'session.created', 'calendar_session', session.id, session.id, parsed.data.individualClientId ?? null, { capacity: parsed.data.capacity, individual: Boolean(parsed.data.individualClientId) });
+        if (documentRequirementIds.length && parsed.data.individualClientId) await appendAudit(tx, context.actorId, 'reservation.document_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId, { requirementIds: documentRequirementIds.join(','), reason: parsed.data.documentOverrideReason ?? '' });
         if (availability.warnings.length) await appendAudit(tx, context.actorId, 'session.availability_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId ?? null, { warnings: availability.warnings.join(','), reason: parsed.data.availabilityReason ?? '' });
         if (parsed.data.individualClientId) {
           if (debtOverrideApplied) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId, { reason: parsed.data.overrideReason ?? '' });
@@ -158,7 +171,7 @@ export function registerCalendarRoutes(
         }
         return { id: session.id };
       });
-      if ('error' in result) return reply.code(result.error === 'client_not_found' || result.error === 'service_not_found' || result.error === 'area_not_found' || result.error === 'professional_unavailable' ? 404 : result.error==='permission_denied'?403:409).send({ error: result.error, ...('warnings' in result ? { warnings: result.warnings } : {}) });
+      if ('error' in result) return reply.code(result.error === 'client_not_found' || result.error === 'service_not_found' || result.error === 'area_not_found' || result.error === 'professional_unavailable' ? 404 : result.error==='permission_denied'?403:409).send({ error: result.error, ...('warnings' in result ? { warnings: result.warnings } : {}), ...('missing' in result ? { missing: result.missing } : {}) });
       return reply.code(201).send(await readSession(database, result.id));
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/sessions' }, 'session create failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
@@ -229,12 +242,14 @@ export function registerCalendarRoutes(
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     if (!can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
     const params = z.object({ sessionId: uuid }).safeParse(request.params);
-    const body = z.object({ clientId: uuid, overbook: z.boolean().optional().default(false), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, issue) => {
+    const body = z.object({ clientId: uuid, overbook: z.boolean().optional().default(false), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional(), overrideDocuments: z.boolean().optional().default(false), documentOverrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, issue) => {
       if (value.overrideDebt && !value.overrideReason) issue.addIssue({ code: 'custom', path: ['overrideReason'], message: 'Indica el motivo de la excepción.' });
+      if (value.overrideDocuments && !value.documentOverrideReason) issue.addIssue({ code: 'custom', path: ['documentOverrideReason'], message: 'Indica el motivo de la excepción documental.' });
     }).safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     if (body.data.overbook && !can(context, 'scheduling.override_capacity')) return reply.code(403).send({ error: 'permission_denied' });
     if (body.data.overrideDebt && !can(context, 'billing.debt.override')) return reply.code(403).send({ error: 'permission_denied' });
+    if (body.data.overrideDocuments && !can(context, 'documents.requirement.override')) return reply.code(403).send({ error: 'permission_denied' });
     try {
       const result = await database.begin(async (tx) => {
         const [session] = await tx`SELECT id,status,capacity,service_id,area_id,individual_client_id,starts_at FROM calendar_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
@@ -247,6 +262,8 @@ export function registerCalendarRoutes(
         if (session.individual_client_id && session.individual_client_id !== client.id) return { error: 'individual_session_client_mismatch' };
         const eligibility = await resolveBookingEligibility({ tx, clientId: client.id, serviceId: session.service_id, startsAt: session.starts_at instanceof Date ? session.starts_at.toISOString() : String(session.starts_at) });
         if (!eligibility.eligible) return { error: eligibility.reason };
+        const missing = await missingDocuments(tx, client.id, session.service_id, eligibility.planId);
+        if (missing.length && !body.data.overrideDocuments) return { error: 'required_documents_pending', missing };
         const overdue = await debtBlocksNewBooking(tx, client.id);
         if (overdue && !body.data.overrideDebt) return { error: 'overdue_balance_blocks_booking' };
         if (overdue && body.data.overrideDebt) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, client.id, { reason: body.data.overrideReason ?? '' });
@@ -256,10 +273,11 @@ export function registerCalendarRoutes(
         if (!body.data.overbook && (count?.occupied ?? 0) >= session.capacity) return { error: 'capacity_full' };
         const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${client.id},${eligibility.entitlementId},${context.actorId}) RETURNING id`;
         if (!reservation) throw new Error('Reservation insert returned no row.');
+        if (missing.length && body.data.overrideDocuments) await appendAudit(tx, context.actorId, 'reservation.document_override', 'calendar_reservation', reservation.id, session.id, client.id, { requirementIds: missing.map((item:any) => String(item.requirementId)).join(','), reason: body.data.documentOverrideReason! });
         await appendAudit(tx, context.actorId, body.data.overbook ? 'reservation.overbooked' : 'reservation.created', 'calendar_reservation', reservation.id, session.id, client.id, { overbooked: body.data.overbook, debtOverride: overdue && body.data.overrideDebt, debtOverrideReason: overdue && body.data.overrideDebt ? body.data.overrideReason ?? '' : null });
         return { id: reservation.id, overbooked: body.data.overbook };
       });
-      if ('error' in result) return reply.code(result.error === 'session_not_found' || result.error === 'client_not_found' ? 404 : 409).send({ error: result.error });
+      if ('error' in result) return reply.code(result.error === 'session_not_found' || result.error === 'client_not_found' ? 404 : 409).send({ error: result.error, ...('missing' in result ? { missing: result.missing } : {}) });
       return reply.code(201).send(result);
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/sessions/:sessionId/reservations' }, 'reservation create failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
@@ -291,7 +309,7 @@ export function registerCalendarRoutes(
         await appendAudit(tx, context.actorId, 'waitlist.entered', 'calendar_waitlist_entry', entry.id, session.id, client.id);
         return { id: entry.id };
       });
-      if ('error' in result) return reply.code(result.error === 'session_not_found' || result.error === 'client_not_found' ? 404 : 409).send({ error: result.error });
+      if ('error' in result) return reply.code(result.error === 'session_not_found' || result.error === 'client_not_found' ? 404 : 409).send({ error: result.error, ...('missing' in result ? { missing: result.missing } : {}) });
       return reply.code(201).send(result);
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/sessions/:sessionId/waitlist' }, 'waitlist entry failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
@@ -378,7 +396,6 @@ export function registerCalendarRoutes(
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'PATCH /api/calendar/sessions/:sessionId/cancel' }, 'session cancel failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 }
-
 async function readSession(database: SqlClient, id: string) {
   const [session] = await database`SELECT cs.id,cs.service_id AS "serviceId",s.name AS "serviceName",cs.area_id AS "areaId",a.name AS "areaName",cs.template_id AS "templateId",cs.source,cs.starts_at AS "startsAt",cs.duration_minutes AS "durationMinutes",cs.capacity,cs.status,cs.individual_client_id AS "individualClientId" FROM calendar_sessions cs JOIN services s ON s.id=cs.service_id JOIN areas a ON a.id=cs.area_id WHERE cs.id=${id}`;
   return session;

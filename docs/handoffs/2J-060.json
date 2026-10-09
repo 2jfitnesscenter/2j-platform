@@ -1,0 +1,82 @@
+{
+  "taskId": "2J-060",
+  "title": "Comunicación, formularios, consentimientos y seguimiento básico",
+  "status": "awaiting_independent_review",
+  "baseSha": "a64de6b1eb56f87d0fb000758fa3c0394f324a79",
+  "branch": "agent/codex/2J-060-communications-forms-consents-followup",
+  "pullRequest": {
+    "number": 12,
+    "url": "https://github.com/2jfitnesscenter/2j-platform/pull/12"
+  },
+  "codeShaBeforeHandoffUpdate": "pending final commit",
+  "mergePolicy": "No merge; independent review required from Claude and Antigravity on exact head SHA.",
+  "migrations": [
+    "0010_communications_documents_followup.sql",
+    "0011_consent_archive_audit.sql",
+    "0012_immutable_message_history.sql",
+    "0013_form_review_history.sql"
+  ],
+  "permissions": [
+    "communication.read",
+    "communication.send",
+    "communication.manage_templates",
+    "communication.internal_notes.read",
+    "communication.internal_notes.write",
+    "forms.read",
+    "forms.manage",
+    "forms.assign",
+    "forms.review",
+    "forms.responses.sensitive.read",
+    "consents.read",
+    "consents.manage",
+    "consents.accept.assisted",
+    "documents.read",
+    "documents.manage",
+    "documents.requirement.override",
+    "followup.read",
+    "followup.manage"
+  ],
+  "permissionPolicy": {
+    "roleGrantsChanged": false,
+    "parQAndHealthResponsesRequire": ["health.read", "forms.responses.sensitive.read"],
+    "trainerGrantedSensitiveRead": false,
+    "reviewHistory": "append-only; decision/note linked to answer, assignment, version, actor and timestamp; notes excluded from audit/log payloads"
+  },
+  "areas": {
+    "communication": "One center-client conversation, staff/client messages, read/unread, manual unread, templates, separate internal notes, transaction-backed audit and idempotency.",
+    "forms": "Draft/active/archived forms, immutable versions and responses, per-client assignments, validated answers, PAR-Q manual review only.",
+    "consents": "Version hashes, immutable acceptance snapshots, client acceptance and separately authorized staff-assisted acceptance.",
+    "documentsAndBooking": "Center/client/service/plan requirements checked for new bookings only; actionable missing-document response; audited override; waitlist and existing cancellations remain compatible.",
+    "followup": "Per-client check-in assignment, due/overdue state, history, and sensitive response gating. No medical inference.",
+    "client360": "Unread, required form/consent, review and overdue check-in indicators; messages/documents/follow-up links and panels."
+  },
+  "verification": {
+    "postgres": { "status": "PASS", "evidence": "13 checksummed migrations applied and re-verified on clean disposable PostgreSQL 17." },
+    "tests": { "status": "PASS", "count": 156, "packageTests": 16, "apiPostgres": 95, "adminUi": 45 },
+    "typecheck": { "status": "PASS", "packages": 7 },
+    "build": { "status": "PASS", "packages": 7 },
+    "dependencyAudit": { "status": "PASS", "evidence": "pnpm audit --audit-level high: no known vulnerabilities." },
+    "diffCheck": { "status": "PASS" },
+    "secretScan": {
+      "status": "PENDING_CI",
+      "evidence": "Gitleaks is not installed in the local environment; wait for the PR push and pull_request checks on the final SHA."
+    },
+    "githubCi": {
+      "status": "PENDING",
+      "evidence": "Must be checked against the final pushed SHA; previous SHA checks do not count."
+    },
+    "visualResponsive": {
+      "status": "PARTIAL",
+      "viewports": ["1440", "768", "390"],
+      "captures": [],
+      "evidenceFile": "docs/evidence/2J-060/README.md"
+    }
+  },
+  "pendingIndependentReview": ["Claude backend/domain/privacy/security", "Antigravity UX/accessibility/responsive"],
+  "remaining": [
+    "P2: inspect and capture current 1440px, 768px and 390px browser layouts; complete independent assistive-technology QA.",
+    "LEGAL/PRIVACY DECISION REQUIRED: approved PAR-Q and consent content, acceptance/assisted acceptance language, retention, requirement obligations, sensitive response visibility.",
+    "External integration pending: client identity, message provider, object storage; no provider or credentials configured."
+  ],
+  "scopeGuard": "No bulk campaigns, WhatsApp/SMS/email provider, AI, community, video, diagnosis, full clinical history, nutrition, qualified e-signature, automation engine, training routines or 2jfitnessapp integration."
+}

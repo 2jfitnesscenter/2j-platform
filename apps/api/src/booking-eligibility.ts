@@ -9,7 +9,7 @@ export interface BookingEligibilityRequest {
 }
 
 export type BookingEligibilityResult =
-  | { readonly eligible: true; readonly entitlementId: string }
+  | { readonly eligible: true; readonly entitlementId: string; readonly planId?: string }
   | { readonly eligible: false; readonly reason: 'entitlement_required' | 'entitlement_unavailable' };
 
 export type BookingEligibilityResolver = (request: BookingEligibilityRequest) => Promise<BookingEligibilityResult>;

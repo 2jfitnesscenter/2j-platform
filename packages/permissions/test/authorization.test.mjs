@@ -10,6 +10,16 @@ test('approved role matrix grants only named operations and denies by default', 
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'reservations.manage'), true);
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'reservations.attendance'), true);
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'scheduling.override_capacity'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'communication.send'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'communication.internal_notes.write'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'forms.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'documents.override'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'forms.responses.sensitive.read'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'forms.responses.sensitive.read'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'forms.responses.sensitive.read'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'documents.requirement.override'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'documents.read'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'communication.internal_notes.write'), false);
   assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'scheduling.override_capacity'), true);
   assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'scheduling.override_capacity'), false);
   assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'reservations.attendance'), false);
@@ -21,6 +31,8 @@ test('approved role matrix grants only named operations and denies by default', 
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.cash.manage'), false);
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.write-tax'), false);
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.validate_transfer'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'communication.read'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'documents.read'), false);
   assert.throws(() => requirePermission({ actorId: 'fixture', role: 'accountant' }, 'billing.refund'), { code: 'FORBIDDEN', statusCode: 403 });
 });
 

@@ -147,8 +147,8 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(trainer.json().summary.training.access, 'available');
   assert.equal(trainer.json().summary.health.access, 'available');
   assert.equal(trainer.json().summary.plans.access, 'forbidden', 'unknown future domain permissions deny by default');
-  assert.equal(trainer.json().summary.documents.access, 'forbidden');
-  assert.equal(trainer.json().summary.messages.data, null);
+  assert.equal(trainer.json().summary.documents.access, 'available');
+  assert.deepEqual(trainer.json().summary.messages.data, { unreadCount: 0, lastMessageAt: null });
   assert.equal(trainer.json().sections.find((section) => section.id === 'payments').sourceLabel, 'Pagos');
   assert.equal(JSON.stringify(trainer.json()).includes('qa-admin'), false);
   const forbiddenCreate = await createClientRequest(clientsTrainerApp, { firstName: 'No', lastName: 'Write' });
