@@ -126,14 +126,14 @@ test('Guardar y añadir cuota creates the client, assigns the active plan and re
   const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,services:[{id:'service-1',name:'Fuerza',area:'Sala'}],rights:[{rightType:'sessions_quota',serviceName:'Fuerza',quantity:12,period:null,quotaScope:'shared'}]};
   const created={...client,id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',firstName:'Ada',lastName:'Lovelace'};
   const saleProfile={...profile,client:created,capabilities:{manage:true,assignPlans:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
-  const requests=[];let assignmentPayload;
+  const requests=[];let assignmentPayload;let assignmentKey;
   globalThis.fetch=async(url,options={})=>{
     const path=String(url);requests.push({path,method:options.method??'GET'});
     if(path.endsWith('/api/clients')&&options.method==='POST')return response(created,201);
     if(path.includes('/api/clients?'))return response(listResponse([], {capabilities:{manage:true,assignPlans:true}}));
     if(path.endsWith(`/api/clients/${created.id}`))return response({...saleProfile,summary:{...saleProfile.summary,plans:{access:'available',dataState:'ready',data:requests.some(item=>item.path.endsWith('/plans')&&item.method==='POST')?[assigned]:[]}}});
     if(path.endsWith('/api/plans/assignable'))return response([plan]);
-    if(path.endsWith(`/api/clients/${created.id}/plans`)&&options.method==='POST'){assignmentPayload=JSON.parse(options.body);return response({id:assigned.id,chargeId:'charge-1',paymentId:'payment-1'},201);}
+    if(path.endsWith(`/api/clients/${created.id}/plans`)&&options.method==='POST'){assignmentPayload=JSON.parse(options.body);assignmentKey=options.headers['idempotency-key'];return response({id:assigned.id,chargeId:'charge-1',paymentId:'payment-1'},201);}
     throw new Error(`Unexpected ${options.method??'GET'} ${path}`);
   };
   render(React.createElement(ClientsPage));await screen.findByText('Aún no hay clientes');fireEvent.click(screen.getByRole('button',{name:/crear primer cliente/i}));
@@ -143,9 +143,97 @@ test('Guardar y añadir cuota creates the client, assigns the active plan and re
   fireEvent.click(within(planDialog).getByRole('button',{name:'Asignar y cobrar'}));
   await screen.findByText('Cuota asignada y cobro registrado.');
   assert.equal(assignmentPayload.amountCents,5900);assert.equal(assignmentPayload.paymentAmountCents,5900);assert.equal(assignmentPayload.paymentMethod,'card');assert.equal(assignmentPayload.planId,plan.id);
+  assert.match(assignmentKey,/^[0-9a-f-]{36}$/i);
   assert.ok(requests.some(item=>item.path.endsWith('/api/clients')&&item.method==='POST'));
   assert.equal(screen.getByRole('tab',{name:'Cuotas'}).getAttribute('aria-selected'),'true');
   await screen.findByText('Fuerza 3 días');
+});
+
+test('plan sale retries reuse one key after a lost response, while success and cancel start fresh operations',async()=>{
+  const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,services:[],rights:[]};
+  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,collectPayments:true}};
+  const saleRequests=[];let loseFirstResponse=true;
+  globalThis.fetch=async(url,options={})=>{
+    const path=String(url);
+    if(path.includes('/api/clients?'))return response(listResponse());
+    if(path.endsWith(`/api/clients/${client.id}`))return response(saleProfile);
+    if(path.endsWith('/api/plans/assignable'))return response([plan]);
+    if(path.endsWith(`/api/clients/${client.id}/plans`)&&options.method==='POST'){
+      saleRequests.push({key:options.headers['idempotency-key'],payload:options.body});
+      if(loseFirstResponse){loseFirstResponse=false;throw new Error('connection reset after server commit');}
+      return response({id:`assignment-${saleRequests.length}`,chargeId:`charge-${saleRequests.length}`,paymentId:null},201);
+    }
+    throw new Error(`Unexpected ${options.method??'GET'} ${path}`);
+  };
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
+  await screen.findByRole('heading',{name:'Marta Santos'});
+  fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
+  let dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
+  await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
+  fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:plan.id}});
+  fireEvent.change(within(dialog).getByLabelText('Precio de venta (€)'),{target:{value:'59,00'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Asignar y dejar pendiente'}));
+  await screen.findByRole('alert');
+  fireEvent.click(within(dialog).getByRole('button',{name:'Asignar y dejar pendiente'}));
+  await screen.findByText('Cuota asignada; el cargo queda pendiente.');
+  assert.equal(saleRequests.length,2);
+  assert.equal(saleRequests[0].key,saleRequests[1].key,'a retry after a lost response must reuse the operation key');
+  assert.equal(saleRequests[0].payload,saleRequests[1].payload);
+
+  fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
+  dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
+  await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
+  fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:plan.id}});
+  fireEvent.change(within(dialog).getByLabelText('Precio de venta (€)'),{target:{value:'59,00'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Asignar y dejar pendiente'}));
+  await screen.findByText('Cuota asignada; el cargo queda pendiente.');
+  assert.notEqual(saleRequests[2].key,saleRequests[1].key,'the next sale after success must have a fresh key');
+
+  fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
+  dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Cancelar'}));
+  fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
+  dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
+  await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
+  fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:plan.id}});
+  fireEvent.change(within(dialog).getByLabelText('Precio de venta (€)'),{target:{value:'59,00'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Asignar y dejar pendiente'}));
+  await screen.findByText('Cuota asignada; el cargo queda pendiente.');
+  assert.notEqual(saleRequests[3].key,saleRequests[2].key,'cancel/reset must discard the prior key');
+});
+
+test('changing a failed sale payload rotates its idempotency key',async()=>{
+  const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,services:[],rights:[]};
+  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,collectPayments:true}};
+  const saleRequests=[];let first=true;
+  globalThis.fetch=async(url,options={})=>{
+    const path=String(url);
+    if(path.includes('/api/clients?'))return response(listResponse());
+    if(path.endsWith(`/api/clients/${client.id}`))return response(saleProfile);
+    if(path.endsWith('/api/plans/assignable'))return response([plan]);
+    if(path.endsWith(`/api/clients/${client.id}/plans`)&&options.method==='POST'){
+      saleRequests.push({key:options.headers['idempotency-key'],payload:JSON.parse(options.body)});
+      if(first){first=false;return response({error:'temporary_failure'},503);}
+      return response({id:'assignment-1',chargeId:'charge-1',paymentId:null},201);
+    }
+    throw new Error(`Unexpected ${options.method??'GET'} ${path}`);
+  };
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
+  await screen.findByRole('heading',{name:'Marta Santos'});
+  fireEvent.click(screen.getAllByRole('button',{name:'Añadir cuota'})[0]);
+  const dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
+  await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
+  fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:plan.id}});
+  fireEvent.change(within(dialog).getByLabelText('Precio de venta (€)'),{target:{value:'59,00'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Asignar y dejar pendiente'}));
+  await screen.findByRole('alert');
+  fireEvent.change(within(dialog).getByLabelText('Precio de venta (€)'),{target:{value:'69,00'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Asignar y dejar pendiente'}));
+  await screen.findByText('Cuota asignada; el cargo queda pendiente.');
+  assert.notEqual(saleRequests[0].key,saleRequests[1].key,'material payload edits are a new logical operation');
+  assert.equal(saleRequests[1].payload.amountCents,6900);
 });
 
 test('search waits for typing to pause before querying and keeps current results during debounce', async () => {

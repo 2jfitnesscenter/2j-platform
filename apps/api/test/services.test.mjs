@@ -1087,6 +1087,9 @@ test('client plan sale atomically assigns the frozen catalog version, charge and
   const replay=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':key},payload});
   assert.equal(replay.statusCode,200,replay.body);
   assert.equal(replay.json().id,response.json().id);
+  const conflict=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':key},payload:{...payload,amountCents:6000}});
+  assert.equal(conflict.statusCode,409,conflict.body);
+  assert.equal(conflict.json().error,'idempotency_conflict');
   const [counts]=await sql`SELECT (SELECT count(*)::int FROM client_plan_assignments WHERE client_id=${clientId}) assignments,(SELECT count(*)::int FROM economic_charges WHERE client_id=${clientId} AND plan_id=${planId}) charges,(SELECT count(*)::int FROM economic_transactions WHERE client_id=${clientId} AND kind='payment') payments,(SELECT count(*)::int FROM economic_audit_events WHERE client_id=${clientId} AND action IN ('client_plan.assigned','charge.created','payment.recorded')) audit_events,(SELECT count(*)::int FROM client_events WHERE client_id=${clientId} AND event_type='client.plan_assigned') AS client_events`;
   assert.deepEqual(counts,{assignments:1,charges:1,payments:1,audit_events:3,client_events:1});
   const profile=await clientsAdminApp.inject({method:'GET',url:`/api/clients/${clientId}`});
