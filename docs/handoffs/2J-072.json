@@ -1,10 +1,11 @@
 {
   "taskId": "2J-072",
   "title": "Home V2, compact navigation and operational Client 360",
-  "status": "awaiting_ci_and_independent_review",
+  "status": "awaiting_independent_review",
   "baseSha": "eac22896d93ca18970a1998b8e450dbb735e27ac",
   "branch": "agent/codex/2J-072-home-v2-client-360",
   "implementationSha": "407c222e46c621f61b747914510566e69adff3ac",
+  "verifiedHeadSha": "7f0790dde434822bb02af5e0da69c5c608a91e54",
   "pullRequest": {"number": 15, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/15", "draft": true, "merged": false},
   "migrations": ["apps/api/migrations/0016_client_plan_assignments.sql"],
   "scope": ["home layout preferences", "compact capability-filtered sidebar", "wide client profile", "idempotent plan assignment and charge", "optional immediate payment"],
@@ -23,8 +24,8 @@
     "build": {"status": "PASS", "packages": 7},
     "migration": {"status": "PASS", "count": 16, "name": "0016_client_plan_assignments.sql"},
     "dependencyAudit": "PASS_NO_KNOWN_VULNERABILITIES",
-    "secretScan": "PENDING_GITHUB_WORKFLOW_GITLEAKS_UNAVAILABLE_LOCALLY",
-    "githubChecks": "RUNNING_ON_INITIAL_HEAD_VERIFY_FINAL_HEAD",
+    "secretScan": "PASS_GITHUB_PUSH_AND_PULL_REQUEST",
+    "githubChecks": "PASS_ON_7f0790dde434822bb02af5e0da69c5c608a91e54_PUSH_AND_PULL_REQUEST; THIS_FOLLOWING_DELTA_IS_DOCUMENTATION_ONLY",
     "diffCheck": "PASS",
     "browserEvidence": {"status": "NOT_CAPTURED", "viewports": [1440, 768, 390], "requiredViews": ["home", "client-summary", "client-plans", "new-client-plan", "mobile-home", "mobile-client", "mobile-plan"]}
   },
