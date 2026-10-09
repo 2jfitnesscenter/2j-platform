@@ -9,6 +9,7 @@ import { registerClientRoutes } from './clients.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
+import { registerStaffRoutes } from './staff.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
@@ -115,6 +116,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerCalendarRoutes(app, client, options.authorizationResolver ?? (async () => null), options.bookingEligibilityResolver);
   registerEconomicRoutes(app, client, options.authorizationResolver ?? (async () => null));
   registerEconomicExtensions(app, client, options.authorizationResolver ?? (async () => null));
+  registerStaffRoutes(app, client, options.authorizationResolver ?? (async () => null));
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }

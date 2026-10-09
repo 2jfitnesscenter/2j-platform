@@ -17,12 +17,13 @@ const sessionFields = {
   durationMinutes: z.number().int().min(5).max(480),
   capacity: z.number().int().min(1).max(500),
 };
-export const createSessionInput = z.object({ ...sessionFields, individualClientId: uuid.optional(), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, context) => {
+export const createSessionInput = z.object({ ...sessionFields, individualClientId: uuid.optional(), professionalId: uuid.optional(), overrideAvailability: z.boolean().optional().default(false), availabilityReason: z.string().trim().min(3).max(240).optional(), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, context) => {
   if (value.individualClientId && value.capacity !== 1) context.addIssue({ code: 'custom', path: ['capacity'], message: 'Una sesión individual tiene una sola plaza.' });
   if (value.overrideDebt && !value.overrideReason) context.addIssue({ code: 'custom', path: ['overrideReason'], message: 'Indica el motivo de la excepción.' });
+  if (value.overrideAvailability && !value.availabilityReason) context.addIssue({ code: 'custom', path: ['availabilityReason'], message: 'Indica el motivo de la excepción.' });
 });
 export const createTemplateInput = z.object({
-  serviceId: uuid, areaId: uuid, weekday: z.number().int().min(0).max(6), localStartTime: time,
+  serviceId: uuid, areaId: uuid, professionalId: uuid.optional(), weekday: z.number().int().min(0).max(6), localStartTime: time,
   durationMinutes: z.number().int().min(5).max(480), capacity: z.number().int().min(1).max(500), startsOn: date, endsOn: date.nullable().optional(),
 }).strict().refine((value) => !value.endsOn || value.endsOn >= value.startsOn, { message: 'La fecha final no puede ser anterior a la inicial.', path: ['endsOn'] });
 const weekQuery = z.object({ weekStart: date }).strict().refine(({ weekStart }) => new Date(`${weekStart}T00:00:00Z`).getUTCDay() === 1, { message: 'La semana debe comenzar en lunes.', path: ['weekStart'] });
@@ -49,6 +50,32 @@ export function registerCalendarRoutes(
     if (area.status !== 'active') return 'area_archived';
     return null;
   }
+  async function checkProfessional(tx: SqlTransaction, professionalId: string | undefined, startsAt: string, durationMinutes: number, override: boolean, overrideReason: string | undefined, context: AuthorizationContext) {
+    if (!professionalId) return { error: null as string | null, warnings: [] as string[] };
+    const [staff] = await tx`SELECT id,status,display_name AS "displayName" FROM staff_professionals WHERE id=${professionalId} FOR SHARE`;
+    if (!staff || staff.status !== 'active') return { error: 'professional_unavailable', warnings: [] as string[] };
+    const endsAt = new Date(new Date(startsAt).getTime() + durationMinutes * 60_000).toISOString();
+    const [conflict] = await tx`SELECT EXISTS(SELECT 1 FROM calendar_sessions WHERE professional_id=${professionalId} AND status='scheduled' AND starts_at<${endsAt} AND starts_at + duration_minutes * interval '1 minute'>${startsAt}) AS conflict`;
+    if (conflict?.conflict) return { error: 'professional_session_conflict', warnings: [] as string[] };
+    const local = await tx`SELECT extract(dow FROM ${startsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::int AS weekday,(${startsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::date AS local_date,(${startsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::time AS local_time,(${endsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::time AS local_end`;
+    const day = local[0]!;
+    const slots = await tx`SELECT starts_at AS "startsAt",ends_at AS "endsAt" FROM staff_schedule_slots WHERE professional_id=${professionalId} AND status='active' AND weekday=${day.weekday} AND valid_from<=${day.local_date} AND (valid_until IS NULL OR valid_until>=${day.local_date}) ORDER BY starts_at`;
+    const [coverage] = await tx`SELECT ${day.local_time}::time AS starts,${day.local_end}::time AS ends`;
+    const minute = (value: string) => { const [hour, minutes] = String(value).slice(0, 5).split(':').map(Number); return hour! * 60 + minutes!; };
+    let coveredUntil = minute(coverage!.starts);
+    const requestedEnd = minute(coverage!.ends);
+    for (const slot of slots) { const start = minute(slot.startsAt); const end = minute(slot.endsAt); if (start > coveredUntil) break; if (end > coveredUntil) coveredUntil = end; }
+    const [extraAvailability] = await tx`SELECT EXISTS(SELECT 1 FROM staff_exceptions WHERE professional_id=${professionalId} AND status='active' AND kind='extra_availability' AND starts_at<=${startsAt} AND ends_at>=${endsAt}) AS covered`;
+    const scheduleCovered = coveredUntil >= requestedEnd || Boolean(extraAvailability?.covered);
+    const [absence] = await tx`SELECT EXISTS(SELECT 1 FROM staff_exceptions WHERE professional_id=${professionalId} AND status='active' AND kind<>'extra_availability' AND starts_at<${endsAt} AND ends_at>${startsAt}) AS unavailable`;
+    const [substitution] = await tx`SELECT id,substitute_professional_id AS "substituteProfessionalId" FROM staff_substitutions WHERE source_professional_id=${professionalId} AND status='active' AND starts_at<${endsAt} AND ends_at>${startsAt} ORDER BY starts_at LIMIT 1`;
+    const warnings = [...(!scheduleCovered?['outside_working_hours']:[]),...(absence?.unavailable?['professional_absent']:[]),...(substitution?['substitution_available']:[])];
+    if (!warnings.length) return { error: null as string | null, warnings };
+    if (!override) return { error: 'professional_availability_confirmation_required', warnings };
+    if (!can(context,'staff.schedule.override')) return { error: 'permission_denied', warnings };
+    if (!overrideReason) return { error: 'override_reason_required', warnings };
+    return { error: null as string | null, warnings };
+  }
   async function debtBlocksNewBooking(tx: SqlTransaction, clientId: string) {
     const [settings] = await tx`SELECT debt_blocks_new_reservations AS enabled FROM economic_settings WHERE singleton=true`;
     if (!settings?.enabled) return false;
@@ -67,18 +94,19 @@ export function registerCalendarRoutes(
       const weekStart = parsed.data.weekStart;
       const sessions = await database`
         SELECT cs.id,cs.service_id AS "serviceId",s.name AS "serviceName",cs.area_id AS "areaId",a.name AS "areaName",
-          cs.template_id AS "templateId",cs.source,cs.starts_at AS "startsAt",cs.duration_minutes AS "durationMinutes",cs.capacity,cs.status,(cs.individual_client_id IS NOT NULL) AS "isIndividual",
+          cs.template_id AS "templateId",cs.professional_id AS "professionalId",sp.display_name AS "professionalName",cs.source,cs.starts_at AS "startsAt",cs.duration_minutes AS "durationMinutes",cs.capacity,cs.status,(cs.individual_client_id IS NOT NULL) AS "isIndividual",
           (SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show')) AS "occupiedCount",
           GREATEST((SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=cs.id AND r.status IN ('reserved','attended','no_show'))-cs.capacity,0)::int AS "overbookCount",
           (SELECT count(*)::int FROM calendar_waitlist_entries w WHERE w.session_id=cs.id AND w.status='waiting') AS "waitlistCount"
-        FROM calendar_sessions cs JOIN services s ON s.id=cs.service_id JOIN areas a ON a.id=cs.area_id
+        FROM calendar_sessions cs JOIN services s ON s.id=cs.service_id JOIN areas a ON a.id=cs.area_id LEFT JOIN staff_professionals sp ON sp.id=cs.professional_id
         WHERE cs.starts_at >= (${weekStart}::date::timestamp AT TIME ZONE 'Atlantic/Canary')
           AND cs.starts_at < ((${weekStart}::date + 7)::timestamp AT TIME ZONE 'Atlantic/Canary')
         ORDER BY cs.starts_at,cs.id`;
       const areas = await database`SELECT id,name FROM areas WHERE status='active' ORDER BY normalized_name,id`;
       const services = await database`SELECT id,name,area_id AS "areaId" FROM services WHERE status='active' ORDER BY lower(name),id`;
+      const professionals = await database`SELECT id,display_name AS "displayName",calendar_color AS "calendarColor" FROM staff_professionals WHERE status='active' ORDER BY lower(display_name),id`;
       const templates = await database`SELECT t.id,t.service_id AS "serviceId",s.name AS "serviceName",t.area_id AS "areaId",a.name AS "areaName",t.weekday,t.local_start_time AS "localStartTime",t.duration_minutes AS "durationMinutes",t.capacity,to_char(t.starts_on,'YYYY-MM-DD') AS "startsOn",CASE WHEN t.ends_on IS NULL THEN NULL ELSE to_char(t.ends_on,'YYYY-MM-DD') END AS "endsOn" FROM recurring_session_templates t JOIN services s ON s.id=t.service_id JOIN areas a ON a.id=t.area_id WHERE t.status='active' ORDER BY t.weekday,t.local_start_time,t.id`;
-      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity') } };
+      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, professionals, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity'), overrideAvailability: can(context, 'staff.schedule.override') } };
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/week' }, 'calendar week failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
@@ -103,6 +131,8 @@ export function registerCalendarRoutes(
     try {
       const result = await database.begin(async (tx) => {
         const issue = await checkService(tx, parsed.data.serviceId, parsed.data.areaId); if (issue) return { error: issue };
+        const availability = await checkProfessional(tx, parsed.data.professionalId, parsed.data.startsAt, parsed.data.durationMinutes, parsed.data.overrideAvailability, parsed.data.availabilityReason, context);
+        if (availability.error) return { error: availability.error, warnings: availability.warnings };
         let entitlementReference: string | null = null;
         let debtOverrideApplied = false;
         if (parsed.data.individualClientId) {
@@ -116,9 +146,10 @@ export function registerCalendarRoutes(
           debtOverrideApplied = overdue && parsed.data.overrideDebt;
           entitlementReference = eligibility.entitlementId;
         }
-        const [session] = await tx`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,individual_client_id,created_by) VALUES (${parsed.data.serviceId},${parsed.data.areaId},${parsed.data.startsAt},${parsed.data.durationMinutes},${parsed.data.capacity},${parsed.data.individualClientId ?? null},${context.actorId}) RETURNING id`;
+        const [session] = await tx`INSERT INTO calendar_sessions(service_id,area_id,professional_id,starts_at,duration_minutes,capacity,individual_client_id,created_by) VALUES (${parsed.data.serviceId},${parsed.data.areaId},${parsed.data.professionalId ?? null},${parsed.data.startsAt},${parsed.data.durationMinutes},${parsed.data.capacity},${parsed.data.individualClientId ?? null},${context.actorId}) RETURNING id`;
         if (!session) throw new Error('Session insert returned no row.');
         await appendAudit(tx, context.actorId, 'session.created', 'calendar_session', session.id, session.id, parsed.data.individualClientId ?? null, { capacity: parsed.data.capacity, individual: Boolean(parsed.data.individualClientId) });
+        if (availability.warnings.length) await appendAudit(tx, context.actorId, 'session.availability_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId ?? null, { warnings: availability.warnings.join(','), reason: parsed.data.availabilityReason ?? '' });
         if (parsed.data.individualClientId) {
           if (debtOverrideApplied) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId, { reason: parsed.data.overrideReason ?? '' });
           const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${parsed.data.individualClientId},${entitlementReference},${context.actorId}) RETURNING id`;
@@ -127,7 +158,7 @@ export function registerCalendarRoutes(
         }
         return { id: session.id };
       });
-      if ('error' in result) return reply.code(result.error === 'client_not_found' || result.error === 'service_not_found' || result.error === 'area_not_found' ? 404 : 409).send({ error: result.error });
+      if ('error' in result) return reply.code(result.error === 'client_not_found' || result.error === 'service_not_found' || result.error === 'area_not_found' || result.error === 'professional_unavailable' ? 404 : result.error==='permission_denied'?403:409).send({ error: result.error, ...('warnings' in result ? { warnings: result.warnings } : {}) });
       return reply.code(201).send(await readSession(database, result.id));
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/sessions' }, 'session create failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
@@ -138,7 +169,8 @@ export function registerCalendarRoutes(
     try {
       const result = await database.begin(async (tx) => {
         const issue = await checkService(tx, parsed.data.serviceId, parsed.data.areaId); if (issue) return { error: issue };
-        const [template] = await tx`INSERT INTO recurring_session_templates(service_id,area_id,weekday,local_start_time,duration_minutes,capacity,starts_on,ends_on,created_by) VALUES (${parsed.data.serviceId},${parsed.data.areaId},${parsed.data.weekday},${parsed.data.localStartTime},${parsed.data.durationMinutes},${parsed.data.capacity},${parsed.data.startsOn},${parsed.data.endsOn ?? null},${context.actorId}) RETURNING id`;
+        if(parsed.data.professionalId){const [professional]=await tx`SELECT id FROM staff_professionals WHERE id=${parsed.data.professionalId} AND status='active' FOR SHARE`;if(!professional)return {error:'professional_unavailable'};}
+        const [template] = await tx`INSERT INTO recurring_session_templates(service_id,area_id,professional_id,weekday,local_start_time,duration_minutes,capacity,starts_on,ends_on,created_by) VALUES (${parsed.data.serviceId},${parsed.data.areaId},${parsed.data.professionalId??null},${parsed.data.weekday},${parsed.data.localStartTime},${parsed.data.durationMinutes},${parsed.data.capacity},${parsed.data.startsOn},${parsed.data.endsOn ?? null},${context.actorId}) RETURNING id`;
         if (!template) throw new Error('Template insert returned no row.');
         return { id: template.id };
       });
@@ -167,19 +199,25 @@ export function registerCalendarRoutes(
   app.post('/api/calendar/templates/:templateId/sessions', async (request, reply) => {
     const context = await authorized(request, reply, 'reservations.manage'); if (!context) return;
     const params = z.object({ templateId: uuid }).safeParse(request.params);
-    const body = z.object({ sessionDate: date }).strict().safeParse(request.body);
+    const body = z.object({ sessionDate: date, overrideAvailability: z.boolean().optional().default(false), availabilityReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, context) => {
+      if (value.overrideAvailability && !value.availabilityReason) context.addIssue({ code: 'custom', path: ['availabilityReason'], message: 'Indica el motivo de la excepción.' });
+    }).safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     try {
       const result = await database.begin(async (tx) => {
-        const [template] = await tx`SELECT id,service_id,area_id,weekday,local_start_time,duration_minutes,capacity,status,to_char(starts_on,'YYYY-MM-DD') AS starts_on,CASE WHEN ends_on IS NULL THEN NULL ELSE to_char(ends_on,'YYYY-MM-DD') END AS ends_on FROM recurring_session_templates WHERE id=${params.data.templateId} FOR UPDATE`;
+        const [template] = await tx`SELECT id,service_id,area_id,professional_id,weekday,local_start_time,duration_minutes,capacity,status,to_char(starts_on,'YYYY-MM-DD') AS starts_on,CASE WHEN ends_on IS NULL THEN NULL ELSE to_char(ends_on,'YYYY-MM-DD') END AS ends_on FROM recurring_session_templates WHERE id=${params.data.templateId} FOR UPDATE`;
         if (!template) return { error: 'template_not_found' };
         if (template.status !== 'active' || body.data.sessionDate < template.starts_on || (template.ends_on && body.data.sessionDate > template.ends_on)) return { error: 'template_inactive' };
         const weekday = new Date(`${body.data.sessionDate}T00:00:00Z`).getUTCDay();
         if (weekday !== template.weekday) return { error: 'template_weekday_mismatch' };
         const issue = await checkService(tx, template.service_id, template.area_id); if (issue) return { error: issue };
-        const [session] = await tx`INSERT INTO calendar_sessions(service_id,area_id,template_id,source,starts_at,duration_minutes,capacity,created_by) VALUES (${template.service_id},${template.area_id},${template.id},'template',(${body.data.sessionDate}::date + ${String(template.local_start_time).slice(0, 5)}::time) AT TIME ZONE 'Atlantic/Canary',${template.duration_minutes},${template.capacity},${context.actorId}) ON CONFLICT (template_id,starts_at) WHERE template_id IS NOT NULL DO NOTHING RETURNING id`;
+        const startsAt = await tx`SELECT (${body.data.sessionDate}::date + ${String(template.local_start_time).slice(0, 5)}::time) AT TIME ZONE 'Atlantic/Canary' AS value`;
+        const availability = await checkProfessional(tx, template.professional_id ?? undefined, startsAt[0]!.value, template.duration_minutes, body.data.overrideAvailability, body.data.availabilityReason, context);
+        if (availability.error) return { error: availability.error };
+        const [session] = await tx`INSERT INTO calendar_sessions(service_id,area_id,professional_id,template_id,source,starts_at,duration_minutes,capacity,created_by) VALUES (${template.service_id},${template.area_id},${template.professional_id},${template.id},'template',${startsAt[0]!.value},${template.duration_minutes},${template.capacity},${context.actorId}) ON CONFLICT (template_id,starts_at) WHERE template_id IS NOT NULL DO NOTHING RETURNING id`;
         if (!session) return { error: 'session_already_generated' };
         await appendAudit(tx, context.actorId, 'session.generated', 'calendar_session', session.id, session.id, null, { templateId: template.id, sessionDate: body.data.sessionDate });
+        if (availability.warnings.length && body.data.overrideAvailability) await appendAudit(tx, context.actorId, 'session.availability_override', 'calendar_session', session.id, session.id, null, { professionalId:template.professional_id, warnings:availability.warnings.join(','), reason:body.data.availabilityReason??null });
         return { id: session.id };
       });
       if ('error' in result) return reply.code(result.error.endsWith('_not_found') ? 404 : 409).send({ error: result.error });
