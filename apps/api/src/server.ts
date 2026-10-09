@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
 import { registerClientPlanRoutes } from './client-plans.js';
+import { registerEntitlementRoutes } from './entitlements.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
@@ -14,7 +15,7 @@ import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
-import { type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
+import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
 const timezone = 'Atlantic/Canary';
 const uuid = z.string().uuid();
@@ -47,7 +48,9 @@ export const areaInput = z.object({ name: z.string().trim().min(1).max(80) }).st
 export const planInput = z.object({
   name: z.string().trim().min(1).max(100), serviceIds: z.array(uuid.transform((value) => value.toLowerCase())).min(1).max(20), kind: z.enum(['recurring', 'session_pack']),
   renewalCadence: z.enum(['weekly', 'monthly', 'custom_period']).nullable().optional(),
-  periodDays: z.number().int().min(1).max(3660).nullable().optional(), rights: z.array(rightInput).min(1).max(40),
+  periodDays: z.number().int().min(1).max(3660).nullable().optional(), basePriceCents: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  modules: z.array(z.object({ module: z.enum(['reservations','training','nutrition','health']), accessLevel: z.enum(['limited','full']), capabilities: z.array(z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,3}$/)).max(30).default([]) }).strict()).max(10).default([]),
+  rights: z.array(rightInput).min(1).max(40),
 }).strict().superRefine((plan, context) => {
   if (new Set(plan.serviceIds).size !== plan.serviceIds.length) context.addIssue({ code: 'custom', path: ['serviceIds'], message: 'No se pueden repetir servicios.' });
   if (plan.kind === 'recurring' && !plan.renewalCadence) context.addIssue({ code: 'custom', path: ['renewalCadence'], message: 'El plan recurrente requiere una renovación definida.' });
@@ -56,6 +59,8 @@ export const planInput = z.object({
   if (plan.kind === 'session_pack' && !plan.rights.some((right) => right.rightType === 'sessions_quota')) context.addIssue({ code: 'custom', path: ['rights'], message: 'El bono de sesiones requiere un derecho con número de sesiones.' });
   if (plan.renewalCadence === 'custom_period' && !plan.periodDays) context.addIssue({ code: 'custom', path: ['periodDays'], message: 'El periodo personalizado requiere días.' });
   if (plan.renewalCadence !== 'custom_period' && plan.periodDays != null) context.addIssue({ code: 'custom', path: ['periodDays'], message: 'Los días solo aplican al periodo personalizado.' });
+  if (new Set(plan.modules.map((item) => item.module)).size !== plan.modules.length) context.addIssue({ code: 'custom', path: ['modules'], message: 'No se puede repetir el acceso a un módulo.' });
+  plan.modules.forEach((item, index) => { if (new Set(item.capabilities).size !== item.capabilities.length || item.capabilities.some((capability) => capability.split('.')[0] !== item.module)) context.addIssue({ code: 'custom', path: ['modules', index, 'capabilities'], message: 'Las capacidades deben ser únicas y pertenecer al módulo.' }); });
   plan.rights.forEach((right, index) => {
     if (right.serviceId && !plan.serviceIds.includes(right.serviceId)) context.addIssue({ code: 'custom', path: ['rights', index, 'serviceId'], message: 'El derecho debe apuntar a un servicio incluido en el plan.' });
   });
@@ -107,6 +112,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     return reply.code(statusCode).send({ error: statusCode < 500 ? 'request_rejected' : 'internal_error' });
   });
   const { client } = createDatabase(databaseUrl);
+  const authorizationResolver = options.authorizationResolver ?? (async () => null);
   const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
   const originHost = new URL(allowedOrigin).hostname.replace(/^\[|\]$/g, '');
   if (!['127.0.0.1', 'localhost', '::1'].includes(originHost)) throw new Error('CORS_ORIGIN must be loopback-only until runtime authentication is approved.');
@@ -116,14 +122,15 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     if (!host || !['127.0.0.1', 'localhost', '::1'].includes(host)) return reply.code(400).send({ error: 'invalid_host' });
   });
   app.addHook('onClose', async () => { await client.end(); });
-  registerClientRoutes(app, client, options.authorizationResolver ?? (async () => null));
-  registerClientPlanRoutes(app, client, options.authorizationResolver ?? (async () => null));
-  registerCalendarRoutes(app, client, options.authorizationResolver ?? (async () => null), options.bookingEligibilityResolver);
-  registerEconomicRoutes(app, client, options.authorizationResolver ?? (async () => null));
-  registerEconomicExtensions(app, client, options.authorizationResolver ?? (async () => null));
-  registerStaffRoutes(app, client, options.authorizationResolver ?? (async () => null));
-  registerCommunicationRoutes(app, client, options.authorizationResolver ?? (async () => null), options.clientAuthorizationResolver);
-  registerDashboardRoutes(app, client, options.authorizationResolver ?? (async () => null));
+  registerClientRoutes(app, client, authorizationResolver);
+  registerClientPlanRoutes(app, client, authorizationResolver);
+  registerEntitlementRoutes(app, client, authorizationResolver);
+  registerCalendarRoutes(app, client, authorizationResolver, options.bookingEligibilityResolver);
+  registerEconomicRoutes(app, client, authorizationResolver);
+  registerEconomicExtensions(app, client, authorizationResolver);
+  registerStaffRoutes(app, client, authorizationResolver);
+  registerCommunicationRoutes(app, client, authorizationResolver, options.clientAuthorizationResolver);
+  registerDashboardRoutes(app, client, authorizationResolver);
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }
@@ -209,6 +216,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/plans', async (request, reply) => {
+    const context=await authorizationResolver(request);
+    if(!context)return reply.code(401).send({error:'authentication_required'});
+    if(!can(context,'catalog.pricing.manage'))return reply.code(403).send({error:'permission_denied'});
     const idempotencyKey = request.headers['idempotency-key'];
     if (typeof idempotencyKey !== 'string' || !uuid.safeParse(idempotencyKey).success) return reply.code(400).send({ error: 'idempotency_key_required' });
     const parsed = planInput.safeParse(request.body);
@@ -223,7 +233,8 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const body = { ...parsed.data, serviceIds, rights: parsed.data.rights };
     const canonicalBody = {
       name: body.name, serviceIds: body.serviceIds, kind: body.kind, renewalCadence: body.renewalCadence ?? null, periodDays: body.periodDays ?? null,
-      rights: canonicalRights,
+        rights: canonicalRights, basePriceCents: body.basePriceCents ?? null,
+      modules: [...body.modules].map((item) => ({ ...item, capabilities: [...item.capabilities].sort(compareCodeUnits) })).sort((a,b) => compareCodeUnits(a.module,b.module)),
     };
     const requestHash = createHash('sha256').update(JSON.stringify(canonicalBody)).digest('hex');
     try {
@@ -237,11 +248,16 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
         if (existing) return existing.requestHash.trim() === requestHash ? { id: existing.id, replay: true as const } : { error: 'idempotency_conflict' as const };
         const [plan] = await tx`INSERT INTO plans(name,status,current_version,idempotency_key,request_hash) VALUES (${body.name},'draft',1,${idempotencyKey},${requestHash}) RETURNING id`;
         if (!plan) throw new Error('Plan insert returned no row');
-        await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone) VALUES (${plan.id},1,${body.kind},${body.renewalCadence ?? null},${body.periodDays ?? null},${timezone})`;
+        await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents) VALUES (${plan.id},1,${body.kind},${body.renewalCadence ?? null},${body.periodDays ?? null},${timezone},${body.basePriceCents ?? null})`;
         await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) SELECT ${plan.id},1,id FROM services WHERE id IN ${tx(body.serviceIds)}`;
         for (const right of body.rights) {
           await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quota_scope,quantity,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},1,${right.rightType},${right.serviceId ?? null},${right.quotaScope ?? null},${right.quantity ?? null},${right.period ?? null},${right.periodMode ?? null},${right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null},${right.validDays ?? null},${right.validDaysStartRule ?? null})`;
         }
+        for (const moduleAccess of body.modules) {
+          await tx`INSERT INTO plan_module_accesses(plan_id,plan_version,module,access_level) VALUES (${plan.id},1,${moduleAccess.module},${moduleAccess.accessLevel})`;
+          for (const capability of moduleAccess.capabilities) await tx`INSERT INTO plan_module_capabilities(plan_id,plan_version,module,capability) VALUES (${plan.id},1,${moduleAccess.module},${capability})`;
+        }
+        await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,details) VALUES (${context.actorId},'catalog.plan_created','plan',${plan.id},${JSON.stringify({version:1,basePriceCents:body.basePriceCents??null,modules:body.modules.map(item=>item.module)})}::jsonb)`;
         return { id: plan.id, replay: false as const };
       });
       if ('error' in result) {
@@ -261,16 +277,61 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       return sendDatabaseError(app, reply, error);
     }
   });
+  app.post('/api/plans/:planId/versions', async (request, reply) => {
+    reply.header('Cache-Control','no-store');
+    const context=await authorizationResolver(request);
+    if(!context)return reply.code(401).send({error:'authentication_required'});
+    if(!can(context,'catalog.pricing.manage'))return reply.code(403).send({error:'permission_denied'});
+    const {planId}=request.params as {planId:string};
+    if(!uuid.safeParse(planId).success)return reply.code(400).send({error:'invalid_plan_id'});
+    const idempotencyKey=request.headers['idempotency-key'];
+    if(typeof idempotencyKey!=='string'||!uuid.safeParse(idempotencyKey).success)return reply.code(400).send({error:'idempotency_key_required'});
+    const parsed=planInput.safeParse(request.body);
+    if(!parsed.success)return reply.code(400).send({error:'validation_error',details:parsed.error.flatten()});
+    const body=parsed.data;const serviceIds=[...body.serviceIds].sort(compareCodeUnits);
+    const canonical={...body,serviceIds,modules:[...body.modules].map(item=>({...item,capabilities:[...item.capabilities].sort(compareCodeUnits)})).sort((a,b)=>compareCodeUnits(a.module,b.module)),rights:[...body.rights].map(right=>({...right,serviceId:right.serviceId??null})).sort((a,b)=>compareCodeUnits(JSON.stringify(a),JSON.stringify(b)))};
+    const requestHash=createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+    try{
+      const result=await client.begin(async tx=>{
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${idempotencyKey},0))`;
+        const [prior]=await tx`SELECT plan_id AS "planId",version,request_hash AS "requestHash" FROM plan_version_changes WHERE idempotency_key=${idempotencyKey}`;
+        if(prior)return prior.requestHash.trim()===requestHash?{planId:prior.planId,version:prior.version,replay:true as const}:{error:'idempotency_conflict' as const};
+        const [plan]=await tx`SELECT id,name,status,current_version AS "currentVersion" FROM plans WHERE id=${planId} FOR UPDATE`;
+        if(!plan||plan.status==='archived')return {error:'plan_unavailable' as const};
+        const services=await tx`SELECT id,status FROM services WHERE id IN ${tx(serviceIds)} ORDER BY id FOR SHARE`;
+        if(services.length!==serviceIds.length)return {error:'service_not_found' as const};
+        if(services.some(item=>item.status==='archived'))return {error:'service_archived' as const};
+        const version=Number(plan.currentVersion)+1;
+        await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents) VALUES (${plan.id},${version},${body.kind},${body.renewalCadence??null},${body.periodDays??null},${timezone},${body.basePriceCents??null})`;
+        await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) SELECT ${plan.id},${version},id FROM services WHERE id IN ${tx(serviceIds)}`;
+        for(const right of body.rights)await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quota_scope,quantity,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},${version},${right.rightType},${right.serviceId??null},${right.quotaScope??null},${right.quantity??null},${right.period??null},${right.periodMode??null},${right.rightType==='period_quota'&&right.period!=='plan_period'?timezone:null},${right.validDays??null},${right.validDaysStartRule??null})`;
+        for(const access of body.modules){await tx`INSERT INTO plan_module_accesses(plan_id,plan_version,module,access_level) VALUES (${plan.id},${version},${access.module},${access.accessLevel})`;for(const capability of access.capabilities)await tx`INSERT INTO plan_module_capabilities(plan_id,plan_version,module,capability) VALUES (${plan.id},${version},${access.module},${capability})`;}
+        if(plan.status==='active')await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${plan.id} AND version=${version}`;
+        await tx`UPDATE plans SET current_version=${version},name=${body.name} WHERE id=${plan.id}`;
+        await tx`INSERT INTO plan_version_changes(plan_id,version,actor_id,idempotency_key,request_hash) VALUES (${plan.id},${version},${context.actorId},${idempotencyKey},${requestHash})`;
+        await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,details) VALUES (${context.actorId},'catalog.plan_version_created','plan',${plan.id},${JSON.stringify({version,basePriceCents:body.basePriceCents??null,modules:body.modules.map(item=>item.module)})}::jsonb)`;
+        return {planId:plan.id,version,replay:false as const};
+      });
+      if('error'in result)return reply.code(result.error==='service_not_found'?404:409).send({error:result.error});
+      const output=await getPlan(client,result.planId);
+      return reply.code(result.replay?200:201).send(output);
+    }catch(error){return sendDatabaseError(app,reply,error);}
+  });
   app.post('/api/plans/:planId/activate', async (request, reply) => {
+    const context=await authorizationResolver(request);
+    if(!context)return reply.code(401).send({error:'authentication_required'});
+    if(!can(context,'catalog.pricing.manage'))return reply.code(403).send({error:'permission_denied'});
     const { planId } = request.params as { planId: string };
     if (!uuid.safeParse(planId).success) return reply.code(400).send({ error: 'invalid_plan_id' });
     try {
       const result = await client.begin(async (tx) => {
         const [plan] = await tx`SELECT id,status FROM plans WHERE id=${planId} FOR UPDATE`;
         if (!plan) return 'not_found';
-        if (plan.status !== 'draft') return 'conflict';
+        if (plan.status === 'archived') return 'conflict';
         const services = await tx`SELECT s.id,s.status FROM plans p JOIN plan_services ps ON ps.plan_id=p.id AND ps.plan_version=p.current_version JOIN services s ON s.id=ps.service_id WHERE p.id=${planId} ORDER BY s.id FOR SHARE OF s`;
         if (services.length === 0 || services.some((service) => service.status !== 'active')) return 'archived_service';
+        const [version] = await tx`SELECT frozen_at AS "frozenAt" FROM plan_versions WHERE plan_id=${planId} AND version=(SELECT current_version FROM plans WHERE id=${planId}) FOR UPDATE`;
+        if (version?.frozenAt) return 'conflict';
         await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${planId} AND version=(SELECT current_version FROM plans WHERE id=${planId}) AND frozen_at IS NULL`;
         await tx`UPDATE plans SET status='active' WHERE id=${planId}`;
         return 'active';
@@ -282,6 +343,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/plans/:planId/archive', async (request, reply) => {
+    const context=await authorizationResolver(request);
+    if(!context)return reply.code(401).send({error:'authentication_required'});
+    if(!can(context,'catalog.pricing.manage'))return reply.code(403).send({error:'permission_denied'});
     const { planId } = request.params as { planId: string };
     if (!uuid.safeParse(planId).success) return reply.code(400).send({ error: 'invalid_plan_id' });
     try {
@@ -298,11 +362,12 @@ function compareCodeUnits(left: string, right: string) {
 }
 
 async function listPlans(client: SqlClient, serviceId: string) {
-  const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
+  const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
   return Promise.all(plans.map(async (plan) => {
     const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
     const rights = await client`SELECT id,right_type AS "rightType",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
-    return { ...plan, services, rights };
+    const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${plan.id} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
+    return { ...plan, services, rights, modules };
   }));
 }
 
@@ -311,10 +376,11 @@ async function listPlansById(client: SqlClient, planId: string) {
   const rows = await client`SELECT id,name,status,current_version AS "currentVersion" FROM plans WHERE id=${planId}`;
   if (!rows[0]) return [];
   const plan = rows[0];
-  const versionRows = await client`SELECT kind,renewal_cadence AS "renewalCadence",period_days AS "periodDays" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion}`;
+  const versionRows = await client`SELECT kind,renewal_cadence AS "renewalCadence",period_days AS "periodDays",base_price_cents AS "basePriceCents" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion}`;
   const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${planId} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
   const rights = await client`SELECT id,right_type AS "rightType",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${planId} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
-  return [{ ...plan, ...versionRows[0], services, rights }];
+  const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${planId} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
+  return [{ ...plan, ...versionRows[0], services, rights, modules }];
 }
 
 function sendDatabaseError(app: ReturnType<typeof Fastify>, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, error: unknown) {

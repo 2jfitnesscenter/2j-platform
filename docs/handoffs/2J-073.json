@@ -1,0 +1,46 @@
+{
+  "taskId": "2J-073",
+  "title": "Cuotas, Bonos, Derechos y Accesos por Módulo V2",
+  "status": "ready_for_draft_pr",
+  "repository": "2jfitnesscenter/2j-platform",
+  "baseRef": "main",
+  "baseSha": "868b0c5fc120a4f57624bc5b87008aced46bee4b",
+  "branch": "agent/codex/2J-073-entitlements-v2",
+  "pullRequest": null,
+  "mergeAllowed": false,
+  "timezone": "Atlantic/Canary",
+  "migrations": ["0017_entitlements_v2.sql"],
+  "apis": [
+    {"method":"POST","path":"/api/plans","permission":"catalog.pricing.manage"},
+    {"method":"POST","path":"/api/plans/:planId/versions","permission":"catalog.pricing.manage"},
+    {"method":"POST","path":"/api/plans/:planId/activate","permission":"catalog.pricing.manage"},
+    {"method":"POST","path":"/api/plans/:planId/archive","permission":"catalog.pricing.manage"},
+    {"method":"POST","path":"/api/clients/:clientId/plans","permission":"entitlements.manage"},
+    {"method":"GET","path":"/api/clients/:clientId/entitlements/effective","permission":"entitlements.read"},
+    {"method":"GET","path":"/api/clients/:clientId/plans/:assignmentId/movements","permission":"entitlements.read"},
+    {"method":"POST","path":"/api/clients/:clientId/plans/:assignmentId/pause|resume","permission":"entitlements.pause"},
+    {"method":"POST","path":"/api/clients/:clientId/plans/:assignmentId/cancel","permission":"entitlements.cancel"},
+    {"method":"POST","path":"/api/clients/:clientId/plans/:assignmentId/adjustments","permission":"entitlements.adjust"}
+  ],
+  "permissionsAddedToKnownSetOnly": ["entitlements.adjust","entitlements.cancel","entitlements.pause","entitlements.renew","catalog.pricing.manage"],
+  "rolesBroadened": false,
+  "decisions": {
+    "serviceAccessWithoutTarget": "unresolved_and_not_inferred_as_global",
+    "pauseExtendsTerm": false,
+    "renewal": "manual_new_assignment_and_charge",
+    "calendarConsumesLedger": false,
+    "childModulesOwnClientIdentity": false
+  },
+  "outOfScope": ["2jfitnessapp changes","reservation consumption","automatic payment","payment gateway","client app","nutrition UI","training or Bunker data duplication"],
+  "checks": {
+    "migrations": "17/17 checksummed on clean PostgreSQL",
+    "tests": {"designTokens": "3/3", "domain": "3/3", "permissions": "5/5", "auth": "2/2", "audit": "3/3", "apiPostgres": "121/121", "adminWeb": "56/56", "total": "193/193"},
+    "typecheck": "7/7 packages",
+    "build": "7/7 packages",
+    "audit": "no known vulnerabilities",
+    "diffCheck": "pass",
+    "localSecretScan": "not_run_go_unavailable; GitHub workflow pending"
+  },
+  "visualEvidence": "pending_real_capture_browser_url_verification_stopped; documented in docs/evidence/2J-073/README.md",
+  "independentReview": "pending"
+}

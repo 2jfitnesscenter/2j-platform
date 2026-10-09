@@ -54,7 +54,12 @@
     "staff.timeclock.correct",
     "settings.manage",
     "entitlements.read",
-    "entitlements.manage"
+    "entitlements.manage",
+    "entitlements.adjust",
+    "entitlements.cancel",
+    "entitlements.pause",
+    "entitlements.renew",
+    "catalog.pricing.manage"
   ],
   "roles": {
     "admin": [

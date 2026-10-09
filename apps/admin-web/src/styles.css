@@ -458,6 +458,7 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .client-active-plan>div:first-child>strong { font-size:17px; }
 .client-plan-actions { display:flex; gap:14px; }
 .client-plan-list { display:grid; gap:12px; }
+.client-plan-group-title { grid-column:1/-1; margin:12px 0 0; color:var(--2j-color-text-secondary); font-size:13px; letter-spacing:.04em; text-transform:uppercase; }
 .client-plan-card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; padding:16px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-lg); background:var(--2j-color-surface); }
 .client-plan-card>div:first-child { display:grid; gap:5px; }
 .client-plan-card>div:first-child>span,.client-plan-card>div:first-child>small { color:var(--2j-color-text-secondary); font-size:13px; }
@@ -465,6 +466,11 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .client-plan-rights span { padding:6px 9px; border-radius:var(--2j-radius-pill); background:var(--2j-color-surface-subtle); font-size:12px; }
 .client-plan-card>a { grid-column:1/-1; justify-self:start; }
 .plan-assignment-dialog { width:min(680px,100%); }
+.plan-action-dialog { width:min(600px,100%); }
+.plan-action-dialog textarea { width:100%; min-height:88px; padding:11px 12px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); background:var(--2j-color-surface); color:var(--2j-color-text-primary); font:inherit; resize:vertical; }
+.plan-ledger-list { display:grid; gap:8px; max-height:320px; overflow:auto; }
+.plan-ledger-list>div { display:grid; gap:4px; padding:12px 14px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); background:var(--2j-color-surface-subtle); }
+.plan-ledger-list>div>span { color:var(--2j-color-text-secondary); font-size:13px; }
 .plan-assignment-preview { display:grid; gap:6px; padding:13px 15px; border-left:3px solid var(--2j-color-brand-strong); border-radius:0 var(--2j-radius-sm) var(--2j-radius-sm) 0; background:var(--2j-color-surface-subtle); }
 .plan-assignment-preview span,.plan-assignment-preview small { color:var(--2j-color-text-secondary); font-size:13px; }
 .client-plan-date-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
@@ -472,6 +478,13 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .collect-plan-toggle input { width:18px; height:18px; }
 .client-create-actions { flex-wrap:wrap; }
 .client-create-actions .button { min-height:46px; }
+@media (max-width: 640px) {
+  .client-plan-card { grid-template-columns:minmax(0,1fr); }
+  .client-plan-card>a,.client-plan-rights { grid-column:1; }
+  .client-plan-card>.client-plan-actions { grid-column:1; flex-wrap:wrap; gap:8px; }
+  .client-plan-card>.client-plan-actions .button,.client-plan-card>.client-plan-actions .text-button { min-height:42px; }
+  .plan-action-dialog .dialog-actions { position:sticky; bottom:0; padding-top:12px; background:var(--2j-color-surface); }
+}
 .clients-list-panel { min-height: 420px; }
 .client-toolbar { align-items: center; }
 .client-toolbar select { min-height: 44px; }
@@ -871,3 +884,12 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .bulk-preview { display:grid; gap:5px; padding:13px; border-radius:var(--2j-radius-md); background:var(--2j-color-surface-subtle); }
 .bulk-preview span { color:var(--2j-color-text-secondary); font-size:13px; }
 @media (max-width: 720px) { .today-agenda-item { grid-template-columns:56px minmax(0,1fr) auto; gap:8px 10px; padding:12px 14px; } .today-agenda-free { grid-column:2; grid-row:2; } .today-agenda-waitlist { grid-column:3; grid-row:2; text-align:right; } .today-agenda-capacity { grid-column:3; grid-row:1; text-align:right; } .bulk-blocks>.calendar-form-row { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+/* 2J-073 commercial product access and catalog pricing */
+.plan-catalog-price { margin:-5px 0 12px; color:var(--2j-color-text-secondary); font-size:13px; font-weight:var(--2j-type-weight-medium); }
+.module-rights { margin-top:12px; }
+.module-access-editor { display:grid; grid-template-columns:minmax(0,1fr) minmax(170px,.7fr); align-items:end; gap:10px; padding:10px 0; border-bottom:1px solid var(--2j-color-border); }
+.module-access-editor:last-child { border-bottom:0; }
+.module-access-editor .check-option { min-height:44px; }
+.module-access-editor > label:last-child { display:grid; gap:6px; }
+@media(max-width:620px){.module-access-editor{grid-template-columns:1fr}.module-access-editor>label:last-child{max-width:none}}

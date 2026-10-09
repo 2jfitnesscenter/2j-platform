@@ -76,6 +76,15 @@ test('fails closed when the server has no authorized session', async () => {
   assert.equal(screen.queryByRole('button', { name: /nuevo cliente/i }), null);
 });
 
+test('Client 360 pauses an entitlement with reason and idempotency key, then refreshes its effective status', async () => {
+  const assignment={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',planId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',planName:'Funcional 2 días',kind:'recurring',startsOn:'2026-10-01',endsOn:'2026-10-31',derivedStatus:'active',concept:'Funcional · Cuota',amountCents:4500,salePriceCents:4500,dueOn:'2026-10-01',rights:[{id:'right-1',rightType:'period_quota',serviceName:'La Sala',quantity:2,period:'week',quotaScope:'per_service'}],modules:[{module:'training',accessLevel:'limited',capabilities:['training.routines.read']}]};
+  const taskProfile={...profile,capabilities:{manage:true,readEntitlements:true,pauseEntitlements:true,cancelEntitlements:true,adjustEntitlements:true,renewEntitlements:true,assignPlans:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[assignment]}}};
+  let posted;
+  globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`))return response(taskProfile);if(path.endsWith(`/api/clients/${client.id}/plans/${assignment.id}/pause`)&&options.method==='POST'){posted={body:JSON.parse(options.body),key:options.headers['idempotency-key']};return response({status:'paused'},201);}throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:'Cuotas'}));assert.ok(screen.getByRole('heading',{name:'Activas'}));assert.ok(screen.getByText('Entrenamiento: Limitado'));fireEvent.click(await screen.findByRole('button',{name:'Pausar'}));
+  const dialog=await screen.findByRole('dialog',{name:'Pausar cuota'});fireEvent.change(within(dialog).getByLabelText('Motivo obligatorio'),{target:{value:'Pausa solicitada por cliente'}});fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar pausa'}));await screen.findByText('Cuota pausada.');assert.equal(posted.body.reason,'Pausa solicitada por cliente');assert.match(posted.key,/^[0-9a-f-]{36}$/i);
+});
+
 test('client list exposes distinct loading, error and empty states with retry', async () => {
   const pending = [];
   globalThis.fetch = () => new Promise((resolve) => pending.push(resolve));
@@ -145,13 +154,13 @@ test('Guardar y añadir cuota creates the client, assigns the active plan and re
   assert.equal(assignmentPayload.amountCents,5900);assert.equal(assignmentPayload.paymentAmountCents,5900);assert.equal(assignmentPayload.paymentMethod,'card');assert.equal(assignmentPayload.planId,plan.id);
   assert.match(assignmentKey,/^[0-9a-f-]{36}$/i);
   assert.ok(requests.some(item=>item.path.endsWith('/api/clients')&&item.method==='POST'));
-  assert.equal(screen.getByRole('tab',{name:'Cuotas'}).getAttribute('aria-selected'),'true');
   await screen.findByText('Fuerza 3 días');
+  await waitFor(()=>assert.equal(screen.getByRole('tab',{name:'Cuotas'}).getAttribute('aria-selected'),'true'));
 });
 
 test('plan sale retries reuse one key after a lost response, while success and cancel start fresh operations',async()=>{
   const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,services:[],rights:[]};
-  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,collectPayments:true}};
+  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}]};
   const saleRequests=[];let loseFirstResponse=true;
   globalThis.fetch=async(url,options={})=>{
     const path=String(url);
@@ -181,6 +190,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
   assert.equal(saleRequests[0].key,saleRequests[1].key,'a retry after a lost response must reuse the operation key');
   assert.equal(saleRequests[0].payload,saleRequests[1].payload);
 
+  await screen.findByRole('tab',{name:'Cuotas'});
   fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
@@ -190,6 +200,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
   await screen.findByText('Cuota asignada; el cargo queda pendiente.');
   assert.notEqual(saleRequests[2].key,saleRequests[1].key,'the next sale after success must have a fresh key');
 
+  await screen.findByRole('tab',{name:'Cuotas'});
   fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   fireEvent.click(within(dialog).getByRole('button',{name:'Cancelar'}));

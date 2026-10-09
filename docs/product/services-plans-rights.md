@@ -1,6 +1,6 @@
 # Services, plans and rights domain contract
 
-This first vertical covers the service catalog and commercial definitions only. It does not implement prices, payments, automatic renewals, clients, reservations, training routines or Búnker behavior.
+This contract began with 2J-010's service catalog and commercial definitions. 2J-073 extends it with catalog pricing, immutable sale snapshots, entitlements, a session-balance ledger and module-access grants. It still does not implement payment gateways, automatic renewals, reservation consumption, training routines or Búnker behavior.
 
 ## Domain and versioning
 
@@ -13,7 +13,7 @@ This first vertical covers the service catalog and commercial definitions only. 
 
 ## Rights and quota semantics
 
-- `service_id = NULL` means the right is intentionally global across the services in that plan version. A non-null service ID must be linked to that same version.
+- For quota rights, a null service target is interpreted by `quota_scope`: `shared` is one balance across the included services, while `per_service` requires an explicit service linked to that version. For `service_access`, a null target remains unspecified and must not be inferred as access to every service; the business meaning is still unresolved. The effective entitlement read model returns it neutrally and does not make a booking decision.
 - `quota_scope = shared` is always a single global balance across the version's included services and therefore requires a null service target. `per_service` requires one explicit service target and records a separate quantity for that service.
 - A global and a service-targeted right of the same type and period cannot coexist in one plan version. Distinct service-targeted rights may coexist for different services, and period quotas may coexist for different periods (for example, weekly and monthly limits). PostgreSQL and API validation both enforce this rule.
 - Within a given target, a right type may have one entry per period. PostgreSQL's unique indexes include the period so distinct period quotas remain representable.
@@ -28,3 +28,13 @@ The initial SQL baseline is the canonical migration. Drizzle describes the same 
 Each migration is SHA-256 checksummed and applied under an advisory transaction lock in its own transaction. Reapplying a migration is a no-op only when its checksum matches. Database uniqueness/FK errors map to `409`, check/data constraints to `422`, and actual connectivity/unavailability to `503`; unexpected failures remain `500`.
 
 Plan creation requires an `Idempotency-Key`, locks its service rows while validating status, stores a request hash, inserts service links and rights atomically, and rolls all rows back if any right violates a constraint. Listing uses stable area/service or plan-name ordering.
+
+## 2J-073: purchased entitlements
+
+- A plan version may include an optional catalog price in integer EUR cents. A sale stores the contemporaneous list price, sold price, any adjustment and reason, actor, currency, dates, service/right/module data and operating terms in the assignment's immutable JSON snapshot. A later catalog version never rewrites that snapshot.
+- `recurring` and `session_pack` remain separate. Recurring plans hold a manual term and periodic rights; session packs receive one initial grant and do not regenerate balance. Payments remain economic charges/transactions owned by the existing Economics module.
+- Assignment lifecycle is an append-only dated event stream: activated, paused, resumed, cancelled, renewed and changed. The read model derives scheduled, active, paused, expired, cancelled or exhausted state in `Atlantic/Canary`. Pausing blocks entitlement use without erasing balance or automatically extending dates. Renewal/change creates another assignment and charge; the earlier assignment is retained.
+- `client_entitlement_ledger` is append-only. Grants, future consumption/restoration/expiry event types and manual adjustments are separate rows; this TASK exposes only grant and adjustment. PostgreSQL serializes writes on the assignment and rejects a resulting negative balance. 2J-073 itself does not consume a session.
+- `plan_module_accesses` stores `reservations`, `training`, `nutrition` or `health`, with `limited`/`full` and optional namespaced capabilities. The resolver combines only active, in-date, unpaused and non-exhausted assignments; full wins over limited and capabilities are unioned. This is a central entitlement contract, not an implementation of the child modules or a local customer profile.
+- Admin remains the only role granted the new catalog and entitlement write/read capabilities under the currently approved matrix. No role grants were broadened. A broader reception/trainer commercial access matrix is unresolved and must be approved before granting it.
+- A null `service_access` target stays unspecified; no global booking grant is inferred. 2J-074 must resolve booking eligibility together with debt policy, schedule/capacity and explicit rights, then record consumption transactionally.

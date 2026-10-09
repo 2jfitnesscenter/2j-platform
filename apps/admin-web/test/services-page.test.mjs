@@ -77,7 +77,7 @@ test('a selected draft service is visible and clearly labeled in the new plan di
   await screen.findByRole('heading', { name: draftService.name });
   fireEvent.click(await screen.findByRole('button', { name: /nuevo plan/i }));
   const dialog = await screen.findByRole('dialog', { name: 'Nuevo plan' });
-  assert.equal(within(dialog).getByRole('checkbox').checked, true);
+  assert.equal(within(dialog).getByRole('checkbox', { name: /Borrador/ }).checked, true);
   assert.match(within(dialog).getByText(/Borrador/).textContent, /Borrador/);
   assert.match(within(dialog).getByText(/también seguirá en borrador/).textContent, /hasta que todos sus servicios estén activos/);
 });
