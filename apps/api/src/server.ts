@@ -11,6 +11,7 @@ import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
+import { registerDashboardRoutes } from './dashboard.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
@@ -120,6 +121,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerEconomicExtensions(app, client, options.authorizationResolver ?? (async () => null));
   registerStaffRoutes(app, client, options.authorizationResolver ?? (async () => null));
   registerCommunicationRoutes(app, client, options.authorizationResolver ?? (async () => null), options.clientAuthorizationResolver);
+  registerDashboardRoutes(app, client, options.authorizationResolver ?? (async () => null));
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }
@@ -165,7 +167,12 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const parsed = serviceInput.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     try {
-      const [row] = await client`INSERT INTO services (name,area_id,status) SELECT ${parsed.data.name},id,${parsed.data.status} FROM areas WHERE id=${parsed.data.areaId} AND status='active' RETURNING id,name,area_id AS "areaId",status,updated_at AS "updatedAt"`;
+      const row = await client.begin(async (tx) => {
+        const [area] = await tx`SELECT id FROM areas WHERE id=${parsed.data.areaId} AND status='active' FOR SHARE`;
+        if (!area) return null;
+        const [created] = await tx`INSERT INTO services (name,area_id,status) VALUES (${parsed.data.name},${area.id},${parsed.data.status}) RETURNING id,name,area_id AS "areaId",status,updated_at AS "updatedAt"`;
+        return created ?? null;
+      });
       if (!row) return reply.code(404).send({ error: 'area_not_found' });
       return reply.code(201).send(row);
     } catch (error) { return sendDatabaseError(app, reply, error); }

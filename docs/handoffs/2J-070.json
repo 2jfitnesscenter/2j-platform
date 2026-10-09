@@ -1,0 +1,54 @@
+{
+  "taskId": "2J-070",
+  "title": "Command Center, App Shell, integración visual y demo operativa",
+  "status": "awaiting_independent_review",
+  "baseSha": "9004921b9752ae4df75b5fa2ff8240cc47a3711d",
+  "branch": "agent/codex/2J-070-command-center-app-shell-demo",
+  "pullRequest": {
+    "number": 13,
+    "url": "https://github.com/2jfitnesscenter/2j-platform/pull/13",
+    "draft": true,
+    "merged": false
+  },
+  "reviewedStartingSha": "93b394aab3eb473fda45d51ce7bad8a9618f2285",
+  "codeCommitSha": "fba0624122c376372e4fac5939b2cab0433c895a",
+  "mergePolicy": "Do not merge before independent Claude and Antigravity reviews, visual evidence, and green CI on the same final SHA.",
+  "migrations": ["apps/api/migrations/0014_unaccent_search.sql"],
+  "implementation": {
+    "appShell": "Shared responsive navigation for implemented 2J modules; preserves module hashes and displays permission-based navigation.",
+    "commandCenter": "GET /api/dashboard/command-center aggregates today's calendar, clients, attention, economics, team and unread communications from existing domain tables.",
+    "globalSearch": "GET /api/search covers active clients, professionals and active services only; PostgreSQL unaccent normalizes both query and searched text; no messages, health or document response content.",
+    "navigationBootstrap": "GET /api/session/capabilities resolves permitted navigation server-side independently of Command Center query success.",
+    "cashSelection": "Matches GET /api/economics/cash/today: prioritize an open session, otherwise most recently opened local-today session; deterministic opened_at ordering and LIMIT 1.",
+    "timeclockAttention": "Only an open clock-in whose effective corrected timestamp is on a prior Atlantic/Canary date is attention; workingNow counts active professionals only; extra_availability is excluded from absence metrics.",
+    "catalogArchiveConcurrency": "Service creation holds a shared lock on its active area inside the insert transaction so it serializes with area archival.",
+    "demo": "Explicit additive and repeat-safe synthetic seed, restricted to development/test, loopback PostgreSQL and database name 2j_demo. Never runs on API startup.",
+    "quickActions": "Permission-filtered navigation links into existing modules; no fake create/payment/send behaviors."
+  },
+  "security": {
+    "authorization": "Every read-model block and global search group is gated server-side using existing capabilities.",
+    "cache": "Command Center and search replies are marked Cache-Control: no-store.",
+    "sensitiveData": "No client messages, health responses, PAR-Q answers, or document contents are returned by the read models.",
+    "demoProfile": "LOCAL_DEMO_ROLE is development-only and loopback-bound; not production authentication.",
+    "productionSeedAttempt": "rejected before connecting"
+  },
+  "verification": {
+    "postgres": { "status": "PASS", "evidence": "PostgreSQL 17 isolated disposable database; 14 checksummed migrations verified, including migration 0014 unaccent." },
+    "tests": { "status": "PASS", "count": 171, "packageTests": 16, "apiPostgres": 107, "adminUi": 48 },
+    "typecheck": { "status": "PASS", "packages": 7 },
+    "build": { "status": "PASS", "packages": 7 },
+    "demoSeed": { "status": "PASS", "repeatRuns": 2, "evidence": "After migration 0014: 12 synthetic clients, 1 session, 3 reservations and 1 waitlist row after both runs." },
+    "dependencyAudit": { "status": "PASS", "evidence": "pnpm audit --audit-level high: no known vulnerabilities." },
+    "diffCheck": { "status": "PASS", "evidence": "git diff --check returned clean." },
+    "secretScan": { "status": "PASS", "sha": "fba0624122c376372e4fac5939b2cab0433c895a", "evidence": "Push and pull_request secret scan jobs succeeded." },
+    "githubCi": { "status": "PASS_ON_CODE_COMMIT", "sha": "fba0624122c376372e4fac5939b2cab0433c895a", "evidence": "Quality and secret scan succeeded for both push and pull_request; the subsequent handoff-only commit triggers fresh checks." },
+    "visualResponsive": {
+      "status": "PENDING_REAL_BROWSER_CAPTURE",
+      "viewports": [1440, 768, 390],
+      "captures": [],
+      "evidenceFile": "docs/evidence/2J-070/README.md"
+    }
+  },
+  "pendingIndependentReview": ["Claude backend/permissions/performance", "Antigravity product/accessibility/responsive"],
+  "scopeGuard": "No 2jfitnessapp changes, no duplicated training/Búnker/Health, no production credentials, no module feature expansion, no PR merge."
+}

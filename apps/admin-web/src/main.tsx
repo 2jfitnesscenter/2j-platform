@@ -8,15 +8,19 @@ import { CalendarPage } from './calendar-page.js';
 import { EconomicsPage } from './economics-page.js';
 import { StaffPage } from './staff-page.js';
 import { CommunicationsPage } from './communications-page.js';
+import { AppShell } from './app-shell.js';
+import { CommandCenter } from './command-center.js';
 
 function App() {
-  const [route, setRoute] = React.useState(() => window.location.hash.slice(1) || 'services');
+  const [route, setRoute] = React.useState(() => window.location.hash.slice(1).split('?')[0] || 'home');
   React.useEffect(() => {
-    const onHashChange = () => setRoute(window.location.hash.slice(1) || 'services');
+    const onHashChange = () => setRoute(window.location.hash.slice(1).split('?')[0] || 'home');
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
-  return route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : <ServicesPage/>;
+  React.useEffect(() => { document.title = `${route === 'home' ? 'Inicio' : route === 'clients' ? 'Clientes' : route === 'calendar' ? 'Agenda' : route === 'economics' ? 'Economía' : route === 'staff' ? 'Equipo' : route === 'communications' ? 'Comunicación' : 'Servicios'} · 2J Platform`; }, [route]);
+  const page = route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
+  return <AppShell>{page}</AppShell>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
