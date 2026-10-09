@@ -4,7 +4,7 @@
   "status": "awaiting_independent_review",
   "baseSha": "916b33af57e46a6772a36f66b16ad4bdb340d6ee",
   "branch": "codex/2j071-empty-start-dashboard-bulk-schedules",
-  "pullRequest": null,
+  "pullRequest": {"number": 14, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/14", "draft": true, "merged": false},
   "scope": ["clean local quickstart", "today agenda", "bulk recurring templates", "communications navigation regression", "useful calendar empty state"],
   "migrations": ["apps/api/migrations/0015_bulk_template_audit.sql"],
   "decisions": {
