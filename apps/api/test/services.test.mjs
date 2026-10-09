@@ -19,9 +19,10 @@ const app = buildServer(process.env.DATABASE_URL, { authorizationResolver: async
 const anonymousApp = buildServer(process.env.DATABASE_URL);
 const clientsAdminApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }) });
 const clientsTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-trainer', role: 'trainer' }) });
+const clientsReceptionApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-reception', role: 'reception-management' }) });
 const clientsAccountantApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-accountant', role: 'accountant' }) });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsAccountantApp.close()]); await sql.end(); });
+after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close()]); await sql.end(); });
 
 function createClientRequest(server, payload, key = randomUUID()) {
   return server.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': key }, payload });
@@ -55,6 +56,9 @@ test('domain input separates product kind from renewal and defines quota periods
   assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'period_quota', quantity: 8, quotaScope: 'shared', period: 'month' }] }).success, false);
   assert.equal(planInput.safeParse({ ...valid, serviceIds: [valid.serviceIds[0], valid.serviceIds[0]] }).success, false);
   assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'service_access', serviceId: randomUUID() }] }).success, false);
+  assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'service_access', serviceId: valid.serviceIds[0] }] }).success, true, 'a direct service grant requires and accepts a listed target');
+  assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'service_access' }] }).success, false, 'a direct grant without target is invalid');
+  assert.equal(planInput.safeParse({ ...valid, rights: [{ rightType: 'service_access', serviceId: null }] }).success, false, 'null cannot mean wildcard access');
   assert.equal(planInput.safeParse({ ...valid, rights: [
     { rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantity: 10 },
     { rightType: 'sessions_quota', serviceId: randomUUID(), quotaScope: 'per_service', quantity: 4 },
@@ -149,7 +153,7 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(trainer.json().summary.payments.data, null);
   assert.equal(trainer.json().summary.training.access, 'available');
   assert.equal(trainer.json().summary.health.access, 'available');
-  assert.equal(trainer.json().summary.plans.access, 'forbidden', 'unknown future domain permissions deny by default');
+  assert.equal(trainer.json().summary.plans.access, 'available', 'Trainer has operational read access to entitlements');
   assert.equal(trainer.json().summary.documents.access, 'available');
   assert.deepEqual(trainer.json().summary.messages.data, { unreadCount: 0, lastMessageAt: null });
   assert.equal(trainer.json().sections.find((section) => section.id === 'payments').sourceLabel, 'Pagos');
@@ -430,6 +434,81 @@ test('plan creation idempotency replays identical requests and rejects changed p
   assert.equal(replay.json().id, first.json().id);
   assert.equal(mismatch.statusCode, 409);
   assert.equal(mismatch.json().error, 'idempotency_conflict');
+});
+
+test('service_access needs a valid service target in new plans and plan versions', async () => {
+  const service = await createService();
+  const planKey = randomUUID();
+  const invalid = planPayload([service.id], { rights: [{ rightType: 'service_access', serviceId: null }] });
+  const rejected = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': planKey }, payload: invalid });
+  assert.equal(rejected.statusCode, 400, rejected.body);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM plans WHERE idempotency_key=${planKey}`).at(0).count, 0, 'invalid plan was not persisted');
+
+  const valid = await createPlan([service.id]);
+  assert.equal(valid.response.statusCode, 201, valid.response.body);
+  const planId = valid.response.json().id;
+  assert.equal((await app.inject({ method: 'POST', url: `/api/plans/${planId}/activate` })).statusCode, 200);
+  const versionKey = randomUUID();
+  const version = await app.inject({ method: 'POST', url: `/api/plans/${planId}/versions`, headers: { 'idempotency-key': versionKey }, payload: { ...valid.body, rights: [{ rightType: 'service_access' }] } });
+  assert.equal(version.statusCode, 400, version.body);
+  assert.equal((await sql`SELECT current_version AS version FROM plans WHERE id=${planId}`).at(0).version, 1, 'invalid version was not persisted or selected');
+  assert.equal((await sql`SELECT count(*)::int AS count FROM plan_version_changes WHERE idempotency_key=${versionKey}`).at(0).count, 0);
+
+  const draft = await createPlan([service.id]);
+  assert.equal(draft.response.statusCode, 201, draft.response.body);
+  await assert.rejects(sql`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id) VALUES (${draft.response.json().id},1,'service_access',NULL)`, error => error.code === '23514');
+});
+
+test('approved entitlement roles are enforced server-side for reads, sales, lifecycle, payment and adjustments', async () => {
+  const service = await createService();
+  const created = await createPlan([service.id], { basePriceCents: 3200 });
+  assert.equal(created.response.statusCode, 201, created.response.body);
+  const planId = created.response.json().id;
+  assert.equal((await app.inject({ method: 'POST', url: `/api/plans/${planId}/activate` })).statusCode, 200);
+  const client = (await createClientRequest(clientsAdminApp, { firstName: 'Mostrador', lastName: randomUUID() })).json();
+  const clientList = await clientsReceptionApp.inject({ method: 'GET', url: '/api/clients?limit=1' });
+  assert.equal(clientList.statusCode, 200); assert.equal(clientList.json().capabilities.assignPlans, true); assert.equal(clientList.json().capabilities.collectPayments, false);
+  assert.equal((await clientsReceptionApp.inject({ method: 'GET', url: `/api/clients/${client.id}` })).statusCode, 200);
+  assert.equal((await clientsReceptionApp.inject({ method: 'GET', url: '/api/plans/assignable' })).statusCode, 200);
+  assert.equal((await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${client.id}/entitlements/effective?date=2026-10-09` })).statusCode, 200);
+  assert.equal((await clientsAccountantApp.inject({ method: 'GET', url: `/api/clients/${client.id}/entitlements/effective?date=2026-10-09` })).statusCode, 403);
+
+  const salePayload = { planId, startsOn: '2026-10-09', endsOn: '2026-10-31', dueOn: '2026-10-09', amountCents: 3200 };
+  const sale = await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: salePayload });
+  assert.equal(sale.statusCode, 201, sale.body);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${sale.json().chargeId}`).at(0).count, 0, 'an unpaid counter sale does not require payment permission');
+  const deniedOverride = await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { ...salePayload, amountCents: 3300, adjustmentReason: 'Precio excepcional' } });
+  assert.equal(deniedOverride.statusCode, 403); assert.equal(deniedOverride.json().error, 'price_override_forbidden');
+  const deniedCharge = await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { ...salePayload, paymentAmountCents: 3200, paymentMethod: 'card' } });
+  assert.equal(deniedCharge.statusCode, 403);
+  const noCatalogPrice = await createPlan([service.id], { basePriceCents: null });
+  assert.equal(noCatalogPrice.response.statusCode, 201, noCatalogPrice.response.body);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/plans/${noCatalogPrice.response.json().id}/activate` })).statusCode, 200);
+  const noPriceSale = await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { ...salePayload, planId: noCatalogPrice.response.json().id } });
+  assert.equal(noPriceSale.statusCode, 409); assert.equal(noPriceSale.json().error, 'catalog_price_required');
+  const adjustUrl = `/api/clients/${client.id}/plans/${sale.json().id}/adjustments`;
+  for (const actor of [clientsReceptionApp, clientsTrainerApp, clientsAccountantApp]) {
+    assert.equal((await actor.inject({ method: 'POST', url: adjustUrl, headers: { 'idempotency-key': randomUUID() }, payload: { rightId: randomUUID(), quantity: 1, reason: 'Ajuste no autorizado' } })).statusCode, 403);
+  }
+  assert.equal((await clientsTrainerApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: salePayload })).statusCode, 403);
+  assert.equal((await clientsTrainerApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { ...salePayload, sourceAssignmentId: sale.json().id, operationKind: 'renewal', startsOn: '2026-11-01', endsOn: '2026-11-30' } })).statusCode, 403);
+  assert.equal((await clientsAccountantApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: salePayload })).statusCode, 403);
+
+  assert.equal((await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans/${sale.json().id}/pause`, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'Pausa de cliente' } })).statusCode, 201);
+  assert.equal((await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans/${sale.json().id}/resume`, headers: { 'idempotency-key': randomUUID() }, payload: {} })).statusCode, 201);
+  assert.equal((await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans/${sale.json().id}/cancel`, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'Baja solicitada' } })).statusCode, 201);
+
+  for (const operationKind of ['renewal','change']) {
+    const operationClient = (await createClientRequest(clientsAdminApp, { firstName: 'Operación', lastName: `${operationKind} ${randomUUID()}` })).json();
+    const source = await clientsAdminApp.inject({ method: 'POST', url: `/api/clients/${operationClient.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { planId, startsOn: '2026-10-09', endsOn: '2026-10-09', dueOn: '2026-10-09', amountCents: 3200 } });
+    assert.equal(source.statusCode, 201, source.body);
+    const operation = await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${operationClient.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { planId, sourceAssignmentId: source.json().id, operationKind, startsOn: '2026-10-10', endsOn: '2026-10-31', dueOn: '2026-10-10', amountCents: 3200 } });
+    assert.equal(operation.statusCode, 201, `${operationKind}: ${operation.body}`);
+  }
+  for (const actor of [clientsTrainerApp, clientsAccountantApp]) {
+    assert.equal((await actor.inject({ method: 'POST', url: `/api/clients/${client.id}/plans/${sale.json().id}/pause`, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'No autorizado' } })).statusCode, 403);
+    assert.equal((await actor.inject({ method: 'POST', url: `/api/clients/${client.id}/plans/${sale.json().id}/cancel`, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'No autorizado' } })).statusCode, 403);
+  }
 });
 
 test('idempotency canonicalizes unordered service and rights lists and replays after service archival', async () => {
@@ -1092,7 +1171,7 @@ test('client plan sale atomically assigns the frozen catalog version, charge and
   assert.equal(activated.statusCode,200,activated.body);
   const assignable=await clientsAdminApp.inject({method:'GET',url:'/api/plans/assignable'});
   assert.ok(assignable.json().some(item=>item.id===planId));
-  assert.equal((await clientsTrainerApp.inject({method:'GET',url:'/api/plans/assignable'})).statusCode,403);
+  assert.equal((await clientsTrainerApp.inject({method:'GET',url:'/api/plans/assignable'})).statusCode,200);
   const created=await createClientRequest(clientsAdminApp,{firstName:'Venta',lastName:`Integración ${randomUUID()}`,email:null,phone:null});
   assert.equal(created.statusCode,201,created.body);
   const clientId=created.json().id;
@@ -1112,7 +1191,7 @@ test('client plan sale atomically assigns the frozen catalog version, charge and
   assert.equal(profile.statusCode,200,profile.body);
   assert.equal(profile.json().summary.plans.data[0].planName,createdPlan.body.name);
   assert.equal(profile.json().summary.plans.data[0].derivedStatus,'active');
-  assert.equal((await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${clientId}/plans`})).statusCode,403);
+  assert.equal((await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${clientId}/plans`})).statusCode,200);
   const forbidden=await clientsTrainerApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':randomUUID()},payload});
   assert.equal(forbidden.statusCode,403);
 });
@@ -1154,6 +1233,7 @@ test('2J-073 freezes catalog revisions and the purchased client snapshot remains
   assert.equal(snapshotBefore.salePriceCents,4900);
   assert.equal(snapshotBefore.listPriceCents,4900);
   assert.equal(snapshotBefore.modules[0].accessLevel,'limited');
+  assert.equal(snapshotBefore.rights.find(right=>right.rightType==='service_access').serviceId,service.id,'the sale snapshot retains the exact service target');
   const revised=await clientsAdminApp.inject({method:'POST',url:`/api/plans/${planId}/versions`,headers:{'idempotency-key':randomUUID()},payload:{...created.body,currentVersion:undefined,status:undefined,basePriceCents:5500,modules:[{module:'training',accessLevel:'full',capabilities:['training.routines.read','training.workouts.log']} ]}});
   assert.equal(revised.statusCode,201,revised.body);
   assert.equal(revised.json().currentVersion,2);
@@ -1167,7 +1247,7 @@ test('2J-073 freezes catalog revisions and the purchased client snapshot remains
   assert.equal(effective.statusCode,200,effective.body);
   assert.equal(effective.json().modules[0].accessLevel,'limited');
   assert.equal((await clientsAdminApp.inject({method:'GET',url:`/api/clients/${randomUUID()}/entitlements/effective?date=2026-10-09`})).statusCode,404);
-  assert.equal((await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${client.id}/entitlements/effective?date=2026-10-09`})).statusCode,403);
+  assert.equal((await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${client.id}/entitlements/effective?date=2026-10-09`})).statusCode,200);
 });
 
 test('bonus balance is an append-only idempotent ledger; pause, resume and cancel are effective and audited', async () => {
@@ -1233,7 +1313,8 @@ test('canonical effective resolver keeps scheduled, expired and paused rights ou
   assert.equal(effective.assignments.find(item=>item.id==='d').status,'exhausted');assert.equal(effective.assignments.find(item=>item.id==='d').usable,false);
   assert.equal(effective.services.length,2);assert.equal(effective.modules.find(item=>item.module==='training').accessLevel,'full');assert.equal(effective.modules.some(item=>item.module==='nutrition'),false);
   assert.deepEqual(effective.modules.find(item=>item.module==='training').capabilities,['training.routines.read','training.workouts.log']);
-  assert.equal(effective.rights.some(right=>right.serviceId===null),true,'an unspecified access destination stays neutral and is not inferred as global');
+  assert.equal(effective.rights.some(right=>right.rightType==='service_access'&&right.serviceId==null),false,'a legacy missing destination is never returned as effective access');
+  assert.ok(effective.assignments.find(item=>item.id==='a').blockingReasons.includes('service_access_target_missing'));
 });
 
 test('2J-073 concurrent identical renewal retries create one assignment and charge', async () => {

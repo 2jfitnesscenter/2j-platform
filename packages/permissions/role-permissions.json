@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0.0",
-  "source": "DECISIONS_2J.md; calendar capability grants approved by Juanjo for the Trainer role",
+  "source": "DECISIONS_2J.md; calendar capability grants and 2J-073 entitlement role grants approved by Juanjo",
   "knownPermissions": [
     "clients.read",
     "clients.manage",
@@ -90,7 +90,8 @@
       "staff.read",
       "staff.schedule.read",
       "staff.absence.read",
-      "timeclock.self"
+      "timeclock.self",
+      "entitlements.read"
     ],
     "reception-management": [
       "clients.read",
@@ -112,7 +113,12 @@
       "staff.absence.read",
       "staff.absence.manage",
       "staff.substitution.manage",
-      "timeclock.self"
+      "timeclock.self",
+      "entitlements.read",
+      "entitlements.manage",
+      "entitlements.renew",
+      "entitlements.pause",
+      "entitlements.cancel"
     ],
     "accountant": [
       "billing.read-basic",

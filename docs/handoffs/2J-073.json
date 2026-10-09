@@ -1,17 +1,17 @@
 {
   "taskId": "2J-073",
   "title": "Cuotas, Bonos, Derechos y Accesos por Módulo V2",
-  "status": "draft_pr_open_ci_pending",
+  "status": "draft_pr_open_corrective_fixes_ready_ci_pending",
   "repository": "2jfitnesscenter/2j-platform",
   "baseRef": "main",
   "baseSha": "868b0c5fc120a4f57624bc5b87008aced46bee4b",
   "branch": "agent/codex/2J-073-entitlements-v2",
   "pullRequest": 16,
-  "implementationSha": "b5fb129f453766f4ca7e7040e6f5f474ac3fa4a8",
+  "implementationSha": "pending_commit_sha",
   "pullRequestUrl": "https://github.com/2jfitnesscenter/2j-platform/pull/16",
   "mergeAllowed": false,
   "timezone": "Atlantic/Canary",
-  "migrations": ["0017_entitlements_v2.sql"],
+  "migrations": ["0017_entitlements_v2.sql", "0018_service_access_requires_target.sql"],
   "apis": [
     {"method":"POST","path":"/api/plans","permission":"catalog.pricing.manage"},
     {"method":"POST","path":"/api/plans/:planId/versions","permission":"catalog.pricing.manage"},
@@ -24,10 +24,14 @@
     {"method":"POST","path":"/api/clients/:clientId/plans/:assignmentId/cancel","permission":"entitlements.cancel"},
     {"method":"POST","path":"/api/clients/:clientId/plans/:assignmentId/adjustments","permission":"entitlements.adjust"}
   ],
-  "permissionsAddedToKnownSetOnly": ["entitlements.adjust","entitlements.cancel","entitlements.pause","entitlements.renew","catalog.pricing.manage"],
-  "rolesBroadened": false,
+  "roleChanges": {
+    "reception-management": ["entitlements.read","entitlements.manage","entitlements.renew","entitlements.pause","entitlements.cancel"],
+    "trainer": ["entitlements.read"],
+    "accountant": "unchanged_no_entitlement_permissions",
+    "admin": "unchanged_full"
+  },
   "decisions": {
-    "serviceAccessWithoutTarget": "unresolved_and_not_inferred_as_global",
+    "serviceAccessWithoutTarget": "rejected_for_new_definitions; legacy_rights_filtered_from_effective_read_model; target_must_be_service_id",
     "pauseExtendsTerm": false,
     "renewal": "manual_new_assignment_and_charge",
     "calendarConsumesLedger": false,
@@ -35,15 +39,15 @@
   },
   "outOfScope": ["2jfitnessapp changes","reservation consumption","automatic payment","payment gateway","client app","nutrition UI","training or Bunker data duplication"],
   "checks": {
-    "migrations": "17/17 checksummed on clean PostgreSQL",
-    "tests": {"designTokens": "3/3", "domain": "3/3", "permissions": "5/5", "auth": "2/2", "audit": "3/3", "apiPostgres": "121/121", "adminWeb": "56/56", "total": "193/193"},
+    "migrations": "18/18 checksummed on isolated PostgreSQL",
+    "tests": {"designTokens": "3/3", "domain": "3/3", "permissions": "6/6", "auth": "2/2", "audit": "3/3", "apiPostgres": "122/123; unrelated dashboard timeclock attention limit fixture fails in full suite; services module 65/65", "adminWeb": "57/57", "total": "196/197"},
     "typecheck": "7/7 packages",
     "build": "7/7 packages",
     "audit": "no known vulnerabilities",
     "diffCheck": "pass",
     "localSecretScan": "not_run_go_unavailable",
-    "githubSecretScan": "pass_push_and_pull_request",
-    "githubQuality": "blocked_before_checkout: Docker Hub timed out then rate-limited postgres:17-alpine; failed again on retry"
+    "githubSecretScan": "prior_head_passed; corrective_head_pending",
+    "githubQuality": "prior_head_blocked_before_checkout_by_Docker_Hub_rate_limit; corrective_head_pending"
   },
   "visualEvidence": "pending_real_capture_browser_url_verification_stopped; documented in docs/evidence/2J-073/README.md",
   "independentReview": "pending"

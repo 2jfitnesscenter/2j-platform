@@ -32,6 +32,7 @@ const rightInput = z.object({
   validDaysStartRule: z.enum(['purchase', 'first_use']).nullable().optional(),
 }).strict().superRefine((right, context) => {
   if (right.rightType === 'service_access') {
+    if (!right.serviceId) context.addIssue({ code: 'custom', path: ['serviceId'], message: 'El acceso directo debe indicar un servicio de destino.' });
     if (right.quantity != null || right.quotaScope != null || right.period != null || right.periodMode != null || right.timezone != null) context.addIssue({ code: 'custom', message: 'El acceso directo no admite cuota ni periodo.' });
   } else if (!Number.isInteger(right.quantity) || !right.quotaScope) {
     context.addIssue({ code: 'custom', message: 'Las cuotas necesitan cantidad y alcance.' });

@@ -116,7 +116,7 @@ export function registerClientRoutes(
       const items = rows.slice(0, query.data.limit).map(({ cursorLastName: _last, cursorFirstName: _first, ...row }) => row);
       const last = rows[Math.min(rows.length, query.data.limit) - 1];
       const nextCursor = hasMore && last ? encodeCursor({ lastName: last.cursorLastName, firstName: last.cursorFirstName, id: last.id }) : null;
-      return { items, limit: query.data.limit, nextCursor, hasMore, capabilities: { manage: can(context, 'clients.manage'), assignPlans: can(context, 'entitlements.manage') && can(context, 'billing.payments.manage'), collectPayments: can(context, 'billing.payments.manage') } };
+      return { items, limit: query.data.limit, nextCursor, hasMore, capabilities: { manage: can(context, 'clients.manage'), assignPlans: can(context, 'entitlements.manage'), collectPayments: can(context, 'billing.payments.manage') } };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients' }, 'client list failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
@@ -198,7 +198,7 @@ export function registerClientRoutes(
       }
       return {
         client,
-        capabilities: { manage: can(context, 'clients.manage'), readEntitlements:can(context,'entitlements.read'),manageCatalogPrice:can(context,'catalog.pricing.manage'), assignPlans: can(context, 'entitlements.manage') && can(context, 'billing.payments.manage'), collectPayments: can(context, 'billing.payments.manage'), pauseEntitlements:can(context,'entitlements.pause'),cancelEntitlements:can(context,'entitlements.cancel'),adjustEntitlements:can(context,'entitlements.adjust'),renewEntitlements:can(context,'entitlements.renew') },
+        capabilities: { manage: can(context, 'clients.manage'), readEntitlements:can(context,'entitlements.read'),manageCatalogPrice:can(context,'catalog.pricing.manage'), assignPlans: can(context, 'entitlements.manage'), collectPayments: can(context, 'billing.payments.manage'), pauseEntitlements:can(context,'entitlements.pause'),cancelEntitlements:can(context,'entitlements.cancel'),adjustEntitlements:can(context,'entitlements.adjust'),renewEntitlements:can(context,'entitlements.renew') },
         summary,
         reservations,
         sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) ? 'ready' : 'not_connected' })),

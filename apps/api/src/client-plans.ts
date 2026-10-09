@@ -40,6 +40,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
       (SELECT COALESCE(jsonb_agg(jsonb_build_object('rightType',r.right_type,'serviceId',r.service_id,'serviceName',s.name,'quantity',r.quantity,'period',r.period,'quotaScope',r.quota_scope) ORDER BY r.right_type,r.service_id NULLS FIRST,r.id),'[]'::jsonb) FROM plan_rights r LEFT JOIN services s ON s.id=r.service_id WHERE r.plan_id=p.id AND r.plan_version=p.current_version) AS rights
       ,(SELECT COALESCE(jsonb_agg(jsonb_build_object('module',m.module,'accessLevel',m.access_level,'capabilities',COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb)) ORDER BY m.module),'[]'::jsonb) FROM plan_module_accesses m WHERE m.plan_id=p.id AND m.plan_version=p.current_version) AS modules
       FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.status='active' AND v.frozen_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM plan_rights r WHERE r.plan_id=p.id AND r.plan_version=p.current_version AND r.right_type='service_access' AND r.service_id IS NULL)
         AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version AND (s.status<>'active' OR a.status<>'active'))
       ORDER BY lower(p.name),p.id`;
   });
@@ -72,7 +73,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
     if (!key.success) return reply.code(400).send({ error: 'idempotency_key_required' });
     if (!body.success) return reply.code(400).send({ error: 'validation_error', details: body.error.flatten() });
     if (!can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
-    if (!can(context, 'billing.payments.manage')) return reply.code(403).send({ error: 'permission_denied' });
+    if (body.data.paymentAmountCents != null && !can(context, 'billing.payments.manage')) return reply.code(403).send({ error: 'permission_denied' });
     if(body.data.operationKind==='renewal'&&!can(context,'entitlements.renew'))return reply.code(403).send({error:'permission_denied'});
     if(body.data.operationKind==='change'&&!can(context,'entitlements.manage'))return reply.code(403).send({error:'permission_denied'});
     const data = body.data;
@@ -99,6 +100,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
           if(data.operationKind==='change'&&data.startsOn<=String(source.startsOn))return {error:'change_must_be_effective_after_start' as const};
         }
         const [plan] = await tx`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.base_price_cents AS "basePriceCents",v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.timezone FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.id=${data.planId} AND p.status='active' AND v.frozen_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM plan_rights r WHERE r.plan_id=p.id AND r.plan_version=p.current_version AND r.right_type='service_access' AND r.service_id IS NULL)
           AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version AND (s.status<>'active' OR a.status<>'active')) FOR SHARE OF p,v`;
         if (!plan) return { error: 'plan_unavailable' as const };
         const [cash] = data.paymentMethod === 'cash' ? await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE` : [];
@@ -109,6 +111,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',r.id,'rightType',r.right_type,'serviceId',r.service_id,'quotaScope',r.quota_scope,'quantity',r.quantity,'period',r.period,'periodMode',r.period_mode,'timezone',r.timezone,'validDays',r.valid_days,'validDaysStartRule',r.valid_days_start_rule) ORDER BY r.id) FROM plan_rights r WHERE r.plan_id=${plan.id} AND r.plan_version=${plan.currentVersion}),'[]'::jsonb) AS rights,
           COALESCE((SELECT jsonb_agg(jsonb_build_object('module',m.module,'accessLevel',m.access_level,'capabilities',COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb)) ORDER BY m.module) FROM plan_module_accesses m WHERE m.plan_id=${plan.id} AND m.plan_version=${plan.currentVersion}),'[]'::jsonb) AS modules`;
         const listPrice=plan.basePriceCents==null?null:Number(plan.basePriceCents);
+        if(listPrice===null&&!can(context,'catalog.pricing.manage'))return {error:'catalog_price_required' as const};
         if(listPrice!==null&&listPrice!==data.amountCents&&!can(context,'catalog.pricing.manage'))return {error:'price_override_forbidden' as const};
         if(listPrice!==null&&listPrice!==data.amountCents&&!data.adjustmentReason)return {error:'adjustment_reason_required' as const};
         const snapshot={planId:plan.id,planVersion:plan.currentVersion,name:plan.name,kind:plan.kind,listPriceCents:listPrice,salePriceCents:data.amountCents,priceAdjustmentCents:listPrice===null?0:data.amountCents-listPrice,priceAdjustmentReason:data.adjustmentReason??null,currency:'EUR',soldBy:context.actorId,services:commercial!.services,rights:commercial!.rights,modules:commercial!.modules,startsOn:data.startsOn,endsOn:data.endsOn??null,terms:{renewalCadence:plan.renewalCadence,periodDays:plan.periodDays,timezone:plan.timezone}};

@@ -127,7 +127,7 @@ test('an access right without a target is described neutrally in multi-service p
   assert.equal(screen.queryByText('Todos los servicios incluidos'), null);
 });
 
-test('an access right without a target remains optional and is submitted without implying its scope', async () => {
+test('service access requires an included service target before plan creation', async () => {
   let submitted;
   initialFetch({ onPlanCreate: (_url, options) => { submitted = JSON.parse(options.body); return response(plan, 201); } });
   render(React.createElement(ServicesPage));
@@ -135,13 +135,16 @@ test('an access right without a target remains optional and is submitted without
   fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: plan.name } });
   fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
   fireEvent.change(within(dialog).getByLabelText('Renovación'), { target: { value: 'monthly' } });
-  fireEvent.change(within(dialog).getByLabelText(/Destino del acceso \(opcional\)/), { target: { value: '' } });
-  assert.ok(within(dialog).getByText('El alcance de un acceso sin destino está pendiente de decisión.'));
+  const target = within(dialog).getByLabelText('Servicio de acceso');
+  fireEvent.change(target, { target: { value: '' } });
   const create = within(dialog).getByRole('button', { name: 'Crear borrador' });
+  assert.equal(create.disabled, true);
+  assert.equal(submitted, undefined);
+  fireEvent.change(target, { target: { value: service.id } });
   assert.equal(create.disabled, false);
   fireEvent.click(create);
   await waitFor(() => assert.ok(submitted));
-  assert.equal(submitted.rights[0].serviceId, null);
+  assert.equal(submitted.rights[0].serviceId, service.id);
 });
 
 test('creating a plan without the currently selected service selects a service that contains the new plan', async () => {
@@ -164,6 +167,7 @@ test('creating a plan without the currently selected service selects a service t
   fireEvent.change(within(dialog).getByLabelText('Renovación'), { target: { value: 'monthly' } });
   fireEvent.click(within(dialog).getByRole('checkbox', { name: /Valoración inicial/ }));
   fireEvent.click(within(dialog).getByRole('checkbox', { name: /Entrenamiento funcional/ }));
+  fireEvent.change(within(dialog).getByLabelText('Servicio de acceso'), { target: { value: second.id } });
   await act(async () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Crear borrador' }));
     await new Promise((resolve) => setTimeout(resolve, 40));

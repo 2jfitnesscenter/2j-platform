@@ -33,11 +33,13 @@ export function getEffectiveEntitlements(assignments: readonly EffectiveEntitlem
     const inDateRange = assignment.startsOn <= localDate && (!assignment.endsOn || assignment.endsOn >= localDate);
     if (status !== 'active' || !inDateRange) return [];
     const snapshotModules = assignment.modules.map((entry) => ({ ...entry, capabilities: [...entry.capabilities] }));
-    return [{ ...assignment, usable: true as const, services: (assignment.snapshot.services as unknown[] | undefined) ?? [], areas: (assignment.snapshot.areas as unknown[] | undefined) ?? [], rights: [...assignment.rights], modules: snapshotModules, blockingReasons: [] as string[] }];
+    const missingServiceTarget = assignment.rights.some(right => right.rightType === 'service_access' && right.serviceId == null);
+    const safeRights = assignment.rights.filter(right => right.rightType !== 'service_access' || right.serviceId != null);
+    return [{ ...assignment, usable: true as const, services: (assignment.snapshot.services as unknown[] | undefined) ?? [], areas: (assignment.snapshot.areas as unknown[] | undefined) ?? [], rights: safeRights, modules: snapshotModules, blockingReasons: missingServiceTarget ? ['service_access_target_missing'] : [] as string[] }];
   });
   return {
     asOf: localDate,
-    assignments: assignments.map((assignment) => {const status=statusOf(assignment);return {...assignment,status,usable:effective.some((item)=>item.id===assignment.id),blockingReasons:status!=='active'?[status]:assignment.startsOn>localDate?['not_started']:assignment.endsOn&&assignment.endsOn<localDate?['expired']:[]};}),
+    assignments: assignments.map((assignment) => {const status=statusOf(assignment);const reasons=status!=='active'?[status]:assignment.startsOn>localDate?['not_started']:assignment.endsOn&&assignment.endsOn<localDate?['expired']:[];const missingServiceTarget=assignment.rights.some(right=>right.rightType==='service_access'&&right.serviceId==null);if(status==='active'&&missingServiceTarget)reasons.push('service_access_target_missing');return {...assignment,status,usable:effective.some((item)=>item.id===assignment.id)&&!missingServiceTarget,rights:assignment.rights.filter(right=>right.rightType!=='service_access'||right.serviceId!=null),blockingReasons:reasons};}),
     services: uniqueObjects(effective.flatMap(item => item.snapshot.services as Array<Record<string,unknown>> ?? []), 'id'),
     areas: uniqueObjects(effective.flatMap(item => item.snapshot.areas as Array<Record<string,unknown>> ?? []), 'id'),
     rights: effective.flatMap(item => item.rights.map(right => ({...right, assignmentId:item.id, status:statusOf(item)}))),
