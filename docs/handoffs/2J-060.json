@@ -4,8 +4,11 @@
   "status": "ready_for_draft_pr",
   "baseSha": "a64de6b1eb56f87d0fb000758fa3c0394f324a79",
   "branch": "agent/codex/2J-060-communications-forms-consents-followup",
-  "pullRequest": null,
-  "headSha": null,
+  "pullRequest": {
+    "number": 12,
+    "url": "https://github.com/2jfitnesscenter/2j-platform/pull/12"
+  },
+  "codeShaBeforeHandoffUpdate": "0f4cb7c",
   "mergePolicy": "No merge; independent review required from Claude and Antigravity on exact head SHA.",
   "migrations": [
     "0010_communications_documents_followup.sql",
