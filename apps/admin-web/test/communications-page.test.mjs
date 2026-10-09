@@ -51,6 +51,7 @@ test("inbox shows unread and document state, separates internal notes, sends cen
     requests.push({ url: String(url), options });
     if (String(url).endsWith("/api/communications/inbox"))
       return response([item]);
+    if (String(url).endsWith("/api/communications/templates")) return response([]);
     if (String(url).endsWith(`/api/clients/${item.clientId}/conversation`))
       return response({
         conversation: { id: item.conversationId, clientId: item.clientId },
@@ -65,6 +66,7 @@ test("inbox shows unread and document state, separates internal notes, sends cen
           {
             id: "m-2",
             senderKind: "client",
+            senderLabel: "Personal del centro",
             body: "Gracias.",
             createdAt: "2026-10-01T10:05:00Z",
             readByCenter: true,
@@ -73,6 +75,7 @@ test("inbox shows unread and document state, separates internal notes, sends cen
         internalNotes: [
           {
             id: "n-1",
+            actorLabel: "Laura",
             body: "Solo el equipo",
             createdAt: "2026-10-01T10:01:00Z",
           },
@@ -90,6 +93,7 @@ test("inbox shows unread and document state, separates internal notes, sends cen
   render(React.createElement(CommunicationsPage));
   fireEvent.click(await screen.findByRole("button", { name: /Ana Prueba/ }));
   await screen.findByText("Solo el equipo");
+  assert.ok(screen.getByText("Laura · Nota interna · solo equipo"));
   assert.equal(screen.getByLabelText("2 sin leer").textContent, "2");
   fireEvent.click(screen.getByRole("button", { name: "Marcar como no leído" }));
   await screen.findByText("Mensaje marcado como no leído.");
@@ -111,8 +115,52 @@ test("inbox shows unread and document state, separates internal notes, sends cen
     ),
   );
   fireEvent.click(screen.getByLabelText("Nota interna del centro"));
+  assert.ok(screen.getByText("Nota interna · Solo staff"));
+  assert.equal(screen.getByRole("button", { name: "Guardar nota interna" }).disabled, true);
   assert.equal(
     screen.getByLabelText("Nota interna").getAttribute("maxLength"),
     "5000",
   );
+});
+
+test("active message template fills editable composer and keeps template reference on send", async()=>{
+  let sent;
+  globalThis.fetch=async(url,options={})=>{
+    const path=String(url);
+    if(path.endsWith('/api/communications/inbox'))return response([item]);
+    if(path.endsWith('/api/communications/templates'))return response([{id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',name:'Bienvenida',body:'Hola, {{nombre}}',status:'active'}]);
+    if(path.endsWith(`/api/clients/${item.clientId}/conversation`))return response({conversation:{id:item.conversationId,clientId:item.clientId},messages:[],internalNotes:[]});
+    if(path.endsWith(`/api/clients/${item.clientId}/messages`)){sent=JSON.parse(options.body);return response({id:'m-new'},201);}
+    return response({});
+  };
+  render(React.createElement(CommunicationsPage));
+  fireEvent.click(await screen.findByRole('button',{name:/Ana Prueba/}));
+  const selector=await screen.findByLabelText('Usar plantilla');
+  fireEvent.change(selector,{target:{value:'cccccccc-cccc-4ccc-8ccc-cccccccccccc'}});
+  const composer=screen.getByLabelText('Mensaje para el cliente');
+  assert.equal(composer.value,'Hola, {{nombre}}');
+  fireEvent.change(composer,{target:{value:'Hola, Ana'}});
+  fireEvent.click(screen.getByRole('button',{name:'Enviar mensaje'}));
+  await screen.findByText('Mensaje enviado.');
+  assert.deepEqual(sent,{body:'Hola, Ana',templateId:'cccccccc-cccc-4ccc-8ccc-cccccccccccc'});
+});
+
+test("sending state disables composer controls and announces completion",async()=>{
+  let finish;
+  globalThis.fetch=async(url,options={})=>{
+    const path=String(url);
+    if(path.endsWith('/api/communications/inbox')||path.endsWith('/api/communications/templates'))return response(path.endsWith('/templates')?[]:[item]);
+    if(path.endsWith(`/api/clients/${item.clientId}/conversation`))return response({conversation:{id:item.conversationId,clientId:item.clientId},messages:[],internalNotes:[]});
+    if(path.endsWith(`/api/clients/${item.clientId}/messages`))return new Promise(resolve=>{finish=()=>resolve(response({id:'m-new'},201));});
+    return response({});
+  };
+  render(React.createElement(CommunicationsPage));
+  fireEvent.click(await screen.findByRole('button',{name:/Ana Prueba/}));
+  const composer=await screen.findByLabelText('Mensaje para el cliente');
+  fireEvent.change(composer,{target:{value:'Mensaje de prueba'}});
+  fireEvent.click(screen.getByRole('button',{name:'Enviar mensaje'}));
+  assert.equal((await screen.findByRole('button',{name:'Enviando…'})).disabled,true);
+  assert.equal(composer.disabled,true);
+  finish();
+  await screen.findByText('Mensaje enviado.');
 });

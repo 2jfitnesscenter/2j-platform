@@ -1,15 +1,15 @@
 # 2J-060 — evidencia de interfaz
 
-La pantalla añadida es la bandeja de Comunicación, con conversación compartida, mensajes al cliente, notas internas separadas, estados de carga/error/vacío, lectura y marcado manual como no leído. Clientes 360 incorpora los contadores documentales, mensajes y seguimiento.
+La interfaz operativa de esta pasada incluye la bandeja de Comunicación, selección de plantillas activas, mensajes al cliente, notas internas visualmente separadas, autor del mensaje, busy/feedback accesibles y estados de carga/error/vacío. Clientes 360 carga listas reales de formularios, consentimientos y check-ins; permite revisión autorizada y aceptación asistida.
 
 ## Responsive
 
-Se incluye una captura real de la bandeja a 1440 px: [communications-1440.png](./communications-1440.png). Muestra una ejecución local con datos de prueba, estado listo y ninguna conversación seleccionada. No se guardaron capturas a 768 ni 390 px; la inspección responsive en navegador queda pendiente para QA independiente. No se presentan renders estáticos como capturas reales.
+La captura disponible de 1440 px, [communications-1440.png](./communications-1440.png), pertenece al head anterior a esta corrección y se conserva solo como referencia histórica. No se han generado capturas actuales a 1440, 768 ni 390 px en esta pasada. La inspección responsive real de estas vistas queda pendiente de QA independiente; no se presentan renders estáticos como capturas reales.
 
-La hoja de estilos contiene breakpoints para tablet y móvil; los tests de Admin Web verifican estados, acciones accesibles y renderizado funcional, y el build de Vite comprueba el bundle. La inspección visual en navegador a esos tres anchos queda como QA independiente previo al merge.
+La hoja de estilos conserva breakpoints para tablet y móvil. Los tests de Admin Web verifican interacciones, estados y permisos; el build de Vite comprueba el bundle. Esto no sustituye la inspección visual en navegador a 1440, 768 y 390 px, pendiente antes del merge.
 
 ## Límites visibles de producto
 
-- La interfaz Admin implementa la bandeja y el acceso a los paneles de Clientes 360.
-- La configuración/versionado de formularios, consentimientos, requisitos documentales y asignación de check-ins se ofrece mediante API autenticada; no hay todavía un constructor visual de formularios ni flujos de aceptación del cliente dentro de Admin Web.
+- La interfaz Admin implementa la bandeja y opera documentos existentes desde Clientes 360: estado, fechas, respuestas cuando hay permiso, revisión de PAR-Q, aceptación asistida de la versión activa y lista de seguimiento.
+- El versionado/configuración de formularios, consentimientos y requisitos, y la asignación de check-ins, siguen en API autenticada; no se crea constructor visual ni editor drag-and-drop. La respuesta/autocompletado por el cliente queda en portal.
 - No se habilitan adjuntos porque aún no existe almacenamiento de objetos seguro configurado.

@@ -164,11 +164,11 @@ export function registerCommunicationRoutes(
       if (!conversation)
         return { conversation: null, messages: [], internalNotes: [] };
       const messages =
-        await db`SELECT id,sender_kind AS "senderKind",sender_actor_id AS "senderActorId",body,created_at AS "createdAt",(SELECT is_read FROM communication_message_reads r WHERE r.message_id=m.id AND r.reader_kind='center') AS "readByCenter" FROM communication_messages m WHERE conversation_id=${conversation.id} ORDER BY created_at,id LIMIT 200`;
+        await db`SELECT id,sender_kind AS "senderKind",COALESCE((SELECT display_name FROM staff_professionals sp WHERE sp.id::text=m.sender_actor_id),'Personal del centro') AS "senderLabel",body,template_id AS "templateId",created_at AS "createdAt",(SELECT is_read FROM communication_message_reads r WHERE r.message_id=m.id AND r.reader_kind='center') AS "readByCenter" FROM communication_messages m WHERE conversation_id=${conversation.id} ORDER BY created_at,id LIMIT 200`;
       let internalNotes: readonly unknown[] = [];
       if (can(actor, "communication.internal_notes.read"))
         internalNotes =
-          await db`SELECT id,actor_id AS "actorId",body,created_at AS "createdAt" FROM communication_internal_notes WHERE conversation_id=${conversation.id} ORDER BY created_at DESC,id DESC LIMIT 100`;
+          await db`SELECT id,COALESCE((SELECT display_name FROM staff_professionals sp WHERE sp.id::text=n.actor_id),'Personal del centro') AS "actorLabel",body,created_at AS "createdAt" FROM communication_internal_notes n WHERE conversation_id=${conversation.id} ORDER BY created_at DESC,id DESC LIMIT 100`;
       return { conversation, messages, internalNotes };
     } catch {
       req.log.error(
@@ -184,7 +184,7 @@ export function registerCommunicationRoutes(
     if (!actor) return;
     const p = z.object({ clientId: uuid }).safeParse(req.params),
       b = z
-        .object({ body: safeText(5000) })
+        .object({ body: safeText(5000), templateId: uuid.nullable().optional() })
         .strict()
         .safeParse(req.body),
       key = uuid.safeParse(req.headers["idempotency-key"]);
@@ -201,13 +201,17 @@ export function registerCommunicationRoutes(
         const [conversation]: any[] =
           await tx`INSERT INTO communication_conversations(client_id) VALUES(${p.data.clientId}) ON CONFLICT(center_key,client_id) DO UPDATE SET updated_at=now() RETURNING id`;
         const [prior]: any[] =
-          await tx`SELECT id,body,created_at AS "createdAt" FROM communication_messages WHERE conversation_id=${conversation.id} AND sender_kind='staff' AND idempotency_key=${key.data}`;
+          await tx`SELECT id,body,template_id AS "templateId",created_at AS "createdAt" FROM communication_messages WHERE conversation_id=${conversation.id} AND sender_kind='staff' AND idempotency_key=${key.data}`;
         if (prior)
-          return prior!.body === b.data.body
+          return prior!.body === b.data.body && (prior!.templateId ?? null) === (b.data.templateId ?? null)
             ? { message: prior, replay: true }
             : { error: "idempotency_conflict" as const };
+        if (b.data.templateId) {
+          const [template]: any[] = await tx`SELECT id FROM communication_templates WHERE id=${b.data.templateId} AND status='active' FOR SHARE`;
+          if (!template) return { error: 'template_not_found' as const };
+        }
         const [message]: any[] =
-          await tx`INSERT INTO communication_messages(conversation_id,sender_kind,sender_actor_id,body,idempotency_key) VALUES(${conversation.id},'staff',${actor.actorId},${b.data.body},${key.data}) RETURNING id,body,created_at AS "createdAt"`;
+          await tx`INSERT INTO communication_messages(conversation_id,sender_kind,sender_actor_id,body,template_id,idempotency_key) VALUES(${conversation.id},'staff',${actor.actorId},${b.data.body},${b.data.templateId ?? null},${key.data}) RETURNING id,body,template_id AS "templateId",created_at AS "createdAt"`;
         await tx`UPDATE communication_conversations SET updated_at=now(),last_message_at=${message.createdAt} WHERE id=${conversation.id}`;
         await audit(
           tx,
@@ -893,12 +897,25 @@ export function registerCommunicationRoutes(
     const sensitive =
       can(actor, "health.read") && can(actor, "forms.responses.sensitive.read");
     try {
-      return await db`SELECT a.id,a.status,a.required,a.due_at AS "dueAt",a.assigned_at AS "assignedAt",f.id AS "formId",f.name,f.category,f.sensitivity,v.version,CASE WHEN f.sensitivity='health' AND NOT ${sensitive} THEN NULL ELSE r.answers END AS answers,r.submitted_at AS "submittedAt" FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id LEFT JOIN client_form_responses r ON r.assignment_id=a.id WHERE a.client_id=${p.data.clientId} ORDER BY a.assigned_at DESC,a.id DESC LIMIT 100`;
+      return await db`SELECT a.id,a.status,a.required,a.due_at AS "dueAt",a.assigned_at AS "assignedAt",f.id AS "formId",f.name,f.category,f.sensitivity,v.version,CASE WHEN (f.sensitivity='health' OR f.category='par_q') AND NOT ${sensitive} THEN NULL ELSE r.answers END AS answers,r.submitted_at AS "submittedAt",(${can(actor,'forms.review')} AND (f.sensitivity<>'health' AND f.category<>'par_q' OR ${sensitive})) AS "canReview",((${sensitive}) AND (f.sensitivity='health' OR f.category='par_q')) AS "sensitiveReadable",CASE WHEN (f.sensitivity='health' OR f.category='par_q') AND NOT ${sensitive} THEN '[]'::jsonb ELSE COALESCE((SELECT jsonb_agg(jsonb_build_object('decision',h.decision,'note',h.note,'actorLabel',COALESCE((SELECT display_name FROM staff_professionals sp WHERE sp.id::text=h.actor_id),'Personal del centro'),'reviewedAt',h.reviewed_at) ORDER BY h.reviewed_at,h.id) FROM client_form_reviews h WHERE h.assignment_id=a.id),'[]'::jsonb) END AS reviews FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id LEFT JOIN client_form_responses r ON r.assignment_id=a.id WHERE a.client_id=${p.data.clientId} ORDER BY a.assigned_at DESC,a.id DESC LIMIT 100`;
     } catch {
       req.log.error(
         { route: "GET /api/clients/:clientId/forms" },
         "client forms failed",
       );
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
+  app.get("/api/clients/:clientId/consents", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const actor = await staff(req, reply, "documents.read");
+    if (!actor) return;
+    const p = z.object({ clientId: uuid }).safeParse(req.params);
+    if (!p.success) return reply.code(400).send({ error: "invalid_client_id" });
+    try {
+      return await db`SELECT c.id AS "consentId",c.name,c.required,v.id AS "versionId",v.version,v.title,v.body,v.effective_at AS "effectiveAt",(a.id IS NOT NULL) AS accepted,a.accepted_at AS "acceptedAt",a.method,${can(actor,'consents.accept.assisted') && can(actor,'consents.read')} AS "canAcceptAssisted" FROM client_consents c JOIN client_consent_versions v ON v.id=c.active_version_id LEFT JOIN client_consent_acceptances a ON a.client_id=${p.data.clientId} AND a.consent_version_id=v.id WHERE c.status='active' ORDER BY c.required DESC,c.name`;
+    } catch {
+      req.log.error({ route: "GET /api/clients/:clientId/consents" }, "client consents failed");
       return reply.code(500).send({ error: "internal_error" });
     }
   });
@@ -921,23 +938,27 @@ export function registerCommunicationRoutes(
       if (!p.success || !b.success)
         return reply.code(400).send({ error: "validation_error" });
       try {
-        const [r] = await db.begin(async (tx) => {
-          const [row]: any[] =
-            await tx`UPDATE client_form_assignments SET status=${b.data.decision},updated_at=now() WHERE id=${b.data.assignmentId} AND client_id=${p.data.clientId} AND form_version_id IN(SELECT v.id FROM client_form_versions v WHERE v.form_id=${p.data.formId}) AND status='review_required' RETURNING id`;
-          if (!row) return [];
+        const r = await db.begin(async (tx) => {
+          const [row]: any[] = await tx`SELECT a.id,a.form_version_id AS "formVersionId",r.id AS "responseId",f.category,f.sensitivity FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id JOIN client_form_responses r ON r.assignment_id=a.id WHERE a.id=${b.data.assignmentId} AND a.client_id=${p.data.clientId} AND f.id=${p.data.formId} AND a.status='review_required' FOR UPDATE OF a`;
+          if (!row) return null;
+          const sensitiveReview = row.category === 'par_q' || row.sensitivity === 'health';
+          if (sensitiveReview && !(can(actor, 'health.read') && can(actor, 'forms.responses.sensitive.read'))) return { forbidden: true as const };
+          await tx`INSERT INTO client_form_reviews(assignment_id,response_id,client_id,form_version_id,decision,note,actor_id) VALUES(${row.id},${row.responseId},${p.data.clientId},${row.formVersionId},${b.data.decision},${b.data.note},${actor.actorId})`;
+          await tx`UPDATE client_form_assignments SET status=${b.data.decision},updated_at=now() WHERE id=${row.id}`;
           await audit(
             tx,
             actor.actorId,
             "form.reviewed",
             "client_form_assignment",
-            row!.id,
+            row.id,
             p.data.clientId,
             { decision: b.data.decision },
           );
-          return [row];
+          return { id: row.id };
         });
         if (!r)
           return reply.code(404).send({ error: "review_target_not_found" });
+        if ('forbidden' in r) return reply.code(403).send({ error: 'permission_denied' });
         return { status: b.data.decision };
       } catch {
         req.log.error(

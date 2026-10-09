@@ -113,7 +113,7 @@ export function registerCalendarRoutes(
       const services = await database`SELECT id,name,area_id AS "areaId" FROM services WHERE status='active' ORDER BY lower(name),id`;
       const professionals = await database`SELECT id,display_name AS "displayName",calendar_color AS "calendarColor" FROM staff_professionals WHERE status='active' ORDER BY lower(display_name),id`;
       const templates = await database`SELECT t.id,t.service_id AS "serviceId",s.name AS "serviceName",t.area_id AS "areaId",a.name AS "areaName",t.weekday,t.local_start_time AS "localStartTime",t.duration_minutes AS "durationMinutes",t.capacity,to_char(t.starts_on,'YYYY-MM-DD') AS "startsOn",CASE WHEN t.ends_on IS NULL THEN NULL ELSE to_char(t.ends_on,'YYYY-MM-DD') END AS "endsOn" FROM recurring_session_templates t JOIN services s ON s.id=t.service_id JOIN areas a ON a.id=t.area_id WHERE t.status='active' ORDER BY t.weekday,t.local_start_time,t.id`;
-      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, professionals, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity'), overrideAvailability: can(context, 'staff.schedule.override') } };
+      return { weekStart, timezone: 'Atlantic/Canary', sessions, areas, services, professionals, templates, capabilities: { manage: can(context, 'reservations.manage'), attendance: can(context, 'reservations.attendance'), overrideCapacity: can(context, 'scheduling.override_capacity'), overrideAvailability: can(context, 'staff.schedule.override'), overrideDocuments: can(context, 'documents.requirement.override') } };
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/week' }, 'calendar week failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
@@ -171,7 +171,7 @@ export function registerCalendarRoutes(
         }
         return { id: session.id };
       });
-      if ('error' in result) return reply.code(result.error === 'client_not_found' || result.error === 'service_not_found' || result.error === 'area_not_found' || result.error === 'professional_unavailable' ? 404 : result.error==='permission_denied'?403:409).send({ error: result.error, ...('warnings' in result ? { warnings: result.warnings } : {}) });
+      if ('error' in result) return reply.code(result.error === 'client_not_found' || result.error === 'service_not_found' || result.error === 'area_not_found' || result.error === 'professional_unavailable' ? 404 : result.error==='permission_denied'?403:409).send({ error: result.error, ...('warnings' in result ? { warnings: result.warnings } : {}), ...('missing' in result ? { missing: result.missing } : {}) });
       return reply.code(201).send(await readSession(database, result.id));
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/sessions' }, 'session create failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
@@ -244,6 +244,7 @@ export function registerCalendarRoutes(
     const params = z.object({ sessionId: uuid }).safeParse(request.params);
     const body = z.object({ clientId: uuid, overbook: z.boolean().optional().default(false), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional(), overrideDocuments: z.boolean().optional().default(false), documentOverrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, issue) => {
       if (value.overrideDebt && !value.overrideReason) issue.addIssue({ code: 'custom', path: ['overrideReason'], message: 'Indica el motivo de la excepción.' });
+      if (value.overrideDocuments && !value.documentOverrideReason) issue.addIssue({ code: 'custom', path: ['documentOverrideReason'], message: 'Indica el motivo de la excepción documental.' });
     }).safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     if (body.data.overbook && !can(context, 'scheduling.override_capacity')) return reply.code(403).send({ error: 'permission_denied' });
@@ -263,7 +264,6 @@ export function registerCalendarRoutes(
         if (!eligibility.eligible) return { error: eligibility.reason };
         const missing = await missingDocuments(tx, client.id, session.service_id, eligibility.planId);
         if (missing.length && !body.data.overrideDocuments) return { error: 'required_documents_pending', missing };
-        if (missing.length && body.data.overrideDocuments) await appendAudit(tx, context.actorId, 'reservation.document_override', 'calendar_reservation', session.id, session.id, client.id, { requirementIds: missing.map((item:any) => String(item.requirementId)).join(','), reason: body.data.documentOverrideReason ?? '' });
         const overdue = await debtBlocksNewBooking(tx, client.id);
         if (overdue && !body.data.overrideDebt) return { error: 'overdue_balance_blocks_booking' };
         if (overdue && body.data.overrideDebt) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, client.id, { reason: body.data.overrideReason ?? '' });
@@ -273,6 +273,7 @@ export function registerCalendarRoutes(
         if (!body.data.overbook && (count?.occupied ?? 0) >= session.capacity) return { error: 'capacity_full' };
         const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by) VALUES (${session.id},${client.id},${eligibility.entitlementId},${context.actorId}) RETURNING id`;
         if (!reservation) throw new Error('Reservation insert returned no row.');
+        if (missing.length && body.data.overrideDocuments) await appendAudit(tx, context.actorId, 'reservation.document_override', 'calendar_reservation', reservation.id, session.id, client.id, { requirementIds: missing.map((item:any) => String(item.requirementId)).join(','), reason: body.data.documentOverrideReason! });
         await appendAudit(tx, context.actorId, body.data.overbook ? 'reservation.overbooked' : 'reservation.created', 'calendar_reservation', reservation.id, session.id, client.id, { overbooked: body.data.overbook, debtOverride: overdue && body.data.overrideDebt, debtOverrideReason: overdue && body.data.overrideDebt ? body.data.overrideReason ?? '' : null });
         return { id: reservation.id, overbooked: body.data.overbook };
       });

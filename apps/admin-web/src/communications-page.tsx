@@ -14,6 +14,8 @@ type InboxItem = {
 type Message = {
   id: string;
   senderKind: "staff" | "client";
+  senderLabel?: string;
+  templateId?: string | null;
   body: string;
   createdAt: string;
   readByCenter: boolean | null;
@@ -21,8 +23,9 @@ type Message = {
 type Thread = {
   conversation: { id: string; clientId: string } | null;
   messages: Message[];
-  internalNotes: { id: string; body: string; createdAt: string }[];
+  internalNotes: { id: string; body: string; actorLabel?: string; createdAt: string }[];
 };
+type MessageTemplate = { id:string; name:string; body:string; status:string };
 const api = import.meta.env?.VITE_API_URL ?? "http://127.0.0.1:3100";
 const uuid = () => crypto.randomUUID();
 export function CommunicationsPage() {
@@ -36,6 +39,8 @@ export function CommunicationsPage() {
     [error, setError] = useState(""),
     [sending, setSending] = useState(false),
     [feedback, setFeedback] = useState("");
+  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -50,6 +55,8 @@ export function CommunicationsPage() {
               : "No se pudo cargar la bandeja.",
         );
       setItems((await r.json()) as InboxItem[]);
+      const templateResponse = await fetch(`${api}/api/communications/templates`);
+      if (templateResponse.ok) setTemplates(((await templateResponse.json()) as MessageTemplate[]).filter((item)=>item.status==='active'));
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "No se pudo cargar la bandeja.",
@@ -64,6 +71,7 @@ export function CommunicationsPage() {
       setThread(null);
       setBody("");
       setInternal(false);
+      setSelectedTemplateId("");
       setThreadLoading(true);
       setFeedback("");
       try {
@@ -73,6 +81,7 @@ export function CommunicationsPage() {
         if (!r.ok) throw new Error("No se pudo abrir la conversación.");
         const data = (await r.json()) as Thread;
         setThread(data);
+        setFeedback("Conversación actualizada.");
         await Promise.all(
           data.messages
             .filter((m) => m.senderKind === "client" && !m.readByCenter)
@@ -111,11 +120,11 @@ export function CommunicationsPage() {
           "content-type": "application/json",
           ...(internal ? {} : { "idempotency-key": uuid() }),
         },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, ...(internal || !selectedTemplateId ? {} : { templateId: selectedTemplateId }) }),
       });
       if (!response.ok) throw new Error("No se pudo guardar el mensaje.");
       setBody("");
-      if (!internal) await loadThread(selected);
+      await loadThread(selected);
       setFeedback(internal ? "Nota interna guardada." : "Mensaje enviado.");
       await load();
     } catch (e) {
@@ -311,12 +320,13 @@ export function CommunicationsPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="message-list" aria-live="polite">
+                    <div className="message-list" aria-live="off" aria-label="Historial de mensajes y notas">
                       {thread?.messages.map((m) => (
                         <article
                           key={m.id}
                           className={`message-bubble ${m.senderKind}`}
                         >
+                          <strong>{m.senderKind === "client" ? `${selected.firstName} ${selected.lastName}` : m.senderLabel || "Personal del centro"}</strong>
                           <p>{m.body}</p>
                           <time>
                             {new Intl.DateTimeFormat("es-ES", {
@@ -337,7 +347,7 @@ export function CommunicationsPage() {
                       ))}
                       {thread?.internalNotes.map((n) => (
                         <article key={n.id} className="message-bubble internal">
-                          <strong>Nota interna · solo equipo</strong>
+                          <strong>{n.actorLabel || "Personal del centro"} · Nota interna · solo equipo</strong>
                           <p>{n.body}</p>
                           <time>
                             {new Intl.DateTimeFormat("es-ES", {
@@ -349,20 +359,24 @@ export function CommunicationsPage() {
                         </article>
                       ))}
                     </div>
-                    <form className="message-composer" onSubmit={send}>
+                    <form className={`message-composer ${internal ? "internal-mode" : ""}`} onSubmit={send} aria-busy={sending}>
+                      {internal && <div className="internal-mode-banner"><strong>Nota interna · Solo staff</strong><span>No se enviará al cliente.</span></div>}
                       <label className="internal-toggle">
                         <input
                           type="checkbox"
+                          disabled={sending}
                           checked={internal}
                           onChange={(e) => setInternal(e.target.checked)}
                         />{" "}
                         Nota interna del centro
                       </label>
+                      {!internal && templates.length>0 && <label className="template-picker">Usar plantilla<select aria-label="Usar plantilla" value={selectedTemplateId} disabled={sending} onChange={event=>{const id=event.target.value;setSelectedTemplateId(id);const selectedTemplate=templates.find(item=>item.id===id);if(selectedTemplate)setBody(selectedTemplate.body);}}><option value="">Elegir plantilla…</option>{templates.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
                       <label className="sr-only" htmlFor="message-body">
                         {internal ? "Nota interna" : "Mensaje para el cliente"}
                       </label>
                       <textarea
                         id="message-body"
+                        disabled={sending}
                         maxLength={5000}
                         value={body}
                         onChange={(e) => setBody(e.target.value)}
@@ -373,7 +387,7 @@ export function CommunicationsPage() {
                         }
                       />
                       {feedback && (
-                        <p className="inline-feedback" role="status">
+                        <p className="inline-feedback" role="status" aria-live="polite">
                           {feedback}
                         </p>
                       )}
@@ -382,9 +396,9 @@ export function CommunicationsPage() {
                         disabled={sending || !body.trim()}
                       >
                         {sending
-                          ? "Guardando…"
+                          ? internal ? "Guardando…" : "Enviando…"
                           : internal
-                            ? "Guardar nota"
+                            ? "Guardar nota interna"
                             : "Enviar mensaje"}
                       </button>
                     </form>

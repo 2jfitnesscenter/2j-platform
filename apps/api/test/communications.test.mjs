@@ -295,7 +295,29 @@ test("versioned forms preserve old responses, require PAR-Q review and deduplica
   });
   assert.equal(pr.statusCode, 201, pr.body);
   assert.equal(pr.json().status, "review_required");
-  const reviewedCheckin = await trainer.inject({
+  const deniedParqReview = await trainer.inject({
+    method: "POST",
+    url: `/api/clients/${id}/forms/${parq.json().id}/review`,
+    payload: { assignmentId: pa.json().id, decision: "rejected", note: "No mostrar sin permiso" },
+  });
+  assert.equal(deniedParqReview.statusCode, 403);
+  const trainerForms = await trainer.inject({ method: "GET", url: `/api/clients/${id}/forms` });
+  const protectedParq = trainerForms.json().find((row) => row.id === pa.json().id);
+  assert.equal(protectedParq.answers, null);
+  assert.equal(protectedParq.canReview, false);
+  const parqReviewed = await admin.inject({
+    method: "POST",
+    url: `/api/clients/${id}/forms/${parq.json().id}/review`,
+    payload: { assignmentId: pa.json().id, decision: "approved", note: "Revisión administrativa documentada" },
+  });
+  assert.equal(parqReviewed.statusCode, 200, parqReviewed.body);
+  const reviewHistory = await sql`SELECT decision,note,actor_id FROM client_form_reviews WHERE assignment_id=${pa.json().id}`;
+  assert.equal(reviewHistory.length, 1);
+  assert.equal(reviewHistory[0].note, "Revisión administrativa documentada");
+  assert.equal(reviewHistory[0].actor_id, "comm-admin");
+  assert.equal((await trainer.inject({method:"GET",url:`/api/clients/${id}/forms`})).json().find((row)=>row.id===pa.json().id).reviews.length,0);
+  assert.equal((await admin.inject({method:"GET",url:`/api/clients/${id}/forms`})).json().find((row)=>row.id===pa.json().id).reviews[0].note,"Revisión administrativa documentada");
+  const reviewedCheckin = await admin.inject({
     method: "POST",
     url: `/api/clients/${id}/forms/${form.json().id}/review`,
     payload: { assignmentId: assigned.json().id, decision: "approved" },
@@ -418,10 +440,66 @@ test("consent acceptance snapshots exact content, is idempotent and cannot be al
     )[0].accepted_by,
     "comm-admin",
   );
+  const nextVersion = await admin.inject({method:"POST",url:`/api/consents/${consent.json().id}/versions`,payload:{title:"Normas actualizadas",body:"Nuevo texto vigente",effectiveAt:null}});
+  assert.equal(nextVersion.statusCode,201,nextVersion.body);
+  assert.equal((await admin.inject({method:"POST",url:`/api/consents/${consent.json().id}/activate`})).statusCode,200);
+  clientId=id;
+  const renewedPortalConsents=await portal.inject({method:"GET",url:"/api/client-portal/consents"});
+  assert.equal(renewedPortalConsents.json().find(item=>item.consentId===consent.json().id).accepted,false);
+  const staffConsents=await admin.inject({method:"GET",url:`/api/clients/${id}/consents`});
+  assert.equal(staffConsents.statusCode,200);
+  assert.equal(staffConsents.json().find(item=>item.consentId===consent.json().id).accepted,false);
+  const area=await admin.inject({method:"POST",url:"/api/areas",payload:{name:`Revisión de versión ${randomUUID()}`}});
+  const service=await admin.inject({method:"POST",url:"/api/services",payload:{name:`Reserva consentida ${randomUUID()}`,areaId:area.json().id,status:"active"}});
+  const requirement=await admin.inject({method:"POST",url:"/api/document-requirements",payload:{scopeType:"service",scopeId:service.json().id,requirementType:"consent",consentId:consent.json().id,required:true}});
+  assert.equal(requirement.statusCode,201,requirement.body);
+  const session=await bookingAdmin.inject({method:"POST",url:"/api/calendar/sessions",payload:{serviceId:service.json().id,areaId:area.json().id,startsAt:new Date(Date.now()+3*86400000).toISOString(),durationMinutes:45,capacity:2}});
+  assert.equal(session.statusCode,201,session.body);
+  const blockedByNewVersion=await bookingAdmin.inject({method:"POST",url:`/api/calendar/sessions/${session.json().id}/reservations`,payload:{clientId:id}});
+  assert.equal(blockedByNewVersion.json().error,"required_documents_pending");
   await assert.rejects(
     sql`UPDATE client_consent_acceptances SET typed_name='Changed' WHERE client_id=${id}`,
     { code: "55000" },
   );
+});
+
+test("sensitive review content is not written to server logs",async()=>{
+  const chunks=[];
+  const isolated=buildServer("postgres://2j_local:2j_local_dev_only@127.0.0.1:1/unavailable",{authorizationResolver:async()=>({actorId:"log-reviewer",role:"admin"}),logger:{level:"error",stream:{write(chunk){chunks.push(String(chunk));}}}});
+  try {
+    const response=await isolated.inject({method:"POST",url:`/api/clients/${randomUUID()}/forms/${randomUUID()}/review`,payload:{assignmentId:randomUUID(),decision:"rejected",note:"PRIVATE_REVIEW_NOTE_2J060"}});
+    assert.equal(response.statusCode,500);
+    assert.equal(chunks.join("").includes("PRIVATE_REVIEW_NOTE_2J060"),false);
+  } finally { await isolated.close(); }
+});
+
+test("concurrent identical form responses replay the committed submission",async()=>{
+  const id=await createClient();
+  const form=await admin.inject({method:"POST",url:"/api/forms",payload:{name:`Respuesta idempotente ${randomUUID()}`,category:"general",fields:[{id:"answer",label:"Respuesta",type:"short_text",required:true}]}});
+  assert.equal(form.statusCode,201,form.body);
+  await admin.inject({method:"POST",url:`/api/forms/${form.json().id}/activate`});
+  const assignment=await trainer.inject({method:"POST",url:`/api/clients/${id}/form-assignments`,headers:{"idempotency-key":randomUUID()},payload:{formId:form.json().id,required:true}});
+  assert.equal(assignment.statusCode,201,assignment.body);
+  const headers={"idempotency-key":randomUUID()},payload={answers:{answer:"confirmado"}};
+  const results=await Promise.all([portal.inject({method:"POST",url:`/api/client-portal/form-assignments/${assignment.json().id}/respond`,headers,payload}),portal.inject({method:"POST",url:`/api/client-portal/form-assignments/${assignment.json().id}/respond`,headers,payload})]);
+  assert.deepEqual(results.map(result=>result.statusCode).sort(),[200,201]);
+  assert.equal(results[0].json().id,results[1].json().id);
+  const count=await sql`SELECT count(*)::int AS count FROM client_form_responses WHERE assignment_id=${assignment.json().id}`;
+  assert.equal(count[0].count,1);
+});
+
+test("client portal has no session without identity and cannot read another client's assignment", async()=>{
+  const anonymous=buildServer(process.env.DATABASE_URL);
+  try { assert.equal((await anonymous.inject({method:"GET",url:"/api/client-portal/consents"})).statusCode,401); }
+  finally { await anonymous.close(); }
+  const first=await createClient();
+  const form=await admin.inject({method:"POST",url:"/api/forms",payload:{name:`Privado ${randomUUID()}`,category:"general",fields:[{id:"answer",label:"Respuesta",type:"short_text",required:true}]}});
+  await admin.inject({method:"POST",url:`/api/forms/${form.json().id}/activate`});
+  const assignment=await trainer.inject({method:"POST",url:`/api/clients/${first}/form-assignments`,headers:{"idempotency-key":randomUUID()},payload:{formId:form.json().id,required:true}});
+  assert.equal(assignment.statusCode,201,assignment.body);
+  clientId=await createClient();
+  const isolated=await portal.inject({method:"GET",url:`/api/client-portal/form-assignments/${assignment.json().id}`});
+  assert.equal(isolated.statusCode,404);
 });
 
 test("required service documents block only new reservations, with audited admin override", async () => {
@@ -502,6 +580,10 @@ test("required service documents block only new reservations, with audited admin
   assert.equal(blocked.statusCode, 409);
   assert.equal(blocked.json().error, "required_documents_pending");
   assert.equal(blocked.json().missing[0].label, "Consentimiento operativo");
+  const noOverridePermission = await bookingTrainer.inject({ method:"POST", url:`/api/calendar/sessions/${session.json().id}/reservations`, payload:{clientId:id,overrideDocuments:true,documentOverrideReason:"Motivo de prueba"} });
+  assert.equal(noOverridePermission.statusCode,403);
+  const noReason = await bookingAdmin.inject({ method:"POST", url:`/api/calendar/sessions/${session.json().id}/reservations`, payload:{clientId:id,overrideDocuments:true} });
+  assert.equal(noReason.statusCode,400);
   const override = await bookingAdmin.inject({
     method: "POST",
     url: `/api/calendar/sessions/${session.json().id}/reservations`,

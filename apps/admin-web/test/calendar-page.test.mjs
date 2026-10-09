@@ -16,7 +16,7 @@ const service = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Fuerza 2J',
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const now = new Date(); const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
 const key = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-const baseData = { weekStart: key(monday), sessions: [], areas: [area], services: [service], templates: [], capabilities: { manage: true, attendance: true, overrideCapacity: false } };
+const baseData = { weekStart: key(monday), sessions: [], areas: [area], services: [service], templates: [], capabilities: { manage: true, attendance: true, overrideCapacity: false, overrideDocuments: false } };
 
 test('renders weekly loading and empty states, then allows stepping weeks', async () => {
   const requested = [];
@@ -185,4 +185,10 @@ test('booking cancellation and capacity override require in-app 2J confirmations
   assert.equal(overbooked, false);
   fireEvent.click(within(confirm).getByRole('button', { name: 'Autorizar sobrecupo' }));
   await waitFor(() => assert.equal(overbooked, true));
+});
+
+test('required document response shows exact missing item and authorized override requires reason',async()=>{
+  const session={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',serviceId:service.id,serviceName:service.name,areaId:area.id,areaName:area.name,templateId:null,source:'manual',startsAt:`${key(monday)}T18:00:00.000Z`,durationMinutes:60,capacity:2,status:'scheduled',isIndividual:false,occupiedCount:0,overbookCount:0,waitlistCount:0};let attempts=[];
+  globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/calendar/week'))return response({...baseData,sessions:[session],capabilities:{...baseData.capabilities,overrideDocuments:true}});if(path.endsWith(`/api/calendar/sessions/${session.id}/attendees`))return response({reservations:[],waitlist:[]});if(path.includes('/api/clients?'))return response({items:[{id:'ffffffff-ffff-4fff-8fff-ffffffffffff',firstName:'Lucía',lastName:'Martín'}]});if(path.endsWith(`/api/calendar/sessions/${session.id}/reservations`)){attempts.push(JSON.parse(options.body));return attempts.length===1?response({error:'required_documents_pending',missing:[{requirementId:'req-1',requirementType:'form',label:'PAR-Q'}]},409):response({id:'new-reservation'},201);}throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
+  render(React.createElement(CalendarPage));fireEvent.click(await screen.findByRole('button',{name:/Fuerza 2J/}));await screen.findByText('Aún no hay reservas.');const picker=screen.getByRole('combobox',{name:'Buscar cliente'});fireEvent.change(picker,{target:{value:'Lucía'}});await screen.findByRole('option',{name:'Lucía Martín'});fireEvent.keyDown(picker,{key:'ArrowDown'});fireEvent.keyDown(picker,{key:'Enter'});fireEvent.click(screen.getByRole('button',{name:'Reservar plaza'}));await screen.findByText('PAR-Q');assert.ok(screen.getByText('Faltan documentos para completar la reserva:'));assert.ok(screen.getByRole('checkbox',{name:'Continuar con excepción'}));fireEvent.click(screen.getByRole('checkbox',{name:'Continuar con excepción'}));fireEvent.change(screen.getByLabelText('Motivo obligatorio'),{target:{value:'Comprobado presencialmente'}});fireEvent.click(screen.getByRole('button',{name:'Reservar plaza'}));await waitFor(()=>assert.equal(attempts.length,2));assert.deepEqual(attempts[1],{clientId:'ffffffff-ffff-4fff-8fff-ffffffffffff',overrideDocuments:true,documentOverrideReason:'Comprobado presencialmente'});
 });
