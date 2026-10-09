@@ -126,6 +126,14 @@ export function ClientsPage() {
   useEffect(() => { void loadClients(null, false); }, [loadClients, refreshKey]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '');
+    const clientId = params.get('clientId');
+    const section = params.get('tab');
+    if (clientId && /^[0-9a-f-]{36}$/i.test(clientId)) setSelectedId(clientId);
+    if (section && ['summary','reservations','payments','training','progress','health','documents','messages','followup','history'].includes(section)) setActiveSection(section);
+  }, []);
+
+  useEffect(() => {
     let current = true;
     if (!selectedId) { setProfile(null); setProfileState('idle'); return () => { current = false; }; }
     setProfileState('loading');
