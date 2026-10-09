@@ -21,6 +21,7 @@
     "navigationBootstrap": "GET /api/session/capabilities resolves permitted navigation server-side independently of Command Center query success.",
     "cashSelection": "Matches GET /api/economics/cash/today: prioritize an open session, otherwise most recently opened local-today session; deterministic opened_at ordering and LIMIT 1.",
     "timeclockAttention": "Only an open clock-in whose effective corrected timestamp is on a prior Atlantic/Canary date is attention; workingNow counts active professionals only; extra_availability is excluded from absence metrics.",
+    "catalogArchiveConcurrency": "Service creation holds a shared lock on its active area inside the insert transaction so it serializes with area archival.",
     "demo": "Explicit additive and repeat-safe synthetic seed, restricted to development/test, loopback PostgreSQL and database name 2j_demo. Never runs on API startup.",
     "quickActions": "Permission-filtered navigation links into existing modules; no fake create/payment/send behaviors."
   },
