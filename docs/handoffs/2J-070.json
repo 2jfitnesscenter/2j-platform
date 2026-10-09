@@ -1,0 +1,49 @@
+{
+  "taskId": "2J-070",
+  "title": "Command Center, App Shell, integración visual y demo operativa",
+  "status": "awaiting_independent_review",
+  "baseSha": "9004921b9752ae4df75b5fa2ff8240cc47a3711d",
+  "branch": "agent/codex/2J-070-command-center-app-shell-demo",
+  "pullRequest": {
+    "number": 13,
+    "url": "https://github.com/2jfitnesscenter/2j-platform/pull/13",
+    "draft": true,
+    "merged": false
+  },
+  "codeShaBeforeHandoffUpdate": "e57d00d7a0c0f2535c73ece653d660e9a491ada5",
+  "mergePolicy": "Do not merge before independent Claude and Antigravity reviews, visual evidence, and green CI on the same final SHA.",
+  "migrations": [],
+  "implementation": {
+    "appShell": "Shared responsive navigation for implemented 2J modules; preserves module hashes and displays permission-based navigation.",
+    "commandCenter": "GET /api/dashboard/command-center aggregates today's calendar, clients, attention, economics, team and unread communications from existing domain tables.",
+    "globalSearch": "GET /api/search covers active clients, professionals and active services only; no messages, health or document response content.",
+    "demo": "Explicit additive and repeat-safe synthetic seed, restricted to development/test, loopback PostgreSQL and database name 2j_demo. Never runs on API startup.",
+    "quickActions": "Permission-filtered navigation links into existing modules; no fake create/payment/send behaviors."
+  },
+  "security": {
+    "authorization": "Every read-model block and global search group is gated server-side using existing capabilities.",
+    "cache": "Command Center and search replies are marked Cache-Control: no-store.",
+    "sensitiveData": "No client messages, health responses, PAR-Q answers, or document contents are returned by the read models.",
+    "demoProfile": "LOCAL_DEMO_ROLE is development-only and loopback-bound; not production authentication.",
+    "productionSeedAttempt": "rejected before connecting"
+  },
+  "verification": {
+    "postgres": { "status": "PASS", "evidence": "PostgreSQL 17 isolated disposable databases; 13 checksummed migrations verified." },
+    "tests": { "status": "PASS", "count": 161, "packageTests": 16, "apiPostgres": 98, "adminUi": 47 },
+    "typecheck": { "status": "PASS", "packages": 7 },
+    "build": { "status": "PASS", "packages": 7 },
+    "demoSeed": { "status": "PASS", "repeatRuns": 2, "evidence": "12 clients, 12 client events, 1 session, 3 reservations, 1 waitlist row after both runs." },
+    "dependencyAudit": { "status": "PASS", "evidence": "pnpm audit --audit-level high: no known vulnerabilities." },
+    "diffCheck": { "status": "PASS", "evidence": "git diff --check returned clean." },
+    "secretScan": { "status": "PENDING_CI" },
+    "githubCi": { "status": "PENDING_FINAL_SHA" },
+    "visualResponsive": {
+      "status": "PENDING_REAL_BROWSER_CAPTURE",
+      "viewports": [1440, 768, 390],
+      "captures": [],
+      "evidenceFile": "docs/evidence/2J-070/README.md"
+    }
+  },
+  "pendingIndependentReview": ["Claude backend/permissions/performance", "Antigravity product/accessibility/responsive"],
+  "scopeGuard": "No 2jfitnessapp changes, no duplicated training/Búnker/Health, no production credentials, no module feature expansion, no PR merge."
+}
