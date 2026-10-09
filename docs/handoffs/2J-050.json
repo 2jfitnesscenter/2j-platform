@@ -29,11 +29,11 @@
     "build": {"result": "PASS", "packages": 7},
     "dependency_audit": {"result": "PASS", "evidence": "No known vulnerabilities found."},
     "diff_check": {"result": "PASS"},
-    "github_quality_secret_scan": {"result": "PENDING_FINAL_PR_HEAD"}
+    "github_quality_secret_scan": {"result": "PASS", "evidence": "Push and pull_request quality + secret scan passed for implementation SHA 187cd72d7faa49bce9f278054ad678f30d58705d; rerun required if the documentation commit changes the PR head."}
   },
   "evidence": {
     "visual_reviewed": ["local browser screenshot after corrections"],
-    "responsive_dimensions": ["1440x1000", "768x1024", "390x844"],
+    "last_browser_capture": "1265x712",
     "persistent_screenshots": false,
     "note": "The browser runtime displays screenshots inline but does not expose them as persistent workspace files. Responsive measurements need fresh confirmation on the final head if viewport control is available; do not overstate this evidence."
   },
