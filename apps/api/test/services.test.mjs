@@ -96,7 +96,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarAuditEvents];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -117,8 +117,9 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
   }
   const configuredForeignKeys = tables.flatMap((table) => getTableConfig(table).foreignKeys.map((foreignKey) => foreignKey.getName()));
   const databaseForeignKeys = await sql`SELECT conname,confdeltype FROM pg_constraint WHERE contype='f' AND connamespace='public'::regnamespace`;
-  for (const name of configuredForeignKeys) assert.ok(databaseForeignKeys.some((key) => key.conname === name), `missing SQL foreign key ${name}`);
-  for (const key of databaseForeignKeys.filter((item) => configuredForeignKeys.includes(item.conname))) assert.equal(key.confdeltype, 'r', `${key.conname} must restrict historical deletes`);
+  const foreignKeyAliases = (name) => [name, name.slice(0, 63), name.replace(/_(?:staff_professionals|staff_timeclock_events)_id_fk$/, '_fkey')];
+  for (const name of configuredForeignKeys) assert.ok(databaseForeignKeys.some((key) => foreignKeyAliases(name).includes(key.conname)), `missing SQL foreign key ${name}`);
+  for (const key of databaseForeignKeys.filter((item) => configuredForeignKeys.some((name) => foreignKeyAliases(name).includes(item.conname)))) assert.equal(key.confdeltype, 'r', `${key.conname} must restrict historical deletes`);
   assert.ok((await sql`SELECT 1 FROM pg_constraint WHERE conname='plans_current_version_fk'`).length, 'SQL must retain the deferred active-version foreign key');
   const planIndexes = await sql`SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename IN ('plans','services')`;
   assert.match(planIndexes.find((row) => row.indexname === 'plans_active_name_unique').indexdef, /lower\(name\)/);

@@ -8,8 +8,8 @@ export interface AuthorizationContext {
 
 export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> = {
   admin: ['*'],
-  trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read', 'reservations.manage', 'reservations.attendance', 'scheduling.override_capacity', 'billing.validate_transfer', 'billing.debt.override'],
-  'reception-management': ['clients.read', 'calendar.read', 'reservations.manage', 'billing.read-basic', 'timeclock.read'],
+  trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read', 'reservations.manage', 'reservations.attendance', 'scheduling.override_capacity', 'billing.validate_transfer', 'billing.debt.override', 'staff.read', 'staff.schedule.read', 'staff.schedule.manage', 'staff.schedule.override', 'staff.absence.read', 'staff.absence.manage', 'staff.substitution.manage', 'timeclock.self'],
+  'reception-management': ['clients.read', 'calendar.read', 'reservations.manage', 'billing.read-basic', 'timeclock.read', 'staff.read', 'staff.schedule.read', 'staff.absence.read', 'timeclock.self'],
   accountant: ['billing.read-basic', 'billing.read-tax', 'billing.export'],
 };
 
@@ -17,7 +17,7 @@ export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> 
 export const knownPermissions: ReadonlySet<string> = new Set([
   'clients.read', 'clients.manage', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'timeclock.read',
   'reservations.manage', 'reservations.attendance', 'billing.read-basic', 'billing.payments.manage', 'billing.cash.manage', 'billing.invoices.manage', 'billing.read-tax', 'billing.write-tax', 'billing.export', 'billing.validate_transfer', 'billing.debt.override', 'scheduling.override_capacity',
-  'staff.timeclock.correct', 'settings.manage',
+  'staff.read', 'staff.manage', 'staff.schedule.read', 'staff.schedule.manage', 'staff.schedule.override', 'staff.absence.read', 'staff.absence.manage', 'staff.substitution.manage', 'timeclock.self', 'timeclock.manage', 'timeclock.audit', 'staff.timeclock.correct', 'settings.manage',
 ]);
 
 /** Deny-by-default. Client visibility must never replace this server check. */

@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2J-050",
+  "agent": "codex",
+  "branch": "agent/codex/2J-050-staff-team-timeclock",
+  "pull_request": "Created after pushing final implementation branch; see final PR URL in close-out.",
+  "status": "REVIEW_PENDING_PUBLICATION",
+  "starting_head": "a2b63c07cccae87454700f5df6c0dad745af9bb9",
+  "implementation_head": "The published PR head is the reviewed implementation SHA; use the current headRefOid for independent review.",
+  "scope": [
+    "Staff professional records, role metadata, archival and account linking",
+    "Capability-based team access and calendar availability integration",
+    "Weekly working schedules, exceptions and explicit substitutions",
+    "Append-only timeclock events, corrections, audit and day/week/month observed-hour summaries",
+    "Responsive team dashboard and professional profile"
+  ],
+  "permissions": [
+    "staff.read", "staff.manage", "staff.schedule.read", "staff.schedule.manage",
+    "staff.schedule.override", "staff.absence.read", "staff.absence.manage",
+    "staff.substitution.manage", "timeclock.self", "timeclock.manage",
+    "timeclock.audit", "staff.timeclock.correct"
+  ],
+  "migration": "apps/api/migrations/0008_staff_team_timeclock.sql",
+  "timezone": "Atlantic/Canary",
+  "verification": {
+    "database_migrations": { "result": "PASS", "evidence": "8 checksummed migrations applied to a disposable PostgreSQL 17 instance." },
+    "full_test_suite": { "result": "PASS", "count": 126, "evidence": "3 token, 3 domain, 5 permission, 2 auth, 3 audit, 77 API/PostgreSQL, 33 admin UI; PostgreSQL started empty." },
+    "typecheck": { "result": "PASS", "packages": 7 },
+    "build": { "result": "PASS", "packages": 7 },
+    "dependency_audit": { "result": "PASS", "evidence": "No known vulnerabilities found." },
+    "diff_check": { "result": "PASS" },
+    "github_quality_secret_scan": { "result": "PENDING_PR" }
+  },
+  "evidence": {
+    "visual_reviewed": ["1440x1000", "768x1024", "390x844"],
+    "horizontal_document_overflow": false,
+    "persistent_screenshots": false,
+    "note": "Captured and inspected with the local browser during this task. Current browser runtime exposes screenshots inline but not as a workspace file."
+  },
+  "out_of_scope": [
+    "Payroll, salaries, contracts, legal overtime, collective agreements and accrued vacation calculations",
+    "Biometrics, GPS, geofencing, facial recognition and invasive monitoring",
+    "Automatic cancellation or reassignment of calendar sessions",
+    "Production SSO or identity-provider provisioning"
+  ],
+  "known_findings": [
+    "Admin UI exposes creation and self clocking plus profile sections, but not every API management action (role editing, status/archive, account linking, exception cancellation, schedule archive, substitution reassign/cancel, manual timeclock and correction). Follow-up UX pass recommended.",
+    "Staff base role remains profile metadata; production authentication-provider integration is not part of this TASK.",
+    "Manual screen-reader validation and persistent PNG evidence remain pending."
+  ],
+  "reviews": {
+    "claude_backend_security": "PENDING_FINAL_SHA",
+    "antigravity_ux_accessibility": "PENDING_FINAL_SHA",
+    "merge": "DO_NOT_MERGE"
+  },
+  "legal_hr_decision": "No legal calculation is implemented. Escalate any concrete labor-law rule as LEGAL/HR DECISION REQUIRED."
+}
