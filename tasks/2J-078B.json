@@ -3,7 +3,7 @@
   "title": "Shared person identity and Training contract foundation",
   "status": "ready_for_independent_review",
   "branch": "agent/codex/2J-078B-person-identity-training-contracts",
-  "baseSha": "fc97458100b45db51475b37470e75cf2bb76d687",
+  "baseSha": "8be96c1ba2f975e87397279a992c17fcfd27beb5",
   "live": false,
   "trainingRepositoryTouched": false,
   "providerTrafficEnabled": false,
@@ -16,6 +16,7 @@
     "platformLocalClientStaffFacets": true,
     "oneTrainingLinkPerPerson": true,
     "personScopedV1Contracts": true,
+    "capabilitiesAreFacetLabelsNotPermissions": true,
     "serverPermissionRequired": true,
     "trainingSummaryFailSoftReadAdapter": true,
     "syntheticLocalLinkMutationsDefaultOff": true,
@@ -24,7 +25,7 @@
     "noEmailPhoneMatching": true
   },
   "lifecycle": { "identityFoundation": "implemented", "localLinkStorage": "implemented", "remoteLifecycle": "not_implemented", "dualProof": "not_implemented", "sso": "not_implemented", "trainingAccessEnforcement": "not_implemented" },
-  "verification": { "fullSuite": "227/227 passed; zero skipped", "migrations": "22 checksummed migrations verified on fresh PostgreSQL 17 database", "typecheck": "9/9 packages passed", "build": "9/9 packages passed", "audit": "no known high severity vulnerabilities", "diffCheck": "pass", "secretScan": "passed on hardening code SHA 7449f044a7418172dda006fd76723b24febd57d2" },
-  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "quality and secret scan passed on hardening code SHA 7449f044a7418172dda006fd76723b24febd57d2" },
+  "verification": { "fullSuite": "227/227 passed; zero skipped on rebased tree", "migrations": "22 checksummed migrations verified and repeat-tested on fresh PostgreSQL 17", "typecheck": "9/9 packages passed", "build": "9/9 packages passed", "audit": "no known high severity vulnerabilities", "diffCheck": "pass", "secretScan": "pending on rebased PR head" },
+  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "pending on rebased head" },
   "pullRequest": { "number": 22, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/22", "state": "open", "draft": true, "merged": false }
 }

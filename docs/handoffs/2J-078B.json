@@ -1,7 +1,7 @@
 {
   "taskId": "2J-078B",
   "status": "ready_for_independent_review",
-  "baseSha": "fc97458100b45db51475b37470e75cf2bb76d687",
+  "baseSha": "8be96c1ba2f975e87397279a992c17fcfd27beb5",
   "branch": "agent/codex/2J-078B-person-identity-training-contracts",
   "decision": {
     "sharedIdentifier": "personId",
@@ -14,6 +14,7 @@
     "trainingRolesRemainLocal": true
   },
   "contracts": ["PlatformSubject/v1", "LinkProposal/v1", "AccessGrant/v1", "TrainingSummary/v1"],
+  "subjectCapabilitiesSemantics": "retained V1 field name for compatibility; client/staff are facet labels, not permissions/RBAC; server-side local authorization remains authoritative",
   "persistence": ["platform_persons", "platform_person_clients", "platform_person_staff", "training_account_links", "platform_identity_audit_events"],
   "migration": "0022_person_training_identity.sql",
   "providerTraffic": "disabled_by_default; requires explicit configuration and injected signer",
@@ -27,21 +28,21 @@
   "credentialsStored": false,
   "live": false,
   "verification": {
-    "fullSuite": "227/227 passed; zero skipped",
-    "api": "139/139 on fresh PostgreSQL 17 test database",
+    "fullSuite": "227/227 passed; zero skipped on rebased tree",
+    "api": "139/139 on fresh PostgreSQL 17 database",
     "adminWeb": "57/57",
     "clientApp": "6/6",
     "staffApp": "7/7",
     "sharedPackages": "18/18",
-    "migrations": "22 checksummed migrations verified on fresh PostgreSQL 17 database",
+    "migrations": "22 checksummed migrations verified and repeat-tested on fresh PostgreSQL 17",
     "typecheckPackages": "9/9",
     "buildPackages": "9/9",
     "dependencyAudit": "no known high severity vulnerabilities",
     "diffCheck": "pass",
     "visualEvidence": "not applicable; backend-only",
-    "localSecretScan": "CLI unavailable; GitHub secret scan passed on hardening code SHA 7449f044a7418172dda006fd76723b24febd57d2"
+    "localSecretScan": "CLI unavailable; updated GitHub secret scan pending"
   },
-  "review": { "security": "pending", "qa": "pending", "ci": "quality and secret scan passed on hardening code SHA 7449f044a7418172dda006fd76723b24febd57d2" },
+  "review": { "security": "pending", "qa": "pending", "ci": "pending on rebased head" },
   "pullRequest": { "number": 22, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/22", "state": "open", "draft": true, "merged": false },
   "merged": false
 }
