@@ -11,7 +11,7 @@
 
 The two applications have distinct identities, authentication systems, persistence, and domain ownership today. Platform has UUID client records and management domains; Training has a random internal user id, WebAuthn passkeys, a signed host-local session cookie, and an encrypted per-user state file. Platform's authentication resolver is an injected runtime boundary and defaults to unauthenticated; its client self-service resolver is also injected. There is no current cross-product identity link, SSO, entitlement bridge, Training summary gateway, or cross-database access. Existing `training.read` and `health.read` permissions are authorization vocabulary for future Platform surfaces, not proof that a Training data integration exists.
 
-The safe target is to keep `clients.id` as the commercial/operational `centralClientId` and keep `Training user.id` as the Training subject. A separately audited 1:1 account-link maps them after proof of control of both accounts. Training retains passkeys and all Training-owned information. Platform remains owner of membership, plans/rights, reservations, billing, staff, forms, communications and notifications. Any future cross-product data is a narrow, versioned API DTO, never a shared database, copied Training state, or implicit profile sync.
+The safe target is a conceptual central human identity, `personId`, distinct from product/domain identifiers. `clients.id` remains the commercial/operational client-facet identifier (`centralClientId`), Training `user.id` remains the Training subject (`trainingUserId`), and staff/professional identifiers remain their own facet identifiers. A separately audited link maps the existing Training identity to `personId` only after proof of control of both accounts. Training retains passkeys and all Training-owned information. Platform remains owner of membership, plans/rights, reservations, billing, staff, forms, communications and notifications. Any future cross-product data is a narrow, versioned API DTO, never a shared database, copied Training state, or implicit profile sync.
 
 No email or phone is collected in Training's current public registration flow. Names, handles, and contact details must not be used to silently merge accounts. Existing passkeys can remain usable if the account and RP ID remain unchanged; they are not portable credentials that can be copied into a new identity provider.
 
@@ -74,6 +74,90 @@ flowchart LR
 
 The applications deploy separately and have separate origin/host configuration, secrets, API processes, and stores. Training's backend is a Node HTTP API with JSON-file stores; `state-<uid>.json` is encrypted at rest by `api/lib/state-store.js`. Platform uses PostgreSQL, SQL migrations and permission-aware APIs. The audited Platform API is loopback-only unless an approved runtime resolver is provided; the default resolver returns `null`. Treat both as separate deployables and availability domains.
 
+## 1A. Proposed central person and independent facets
+
+This is a conceptual recommendation for a later TASK, **not an implemented schema or accepted product decision**. 2J-078A introduces no `people` table, `personId`, identity provider, or cross-system link.
+
+```mermaid
+flowchart TB
+  AUTH[Authenticated subject / actor]
+  PERSON[personId — conceptual human identity root]
+  CLIENT[Client facet: centralClientId = clients.id]
+  STAFF[Staff facet: staffId / professionalId]
+  TRAIN[Training facet: trainingUserId = Training user.id]
+  AUTH -->|verified mapping, when available| PERSON
+  PERSON --> CLIENT
+  PERSON --> STAFF
+  PERSON --> TRAIN
+  CLIENT --> CLIENT_AUTH[Client capabilities only]
+  STAFF --> STAFF_AUTH[Staff capabilities only]
+  TRAIN --> TRAIN_AUTH[Training roles and capabilities only]
+```
+
+One human may have zero, one, or several facets/accounts: client only, staff only, client plus staff, client plus staff plus Training, or future combinations.
+Illustrative relationships only; neither names nor schema are final:
+
+```text
+people: id=personId, status, created_at, updated_at
+client facet: clientId=centralClientId, personId
+staff facet: staffId/professionalId, personId
+external account link: id, personId, provider/domain=training,
+  remote_subject_id=trainingUserId, status, proof_method, verified_at, link_version
+```
+
+Example identifiers `personId=PERSON-1`, `centralClientId=CLIENT-15`, `staffId=STAFF-4` and `trainingUserId=abc123` can all refer to one human while keeping separate namespaces.
+### Future Hub identity and capability view
+
+```mermaid
+flowchart LR
+  HUB[One future Hub sign-in]
+  SUBJECT[Central identity subject]
+  PERSON[personId]
+  CLIENT[Client facet / centralClientId]
+  STAFF[Staff facet / staffId]
+  TRAIN[Training account / trainingUserId]
+  CAP[Server-side contextual capabilities]
+  HUB --> SUBJECT --> PERSON
+  PERSON --> CLIENT
+  PERSON --> STAFF
+  PERSON --> TRAIN
+  PERSON --> CAP
+  CAP -->|member: reservations, profile| CLIENT
+  CAP -->|member: Training, when linked and allowed| TRAIN
+  CAP -->|staff: agenda, clients, team| STAFF
+  CAP -->|admin: management, economics, configuration| STAFF
+```
+
+This shows one human identity with separately authorized contexts, not shared roles or a final UX selector design. Capabilities, not duplicate accounts, determine which context/actions are available.
+
+`personId` is the conceptual cross-facet identity root; it must not be represented by `clients.id`, `staff.auth_actor_id`, or Training `user.id`. `centralClientId` remains the identifier for client-domain records such as memberships, reservations, payments and Client 360. Existing client-only workflows continue to use it. A future account-link foundation should associate client and staff facets to a person rather than make the client facet the root; this avoids re-rooting identity if a client later becomes staff or trainer.
+
+### Identity and authorization are separate
+
+The conceptual relation is `authentication subject → verified personId → zero or more domain facets`. Authentication proves control of an account/session; `personId` represents one linked human; each bounded context separately grants capabilities against its own resources. A future Hub session can expose member actions (reservations, Training, profile), staff actions (agenda, clients, team) and admin actions (management, economics, configuration) only when the corresponding server-side capabilities allow them. This illustrates capability-based availability only; it does not prescribe final selector UX. Linkage never copies permissions. A Training `admin` or `trainer` role grants no Platform role, and Platform Trainer/Reception/Management/Admin capabilities grant no Training role. Authorization remains contextual and server-side.
+
+Current `staff.auth_actor_id` is an authentication actor/subject reference, not a canonical human id. If staff is linked later, resolve that actor to `personId` through an explicit verified identity mapping, then link the existing Training `trainingUserId` to that same person after fresh proof of both accounts. Do not equate an auth subject to `personId` because their values happen to match; never link by name, email, phone, or role.
+
+### Profile ownership
+
+Keep any future person record minimal: `id` (`personId`), lifecycle `status`, `created_at`, `updated_at`, verified identity/link metadata and only canonical attributes required to identify the human. These identity-person attributes are distinct from domain display attributes. Client contact, commercial and membership fields remain client-facet data; staff employment/professional and operational attributes remain staff-facet data; Training display name, username, avatar and preferences remain Training-owned. Names may intentionally differ across products; do not silently synchronize profile fields or bidirectionally sync profiles. Health, progress and workout data remain Training-owned regardless of person linkage.
+
+### Link and facet lifecycle
+
+Client archive, staff deactivation, Training suspension/deletion, and unlink are independent domain events. Archiving a client does not delete the person, staff facet, Training account, credentials or Training history. Deactivating staff does not delete the client or Training account. Training account deletion does not erase Platform client/staff records. Unlinking marks the relevant mapping inactive/revoked, invalidates dependent access/cache versions and is audited; it does not cascade-delete either side. Retain the person/link audit under a future approved retention policy; never infer deletion from timeout or provider outage.
+
+### Conceptual acceptance cases for a future identity/link TASK
+
+| Case | Starting state | Expected result |
+|---|---|---|
+| A — regular client | Person has client facet and existing Training account is independently authenticated | Link existing `trainingUserId` to the same `personId`; keep `centralClientId`; create no Training account. |
+| B — trainer, not a client | Person has staff facet and existing Training account | Link existing `trainingUserId` to that `personId` after staff actor/person proof and fresh Training account proof; do not create a client facet or map roles. |
+| C — trainer who also trains | Person has staff, client and Training facets | Resolve one `personId` with separate `staffId`, `centralClientId` and `trainingUserId`; keep authorization contextual. |
+| D — admin without Training | Person has staff/admin facet and no Training account | Keep the person and staff facet; no Training link/account is required or created. |
+| E — Reception later becomes a client | Person initially has staff facet only, then acquires client facet | Attach the new client facet to the same `personId`; do not create another person. Proof/ambiguity failures must also fail closed. |
+
+For staff linking, explicitly verify the existing Platform staff actor/person mapping, then require fresh proof of the existing Training account; never use role, name, or automatic email matching. The link ceremony requires fresh, independent proof of the Platform identity and existing Training account, bound to a one-time nonce/state and explicit confirmation. If the Platform person-identity layer is unavailable, defer linking rather than substituting `centralClientId`. Future storage may choose table names and constraints, but should model `personId` as the root and external account links as provider/subject mappings.
+
 ## 2. Training identity and passkey flow
 
 ### User identifiers and profile
@@ -125,7 +209,7 @@ Observed behavior:
 
 ### Can existing passkeys be kept?
 
-**Yes, if Training keeps the same Training account, credential rows, RP ID and accepted origins.** A passkey is scoped to its relying party and authenticator; its private key is not available to migrate. Linking an unchanged Training account to a `centralClientId` does not require re-registering credentials. Keep `app.2jfitnesscenter.com` and its RP ID stable, add a federated handoff only at a later phase, and retain passkey login/recovery as a tested fallback. Changing RP ID or recreating Training users is a credential migration with material lockout risk and is explicitly out of scope.
+**Yes, if Training keeps the same Training account, credential rows, RP ID and accepted origins.** A passkey is scoped to its relying party and authenticator; its private key is not available to migrate. Linking an unchanged Training account to its `personId` mapping does not require re-registering credentials. Keep `app.2jfitnesscenter.com` and its RP ID stable, add a federated handoff only at a later phase, and retain passkey login/recovery as a tested fallback. Changing RP ID or recreating Training users is a credential migration with material lockout risk and is explicitly out of scope.
 
 The repository config accepts a web `ORIGIN` and exact Android app-key-hash origins in `api/lib/webauthn-origins.js`; deployment values are environment configuration and were not read. Production RP ID/origin values must be confirmed by operators as part of 078B/078D, not inferred from local files.
 
@@ -171,8 +255,8 @@ Búnker uses Training accounts, a separately authorized shared device/room, memb
 
 | Resource | Current Platform representation / authority | Cross-system boundary |
 |---|---|---|
-| Client identity | `clients.id` UUID with first/last name, optional email/phone, active/archived status and audit events. Active email is unique when present. No Training id link exists. | Proposed `centralClientId`; linking record added in a later task, not this one. |
-| Staff identity | Staff professionals and `auth_actor_id` mapping; staff roles are local to Platform. | Never map Training `trainer`/`admin` flags as Platform permissions. |
+| Client facet identity | `clients.id` UUID with first/last name, optional email/phone, active/archived status and audit events. Active email is unique when present. No person or Training link exists. | Proposed `centralClientId`; associate this facet to conceptual `personId` in a later identity task. |
+| Staff facet identity | Staff professionals and `auth_actor_id` mapping; staff roles are local to Platform. `auth_actor_id` is an actor subject, not `personId`. | Resolve through explicit verified actor-to-person mapping later; never map Training `trainer`/`admin` flags as Platform permissions. |
 | Authentication | API receives resolvers for staff/admin `AuthorizationContext` and client self-service context. Resolver defaults to `null`; HTTP production host is restricted to loopback until a runtime auth provider is approved. | Central login/provider is not yet operational. Future integration must follow an approved Platform identity/session service, not piggyback on Training cookies. |
 | Plans, rights, membership/access | Services, versioned plans, client plan assignments and entitlement ledger/effective balances; Platform DB + APIs. | Platform owns access decisions. Training may receive a signed/read API result or short-lived capability, never query the database. |
 | Reservations/calendar | Calendar sessions, reservations, waitlist and eligibility in Platform APIs/PostgreSQL. | Platform remains sole owner; Training can show no reservation details unless a later DTO is approved. |
@@ -188,8 +272,8 @@ Platform's `client-app` self-service API is designed to derive the client's id f
 “Read” below means a future, explicitly authorized API projection, not current access. No write is authorized across the boundary in 078A.
 
 | Domain/resource | Current / future owner | Consumer | Proposed method | Write authority | Failure policy |
-|---|---|---|---|---|---|
-| Client identity / `centralClientId` | Platform / Platform | Hub, Training link adapter | Versioned identity/link API | Platform for client; link requires dual proof | Fail closed for protected access; preserve existing Training login |
+|---|---|---|---|---|
+| Human identity / `personId` | Proposed Platform identity root / Platform | Hub, client and staff facets, Training link adapter | Versioned identity/link API | Explicit verified identity mapping | Fail closed; no identity fallback to a facet id |
 | Training account / `trainingUserId` | Training / Training | Platform link service | Link-confirmation API only | Training for its account | Orphan mapping inactive; never create a replacement account automatically |
 | Account link | None / Platform mapping + Training acknowledgment | Both systems | Audited, idempotent link/unlink commands | Dual authenticated proof; controlled admin override only after member proof process | Pending/conflict state, no data access |
 | Passkeys and credentials | Training / Training | Training auth only | No credential transfer; future federated assertion | Training/authenticator | Existing passkey remains available |
@@ -210,7 +294,7 @@ Platform's `client-app` self-service API is designed to derive the client's id f
 | Data | May appear in both? | Rule |
 |---|---|---|
 | Client name/email/phone | Similar display values may exist in separate products | No automatic overwrite. Platform contact remains Platform truth; Training display name remains Training truth. Show separately or deliberately map one display field after product approval. |
-| IDs | Yes, distinct IDs | Keep both `centralClientId` and `trainingUserId`; never reuse one namespace as the other. |
+| IDs | Yes, distinct identifiers | Keep `personId` as proposed human identity root, `centralClientId` for the client facet, staff identifiers/actor subjects for staff, and `trainingUserId` for Training. Never reuse one namespace as another. |
 | Membership and access | No duplicate source of truth | Platform-only. Training consumes the minimum signed result; never infers access from a local account flag. |
 | Routine/workout/Health records | No replication | Training-only. Hub projections are ephemeral/minimized read models, identified by link and source timestamp. |
 | Reservations / Búnker attendance | No entity merge | Platform reservation and Training Búnker check-in/workout are separate facts, with no inferred attendance equivalence. |
@@ -260,12 +344,13 @@ No Training gateway, Platform-entitlement callback, account-link API, OIDC issue
 
 ### Recommended link model
 
-Platform `clients.id` remains the central/commercial client id. Training `db.users[].id` remains the Training account id. In 078B, add a Platform-owned mapping with a uniqueness invariant for at most one active Training account per Platform client and at most one active Platform client per Training account. Suggested conceptual record:
+`personId` is the proposed conceptual root; `clients.id` remains the client-facet id and Training `db.users[].id` remains the Training account id. In a later identity/link TASK, first define verified mappings from client/staff facets and auth actors to `personId`; then link at most one active Training account to a person and at most one active person to a Training account. Suggested conceptual record:
 
 ```text
 training_account_links
   id (opaque link id)
-  central_client_id (Platform UUID, FK to clients)
+  person_id (conceptual Platform UUID, FK to people; proposed root)
+  central_client_id (Platform UUID, client facet reference for client-domain use)
   training_user_id (opaque string; remote identifier, not Training DB FK)
   status (pending | active | suspended | unlink_pending | unlinked | disputed)
   initiated_at, linked_at, verified_at, unlinked_at
@@ -275,7 +360,15 @@ training_account_links
   created_at, updated_at
 ```
 
-Unique constraints should apply to active/pending mappings, and link lifecycle changes should produce an immutable audit event. Do not keep credential IDs, public keys, passkey responses, birth date, phone/email, routine content, or Health data in this mapping. Prefer an opaque account-link id exposed to Training; store the reverse mapping only as needed by each owner.
+Unique constraints should apply to active/pending mappings, and link lifecycle changes should produce an immutable audit event.
+#### Account-link root alternatives
+
+| Option | Model | Benefit | Long-term cost | Recommendation |
+|---|---|---|---|---|
+| A — person root | `external_account_links(personId, provider/domain, remote_subject_id=trainingUserId, status, proof_method, verified_at, link_version)`; client/staff facets separately attach to person | Supports client-only, staff-only and multi-facet people uniformly | Requires the future Platform identity layer and verified facet mappings before linking | **Recommend.** Avoids moving a Training link when a trainer later becomes a client or vice versa. |
+| B — client root | `training_account_links(centralClientId, trainingUserId)` | Fits current client-only operational flows | Staff-only trainers cannot link naturally; later conversion requires a new person root and careful link migration/reconciliation | Interim compatibility only if person identity is unavailable; not the long-term architecture. |
+
+A client may initiate a link from its client context; the verified link belongs to `personId`, while `centralClientId` remains available as relevant client-facet context. Do not keep credential IDs, public keys, passkey responses, birth date, phone/email, routine content, or Health data in this mapping. Prefer an opaque account-link id exposed to Training; store the reverse mapping only as needed by each owner.
 
 ### Linking options compared
 
@@ -289,10 +382,10 @@ Unique constraints should apply to active/pending mappings, and link lifecycle c
 
 ### Proposed flow and invariants
 
-1. Authenticated client opens “Link Training account” from Platform and requests a single-use opaque nonce bound to `centralClientId`, session, purpose `account-link`, expiration (≤5 minutes), and random `state`.
+1. An authenticated person/facet owner opens “Link Training account” from the appropriate Platform context and requests a single-use opaque nonce bound to verified `personId`, actor/session, purpose `account-link`, expiration (≤5 minutes), and random `state`. `centralClientId` may be included only as the client facet context, not as the identity root.
 2. Browser navigates to the existing Training origin. Training requires the existing account's passkey-backed session (or a fresh passkey assertion for this sensitive action); a logged-out visitor signs into the existing account.
 3. Training displays a confirmation naming the destination Platform account in privacy-minimized form and returns an authorization code bound to nonce, audience, exact callback, and proof method. Do not put user ids, email, tokens, or signed long-lived assertions in URLs.
-4. Platform backend exchanges the code over TLS directly with Training backend and verifies one-time use, state, audience, `centralClientId`, `trainingUserId`, expiry, signature/channel, and assurance. Both sides persist an audit receipt and an idempotent link id.
+4. Platform backend exchanges the code over TLS directly with Training backend and verifies one-time use, state, audience, `personId`, `trainingUserId`, expiry, signature/channel, and assurance. The client/staff facet context is separately validated. Both sides persist an audit receipt and an idempotent link id.
 5. Link activates only when both sides confirm. Conflicts, duplicate active mappings, disabled accounts, or a mismatching existing link fail closed and enter a manual review state; they never create another Training user.
 6. Unlink/revocation increments link version and revokes derived tokens. It does not delete either account or history. Re-link requires proof again. Account deletion on either product needs a distinct coordinated lifecycle contract.
 
@@ -302,7 +395,7 @@ Staff can trigger/resend an invitation and view link status with permission, but
 
 ### Recommended direction
 
-Use an OAuth 2.1/OIDC-style authorization-code handoff with PKCE for the browser, exact registered redirect URI, `state` and `nonce`, short TTL, one-time code, audience restriction and a server-to-server exchange. The Hub authenticates the member; Training validates a code issued by the trusted Platform identity/link service and establishes its own local Training session for the already linked `trainingUserId`. Access/entitlement is fetched server-to-server from Platform or carried as a very short-lived signed, audience-restricted claim and checked against current link/version. A refresh token, if ever needed, remains server-side and revocable.
+Use an OAuth 2.1/OIDC-style authorization-code handoff with PKCE for the browser, exact registered redirect URI, `state` and `nonce`, short TTL, one-time code, audience restriction and a server-to-server exchange. The Hub authenticates the member to the Platform identity service; that service resolves the verified `personId` and selected domain facet; Training validates a code issued by the trusted Platform identity/link service and establishes its own local Training session for the already linked `trainingUserId`. Access/entitlement is fetched server-to-server from Platform or carried as a very short-lived signed, audience-restricted claim and checked against current link/version. A refresh token, if ever needed, remains server-side and revocable.
 
 Do not use a shared parent-domain cookie, long-lived JWT in query parameters, token in local storage, a browser-only Platform-signed user id, direct passkey credential migration, shared signing secrets, or a Training URL that trusts caller-supplied `centralClientId`.
 
@@ -312,11 +405,11 @@ Do not use a shared parent-domain cookie, long-lived JWT in query parameters, to
 sequenceDiagram
   participant U as Member
   participant H as inicio.2jfitnesscenter.com / Hub
-  participant P as Platform identity + entitlement API
+  participant P as Platform identity / personId + entitlement API
   participant T as app.2jfitnesscenter.com / Training
   U->>H: Sign in to central account
   U->>H: Choose Entrenar
-  H->>P: Verify session, link, training entitlement + capability
+  H->>P: Resolve subject to personId/facet; verify link, entitlement + capability
   P-->>H: Allowed + active link version (or deny)
   H->>T: Authorization request + PKCE challenge + state/nonce
   T->>P: Backchannel validation / one-time code exchange
@@ -337,7 +430,8 @@ Common requirements: prefix all contracts with `/internal/integrations/training/
 {
   "schemaVersion": 1,
   "linkId": "opaque-link-id",
-  "centralClientId": "uuid",
+  "personId": "uuid",
+  "centralClientId": "uuid-or-null-client-facet",
   "trainingUserId": "opaque-training-user-id",
   "module": "training",
   "allowed": true,
@@ -469,7 +563,7 @@ No flags are added in this discovery. Proposed server-side flags, all default **
 ## 15. Recommended phases
 
 1. **2J-078A (this TASK):** static audit, ownership boundaries, proposed contracts/ADR. No code integration.
-2. **2J-078B — account-link foundation:** confirm live Training SHA and API constraints; implement Platform mapping/status/audit only with synthetic/test accounts; define Training-side minimal handshake contract separately; no production SSO or Health export.
+2. **2J-078B — person identity and account-link foundation:** revalidate live SHAs/auth boundaries; define the Platform `personId` root and verified client/staff facet mappings first, then design a disabled Platform link/status/audit with synthetic accounts; define Training handshake separately; no production SSO or Health export.
 3. **2J-078C — verified linking ceremony:** dual proof using existing Training passkeys and Platform auth when its runtime identity provider is ready; link/unlink/recovery; no new Training user creation; security review.
 4. **2J-078D — read-only entitlement bridge + shadow mode:** service authentication, versioned access contract, short TTL/revocation behavior, no Training action blocking until policy approved.
 5. **2J-078E — secure Hub → Training handoff:** OAuth/OIDC-style code + PKCE, keep Training passkey login fallback, no shared cookie.
@@ -489,17 +583,17 @@ These are the genuine product decisions to raise before implementing the corresp
 4. Which Training summary is useful for V1 Hub/Client 360 (today's routine, last workout, adherence), and who may see it (member only, or named staff roles).
 5. Whether/when any Platform booking or attendance event is ever surfaced inside Training; default recommendation is not to mirror it.
 
-Do not block 078B's technical link-table draft on names for internal fields. Do block Health export, member-visible entitlement semantics, or broader staff health visibility on the relevant product approval.
+Do not implement a Training link table until the proposed `personId` root and client/staff facet mappings are explicitly reviewed; internal table names can be chosen during that work. Do block Health export, member-visible entitlement semantics, or broader staff health visibility on the relevant product approval.
 
 ## 17. Proposed 2J-078B scope and exit criteria
 
-**Scope:** revalidate both live SHAs; define the minimal link lifecycle API and threat model; Platform-only mapping/audit schema behind disabled feature flag; synthetic-data tests for uniqueness, replay, concurrency, revocation and orphan states; no production data migration, no Training modification in this same PR without a separate authorized TASK, no SSO, no entitlement enforcement, no Health projection.
+**Scope:** revalidate both live SHAs; specify the minimal `personId` root and verified client/staff/actor facet mappings; define the link lifecycle API and threat model; if separately approved, add Platform-only mapping/audit schema behind disabled feature flag; synthetic-data tests for uniqueness, replay, concurrency, revocation and orphan states; no production data migration, no Training modification in this same PR without a separate authorized TASK, no SSO, no entitlement enforcement, no Health projection.
 
 **Exit criteria:**
 
 - live Training repo snapshot and status re-recorded immediately before implementation;
 - a Platform client and an existing Training identity can be represented without merging either id;
-- at most one active link on each side;
+- at most one active Training link per `personId` and at most one active `personId` per `trainingUserId`;
 - proof state is explicit and auditable; name/email/phone alone never activate it;
 - no link means no data crossing;
 - build/test/secret scan and permission tests pass;

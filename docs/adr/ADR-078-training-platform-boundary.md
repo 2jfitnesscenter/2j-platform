@@ -17,7 +17,7 @@ The product goal is one coherent 2J member experience through a Hub while allowi
 
 **Platform and Training remain independently deployable bounded contexts connected through versioned contracts.**
 
-1. Platform `clients.id` remains the central commercial/operational client id (`centralClientId`). Training's existing `user.id` remains the Training-local subject (`trainingUserId`). A dedicated audited account-link maps the two after proof of both accounts; the ids are never substituted for one another.
+1. `personId` is the proposed conceptual human-identity root, distinct from every facet and authentication identifier. Platform `clients.id` remains the client-facet id (`centralClientId`); staff/professional ids and Training `user.id` (`trainingUserId`) remain separate. A later audited account-link maps the existing Training account to `personId` only after proof of both identities; client-domain records continue to reference `centralClientId`.
 2. Each domain writes only its own data. Platform owns clients/contact, membership/rights, reservations, payments, staff, communications, forms/documents and Platform notifications. Training owns its account/passkeys, profile preferences, routines/programs, workouts, Búnker, Health and Training integrations.
 3. Cross-product reads use narrow, versioned APIs and DTOs through anti-corruption adapters. No cross-database reads, shared tables, full Training state transfer, or bidirectional profile sync.
 4. Existing Training passkeys remain attached to the existing Training user and relying-party id. A future Hub handoff uses a short-lived, single-use authorization-code exchange (OIDC/OAuth-style, PKCE, state/nonce and audience), then establishes a local Training session. Passkey consolidation is optional and not required for SSO.
@@ -37,7 +37,7 @@ The product goal is one coherent 2J member experience through a Hub while allowi
 
 - Linking, SSO and API adapters require additional services, contract tests, monitoring and lifecycle/revocation logic.
 - Member/staff surfaces must tolerate delayed, unavailable or stale cross-product information.
-- A dual-proof link ceremony and support process are needed; matching by contact or display name is insufficient.
+- A dual-proof link ceremony and support process are needed; matching by contact or display name is insufficient. The Platform person identity root and verified client/staff facet mappings must be defined before account linking.
 - Platform's runtime identity provider and client auth mapping must be completed/approved before production linking or Hub SSO.
 
 ## Considered alternatives
@@ -50,6 +50,16 @@ The product goal is one coherent 2J member experience through a Hub while allowi
 | Match/link automatically by name/email/phone | Rejected: not proof of control; Training currently does not collect email/phone in registration. |
 | Move passkeys into a central account now | Rejected: credentials are RP-scoped and not exportable; creates lockout and account migration risk. |
 | Copy the entire Training state into Client 360 | Rejected: excess sensitive data and schema coupling. |
+
+## Proposed person identity and facet model
+
+This ADR remains **Proposed**. `personId` is a conceptual Platform-owned root for one human; it is not `clients.id`, `staff.auth_actor_id`, a staff/professional id, or Training `user.id`. One person may have zero or one client facet (`centralClientId`), staff facet(s) as product modeling permits, and an external Training account link (`trainingUserId`). Client records such as membership and reservations continue to use `centralClientId`.
+
+Authentication subject → verified `personId` → domain facets is the identity relation. It does not merge authorization: Platform permissions remain scoped to Platform client/staff capabilities and Training `admin`/`trainer` roles remain local to Training. No role mapping is implied by a link. Resolve staff actor subjects to a person only through explicit proof; never treat `auth_actor_id` as the person key.
+
+Person-level data should be minimal. Client contact/commercial fields, staff professional/operational fields and Training display/preferences remain owned by their respective domains and are not silently synchronized. Client archive, staff deactivation, Training suspension/deletion and unlink are independent lifecycle changes; unlink revokes mappings and dependent access but does not cascade-delete accounts or history. Require fresh proof of both Platform identity and the existing Training account before linking; if the person layer is unavailable, defer rather than substitute `centralClientId`.
+
+Conceptual acceptance cases A–E (regular client, non-client trainer, trainer/client/Training, admin without Training, and Reception later acquiring a client facet) are specified in the 2J-078A integration map. Ambiguous or failed proof must fail closed. They are future implementation criteria, not changes implemented by this audit.
 
 ## Security and rollout gates
 

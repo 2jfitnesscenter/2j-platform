@@ -34,11 +34,12 @@
     "docs/integrations/training/2J-078A-integration-map.md",
     "docs/adr/ADR-078-training-platform-boundary.md",
     "docs/handoffs/2J-078A.md",
-    "docs/handoffs/2J-078A.json"
+    "docs/handoffs/2J-078A.json",
+    "Proposed personId / multi-facet identity model, lifecycle and conceptual acceptance cases A-E"
   ],
   "decisions": {
     "status": "proposed",
-    "summary": "Platform and Training remain independently deployable bounded contexts connected through versioned contracts.",
+    "summary": "Proposed personId human identity root with independent client, staff and Training facets; products remain separately deployable bounded contexts connected through versioned contracts.",
     "centralClientIdOwner": "Platform",
     "trainingUserIdOwner": "Training",
     "linking": "dual_authenticated_proof",
@@ -47,7 +48,12 @@
     "trainingStateReplication": false,
     "healthCrossingDefault": false,
     "integrationFlagsDefault": "OFF",
-    "productionSSOImplemented": false
+    "productionSSOImplemented": false,
+    "personIdentityRoot": "personId (conceptual, proposed; no implementation)",
+    "clientFacetId": "centralClientId remains clients.id; not the person identity root",
+    "staffIdentity": "staff/professional id and auth_actor_id remain distinct; actor-to-person mapping requires explicit verification",
+    "authorization": "roles and capabilities remain local to Platform and Training; identity linking does not transfer authorization",
+    "facetLifecycle": "client, staff, Training account and link lifecycle are independent; unlink does not cascade-delete"
   },
   "reviews": {
     "architectureSecurity": "pending",
