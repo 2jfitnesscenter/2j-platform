@@ -10,7 +10,7 @@ export const platformSubjectSchema = z.object({
 });
 export const linkProposalSchema = z.object({
   v: z.literal(1), personId: z.string().uuid(), candidate: z.object({ trainingUserId: opaqueId }).strict().optional(),
-  method: z.enum(['explicit_admin', 'user_confirmed', 'migration']), requestId: z.string().uuid(),
+  method: z.literal('explicit_admin'), requestId: z.string().uuid(),
 }).strict();
 export const accessGrantSchema = z.object({ v: z.literal(1), personId: z.string().uuid(), trainingAccess: z.enum(['enabled', 'blocked', 'unknown']), asOf: z.string().datetime().optional() }).strict();
 export const trainingSummarySchema = z.object({

@@ -144,8 +144,10 @@ test('2J-078B contracts are person-scoped, strict, and Training adapter is disab
   const personId = randomUUID();
   assert.equal(platformSubjectSchema.safeParse({ v: 1, personId, clientId: randomUUID(), capabilities: ['client'], status: 'active' }).success, true);
   assert.equal(platformSubjectSchema.safeParse({ v: 1, personId, clientId: randomUUID(), staffId: randomUUID(), capabilities: ['client','staff'], status: 'active', centralClientId: randomUUID() }).success, false);
-  assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7' }, method: 'user_confirmed', requestId: randomUUID() }).success, true);
-  assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7', centralClientId: randomUUID() }, method: 'user_confirmed', requestId: randomUUID() }).success, false);
+  assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7' }, method: 'explicit_admin', requestId: randomUUID() }).success, true);
+  assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7' }, method: 'user_confirmed', requestId: randomUUID() }).success, false);
+  assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7' }, method: 'migration', requestId: randomUUID() }).success, false);
+  assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7', centralClientId: randomUUID() }, method: 'explicit_admin', requestId: randomUUID() }).success, false);
   assert.equal(accessGrantSchema.safeParse({ v: 1, personId, trainingAccess: 'blocked' }).success, true);
   assert.equal(trainingSummarySchema.safeParse({ v: 1, personId, asOf: new Date().toISOString(), program: { activeCount: 2 } }).success, true);
   let calls = 0;
@@ -199,14 +201,33 @@ test('identity API keeps Training linking disabled by default and gates syntheti
   const otherClient = await createClientRequest(clientsAdminApp, { firstName: 'Another', lastName: `Person ${randomUUID()}` });
   const otherPerson = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: otherClient.json().id } });
   assert.equal(otherPerson.statusCode, 201);
+  for (const method of ['user_confirmed', 'migration']) {
+    await assert.rejects(sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${otherPerson.json().personId},${`future-${method}-${randomUUID()}`},${method},'qa-admin','qa-admin')`, { code: '23514' }, `database must reject unproven method ${method}`);
+  }
+  await assert.rejects(sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${otherPerson.json().personId},${`user-${randomUUID()} `},'explicit_admin','qa-admin','qa-admin')`, { code: '23514' }, 'database must reject non-canonical trailing-space Training identifiers');
   const reusedTrainingUser = await trainingLinkingAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${otherPerson.json().personId}/training-link`, payload: { requestId: randomUUID(), trainingUserId } });
   assert.equal(reusedTrainingUser.statusCode, 409, 'a Training account cannot be active for two people');
+  const caseVariantLink = await trainingLinkingAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${otherPerson.json().personId}/training-link`, payload: { requestId: randomUUID(), trainingUserId: trainingUserId.toUpperCase() } });
+  assert.equal(caseVariantLink.statusCode, 201, 'Training user identifiers retain case-sensitive semantics');
   await assert.rejects(sql`UPDATE training_account_links SET training_user_id=${`changed-${randomUUID()}`} WHERE link_id=${link.json().linkId}`, { code: '55000' });
   await assert.rejects(sql`UPDATE training_account_links SET link_version=9 WHERE link_id=${link.json().linkId}`, { code: '55000' });
+  await assert.rejects(sql`UPDATE training_account_links SET method='migration' WHERE link_id=${link.json().linkId}`, { code: '55000' }, 'method must remain immutable after insert');
+  await assert.rejects(sql`UPDATE training_account_links SET status='revoked',revoked_at='2000-01-01T00:00:00Z',method='migration' WHERE link_id=${link.json().linkId}`, { code: '55000' }, 'method cannot be rewritten during revocation');
+  const revocationProbeStartedAt = Date.now();
+  let effectiveRevokedAt;
+  await assert.rejects(sql.begin(async (tx) => {
+    const rows = await tx`UPDATE training_account_links SET status='revoked',revoked_at='2000-01-01T00:00:00Z' WHERE link_id=${link.json().linkId} RETURNING revoked_at`;
+    effectiveRevokedAt = new Date(rows[0].revoked_at).getTime();
+    throw new Error('rollback timestamp probe');
+  }), /rollback timestamp probe/);
+  assert.ok(effectiveRevokedAt >= revocationProbeStartedAt - 10_000 && effectiveRevokedAt <= Date.now() + 10_000, 'the DB trigger must replace caller timestamp with transaction time');
   const revoked = await trainingLinkingAdminApp.inject({ method: 'DELETE', url: `/api/platform/v1/persons/${person.personId}/training-link` });
   assert.equal(revoked.statusCode, 200, revoked.body); assert.equal(revoked.json().status, 'revoked');
   assert.equal((await clientsAdminApp.inject({ method: 'GET', url: `/api/platform/v1/persons/${person.personId}` })).json().status, 'active', 'unlink revokes the Training link, not the stable person identity');
-  assert.equal((await sql`SELECT status FROM training_account_links WHERE person_id=${person.personId}`).at(0).status, 'revoked');
+  const [revokedLink] = await sql`SELECT status,revoked_at FROM training_account_links WHERE person_id=${person.personId}`;
+  assert.equal(revokedLink.status, 'revoked');
+  const apiRevokedAt = new Date(revokedLink.revoked_at).getTime();
+  assert.ok(apiRevokedAt >= Date.now() - 15_000 && apiRevokedAt <= Date.now() + 10_000, 'API revocation must persist a current database timestamp');
   assert.equal((await sql`SELECT method FROM training_account_links WHERE person_id=${person.personId}`).at(0).method, 'explicit_admin', 'the admin endpoint cannot assert a user confirmation it did not collect');
   assert.equal((await sql`SELECT count(*)::int AS count FROM platform_identity_audit_events WHERE person_id=${person.personId}`).at(0).count, 3);
   let providerCalls = 0;

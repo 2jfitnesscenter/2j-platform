@@ -51,9 +51,9 @@ CREATE TABLE training_account_links (
   revoked_at timestamptz,
   CONSTRAINT training_account_links_status_check CHECK (status IN ('active','revoked')),
   CONSTRAINT training_account_links_person_id_platform_persons_id_fk FOREIGN KEY (person_id) REFERENCES platform_persons(id) ON DELETE RESTRICT,
-  CONSTRAINT training_account_links_method_check CHECK (method IN ('explicit_admin','user_confirmed','migration')),
+  CONSTRAINT training_account_links_method_check CHECK (method='explicit_admin'),
   CONSTRAINT training_account_links_version_check CHECK (link_version > 0),
-  CONSTRAINT training_account_links_user_id_check CHECK (char_length(btrim(training_user_id)) BETWEEN 1 AND 200),
+  CONSTRAINT training_account_links_user_id_check CHECK (training_user_id=btrim(training_user_id) AND char_length(btrim(training_user_id)) BETWEEN 1 AND 200),
   CONSTRAINT training_account_links_revoked_check CHECK ((status='revoked') = (revoked_at IS NOT NULL)),
   CONSTRAINT training_account_links_actor_check CHECK (char_length(created_by) BETWEEN 1 AND 120 AND char_length(updated_by) BETWEEN 1 AND 120)
 );
@@ -99,11 +99,11 @@ CREATE TRIGGER platform_person_staff_no_truncate BEFORE TRUNCATE ON platform_per
 CREATE FUNCTION protect_training_account_link() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP='DELETE' THEN RAISE EXCEPTION 'training link history is retained' USING ERRCODE='55000'; END IF;
-  IF NEW.link_id IS DISTINCT FROM OLD.link_id OR NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.person_id IS DISTINCT FROM OLD.person_id OR NEW.training_user_id IS DISTINCT FROM OLD.training_user_id OR NEW.created_at IS DISTINCT FROM OLD.created_at OR NEW.created_by IS DISTINCT FROM OLD.created_by THEN
+  IF NEW.link_id IS DISTINCT FROM OLD.link_id OR NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.person_id IS DISTINCT FROM OLD.person_id OR NEW.training_user_id IS DISTINCT FROM OLD.training_user_id OR NEW.method IS DISTINCT FROM OLD.method OR NEW.created_at IS DISTINCT FROM OLD.created_at OR NEW.created_by IS DISTINCT FROM OLD.created_by THEN
     RAISE EXCEPTION 'training link identity is immutable' USING ERRCODE='55000';
   END IF;
   IF OLD.status='revoked' AND NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'revoked training link is final' USING ERRCODE='55000'; END IF;
-  IF OLD.status='active' AND NEW.status='revoked' THEN NEW.revoked_at=coalesce(NEW.revoked_at,now()); NEW.link_version=OLD.link_version+1; END IF;
+  IF OLD.status='active' AND NEW.status='revoked' THEN NEW.revoked_at=now(); NEW.link_version=OLD.link_version+1; END IF;
   IF OLD.status='active' AND NEW.status='active' AND NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'active training link changes require revocation and a new link' USING ERRCODE='55000'; END IF;
   RETURN NEW;
 END; $$;
