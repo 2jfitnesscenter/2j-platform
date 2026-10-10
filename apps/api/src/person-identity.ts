@@ -7,7 +7,7 @@ import type { createDatabase } from './db.js';
 type SqlClient = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform((value) => value.toLowerCase());
 const facetInput = z.object({ clientId: uuid.optional(), staffId: uuid.optional() }).strict().refine((value) => value.clientId || value.staffId, 'At least one Platform facet is required');
-const trainingLinkInput = z.object({ requestId: uuid, trainingUserId: z.string().trim().min(1).max(200), method: z.enum(['explicit_admin', 'user_confirmed', 'migration']) }).strict();
+const trainingLinkInput = z.object({ requestId: uuid, trainingUserId: z.string().trim().min(1).max(200) }).strict();
 
 export function registerPersonIdentityRoutes(app: FastifyInstance<any, any, any, any, any>, database: SqlClient, resolveAuthorization: (request: FastifyRequest) => Promise<AuthorizationContext | null>) {
   async function authorized(request: FastifyRequest, reply: any) {
@@ -84,16 +84,17 @@ export function registerPersonIdentityRoutes(app: FastifyInstance<any, any, any,
     const linkId = randomUUID();
     try {
       const linked = await database.begin(async (tx) => {
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${body.data.requestId}::text,0))`;
         const replay = await tx`SELECT link_id AS "linkId",person_id AS "personId",training_user_id AS "trainingUserId",status,link_version AS "linkVersion",method,created_by AS "createdBy" FROM training_account_links WHERE request_id=${body.data.requestId} FOR UPDATE`;
         if (replay[0]) {
           const previous = replay[0];
-          if (previous.personId !== parsed.data.personId || previous.trainingUserId !== body.data.trainingUserId || previous.method !== body.data.method || previous.createdBy !== actor.actorId) throw Object.assign(new Error('Idempotency conflict'), { code: 'IDEMPOTENCY_CONFLICT' });
+          if (previous.personId !== parsed.data.personId || previous.trainingUserId !== body.data.trainingUserId || previous.method !== 'explicit_admin' || previous.createdBy !== actor.actorId) throw Object.assign(new Error('Idempotency conflict'), { code: 'IDEMPOTENCY_CONFLICT' });
           return previous;
         }
         const person = await tx`SELECT id FROM platform_persons WHERE id=${parsed.data.personId} AND status='active' FOR UPDATE`;
         if (!person.length) throw Object.assign(new Error('Person unavailable'), { code: 'PERSON_UNAVAILABLE' });
-        await tx`INSERT INTO training_account_links(link_id,request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${linkId},${body.data.requestId},${parsed.data.personId},${body.data.trainingUserId},${body.data.method},${actor.actorId},${actor.actorId})`;
-        await tx`INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details) VALUES (${parsed.data.personId},${actor.actorId},'training.linked',${linkId},${JSON.stringify({ method: body.data.method })}::jsonb)`;
+        await tx`INSERT INTO training_account_links(link_id,request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${linkId},${body.data.requestId},${parsed.data.personId},${body.data.trainingUserId},'explicit_admin',${actor.actorId},${actor.actorId})`;
+        await tx`INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details) VALUES (${parsed.data.personId},${actor.actorId},'training.linked',${linkId},'{}'::jsonb)`;
         return { linkId, personId: parsed.data.personId, trainingUserId: body.data.trainingUserId, status: 'active', linkVersion: 1 };
       });
       return reply.code(linked.linkId === linkId ? 201 : 200).send(linked);
