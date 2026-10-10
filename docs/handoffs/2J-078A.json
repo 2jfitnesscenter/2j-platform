@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "taskId": "2J-078A",
+  "title": "Platform and Training integration audit",
+  "status": "documentation_complete_review_pending",
+  "mode": "discovery_only",
+  "platform": {
+    "repository": "2jfitnesscenter/2j-platform",
+    "path": "C:\\Users\\juanj\\Dev\\2J\\repos\\2j-platform",
+    "baseRef": "main",
+    "auditedSha": "fc97458100b45db51475b37470e75cf2bb76d687",
+    "branch": "agent/codex/2J-078A-training-boundary",
+    "worktree": "C:\\Users\\juanj\\Dev\\2J\\worktrees\\codex\\platform\\2J-078A"
+  },
+  "training": {
+    "repository": "2jfitnesscenter/2jfitnessapp",
+    "path": "C:\\Users\\juanj\\Desktop\\APP de Entrenos 2JFitness",
+    "auditedBranch": "codex/android-rest-alert-integration",
+    "auditedSha": "d1ea376d4834fb5ba7b419c9315a926e64a9cab4",
+    "workingTreeAtStart": {
+      "statusPorcelainLineCount": 91,
+      "statusPorcelainSha256": "93BEB7BB518CB0366C9B2E3A6812CD79AFDD809C7492AC4B088EFEE7AEB26ACD"
+    },
+    "workingTreeAtEnd": {
+      "statusPorcelainLineCount": 91,
+      "statusPorcelainSha256": "93BEB7BB518CB0366C9B2E3A6812CD79AFDD809C7492AC4B088EFEE7AEB26ACD"
+    },
+    "readOnly": true,
+    "filesChanged": false,
+    "branchesCreated": false,
+    "testsOrScriptsRun": false
+  },
+  "deliverables": [
+    "docs/integrations/training/2J-078A-integration-map.md",
+    "docs/adr/ADR-078-training-platform-boundary.md",
+    "docs/handoffs/2J-078A.md",
+    "docs/handoffs/2J-078A.json",
+    "Proposed personId / multi-facet identity model, lifecycle and conceptual acceptance cases A-E"
+  ],
+  "decisions": {
+    "status": "proposed",
+    "summary": "Proposed personId human identity root with independent client, staff and Training facets; products remain separately deployable bounded contexts connected through versioned contracts.",
+    "centralClientIdOwner": "Platform",
+    "trainingUserIdOwner": "Training",
+    "linking": "dual_authenticated_proof",
+    "passkeyMigration": false,
+    "sharedDatabase": false,
+    "trainingStateReplication": false,
+    "healthCrossingDefault": false,
+    "integrationFlagsDefault": "OFF",
+    "productionSSOImplemented": false,
+    "personIdentityRoot": "personId (conceptual, proposed; no implementation)",
+    "clientFacetId": "centralClientId remains clients.id; not the person identity root",
+    "staffIdentity": "staff/professional id and auth_actor_id remain distinct; actor-to-person mapping requires explicit verification",
+    "authorization": "roles and capabilities remain local to Platform and Training; identity linking does not transfer authorization",
+    "facetLifecycle": "client, staff, Training account and link lifecycle are independent; unlink does not cascade-delete"
+  },
+  "reviews": {
+    "architectureSecurity": "pending",
+    "independentQa": "pending",
+    "merge": "not_performed"
+  },
+  "nextTask": "2J-078B",
+  "createdAt": "2026-10-10"
+}
