@@ -10,7 +10,8 @@ import * as schema from '../src/schema.ts';
 import { getEffectiveEntitlements } from '../src/entitlements.ts';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
-import { createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
+import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
+import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
 
@@ -26,8 +27,11 @@ const trainingLinkingAdminApp = buildServer(process.env.DATABASE_URL, { authoriz
 const trainingLinkingTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-trainer', role: 'trainer' }), trainingLinkingEnabled: true });
 const trainingLinkingReceptionApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-reception', role: 'reception-management' }), trainingLinkingEnabled: true });
 const trainingLinkingAccountantApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-accountant', role: 'accountant' }), trainingLinkingEnabled: true });
+let resolvedTrainingAuth = null;
+const trainingVerifiedLinkingApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }), trainingVerifiedLinkingEnabled: true, resolvePersonAuth: async () => resolvedTrainingAuth });
+const trainingServiceCallsOnlyApp = buildServer(process.env.DATABASE_URL, { trainingServiceCallsEnabled: true, resolvePersonAuth: async () => resolvedTrainingAuth });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close()]); await sql.end(); });
+after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close()]); await sql.end(); });
 
 function createClientRequest(server, payload, key = randomUUID()) {
   return server.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': key }, payload });
@@ -107,7 +111,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformIdentityAuditEvents];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -153,11 +157,61 @@ test('2J-078B contracts are person-scoped, strict, and Training adapter is disab
   let calls = 0;
   assert.deepEqual(await createTrainingAdapter({ fetcher: async () => { calls += 1; throw new Error('must not call'); } }).getSummary(personId), { status: 'disabled' });
   assert.equal(calls, 0);
-  const adapter = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', fetcher: async () => { calls += 1; return new Response(JSON.stringify({ v: 1, personId, asOf: new Date().toISOString() }), { status: 200 }); }, signRequest: async () => ({ 'x-signature': 'test-only' }) });
+  const adapter = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1', fetcher: async (_url, init) => { calls += 1; assert.equal(init.redirect, 'error'); return new Response(JSON.stringify({ v: 1, personId, asOf: new Date().toISOString() }), { status: 200, headers: { 'content-type': 'application/json' } }); }, signRequest: async (canonical, signal) => { assert.match(canonical, /2J-SERVICE-AUTH-V1/); assert.equal(signal.aborted, false); return 'A'.repeat(43); } });
   assert.equal((await adapter.getSummary(personId)).status, 'available');
   assert.equal(calls, 1);
-  const failSoft = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', fetcher: async () => new Response('bad', { status: 503 }), signRequest: async () => ({}) });
+  const failSoft = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1', fetcher: async () => new Response('bad', { status: 503 }), signRequest: async () => 'A'.repeat(43) });
   assert.deepEqual(await failSoft.getSummary(personId), { status: 'unavailable' });
+});
+
+test('Training service auth canonicalization signs request identity, method, path and raw body digest', async () => {
+  const request = { keyId: 'test-k1', timestamp: '2026-10-10T12:00:00.000Z', requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', method: 'POST', path: '/api/platform/v1/persons/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/link', body: Buffer.from('{"v":1}') };
+  const canonical = canonicalizeTrainingServiceRequest(request);
+  assert.equal(canonical.split('\n').length, 7);
+  assert.match(canonical, /test-k1/); assert.match(canonical, /POST/); assert.match(canonical, /\/link/);
+  assert.throws(() => canonicalizeTrainingServiceRequest({ ...request, path: '/api/../secret' }), /path traversal|canonical request target/);
+  assert.throws(() => canonicalizeTrainingServiceRequest({ ...request, timestamp: '2026-10-10T12:00:00Z' }), /canonical UTC/);
+  assert.throws(() => canonicalizeTrainingServiceRequest({ ...request, path: '/api/%2e%2e/secret' }), /path traversal|canonical request target/);
+  assert.throws(() => canonicalizeTrainingServiceRequest({ ...request, path: '/api/%2fsecret' }), /path traversal/);
+  assert.throws(() => canonicalizeTrainingServiceRequest({ ...request, path: '/api/\nsecret' }), /invalid request target/);
+  const headers = await buildTrainingServiceAuthHeaders(request, async (value, signal) => { assert.equal(value, canonical); assert.equal(signal.aborted, false); return 'S'.repeat(43); }, new AbortController().signal);
+  assert.deepEqual(Object.keys(headers).sort(), ['x-2j-key-id','x-2j-request-id','x-2j-signature','x-2j-timestamp'].sort());
+});
+
+test('Training adapter fails closed for invalid targets, redirects, bad content, size, timeout, malformed and non-strict responses', async () => {
+  const personId = randomUUID(), valid = { v: 1, personId, asOf: new Date().toISOString() };
+  const base = { enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1', signRequest: async () => 'A'.repeat(43) };
+  let calls = 0;
+  const spy = createTrainingAdapter({ ...base, fetcher: async () => { calls += 1; return new Response(JSON.stringify(valid), { headers: { 'content-type': 'application/json' } }); } });
+  assert.deepEqual(await spy.getSummary('not-a-uuid'), { status: 'unavailable' });
+  assert.equal(calls, 0, 'reject malformed personId before fetch/URL construction');
+  const notAllowed = createTrainingAdapter({ ...base, baseUrl: 'https://other.example.test', fetcher: async () => { calls += 1; throw new Error('must not fetch'); } });
+  assert.deepEqual(await notAllowed.getSummary(personId), { status: 'unavailable' }); assert.equal(calls, 0);
+  const noTls = createTrainingAdapter({ ...base, baseUrl: 'http://training.example.test', allowedOrigins: ['http://training.example.test'], fetcher: async () => { calls += 1; throw new Error('must not fetch'); } });
+  assert.deepEqual(await noTls.getSummary(personId), { status: 'unavailable' }); assert.equal(calls, 0);
+  const cases = [
+    ['redirect', async (_url, init) => { assert.equal(init.redirect, 'error'); return new Response('', { status: 302, headers: { location: 'https://attacker.example' } }); }],
+    ['wrong content type', async () => new Response(JSON.stringify(valid), { headers: { 'content-type': 'text/plain' } })],
+    ['oversized body', async () => new Response('x'.repeat(4000), { headers: { 'content-type': 'application/json', 'content-length': '4000' } })],
+    ['streamed oversized body', async () => new Response('x'.repeat(4000), { headers: { 'content-type': 'application/json' } })],
+    ['malformed JSON', async () => new Response('{', { headers: { 'content-type': 'application/json' } })],
+    ['wrong person', async () => new Response(JSON.stringify({ ...valid, personId: randomUUID() }), { headers: { 'content-type': 'application/json' } })],
+    ['extra fields', async () => new Response(JSON.stringify({ ...valid, trainingUserId: 'must-not-leak' }), { headers: { 'content-type': 'application/json' } })],
+  ];
+  for (const [name, fetcher] of cases) assert.deepEqual(await createTrainingAdapter({ ...base, maxResponseBytes: 2048, fetcher }).getSummary(personId), { status: 'unavailable' }, name);
+  const oversized = createTrainingAdapter({ ...base, maxResponseBytes: 32, fetcher: cases[2][1] });
+  assert.deepEqual(await oversized.getSummary(personId), { status: 'unavailable' }, 'oversized response is bounded before parsing');
+  const streamOversized = createTrainingAdapter({ ...base, maxResponseBytes: 32, fetcher: cases[3][1] });
+  assert.deepEqual(await streamOversized.getSummary(personId), { status: 'unavailable' }, 'stream size is bounded when Content-Length is absent');
+  const signerFailure = createTrainingAdapter({ ...base, signRequest: async () => { throw new Error('test signer failure'); }, fetcher: async () => { calls += 1; throw new Error('must not fetch'); } });
+  assert.deepEqual(await signerFailure.getSummary(personId), { status: 'unavailable' }); assert.equal(calls, 0);
+  let signerSignal;
+  const timed = createTrainingAdapter({ ...base, timeoutMs: 10, signRequest: async (_canonical, signal) => { signerSignal = signal; await new Promise((resolve) => setTimeout(resolve, 100)); return 'A'.repeat(43); }, fetcher: async () => { calls += 1; throw new Error('must timeout before fetch'); } });
+  assert.deepEqual(await timed.getSummary(personId), { status: 'unavailable' });
+  assert.equal(signerSignal.aborted, true); assert.equal(calls, 0, 'the deadline covers signer execution before fetch');
+  let fetchSignal;
+  const fetchTimed = createTrainingAdapter({ ...base, timeoutMs: 10, fetcher: async (_url, init) => { fetchSignal = init.signal; return new Promise((resolve) => setTimeout(() => resolve(new Response(JSON.stringify(valid), { headers: { 'content-type': 'application/json' } })), 100)); } });
+  assert.deepEqual(await fetchTimed.getSummary(personId), { status: 'unavailable' }); assert.equal(fetchSignal.aborted, true, 'the deadline covers fetch execution');
 });
 
 test('identity API keeps Training linking disabled by default and gates synthetic local links independently', async () => {
@@ -235,6 +289,179 @@ test('identity API keeps Training linking disabled by default and gates syntheti
   assert.equal(providerCalls, 0, 'enabling the local synthetic-link gate does not enable the independent Training adapter');
   await assert.rejects(sql`UPDATE platform_persons SET id=${randomUUID()} WHERE id=${person.personId}`, { code: '55000' });
   await assert.rejects(sql`DELETE FROM platform_identity_audit_events WHERE person_id=${person.personId}`, { code: '55000' });
+});
+
+test('auth subject bindings are explicit, Admin-only, opaque, unique and revocable without role or facet inference', async () => {
+  async function person(label) {
+    const client = await createClientRequest(clientsAdminApp, { firstName: 'Subject', lastName: `${label} ${randomUUID()}` });
+    const created = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.json().id } });
+    assert.equal(created.statusCode, 201, created.body); return created.json();
+  }
+  const first = await person('First'), second = await person('Second');
+  const provider = 'fixture-central-auth', authSubject = `opaque-subject-${randomUUID()}`;
+  const created = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${first.personId}/auth-subjects`, payload: { provider, authSubject, providerVersion: 1 } });
+  assert.equal(created.statusCode, 201, created.body);
+  assert.equal(created.json().personId, first.personId); assert.equal(created.json().status, 'active');
+  assert.equal(Object.hasOwn(created.json(), 'authSubject'), false, 'the management API does not echo the opaque subject');
+  const linkId = created.json().id;
+  assert.deepEqual((await clientsAdminApp.inject({ method: 'GET', url: `/api/platform/v1/persons/${first.personId}` })).json().capabilities, ['client'], 'auth binding does not derive roles or change Platform facets');
+  assert.ok(Math.abs(Date.now() - new Date(created.json().verifiedAt).getTime()) < 15_000, 'verification timestamp is generated by Platform');
+  assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${linkId}`).at(0).action, 'person.auth_subject_linked');
+  await assert.rejects(sql`UPDATE platform_person_auth_subjects SET auth_subject=${`changed-${randomUUID()}`} WHERE id=${linkId}`, { code: '55000' }, 'auth subject binding identity is immutable');
+  assert.equal((await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${second.personId}/auth-subjects`, payload: { provider, authSubject, providerVersion: 1 } })).statusCode, 409, 'one provider subject cannot be assigned to another person');
+  assert.equal((await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${first.personId}/auth-subjects`, payload: { provider, authSubject: `user-${randomUUID()}@example.test`, providerVersion: 1 } })).statusCode, 400, 'email-shaped identifiers are not inferred as stable auth subjects');
+  for (const deniedApp of [anonymousApp, clientsTrainerApp, clientsReceptionApp, clientsAccountantApp]) {
+    const response = await deniedApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${second.personId}/auth-subjects`, headers: { 'x-2j-role': 'admin' }, payload: { provider, authSubject: `denied-${randomUUID()}` } });
+    assert.ok([401,403].includes(response.statusCode), `auth subject mapping denied: ${response.statusCode}`);
+  }
+  const revoked = await clientsAdminApp.inject({ method: 'DELETE', url: `/api/platform/v1/persons/${first.personId}/auth-subjects/${linkId}` });
+  assert.equal(revoked.statusCode, 200, revoked.body); assert.equal(revoked.json().status, 'revoked');
+  assert.ok(Math.abs(Date.now() - new Date(revoked.json().revokedAt).getTime()) < 15_000, 'revocation time is database generated');
+  assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${linkId} ORDER BY occurred_at DESC`).at(0).action, 'person.auth_subject_revoked');
+  await assert.rejects(sql`DELETE FROM platform_person_auth_subjects WHERE id=${linkId}`, { code: '55000' });
+  const afterRevocation = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${second.personId}/auth-subjects`, payload: { provider, authSubject, providerVersion: 1 } });
+  assert.equal(afterRevocation.statusCode, 409, 'revoked subject history cannot be reassigned');
+  assert.equal((await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${second.personId}/auth-subjects`, payload: { provider: 'UPPERCASE', authSubject: `opaque-${randomUUID()}` } })).statusCode, 400);
+});
+
+test('link challenge is one-time, person-resolved, short-lived, replay-safe and never persists its raw value', async () => {
+  async function createBoundPerson(label) {
+    const client = await createClientRequest(clientsAdminApp, { firstName: 'Ceremony', lastName: `${label} ${randomUUID()}` });
+    const person = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.json().id } });
+    const provider = 'fixture-central-auth', authSubject = `subject-${randomUUID()}`;
+    const binding = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${person.json().personId}/auth-subjects`, payload: { provider, authSubject, providerVersion: 1 } });
+    assert.equal(binding.statusCode, 201, binding.body);
+    return { person: person.json(), auth: { personId: person.json().personId, provider, providerVersion: 1, authSubject }, binding: binding.json() };
+  }
+  const one = await createBoundPerson('One'), two = await createBoundPerson('Two');
+  const off = await anonymousApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(off.statusCode, 423, 'verified link gate defaults OFF');
+  const serviceOnly = await trainingServiceCallsOnlyApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(serviceOnly.statusCode, 423, 'service call flag alone cannot enable verified linking');
+  resolvedTrainingAuth = one.auth;
+  const requestId = randomUUID();
+  const extraPersonId = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId, personId: two.person.personId } });
+  assert.equal(extraPersonId.statusCode, 400, 'caller cannot nominate an arbitrary personId');
+  const created = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId } });
+  assert.equal(created.statusCode, 201, created.body);
+  const result = created.json();
+  assert.equal(result.v, 1); assert.equal('authSubjectLinkId' in result.transaction, false); assert.equal('requestHash' in result.transaction, false);
+  assert.equal(result.status, 'created'); assert.equal(result.audience, '2j-training-account-link'); assert.equal(result.purpose, 'training-account-link');
+  assert.equal(Buffer.from(result.challenge, 'base64url').length, 32, 'challenge has 256 bits of entropy');
+  assert.equal(TRAINING_LINK_TTL_MS, 5 * 60 * 1000);
+  const stored = (await sql`SELECT * FROM training_link_transactions WHERE transaction_id=${result.transaction.transactionId}`).at(0);
+  assert.notEqual(stored.nonce_hash.trim(), result.challenge); assert.equal(stored.nonce_hash.trim(), createHash('sha256').update(result.challenge).digest('hex'));
+  assert.equal(stored.person_id, one.person.personId); assert.equal(stored.state, 'pending');
+  assert.ok(new Date(stored.expires_at).getTime() - new Date(stored.created_at).getTime() <= TRAINING_LINK_TTL_MS + 5);
+  assert.equal(JSON.stringify((await sql`SELECT details FROM platform_identity_audit_events WHERE resource_id=${result.transaction.transactionId}`)).includes(result.challenge), false);
+  await assert.rejects(sql`INSERT INTO training_link_transactions(person_id,auth_subject_link_id,request_id,request_hash,nonce_hash,audience,purpose,state,verified_at,expires_at) VALUES (${one.person.personId},${one.binding.id},${randomUUID()},${createHash('sha256').update(randomUUID()).digest('hex')},${createHash('sha256').update(randomUUID()).digest('hex')},'2j-training-account-link','training-account-link','verified',now(),now()+interval '1 minute')`, { code: '23514' }, 'database permits transaction inserts only in pending state');
+  const replay = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId } });
+  assert.equal(replay.statusCode, 200); assert.equal(replay.json().challenge, null, 'raw challenge is returned once and never recoverable on replay');
+  assert.equal((await sql`SELECT count(*)::int AS count FROM training_link_transactions WHERE request_id=${requestId}`).at(0).count, 1);
+  const concurrentRequestId = randomUUID();
+  const concurrentCreates = await Promise.all([1,2].map(() => trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: concurrentRequestId } })));
+  assert.deepEqual(concurrentCreates.map((response) => response.statusCode).sort(), [200,201]);
+  assert.equal(concurrentCreates[0].json().transaction.transactionId, concurrentCreates[1].json().transaction.transactionId);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM training_link_transactions WHERE request_id=${concurrentRequestId}`).at(0).count, 1);
+  await trainingVerifiedLinkingApp.inject({ method: 'DELETE', url: `/api/platform/v1/training-link-transactions/${concurrentCreates[0].json().transaction.transactionId}` });
+  resolvedTrainingAuth = two.auth;
+  const conflict = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId } });
+  assert.equal(conflict.statusCode, 409, 'the same requestId cannot be rebound to a different authenticated person');
+  const wrongPersonCancel = await trainingVerifiedLinkingApp.inject({ method: 'DELETE', url: `/api/platform/v1/training-link-transactions/${result.transaction.transactionId}` });
+  assert.equal(wrongPersonCancel.statusCode, 404);
+  resolvedTrainingAuth = one.auth;
+  const cancelled = await trainingVerifiedLinkingApp.inject({ method: 'DELETE', url: `/api/platform/v1/training-link-transactions/${result.transaction.transactionId}` });
+  assert.equal(cancelled.statusCode, 200); assert.equal(cancelled.json().status, 'cancelled');
+  const replayCancel = await trainingVerifiedLinkingApp.inject({ method: 'DELETE', url: `/api/platform/v1/training-link-transactions/${result.transaction.transactionId}` });
+  assert.equal(replayCancel.statusCode, 200); assert.equal(replayCancel.json().status, 'cancelled');
+  await assert.rejects(sql`UPDATE training_link_transactions SET state='verified',version=version+1 WHERE transaction_id=${result.transaction.transactionId}`, { code: '55000' }, 'cancelled is terminal and cannot transition backwards');
+  assert.equal((await sql`SELECT count(*)::int AS count FROM training_account_links WHERE person_id=${one.person.personId}`).at(0).count, 0, 'a challenge never creates a canonical or active Training link');
+  assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${result.transaction.transactionId} ORDER BY occurred_at`).map((row) => row.action).join(','), 'training.link_transaction_created,training.link_transaction_cancelled');
+});
+
+test('link transaction verification and consume are single-use under races, gated, and fail closed on revoked identity', async () => {
+  async function createBoundPerson(label) {
+    const client = await createClientRequest(clientsAdminApp, { firstName: 'Race', lastName: `${label} ${randomUUID()}` });
+    const person = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.json().id } });
+    const auth = { personId: person.json().personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `race-subject-${randomUUID()}` };
+    const binding = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${auth.personId}/auth-subjects`, payload: { provider: auth.provider, providerVersion: auth.providerVersion, authSubject: auth.authSubject } });
+    assert.equal(binding.statusCode, 201, binding.body); return { person: person.json(), auth, binding: binding.json() };
+  }
+  const subject = await createBoundPerson('Consume');
+  resolvedTrainingAuth = subject.auth;
+  const created = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(created.statusCode, 201, created.body);
+  const record = created.json();
+  let verifierCalls = 0;
+  const offService = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: false });
+  assert.equal((await offService.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: {} }, async () => { verifierCalls++; return true; })).status, 'disabled');
+  assert.equal(verifierCalls, 0, 'verified-link flag cannot invoke Training while service calls are OFF');
+  const protocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true });
+  const otherClient = await createClientRequest(clientsAdminApp, { firstName: 'Other', lastName: `Proof ${randomUUID()}` });
+  const otherPerson = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: otherClient.json().id } });
+  const otherAuth = { personId: otherPerson.json().personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `other-proof-${randomUUID()}` };
+  const otherBinding = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${otherAuth.personId}/auth-subjects`, payload: { provider: otherAuth.provider, providerVersion: 1, authSubject: otherAuth.authSubject } });
+  assert.equal(otherBinding.statusCode, 201);
+  assert.equal((await protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: {}, auth: otherAuth }, async () => { verifierCalls++; return 'training-user-verified'; })).status, 'wrong_person');
+  assert.equal((await protocol.verify({ transactionId: record.transaction.transactionId, challenge: 'wrong-challenge', assertion: {}, auth: subject.auth }, async () => { verifierCalls++; return 'training-user-verified'; })).status, 'invalid_challenge');
+  assert.equal(verifierCalls, 0, 'challenge is compared before any remote verifier call');
+  const proofs = await Promise.all([1,2].map(() => protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: { fixture: true }, auth: subject.auth }, async () => { verifierCalls++; await new Promise((resolve) => setTimeout(resolve, 10)); return 'training-user-verified'; })));
+  assert.equal(proofs.filter((item) => item.status === 'verified').length, 1);
+  assert.ok(proofs.some((item) => ['not_pending','replayed'].includes(item.status)), 'only one verifier can advance the state');
+  assert.ok(verifierCalls >= 1 && verifierCalls <= 2, 'parallel attempts may reach proof verification, but only one state transition succeeds');
+  const consumes = await Promise.all([protocol.consume({ transactionId: record.transaction.transactionId }), protocol.consume({ transactionId: record.transaction.transactionId })]);
+  assert.deepEqual(consumes.map((item) => item.status).sort(), ['consumed','not_consumable']);
+  assert.equal((await protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: {}, auth: subject.auth }, async () => 'training-user-verified')).status, 'not_pending', 'consumed challenge cannot replay');
+  assert.equal((await sql`SELECT state,version FROM training_link_transactions WHERE transaction_id=${record.transaction.transactionId}`).at(0).state, 'consumed');
+  assert.equal((await sql`SELECT count(*)::int AS count FROM training_account_links WHERE person_id=${subject.person.personId}`).at(0).count, 0, 'consumption still does not pretend remote ACK or activate a canonical link');
+  const actions = (await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${record.transaction.transactionId}`).map((row) => row.action);
+  assert.deepEqual(new Set(actions), new Set(['training.link_transaction_created','training.link_transaction_verified','training.link_transaction_consumed']));
+
+  const revokedSubject = await createBoundPerson('Revoked');
+  resolvedTrainingAuth = revokedSubject.auth;
+  const pending = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(pending.statusCode, 201);
+  await clientsAdminApp.inject({ method: 'DELETE', url: `/api/platform/v1/persons/${revokedSubject.person.personId}/auth-subjects/${revokedSubject.binding.id}` });
+  resolvedTrainingAuth = revokedSubject.auth;
+  const cannotCreate = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(cannotCreate.statusCode, 403, 'revoked auth subject cannot create a challenge');
+  const cannotCancel = await trainingVerifiedLinkingApp.inject({ method: 'DELETE', url: `/api/platform/v1/training-link-transactions/${pending.json().transaction.transactionId}` });
+  assert.equal(cannotCancel.statusCode, 403, 'revoked auth subject cannot continue its pending transaction');
+  const revokedVerifier = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true });
+  assert.equal((await revokedVerifier.verify({ transactionId: pending.json().transaction.transactionId, challenge: pending.json().challenge, assertion: {}, auth: revokedSubject.auth }, async () => 'training-user')).status, 'identity_unavailable');
+});
+
+test('auth subject resolver and database reject inactive people and unbound subjects', async () => {
+  const client = await createClientRequest(clientsAdminApp, { firstName: 'Inactive', lastName: `Subject ${randomUUID()}` });
+  const person = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.json().id } });
+  const auth = { personId: person.json().personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `unlinked-${randomUUID()}` };
+  resolvedTrainingAuth = auth;
+  const unbound = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(unbound.statusCode, 403);
+  const [personRow] = await sql`UPDATE platform_persons SET status='revoked' WHERE id=${auth.personId} RETURNING id`;
+  assert.equal(personRow.id, auth.personId);
+  const service = createTrainingLinkTransactions(sql, { enabled: true });
+  assert.equal((await service.create({ ...auth, requestId: randomUUID() })).status, 'identity_unavailable');
+  await assert.rejects(sql`INSERT INTO platform_person_auth_subjects(person_id,provider,auth_subject,created_by) VALUES (${auth.personId},${auth.provider},${auth.authSubject},'qa-admin')`, { code: '23514' }, 'database rejects adding auth identities to inactive persons');
+});
+
+test('expired link transactions cannot verify and transition once to expired with audit', async () => {
+  const client = await createClientRequest(clientsAdminApp, { firstName: 'Expired', lastName: `Challenge ${randomUUID()}` });
+  const person = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.json().id } });
+  const auth = { personId: person.json().personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `expired-${randomUUID()}` };
+  const binding = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${auth.personId}/auth-subjects`, payload: { provider: auth.provider, providerVersion: auth.providerVersion, authSubject: auth.authSubject } });
+  assert.equal(binding.statusCode, 201, binding.body);
+  const req = randomUUID();
+  const protocol = createTrainingLinkTransactions(sql, { enabled: true, ttlMs: 20 });
+  const created = await protocol.create({ ...auth, requestId: req });
+  assert.equal(created.status, 'created');
+  const expiredId = created.transaction.transactionId;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  resolvedTrainingAuth = auth;
+  const expired = await protocol.cancel({ transactionId: expiredId, ...auth });
+  assert.equal(expired.status, 'expired');
+  assert.equal((await sql`SELECT state FROM training_link_transactions WHERE transaction_id=${expiredId}`).at(0).state, 'expired');
+  assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${expiredId}`).map((row) => row.action).join(','), 'training.link_transaction_created,training.link_transaction_expired');
 });
 
 test('client PII endpoints deny by default and ignore caller-supplied role headers', async () => {

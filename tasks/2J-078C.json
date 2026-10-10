@@ -1,0 +1,21 @@
+{
+  "taskId": "2J-078C",
+  "title": "Central auth-person binding and verified Training link protocol foundation",
+  "status": "ready_for_independent_review",
+  "branch": "agent/codex/2J-078C-central-auth-person-link",
+  "baseSha": "bddac419eed0ccb413d838bbef6d5c8463771b3e",
+  "live": false,
+  "trainingRepositoryTouched": false,
+  "trainingLiveLinking": "off",
+  "trainingVerifiedLinkingEnabledDefault": false,
+  "trainingServiceCallsEnabledDefault": false,
+  "credentialsStored": false,
+  "productDecisionsChanged": false,
+  "migration": "0023_auth_subject_training_link_transactions.sql",
+  "tables": ["platform_person_auth_subjects", "training_link_transactions"],
+  "contracts": ["TrainingLinkChallenge/v1", "TrainingLinkTransactionReceipt/v1", "ServiceAuthCanonicalRequest/v1"],
+  "implemented": ["explicit admin auth-subject mapping and revocation", "one-time hashed challenge foundation", "strict person-scoped resolver boundary", "hardened dormant Training service client", "request-bound service-auth canonicalization"],
+  "notImplemented": ["central auth provider", "passkeys", "SSO", "Training counterpart", "remote proof", "remote ACK", "canonical active link creation", "entitlement enforcement", "UI", "LIVE provider traffic"],
+  "verification": { "fullSuite": "234/234 passed; zero skipped", "api": "146/146 on PostgreSQL 17", "migrations": "23 checksummed migrations verified and reapplication verified", "typecheck": "9/9 packages passed", "build": "9/9 packages passed", "audit": "no known vulnerabilities at high severity", "diffCheck": "pass", "localSecretScan": "not run; Go CLI unavailable; GitHub secret scan pending", "visualEvidence": "not applicable; backend-only", "independentReview": "pending", "ci": "pending" },
+  "pullRequest": { "state": "opening_draft", "draft": true, "merged": false }
+}

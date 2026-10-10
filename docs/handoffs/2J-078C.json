@@ -1,0 +1,19 @@
+{
+  "taskId": "2J-078C",
+  "status": "implementation",
+  "baseSha": "bddac419eed0ccb413d838bbef6d5c8463771b3e",
+  "branch": "agent/codex/2J-078C-central-auth-person-link",
+  "migration": "0023_auth_subject_training_link_transactions.sql",
+  "tables": ["platform_person_auth_subjects", "training_link_transactions"],
+  "contracts": ["TrainingLinkChallenge/v1", "TrainingLinkTransactionReceipt/v1", "ServiceAuthCanonicalRequest/v1"],
+  "featureGates": { "trainingLinkingEnabled": false, "trainingVerifiedLinkingEnabled": false, "trainingServiceCallsEnabled": false },
+  "authSubjectPolicy": "explicit_admin_mapping; opaque; no inferred mapping; provider-subject retained across revocation to prevent reassignment",
+  "challengePolicy": { "entropyBits": 256, "storedForm": "sha256_only", "ttlMs": 300000, "replayReturnsRawChallenge": false, "createsCanonicalLink": false },
+  "notImplemented": ["central auth", "passkeys", "SSO", "Training changes", "remote proof", "remote ACK", "LIVE calls", "access enforcement", "UI"],
+  "trainingRepositoryTouched": false,
+  "credentialsStored": false,
+  "visualEvidence": "not_applicable_backend_only",
+  "verification": { "fullSuite": "234/234; zero skipped", "apiPostgres17": "146/146", "migrations": "23 checksummed and repeat verified", "typecheck": "9/9", "build": "9/9", "audit": "no known high severity vulnerabilities", "diffCheck": "pass", "localSecretScan": "not run; Go unavailable, GitHub scan pending", "visualEvidence": "not applicable; backend-only" },
+  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "pending" },
+  "pullRequest": { "state": "opening_draft", "draft": true, "merged": false }
+}

@@ -119,4 +119,44 @@ export function registerPersonIdentityRoutes(app: FastifyInstance<any, any, any,
       return result ? { personId: parsed.data.personId, linkId: result.linkId, status: 'revoked', linkVersion: result.linkVersion } : reply.code(404).send({ error: 'active_training_link_not_found' });
     } catch { return reply.code(500).send({ error: 'internal_error' }); }
   });
+
+  const authSubjectInput = z.object({
+    provider: z.string().regex(/^[a-z][a-z0-9.-]{0,63}$/),
+    providerVersion: z.number().int().min(1).max(32767).default(1),
+    authSubject: z.string().min(1).max(500).refine((value) => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)),
+  }).strict();
+  app.post('/api/platform/v1/persons/:personId/auth-subjects', async (request, reply) => {
+    const actor = await authorized(request, reply); if (!actor) return;
+    const params = z.object({ personId: uuid }).safeParse(request.params); const body = authSubjectInput.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
+    try {
+      const result = await database.begin(async (tx) => {
+        const people = await tx`SELECT id FROM platform_persons WHERE id=${params.data.personId} AND status='active' FOR UPDATE`;
+        if (!people.length) throw Object.assign(new Error('Person unavailable'), { code: 'PERSON_UNAVAILABLE' });
+        const rows = await tx`INSERT INTO platform_person_auth_subjects(person_id,provider,provider_version,auth_subject,created_by) VALUES (${params.data.personId},${body.data.provider},${body.data.providerVersion},${body.data.authSubject},${actor.actorId}) RETURNING id,person_id AS "personId",provider,provider_version AS "providerVersion",status,verified_at AS "verifiedAt",created_at AS "createdAt"`;
+        const row = rows[0];
+        if (!row) throw new Error('Auth subject insert failed');
+        await tx`INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details) VALUES (${params.data.personId},${actor.actorId},'person.auth_subject_linked',${row.id},${JSON.stringify({ provider: body.data.provider, providerVersion: body.data.providerVersion })}::jsonb)`;
+        return row;
+      });
+      return reply.code(201).send(result);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      return reply.code(code === '23505' ? 409 : code === 'PERSON_UNAVAILABLE' ? 404 : 500).send({ error: code === '23505' ? 'auth_subject_already_bound' : code === 'PERSON_UNAVAILABLE' ? 'person_unavailable' : 'internal_error' });
+    }
+  });
+  app.delete('/api/platform/v1/persons/:personId/auth-subjects/:authSubjectLinkId', async (request, reply) => {
+    const actor = await authorized(request, reply); if (!actor) return;
+    const params = z.object({ personId: uuid, authSubjectLinkId: uuid }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'validation_error' });
+    try {
+      const result = await database.begin(async (tx) => {
+        const [row] = await tx`UPDATE platform_person_auth_subjects SET status='revoked',revoked_by=${actor.actorId} WHERE id=${params.data.authSubjectLinkId} AND person_id=${params.data.personId} AND status='active' RETURNING id,person_id AS "personId",provider,provider_version AS "providerVersion",status,revoked_at AS "revokedAt"`;
+        if (!row) return null;
+        await tx`INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details) VALUES (${params.data.personId},${actor.actorId},'person.auth_subject_revoked',${row.id},${JSON.stringify({ provider: row.provider, providerVersion: row.providerVersion })}::jsonb)`;
+        return row;
+      });
+      return result ? result : reply.code(404).send({ error: 'active_auth_subject_not_found' });
+    } catch { return reply.code(500).send({ error: 'internal_error' }); }
+  });
 }
