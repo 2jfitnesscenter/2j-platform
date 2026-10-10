@@ -16,7 +16,8 @@ import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
-import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth } from './training-link-protocol.js';
+import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
+import { createRemoteTrainingLinkVerifier } from './training-integration.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -101,6 +102,7 @@ export type ServerOptions = {
   trainingVerifiedLinkingEnabled?: boolean;
   trainingServiceCallsEnabled?: boolean;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
+  trainingLinkVerifier?: TrainingLinkVerifier;
   logger?: FastifyServerOptions['logger'];
 };
 
@@ -148,6 +150,14 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerTrainingLinkTransactionRoutes(app, client, {
     enabled: options.trainingVerifiedLinkingEnabled === true,
     serviceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    verifier: options.trainingLinkVerifier ?? createRemoteTrainingLinkVerifier({
+      trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
+      trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+      ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
+      ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
+      ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
+      fetcher: globalThis.fetch,
+    }),
     resolvePersonAuth: options.resolvePersonAuth ?? (async () => null),
   });
   app.get('/health', async (_request, reply) => {

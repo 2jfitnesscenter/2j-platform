@@ -40,7 +40,7 @@ function publicTransaction(value: Record<string, unknown>) {
   return transactionDto.parse({ transactionId: value.transactionId, personId: value.personId, state: value.state, expiresAt: value.expiresAt, version: value.version });
 }
 
-export function createTrainingLinkTransactions(database: SqlClient, options: { enabled?: boolean; serviceCallsEnabled?: boolean; ttlMs?: number; verifierTimeoutMs?: number } = {}) {
+export function createTrainingLinkTransactions(database: SqlClient, options: { enabled?: boolean; serviceCallsEnabled?: boolean; ttlMs?: number; verifierTimeoutMs?: number; verifier?: TrainingLinkVerifier } = {}) {
   const ttlMs = Math.max(1, Math.min(options.ttlMs ?? TRAINING_LINK_TTL_MS, TRAINING_LINK_TTL_MS));
   const verifierTimeoutMs = Math.max(1, Math.min(options.verifierTimeoutMs ?? 10_000, 30_000));
   return {
@@ -95,7 +95,7 @@ export function createTrainingLinkTransactions(database: SqlClient, options: { e
       });
     },
     /** Internal future transition; a verifier must cryptographically bind its proof to every supplied context field. */
-    async verify(input: { transactionId: string; challenge: string; assertion: unknown; auth: ResolvedPersonAuth }, verifier?: TrainingLinkVerifier) {
+    async verify(input: { transactionId: string; challenge: string; assertion: unknown; auth: ResolvedPersonAuth }, verifier: TrainingLinkVerifier | undefined = options.verifier) {
       if (!options.enabled || !options.serviceCallsEnabled || !verifier) return { status: 'disabled' as const };
       const transactionId = uuid.parse(input.transactionId);
       const auth = { ...input.auth, personId: uuid.parse(input.auth.personId) };
@@ -160,9 +160,10 @@ export function createTrainingLinkTransactions(database: SqlClient, options: { e
 export function registerTrainingLinkTransactionRoutes(app: FastifyInstance, database: SqlClient, options: {
   enabled?: boolean;
   serviceCallsEnabled?: boolean;
+  verifier?: TrainingLinkVerifier;
   resolvePersonAuth: (request: FastifyRequest) => Promise<ResolvedPersonAuth | null>;
 }) {
-  const service = createTrainingLinkTransactions(database, { enabled: options.enabled ?? false, serviceCallsEnabled: options.serviceCallsEnabled ?? false });
+  const service = createTrainingLinkTransactions(database, { enabled: options.enabled ?? false, serviceCallsEnabled: options.serviceCallsEnabled ?? false, ...(options.verifier ? { verifier: options.verifier } : {}) });
   app.post('/api/platform/v1/training-link-transactions', async (request, reply) => {
     reply.header('Cache-Control', 'no-store').header('Pragma', 'no-cache');
     if (!options.enabled) return reply.code(423).send({ error: 'training_verified_linking_disabled' });

@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import type { TrainingLinkVerificationContext, TrainingLinkVerifier } from './training-link-protocol.js';
 
 const opaqueId = z.string().min(1).max(200).refine((value) => value.trim() === value, 'Identifier must be canonical');
 const personUuid = z.string().uuid().transform((value) => value.toLowerCase());
@@ -29,6 +30,128 @@ export type TrainingSummary = z.infer<typeof trainingSummarySchema>;
 export type TrainingAdapter = {
   getSummary(personId: string, signal?: AbortSignal): Promise<{ status: 'disabled' | 'unavailable' | 'available'; summary?: TrainingSummary }>;
 };
+
+const TRAINING_PROOF_PATH = '/api/platform/v1/link-proofs/exchange';
+const TRAINING_LINK_AUDIENCE = '2j-training-account-link';
+const TRAINING_LINK_PURPOSE = 'training-account-link';
+const proofAssertionSchema = z.object({ v: z.literal(1), code: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict();
+const proofExchangeResponseSchema = z.object({
+  v: z.literal(1), transactionId: z.string().uuid(), personId: z.string().uuid(),
+  trainingUserId: opaqueId.refine((value) => !/[\u0000-\u001f\u007f]/.test(value)),
+  audience: z.literal(TRAINING_LINK_AUDIENCE), purpose: z.literal(TRAINING_LINK_PURPOSE),
+  verifiedAt: z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/),
+}).strict();
+const exchangeContextSchema = z.object({
+  transactionId: z.string().uuid(), personId: z.string().uuid(),
+  audience: z.literal(TRAINING_LINK_AUDIENCE), purpose: z.literal(TRAINING_LINK_PURPOSE),
+  challengeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+
+export type RemoteTrainingLinkVerifierOptions = {
+  trainingVerifiedLinkingEnabled?: boolean;
+  trainingServiceCallsEnabled?: boolean;
+  baseUrl?: string;
+  keyId?: string;
+  /** Canonical base64url-encoded key; decoded value must contain at least 32 bytes. */
+  secret?: string;
+  fetcher?: typeof fetch;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  /** Test-only escape hatch; applies only to explicit loopback URLs. */
+  allowInsecureLoopbackForTests?: boolean;
+};
+
+function parseRemoteTrainingConfig(options: RemoteTrainingLinkVerifierOptions) {
+  try {
+    if (options.trainingVerifiedLinkingEnabled !== true || options.trainingServiceCallsEnabled !== true || !options.fetcher || !options.keyId || !options.secret || !/^[A-Za-z0-9._-]{1,80}$/.test(options.keyId)) return null;
+    const key = Buffer.from(options.secret, 'base64url');
+    if (key.length < 32 || key.toString('base64url') !== options.secret) return null;
+    const base = new URL(options.baseUrl || '');
+    const host = base.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    if (base.username || base.password || base.pathname !== '/' || base.search || base.hash) return null;
+    if (base.protocol !== 'https:' && !(options.allowInsecureLoopbackForTests === true && base.protocol === 'http:' && loopback)) return null;
+    return { origin: base.origin, key };
+  } catch { return null; }
+}
+
+/** Bounded UTF-8 JSON reader shared by the signed proof verifier only. */
+async function readProofResponse(response: Response, maxBytes: number, signal: AbortSignal) {
+  if (response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/json') throw new Error('unexpected response content type');
+  const length = response.headers.get('content-length');
+  if (length && (!/^\d+$/.test(length) || Number(length) > maxBytes)) throw new Error('response too large');
+  if (!response.body) throw new Error('missing response body');
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      if (signal.aborted) throw signal.reason ?? new Error('request aborted');
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > maxBytes) { await reader.cancel(); throw new Error('response too large'); }
+      chunks.push(next.value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+}
+
+/** Fail-closed Platform → Training proof exchange. It never trusts context supplied by assertion or response. */
+export function createRemoteTrainingLinkVerifier(options: RemoteTrainingLinkVerifierOptions = {}): TrainingLinkVerifier {
+  const config = parseRemoteTrainingConfig(options);
+  return async (untrustedContext: TrainingLinkVerificationContext, externalSignal: AbortSignal) => {
+    if (!config) return null;
+    const assertion = proofAssertionSchema.safeParse(untrustedContext.assertion);
+    const context = exchangeContextSchema.safeParse({
+      transactionId: untrustedContext.transactionId, personId: untrustedContext.personId,
+      audience: untrustedContext.audience, purpose: untrustedContext.purpose,
+      challengeDigest: untrustedContext.challengeDigest,
+    });
+    if (!assertion.success || !context.success || externalSignal.aborted) return null;
+
+    const requestBody = Buffer.from(JSON.stringify({ v: 1, code: assertion.data.code, ...context.data }), 'utf8');
+    const requestId = randomUUID();
+    const timestamp = new Date().toISOString();
+    const path = TRAINING_PROOF_PATH;
+    const signingInput: ServiceSigningInput = { keyId: options.keyId!, timestamp, requestId, method: 'POST', path, body: requestBody };
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(externalSignal.reason);
+    externalSignal.addEventListener('abort', abortFromCaller, { once: true });
+    const timeout = setTimeout(() => controller.abort(new Error('Training exchange deadline exceeded')), Math.max(1, Math.min(options.timeoutMs ?? 8_000, 8_000)));
+    const aborted = new Promise<never>((_resolve, reject) => {
+      if (controller.signal.aborted) reject(controller.signal.reason ?? new Error('request aborted'));
+      else controller.signal.addEventListener('abort', () => reject(controller.signal.reason ?? new Error('request aborted')), { once: true });
+    });
+    try {
+      const headers = await Promise.race([buildTrainingServiceAuthHeaders(signingInput, async (canonical) => createHmac('sha256', config.key).update(Buffer.from(canonical, 'utf8')).digest('base64url'), controller.signal), aborted]);
+      const url = new URL(path, config.origin);
+      const response = await Promise.race([options.fetcher!(url, {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { accept: 'application/json', 'content-type': 'application/json', ...headers },
+        body: requestBody,
+      }), aborted]);
+      if (response.status !== 200 || !response.ok) return null;
+      const raw = await Promise.race([readProofResponse(response, Math.max(1, Math.min(options.maxResponseBytes ?? 16_384, 16_384)), controller.signal), aborted]);
+      let decoded: unknown;
+      try { decoded = JSON.parse(raw); } catch { return null; }
+      const parsed = proofExchangeResponseSchema.safeParse(decoded);
+      if (!parsed.success) return null;
+      const value = parsed.data;
+      const verifiedAt = new Date(value.verifiedAt);
+      if (!Number.isFinite(verifiedAt.getTime()) || verifiedAt.toISOString() !== value.verifiedAt) return null;
+      if (value.transactionId !== context.data.transactionId || value.personId !== context.data.personId || value.audience !== context.data.audience || value.purpose !== context.data.purpose) return null;
+      return value.trainingUserId;
+    } catch { return null; }
+    finally {
+      clearTimeout(timeout);
+      externalSignal.removeEventListener('abort', abortFromCaller);
+    }
+  };
+}
 
 export type ServiceSigningInput = { keyId: string; timestamp: string; requestId: string; method: string; path: string; body: Uint8Array };
 
