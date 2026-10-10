@@ -54,6 +54,15 @@ export function registerDashboardRoutes(
       communications: can(context, 'communication.read'),
       billing: can(context, 'billing.read-basic'),
       staff: can(context, 'staff.read'),
+      reservationManage: can(context, 'reservations.manage'),
+      attendanceManage: can(context, 'reservations.attendance'),
+      entitlementsRead: can(context, 'entitlements.read'),
+      entitlementsManage: can(context, 'entitlements.manage'),
+      paymentsManage: can(context, 'billing.payments.manage'),
+      communicationSend: can(context, 'communication.send'),
+      documentsRead: can(context, 'documents.read'),
+      timeclockSelf: can(context, 'timeclock.self'),
+      capacityOverride: can(context, 'scheduling.override_capacity'),
     };
   });
 

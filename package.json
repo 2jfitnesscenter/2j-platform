@@ -9,7 +9,7 @@
     "typecheck": "turbo run typecheck",
     "build": "turbo run build",
     "seed:demo": "pnpm --filter @2j/api seed:demo",
-    "test": "pnpm --filter @2j/design-tokens test && pnpm --filter @2j/domain test && pnpm --filter @2j/permissions test && pnpm --filter @2j/auth test && pnpm --filter @2j/audit test && pnpm --filter @2j/api test && pnpm --filter @2j/admin-web test && pnpm --filter @2j/client-app test"
+    "test": "pnpm --filter @2j/design-tokens test && pnpm --filter @2j/domain test && pnpm --filter @2j/permissions test && pnpm --filter @2j/auth test && pnpm --filter @2j/audit test && pnpm --filter @2j/api test && pnpm --filter @2j/admin-web test && pnpm --filter @2j/client-app test && pnpm --filter @2j/staff-app test"
   },
   "devDependencies": {
     "turbo": "^2.5.0",
