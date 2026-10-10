@@ -31,7 +31,7 @@
   },
   "lifecycle": { "identityFoundation": "implemented", "localLinkStorage": "implemented", "remoteLifecycle": "not_implemented", "dualProof": "not_implemented", "sso": "not_implemented", "trainingAccessEnforcement": "not_implemented" },
   "adapterActivationRequirements": ["redirect:error", "validate personId UUID before URL construction", "HTTPS and base URL allowlist", "response content-type and size limits", "deadline covers signer and fetch", "request-bound signature includes method/path/requestId/keyId", "focused tests for each security guarantee"],
-  "verification": { "fullSuite": "227/227 passed; zero skipped on rebased tree", "migrations": "22 checksummed migrations verified and repeat-tested on fresh PostgreSQL 17", "typecheck": "9/9 packages passed", "build": "9/9 packages passed", "audit": "no known high severity vulnerabilities", "diffCheck": "pass", "secretScan": "pending on rebased PR head" },
-  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "pending on rebased head" },
+  "verification": { "fullSuite": "227/227 passed; zero skipped on 2J-078B hardening code", "migrations": "22 checksummed migrations verified and repeat-tested on fresh PostgreSQL 17", "typecheck": "9/9 packages passed", "build": "9/9 packages passed", "audit": "no known high severity vulnerabilities", "diffCheck": "pass", "secretScan": "passed on hardening code SHA f7e31d51c08a6c1e693a2bb9f3489519dac6652d" },
+  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "quality and secret scan passed on hardening code SHA f7e31d51c08a6c1e693a2bb9f3489519dac6652d" },
   "pullRequest": { "number": 22, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/22", "state": "open", "draft": true, "merged": false }
 }

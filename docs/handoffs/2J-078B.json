@@ -47,9 +47,9 @@
     "dependencyAudit": "no known high severity vulnerabilities",
     "diffCheck": "pass",
     "visualEvidence": "not applicable; backend-only",
-    "localSecretScan": "CLI unavailable; updated GitHub secret scan pending"
+    "localSecretScan": "CLI unavailable; GitHub secret scan passed on hardening code SHA f7e31d51c08a6c1e693a2bb9f3489519dac6652d"
   },
-  "review": { "security": "pending", "qa": "pending", "ci": "pending on rebased head" },
+  "review": { "security": "pending", "qa": "pending", "ci": "quality and secret scan passed on hardening code SHA f7e31d51c08a6c1e693a2bb9f3489519dac6652d" },
   "pullRequest": { "number": 22, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/22", "state": "open", "draft": true, "merged": false },
   "merged": false
 }
