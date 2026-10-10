@@ -1,0 +1,56 @@
+{
+  "taskId": "2J-075",
+  "title": "App Cliente V1 / Reservas 2J",
+  "status": "draft_pr_ready_for_independent_review",
+  "repository": "2jfitnesscenter/2j-platform",
+  "baseRef": "main",
+  "baseSha": "3d2506bb7cd2647b0f94941b6814cbc8538df31b",
+  "branch": "agent/codex/2J-075-client-app",
+  "pullRequest": null,
+  "mergeAllowed": false,
+  "timezone": "Atlantic/Canary",
+  "migrations": [],
+  "clientApp": {
+    "path": "apps/client-app",
+    "stack": ["React", "TypeScript", "Vite", "PWA", "Capacitor prepared"],
+    "nativeProjectsGenerated": false,
+    "pushEnabled": false,
+    "offlineMutations": false
+  },
+  "identity": {
+    "source": "central clientAuthorizationResolver",
+    "clientIdFromBrowserAccepted": false,
+    "defaultBehavior": "fail_closed_401",
+    "localDemo": "LOCAL_DEMO_CLIENT_ID only with NODE_ENV=development and loopback HOST",
+    "productionAuthentication": "not_connected; required before real client rollout"
+  },
+  "apis": [
+    "GET /api/me",
+    "GET /api/me/membership",
+    "GET /api/me/bookings",
+    "GET /api/me/bookings/:reservationId/cancellation-preview",
+    "GET /api/me/sessions?from&to",
+    "GET /api/me/sessions/:sessionId",
+    "POST /api/me/sessions/:sessionId/reservations",
+    "POST /api/me/sessions/:sessionId/waitlist",
+    "PATCH /api/me/bookings/:reservationId/cancel",
+    "PATCH /api/me/waitlist/:entryId/cancel"
+  ],
+  "bookingEngine": "2J-074 central resolver and transaction paths reused; no duplicated commercial rules",
+  "outOfScope": ["2jfitnessapp changes", "Bunker implementation", "Health", "Nutrition", "online payments", "friends", "push notifications", "staff tools", "store publication"],
+  "checks": {
+    "apiSelfServicePostgres": "3/3 passed",
+    "monorepoTests": "209/209 passed on a fresh temporary PostgreSQL database",
+    "typecheck": "8/8 passed",
+    "build": "8/8 passed",
+    "audit": "pnpm audit --audit-level high: no known vulnerabilities",
+    "migrations": "19/19 checked and applied on fresh temporary PostgreSQL via integration suite",
+    "secretScan": "pending GitHub CI",
+    "gitDiffCheck": "passed",
+    "githubCi": "pending PR"
+  },
+  "visualEvidence": "real local browser smoke checked; no archived 390/768/1440 captures because exact viewport was not verified; pending independent QA",
+  "independentReview": "pending",
+  "productionBlockers": ["central client login/session resolver integration", "native API origin and production CORS configuration"],
+  "bunkerContract": "same central client id plus training module access/capabilities; no duplicate profile or health/training data"
+}
