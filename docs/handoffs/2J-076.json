@@ -37,7 +37,7 @@
   "review": {
     "independentBackendSecurity": "pending",
     "independentUxQa": "pending",
-    "ci": "pending"
+    "ci": "success on implementation SHA 259917bc18f62734a72ba7fc14f0ca914cd65cef (workflow run 38035560246)"
   },
   "productionBlockers": [
     "validate central staff auth cookies and Capacitor origin with deployment origins",
