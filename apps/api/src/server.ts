@@ -17,7 +17,8 @@ import { registerCommunicationRoutes, type ClientAuthorizationContext } from './
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
 import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
-import { createRemoteTrainingLinkVerifier } from './training-integration.js';
+import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler } from './training-integration.js';
+import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -101,6 +102,7 @@ export type ServerOptions = {
   trainingLinkingEnabled?: boolean;
   trainingVerifiedLinkingEnabled?: boolean;
   trainingServiceCallsEnabled?: boolean;
+  trainingCanonicalLinkingEnabled?: boolean;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
   logger?: FastifyServerOptions['logger'];
@@ -160,6 +162,20 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     }),
     resolvePersonAuth: options.resolvePersonAuth ?? (async () => null),
   });
+  app.decorate('trainingCanonicalLinkLifecycle', createTrainingCanonicalLinkLifecycle(client, {
+    trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
+    trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    trainingCanonicalLinkingEnabled: options.trainingCanonicalLinkingEnabled === true,
+    reconcileReceipt: createRemoteTrainingReceiptReconciler({
+      trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
+      trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+      trainingCanonicalLinkingEnabled: options.trainingCanonicalLinkingEnabled === true,
+      ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
+      ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
+      ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
+      fetcher: globalThis.fetch,
+    }),
+  }));
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }

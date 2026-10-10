@@ -11,8 +11,9 @@ import * as schema from '../src/schema.ts';
 import { getEffectiveEntitlements } from '../src/entitlements.ts';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
-import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createRemoteTrainingLinkVerifier, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
+import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
 import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
+import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
 
@@ -55,6 +56,34 @@ async function createPlan(serviceIds, overrides = {}, idempotencyKey = randomUUI
   const body = planPayload(serviceIds, overrides);
   const response = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': idempotencyKey }, payload: body });
   return { body, response };
+}
+
+async function createTrainingReceiptFixture(ttlMs = TRAINING_LINK_TTL_MS) {
+  const client = (await createClientRequest(clientsAdminApp, { firstName: 'Receipt', lastName: `Fixture ${randomUUID()}` })).json();
+  const person = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.id } });
+  assert.equal(person.statusCode, 201, person.body);
+  const auth = { personId: person.json().personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `receipt-${randomUUID()}` };
+  const binding = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${auth.personId}/auth-subjects`, payload: { provider: auth.provider, providerVersion: auth.providerVersion, authSubject: auth.authSubject } });
+  assert.equal(binding.statusCode, 201, binding.body);
+  const protocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true, ttlMs });
+  const transaction = await protocol.create({ ...auth, requestId: randomUUID() });
+  assert.equal(transaction.status, 'created');
+  const [stored] = await sql`SELECT created_at,expires_at,nonce_hash FROM training_link_transactions WHERE transaction_id=${transaction.transaction.transactionId}`;
+  const receipt = {
+    v: 1, status: 'verified', receiptId: randomUUID(), receiptVersion: 1,
+    transactionId: transaction.transaction.transactionId, personId: auth.personId,
+    trainingUserId: `training-${randomUUID()}`, audience: '2j-training-account-link', purpose: 'training-account-link',
+    challengeDigest: stored.nonce_hash.trim(), verifiedAt: new Date(new Date(stored.created_at).getTime() + 10).toISOString(),
+  };
+  return { client, person: person.json(), auth, binding: binding.json(), transaction, protocol, stored, receipt };
+}
+
+async function createTrainingReceiptForAuth(auth, trainingUserId) {
+  const protocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true });
+  const transaction = await protocol.create({ ...auth, requestId: randomUUID() });
+  assert.equal(transaction.status, 'created');
+  const [stored] = await sql`SELECT created_at,expires_at,nonce_hash FROM training_link_transactions WHERE transaction_id=${transaction.transaction.transactionId}`;
+  return { protocol, transaction, stored, receipt: { v: 1, status: 'verified', receiptId: randomUUID(), receiptVersion: 1, transactionId: transaction.transaction.transactionId, personId: auth.personId, trainingUserId, audience: '2j-training-account-link', purpose: 'training-account-link', challengeDigest: stored.nonce_hash.trim(), verifiedAt: new Date(new Date(stored.created_at).getTime() + 10).toISOString() } };
 }
 
 test('domain input separates product kind from renewal and defines quota periods explicitly', () => {
@@ -109,6 +138,44 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   await sql`UPDATE schema_migrations SET checksum=${'0'.repeat(64)} WHERE name=${migration}`;
   await assert.rejects(migrateDatabase(sql), /Migration checksum mismatch/);
   await sql`UPDATE schema_migrations SET checksum=${originalChecksum} WHERE name=${migration}`;
+});
+
+test('0024 upgrades representative legacy active and revoked explicit-admin links without rewriting history', async () => {
+  const databaseUrl = new URL(process.env.DATABASE_URL);
+  const temporaryDatabase = `legacy_${randomUUID().replaceAll('-', '')}`;
+  const adminUrl = new URL(databaseUrl); adminUrl.pathname = '/postgres';
+  const admin = postgres(adminUrl.toString(), { max: 1, connect_timeout: 5 });
+  let legacy;
+  try {
+    await admin.unsafe(`CREATE DATABASE "${temporaryDatabase}"`);
+    databaseUrl.pathname = `/${temporaryDatabase}`;
+    legacy = postgres(databaseUrl.toString(), { max: 2, connect_timeout: 5 });
+    const directory = new URL('../migrations/', import.meta.url);
+    const migrations = (await readdir(directory)).filter((name) => name.endsWith('.sql') && name < '0024_training_canonical_link_lifecycle.sql').sort();
+    for (const name of migrations) {
+      const contents = await readFile(new URL(name, directory), 'utf8');
+      await legacy.begin(async (tx) => tx.unsafe(contents));
+    }
+    const activePersonId = randomUUID(), revokedPersonId = randomUUID(), activeLinkId = randomUUID(), revokedLinkId = randomUUID();
+    await legacy.begin(async (tx) => {
+      await tx`INSERT INTO platform_persons(id,created_by) VALUES (${activePersonId},'legacy-upgrade-test'),(${revokedPersonId},'legacy-upgrade-test')`;
+      await tx`INSERT INTO training_account_links(link_id,request_id,person_id,training_user_id,method,created_by,updated_by) VALUES
+        (${activeLinkId},${randomUUID()},${activePersonId},'legacy-active-training-id','explicit_admin','legacy-upgrade-test','legacy-upgrade-test'),
+        (${revokedLinkId},${randomUUID()},${revokedPersonId},'legacy-revoked-training-id','explicit_admin','legacy-upgrade-test','legacy-upgrade-test')`;
+      await tx`UPDATE training_account_links SET status='revoked',revoked_at=now() WHERE link_id=${revokedLinkId}`;
+    });
+    const before = await legacy`SELECT link_id,request_id,person_id,training_user_id,status,method,link_version,created_by,updated_by,created_at,updated_at,revoked_at FROM training_account_links ORDER BY link_id`;
+    const migration = await readFile(new URL('0024_training_canonical_link_lifecycle.sql', directory), 'utf8');
+    await legacy.begin(async (tx) => tx.unsafe(migration));
+    const afterRows = await legacy`SELECT link_id,request_id,person_id,training_user_id,status,method,link_version,created_by,updated_by,created_at,updated_at,revoked_at FROM training_account_links ORDER BY link_id`;
+    assert.deepEqual(afterRows, before, '0024 preserves all legacy link identity, state, actor, version, and timestamps');
+    assert.deepEqual(afterRows.map((row) => row.status).sort(), ['active','revoked']);
+    assert.ok((await legacy`SELECT 1 FROM pg_indexes WHERE indexname='training_account_links_one_nonterminal_person'`).length);
+  } finally {
+    if (legacy) await legacy.end({ timeout: 5 });
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${temporaryDatabase}" WITH (FORCE)`);
+    await admin.end({ timeout: 5 });
+  }
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
@@ -682,6 +749,148 @@ test('expired link transactions cannot verify and transition once to expired wit
   assert.equal((await verifiedExpiryProtocol.cancel({ transactionId: verifiedChallenge.transaction.transactionId, ...auth })).status, 'expired');
   const expiredVerifiedRow = (await sql`SELECT state,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${verifiedChallenge.transaction.transactionId}`).at(0);
   assert.equal(expiredVerifiedRow.state, 'expired'); assert.equal(expiredVerifiedRow.verified_training_user_id, verifiedSubject, 'verified subject survives expiry');
+});
+
+test('078F-B ambiguous receipt recovery creates one pending Platform link and cannot activate it', async () => {
+  const f = await createTrainingReceiptFixture();
+  const lifecycle = createTrainingCanonicalLinkLifecycle(sql, {
+    trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true,
+    reconcileReceipt: async () => f.receipt,
+  });
+  const [first, replay] = await Promise.all([
+    lifecycle.reconcile({ transactionId: f.receipt.transactionId, auth: f.auth }),
+    lifecycle.reconcile({ transactionId: f.receipt.transactionId, auth: f.auth }),
+  ]);
+  assert.equal(first.status, 'pending'); assert.equal(first.link.status, 'pending'); assert.equal(first.link.linkVersion, 1);
+  assert.equal(replay.link.linkId, first.link.linkId);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM training_account_links WHERE source_transaction_id=${f.receipt.transactionId}`).at(0).count, 1);
+  assert.deepEqual((await sql`SELECT state,verified_training_user_id,source_receipt_id FROM training_link_transactions WHERE transaction_id=${f.receipt.transactionId}`).at(0), { state: 'verified', verified_training_user_id: f.receipt.trainingUserId, source_receipt_id: f.receipt.receiptId });
+  await assert.rejects(sql`UPDATE training_account_links SET status='active',link_version=2 WHERE link_id=${first.link.linkId}`, { code: '55000' });
+  const details = JSON.stringify(await sql`SELECT action,details FROM platform_identity_audit_events WHERE resource_id=${first.link.linkId} OR resource_id=${f.receipt.transactionId}`);
+  assert.match(details, /training\.link_reconciliation_recovered/);
+  assert.match(details, /training\.link_pending_created/);
+  assert.equal(details.includes(f.receipt.trainingUserId), false);
+});
+
+test('078F-B rejects receipt context/time mismatches and never recovers cancelled or disabled flows', async () => {
+  const mutations = [
+    (r) => ({ ...r, personId: randomUUID() }), (r) => ({ ...r, transactionId: randomUUID() }),
+    (r) => ({ ...r, audience: 'other' }), (r) => ({ ...r, purpose: 'other' }),
+    (r) => ({ ...r, challengeDigest: 'f'.repeat(64) }), (r) => ({ ...r, verifiedAt: 'bad-date' }),
+    (r, f) => ({ ...r, verifiedAt: new Date(new Date(f.stored.created_at).getTime() - 1000).toISOString() }),
+    (r, f) => ({ ...r, verifiedAt: new Date(new Date(f.stored.expires_at).getTime() + 1000).toISOString() }),
+    (r) => ({ ...r, receiptVersion: 2 }), (r) => ({ ...r, receiptId: 'bad-id' }),
+    (r) => ({ ...r, trainingUserId: ' padded ' }), (r) => ({ ...r, extra: true }),
+  ];
+  for (const mutate of mutations) {
+    const f = await createTrainingReceiptFixture();
+    const service = createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, reconcileReceipt: async () => mutate(f.receipt, f) });
+    assert.equal((await service.reconcile({ transactionId: f.receipt.transactionId, auth: f.auth })).status, 'receipt_invalid');
+    assert.equal((await sql`SELECT state FROM training_link_transactions WHERE transaction_id=${f.receipt.transactionId}`).at(0).state, 'pending');
+  }
+  const cancelled = await createTrainingReceiptFixture();
+  assert.equal((await cancelled.protocol.cancel({ transactionId: cancelled.receipt.transactionId, ...cancelled.auth })).status, 'cancelled');
+  let calls = 0;
+  const disabled = createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, reconcileReceipt: async () => { calls++; return cancelled.receipt; } });
+  assert.equal((await disabled.reconcile({ transactionId: cancelled.receipt.transactionId, auth: cancelled.auth })).status, 'disabled');
+  const enabled = createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, reconcileReceipt: async () => { calls++; return cancelled.receipt; } });
+  assert.equal((await enabled.reconcile({ transactionId: cancelled.receipt.transactionId, auth: cancelled.auth })).status, 'not_recoverable');
+  assert.equal(calls, 0);
+});
+
+test('078F-B receipt adapter signs the exact fixed reconciliation path and strictly binds receipt data', async () => {
+  const context = { transactionId: randomUUID(), personId: randomUUID(), audience: '2j-training-account-link', purpose: 'training-account-link', challengeDigest: 'a'.repeat(64) };
+  const secret = Buffer.alloc(32, 0x27), calls = [];
+  const responseFor = (overrides = {}) => ({ v: 1, status: 'verified', receiptId: randomUUID(), receiptVersion: 1, transactionId: context.transactionId, personId: context.personId, trainingUserId: 'opaque-training-user', audience: context.audience, purpose: context.purpose, challengeDigest: context.challengeDigest, verifiedAt: new Date().toISOString(), ...overrides });
+  const adapter = createRemoteTrainingReceiptReconciler({
+    trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true,
+    baseUrl: 'https://training.example.test', keyId: 'platform-test', secret: secret.toString('base64url'),
+    fetcher: async (url, init) => {
+      calls.push(1); const body = Buffer.from(init.body); const headers = init.headers;
+      assert.equal(url.pathname, '/api/platform/v1/link-proofs/reconcile'); assert.equal(url.search, ''); assert.deepEqual(JSON.parse(body.toString()), { v: 1, ...context });
+      const canonical = canonicalizeTrainingServiceRequest({ keyId: headers['x-2j-key-id'], timestamp: headers['x-2j-timestamp'], requestId: headers['x-2j-request-id'], method: 'POST', path: url.pathname, body });
+      assert.equal(headers['x-2j-signature'], createHmac('sha256', secret).update(canonical).digest('base64url'));
+      const payload = calls.length === 2 ? responseFor({ extra: true }) : calls.length === 3 ? responseFor({ challengeDigest: 'b'.repeat(64) }) : responseFor();
+      return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+  const noGate = createRemoteTrainingReceiptReconciler({ trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, baseUrl: 'https://training.example.test', keyId: 'platform-test', secret: secret.toString('base64url'), fetcher: async () => { calls.push(99); throw new Error('must be disabled'); } });
+  assert.equal(await noGate(context, new AbortController().signal), null);
+  assert.equal((await adapter(context, new AbortController().signal)).trainingUserId, 'opaque-training-user');
+  assert.equal(await adapter(context, new AbortController().signal), null);
+  assert.equal(await adapter(context, new AbortController().signal), null);
+  assert.deepEqual(calls, [1,1,1]);
+  const transportBase = { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, baseUrl: 'https://training.example.test', keyId: 'platform-test', secret: secret.toString('base64url') };
+  for (const [status, headers, body] of [
+    [404, { 'content-type': 'application/json' }, '{}'], [409, { 'content-type': 'application/json' }, '{}'],
+    [302, { location: 'https://other.example.test', 'content-type': 'application/json' }, '{}'],
+    [200, { 'content-type': 'text/plain' }, '{}'], [200, { 'content-type': 'application/json', 'content-length': '20000' }, '{}'],
+  ]) {
+    const failed = createRemoteTrainingReceiptReconciler({ ...transportBase, fetcher: async (_url, init) => { assert.equal(init.redirect, 'error'); return new Response(body, { status, headers }); } });
+    assert.equal(await failed(context, new AbortController().signal), null, `HTTP/response failure ${status} is fail-closed`);
+  }
+  const timeout = createRemoteTrainingReceiptReconciler({ ...transportBase, fetcher: async () => { throw new Error('aborted timeout'); } });
+  assert.equal(await timeout(context, new AbortController().signal), null);
+  let forbiddenCalls = 0;
+  const invalidConfig = createRemoteTrainingReceiptReconciler({ ...transportBase, baseUrl: 'http://training.example.test', fetcher: async () => { forbiddenCalls++; throw new Error('must not call'); } });
+  assert.equal(await invalidConfig(context, new AbortController().signal), null);
+  assert.equal(forbiddenCalls, 0, 'invalid origin config makes zero calls');
+});
+
+test('078F-B recovers a clock-expired pending transaction only from historical in-window proof and rejects terminal expiry', async () => {
+  const recoverable = await createTrainingReceiptFixture(25);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const service = createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, reconcileReceipt: async () => recoverable.receipt });
+  const recovered = await service.reconcile({ transactionId: recoverable.receipt.transactionId, auth: recoverable.auth });
+  assert.equal(recovered.status, 'pending');
+  assert.equal(recovered.recovered, true);
+
+  const terminal = await createTrainingReceiptFixture(25);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal((await terminal.protocol.cancel({ transactionId: terminal.receipt.transactionId, ...terminal.auth })).status, 'expired');
+  let calls = 0;
+  const blocked = createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, reconcileReceipt: async () => { calls++; return terminal.receipt; } });
+  assert.equal((await blocked.reconcile({ transactionId: terminal.receipt.transactionId, auth: terminal.auth })).status, 'not_recoverable');
+  assert.equal(calls, 0);
+});
+
+test('078F-B enforces active identity binding and one nonterminal link per person and Training identity', async () => {
+  const f = await createTrainingReceiptFixture();
+  let calls = 0;
+  const create = (receipt) => createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, reconcileReceipt: async () => { calls++; return receipt; } });
+  assert.equal((await create(f.receipt).reconcile({ transactionId: f.receipt.transactionId, auth: { ...f.auth, personId: randomUUID() } })).status, 'wrong_person');
+  await sql`UPDATE platform_person_auth_subjects SET status='revoked',revoked_at=now(),revoked_by='qa-078fb' WHERE id=${f.binding.id}`;
+  assert.equal((await create(f.receipt).reconcile({ transactionId: f.receipt.transactionId, auth: f.auth })).status, 'identity_unavailable');
+  assert.equal(calls, 0, 'wrong person and revoked binding make no service call');
+
+  const inactive = await createTrainingReceiptFixture();
+  await sql`UPDATE platform_persons SET status='revoked' WHERE id=${inactive.auth.personId}`;
+  assert.equal((await create(inactive.receipt).reconcile({ transactionId: inactive.receipt.transactionId, auth: inactive.auth })).status, 'identity_unavailable');
+
+  const first = await createTrainingReceiptFixture();
+  const success = await create(first.receipt).reconcile({ transactionId: first.receipt.transactionId, auth: first.auth });
+  assert.equal(success.status, 'pending');
+  const linkedCount = (await sql`SELECT count(*)::int AS count FROM training_account_links WHERE status IN ('pending','active','revocation_pending') AND person_id=${first.auth.personId}`).at(0).count;
+  const samePersonDifferentRemote = await createTrainingReceiptForAuth(first.auth, `another-${randomUUID()}`);
+  const personCollision = await create(samePersonDifferentRemote.receipt).reconcile({ transactionId: samePersonDifferentRemote.receipt.transactionId, auth: first.auth });
+  assert.equal(personCollision.status, 'conflict');
+  const other = await createTrainingReceiptFixture();
+  const userCollision = await create({ ...other.receipt, trainingUserId: first.receipt.trainingUserId }).reconcile({ transactionId: other.receipt.transactionId, auth: other.auth });
+  assert.equal(userCollision.status, 'conflict');
+  assert.equal((await sql`SELECT count(*)::int AS count FROM training_account_links WHERE status IN ('pending','active','revocation_pending') AND person_id=${first.auth.personId}`).at(0).count, linkedCount, 'conflicts do not create placeholder rows');
+  assert.equal((await sql`SELECT status,method FROM training_account_links WHERE link_id=${success.link.linkId}`).at(0).status, 'pending');
+});
+
+test('078F-B already-verified exchange identity is write-once and a different receipt identity fails closed', async () => {
+  const f = await createTrainingReceiptFixture();
+  const verifiedUser = `verified-${randomUUID()}`;
+  assert.equal((await f.protocol.verify({ transactionId: f.receipt.transactionId, challenge: f.transaction.challenge, assertion: {}, auth: f.auth }, async () => verifiedUser)).status, 'verified');
+  const mismatch = createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, reconcileReceipt: async () => ({ ...f.receipt, trainingUserId: `other-${randomUUID()}` }) });
+  assert.equal((await mismatch.reconcile({ transactionId: f.receipt.transactionId, auth: f.auth })).status, 'conflict');
+  assert.equal((await sql`SELECT count(*)::int AS count FROM training_account_links WHERE source_transaction_id=${f.receipt.transactionId}`).at(0).count, 0);
+  const matching = createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, reconcileReceipt: async () => ({ ...f.receipt, trainingUserId: verifiedUser }) });
+  assert.equal((await matching.reconcile({ transactionId: f.receipt.transactionId, auth: f.auth })).status, 'pending');
+  assert.equal((await sql`SELECT verified_training_user_id FROM training_link_transactions WHERE transaction_id=${f.receipt.transactionId}`).at(0).verified_training_user_id, verifiedUser);
 });
 
 test('client PII endpoints deny by default and ignore caller-supplied role headers', async () => {
