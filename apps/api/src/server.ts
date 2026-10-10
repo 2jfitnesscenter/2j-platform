@@ -16,6 +16,7 @@ import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
+import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth } from './training-link-protocol.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -97,6 +98,9 @@ export type ServerOptions = {
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
   trainingLinkingEnabled?: boolean;
+  trainingVerifiedLinkingEnabled?: boolean;
+  trainingServiceCallsEnabled?: boolean;
+  resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   logger?: FastifyServerOptions['logger'];
 };
 
@@ -141,6 +145,11 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
+  registerTrainingLinkTransactionRoutes(app, client, {
+    enabled: options.trainingVerifiedLinkingEnabled === true,
+    serviceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    resolvePersonAuth: options.resolvePersonAuth ?? (async () => null),
+  });
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }
