@@ -47,7 +47,7 @@
   "review": {
     "independentBackendSecurity": "pending",
     "independentUxQa": "pending",
-    "ci": "pending"
+    "ci": "running_on_draft_pr"
   },
   "productionBlockers": [
     "Approve a push/email provider, cost and legal/privacy terms before external delivery",
@@ -55,5 +55,12 @@
     "Verify client message deep-link destination against the deployed client conversation surface",
     "Run independent responsive browser QA at 390, 768 and 1440 px",
     "Deploy and monitor the API worker as a separate managed service"
-  ]
+  ],
+  "pullRequest": {
+    "number": 20,
+    "url": "https://github.com/2jfitnesscenter/2j-platform/pull/20",
+    "state": "open",
+    "draft": true,
+    "merged": false
+  }
 }
