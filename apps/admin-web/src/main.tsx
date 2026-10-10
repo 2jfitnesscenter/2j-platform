@@ -10,6 +10,7 @@ import { StaffPage } from './staff-page.js';
 import { CommunicationsPage } from './communications-page.js';
 import { AppShell } from './app-shell.js';
 import { CommandCenter } from './command-center.js';
+import { NotificationSettings } from './notification-settings.js';
 
 function App() {
   const [route, setRoute] = React.useState(() => window.location.hash.slice(1).split('?')[0] || 'home');
@@ -18,8 +19,8 @@ function App() {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
-  React.useEffect(() => { document.title = `${route === 'home' ? 'Inicio' : route === 'clients' ? 'Clientes' : route === 'calendar' ? 'Agenda' : route === 'economics' ? 'Economía' : route === 'staff' ? 'Equipo' : route === 'communications' ? 'Comunicación' : 'Servicios'} · 2J Platform`; }, [route]);
-  const page = route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
+  React.useEffect(() => { document.title = `${route === 'home' ? 'Inicio' : route === 'clients' ? 'Clientes' : route === 'calendar' ? 'Agenda' : route === 'economics' ? 'Economía' : route === 'staff' ? 'Equipo' : route === 'communications' ? 'Comunicación' : route === 'notification-settings' ? 'Avisos' : 'Servicios'} · 2J Platform`; }, [route]);
+  const page = route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }
 

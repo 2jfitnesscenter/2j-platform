@@ -70,11 +70,13 @@ test('staff can reserve and cancel a client; client 360 reads the same reservati
   const created = await reserve(session.id, client.id);
   assert.equal(created.statusCode, 201, created.body);
   const reservationId = created.json().id;
+  const [createdEvent]=await sql`SELECT id FROM domain_events_outbox WHERE dedupe_key=${`booking-confirmed:${reservationId}`}`;assert.ok(createdEvent);
   const profile = await reception.inject({ method: 'GET', url: `/api/clients/${client.id}` });
   assert.equal(profile.statusCode, 200, profile.body);
   assert.equal(profile.json().reservations.some((item) => item.id === reservationId), true);
   const cancelled = await reception.inject({ method: 'PATCH', url: `/api/calendar/reservations/${reservationId}/cancel` });
   assert.equal(cancelled.statusCode, 200, cancelled.body);
+  const [cancelledEvent]=await sql`SELECT id FROM domain_events_outbox WHERE dedupe_key=${`booking-cancelled:${reservationId}`}`;assert.ok(cancelledEvent);
   const afterCancel = await admin.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}/attendees` });
   assert.equal(afterCancel.json().reservations.find((item) => item.id === reservationId).status, 'cancelled');
 });
@@ -95,6 +97,7 @@ test('a full session accepts eligible waitlist entry, supports withdrawal and pr
   assert.equal((await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:booked.client.id}})).statusCode,201);
   const joined = await engineAdmin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`,headers:{'idempotency-key':randomUUID()}, payload: { clientId: waiting.client.id } });
   assert.equal(joined.statusCode, 201, joined.body);
+  const [waitlistEvent]=await sql`SELECT id FROM domain_events_outbox WHERE dedupe_key=${`waitlist-joined:${joined.json().id}`}`;assert.ok(waitlistEvent);
   const duplicate = await engineAdmin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`, payload: { clientId: waiting.client.id } });
   assert.equal(duplicate.json().error, 'duplicate_booking');
   const left = await engineAdmin.inject({ method: 'PATCH', url: `/api/calendar/waitlist/${joined.json().id}/cancel` });
@@ -103,6 +106,7 @@ test('a full session accepts eligible waitlist entry, supports withdrawal and pr
   assert.equal(reentered.statusCode, 201, reentered.body);
   const cancelledBooking=await engineAdmin.inject({method:'PATCH',url:`/api/calendar/reservations/${(await sql`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${booked.client.id}`).at(0).id}/cancel`});
   assert.equal(cancelledBooking.statusCode,200,cancelledBooking.body);
+  const [promotedEvent]=await sql`SELECT id FROM domain_events_outbox WHERE dedupe_key=${`waitlist-promoted:${reentered.json().id}`}`;assert.ok(promotedEvent);
   const data = await admin.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}/attendees` });
   assert.equal(data.json().waitlist.filter((item) => item.status === 'waiting').length, 0);
   assert.equal(data.json().waitlist.find((item) => item.status === 'promoted').clientId, waiting.client.id);

@@ -1,0 +1,59 @@
+{
+  "taskId": "2J-077",
+  "title": "Notificaciones y automatización operativa V1",
+  "status": "implementation_in_review",
+  "baseSha": "5ae43a93cc1313d98ae3618524269996cf1a7238",
+  "branch": "agent/codex/2J-077-notifications-automation",
+  "draftPullRequest": true,
+  "merged": false,
+  "live": false,
+  "delivery": {
+    "channels": [
+      "in_app"
+    ],
+    "externalProvidersEnabled": false,
+    "credentialsOrTokensStored": false,
+    "worker": "standalone durable process; PostgreSQL SKIP LOCKED",
+    "timezone": "Atlantic/Canary"
+  },
+  "flows": {
+    "booking_confirm_cancel": "outbox_event_transactional",
+    "waitlist_join_and_promotion": "outbox_event_transactional",
+    "client_and_staff_messages": "generic_notification_without_message_body",
+    "booking_reminder": "scheduled_with_durable_due_time_and_dedupe",
+    "entitlement_expiry": "scheduled_generic_client_notice",
+    "low_session_balance": "scheduled_generic_client_notice",
+    "pending_documents": "scheduled_generic_client_notice",
+    "client_inbox": "implemented_self_scoped_paginated_read_one_read_all",
+    "staff_inbox": "implemented_actor_scoped_paginated_read_one_read_all",
+    "center_preferences": "implemented_settings_manage_only",
+    "push_email_delivery": "deferred_no_provider_or_secrets",
+    "fiscal_debt_staff_timeclock_automation": "deferred"
+  },
+  "migrations": [
+    "0020_notifications_outbox.sql"
+  ],
+  "verification": {
+    "migration": "20 checksummed migrations verified on PostgreSQL 17",
+    "notificationIntegrationTests": "5/5",
+    "typecheckPackages": "9/9",
+    "buildPackages": "9/9",
+    "fullSuite": "221/221 passed (API 136; admin 57; client 5; staff 6; shared packages 17), zero skipped",
+    "audit": "pnpm audit --audit-level high: no known vulnerabilities",
+    "secretScan": "pending GitHub CI; gitleaks unavailable locally",
+    "visualBrowserEvidence": "not captured; no authenticated local test accounts",
+    "freshPostgres": "PostgreSQL 17; 20 checksummed migrations verified"
+  },
+  "review": {
+    "independentBackendSecurity": "pending",
+    "independentUxQa": "pending",
+    "ci": "pending"
+  },
+  "productionBlockers": [
+    "Approve a push/email provider, cost and legal/privacy terms before external delivery",
+    "Add secret-safe token registration, revocation, health, usage/cost controls and kill switch before push",
+    "Verify client message deep-link destination against the deployed client conversation surface",
+    "Run independent responsive browser QA at 390, 768 and 1440 px",
+    "Deploy and monitor the API worker as a separate managed service"
+  ]
+}

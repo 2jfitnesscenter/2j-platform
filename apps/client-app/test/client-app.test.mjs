@@ -39,6 +39,16 @@ test('dates and times are formatted in Atlantic/Canary', () => {
   });
 });
 
+test('client notification bell opens a self-scoped inbox and marks notices read', async () => {
+  const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/'});
+  Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage},crypto:{configurable:true,value:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'}}});
+  const item={id:'99999999-9999-4999-8999-999999999999',type:'booking_confirmed',title:'Reserva confirmada',body:'Tu plaza está confirmada.',deeplink:'/bookings',createdAt:'2026-10-10T10:00:00.000Z',readAt:null};
+  globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}),{status:200});if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[]}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
+  const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));
+  const bell=await ui.findByRole('button',{name:/Notificaciones, 1 sin leer/});fireEvent.click(bell);await ui.findByRole('heading',{name:'Notificaciones'});assert.ok(ui.getByText('Tu plaza está confirmada.'));fireEvent.click(ui.getByRole('button',{name:'Marcar leída'}));await ui.findByText('Tu plaza está confirmada.');assert.equal(item.readAt!==null,true);
+  cleanup();dom.window.close();
+});
+
 test('client can choose a center-local day, review a session, and retry a lost reservation with the same key', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, {

@@ -119,6 +119,7 @@ test("center conversation is shared, internal notes stay staff-only and duplicat
   assert.ok([200, 201].includes(first.statusCode), first.body);
   assert.ok([200, 201].includes(retry.statusCode), retry.body);
   assert.equal(first.json().id, retry.json().id);
+  const [staffMessageEvent]=await sql`SELECT payload FROM domain_events_outbox WHERE dedupe_key=${`message:${first.json().id}`}`;assert.ok(staffMessageEvent);assert.deepEqual(staffMessageEvent.payload,{senderKind:'staff'});assert.equal(JSON.stringify(staffMessageEvent.payload).includes(body.body),false);
   const note = await trainer.inject({
     method: "POST",
     url: `/api/clients/${id}/internal-notes`,
@@ -155,6 +156,7 @@ test("center conversation is shared, internal notes stay staff-only and duplicat
     payload: { body: "Gracias" },
   });
   assert.equal(sent.statusCode, 201, sent.body);
+  const [clientMessageEvent]=await sql`SELECT payload FROM domain_events_outbox WHERE dedupe_key=${`message:${sent.json().id}`}`;assert.ok(clientMessageEvent);assert.deepEqual(clientMessageEvent.payload,{senderKind:'client'});
   assert.equal(
     (await admin.inject({ method: "GET", url: `/api/clients/${id}` })).json()
       .summary.messages.data.unreadCount,

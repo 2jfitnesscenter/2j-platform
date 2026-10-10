@@ -55,13 +55,13 @@ test("capability menu omits destinations the server does not grant", () => {
     visibleDestinations(caps({ calendar: false, clients: false })).map(
       (x) => x.id,
     ),
-    ["home", "more"],
+    ["home", "more", "notifications"],
   );
   assert.deepEqual(
     visibleDestinations(caps({ calendar: true, clients: true })).map(
       (x) => x.id,
     ),
-    ["home", "agenda", "clients", "more"],
+    ["home", "agenda", "clients", "more", "notifications"],
   );
 });
 
@@ -113,6 +113,12 @@ test("authentication failure stops the app and offers retry without exposing ope
     globalThis.fetch = original;
     dom.window.close();
   }
+});
+
+test("staff notification inbox is available without exposing unrelated operational data", async () => {
+  const dom=setupDom(),original=globalThis.fetch;
+  globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response(caps({calendar:false,clients:false,communications:false,staff:false,timeclockSelf:false})):String(url)==='/api/staff/notifications/unread-count'?response({count:1}):String(url)==='/api/staff/notifications'?response({items:[{id:'11111111-1111-4111-8111-111111111111',title:'Cambio de cobertura',body:'Hay una actualización sobre una cobertura de equipo.',createdAt:'2026-10-10T10:00:00.000Z',readAt:null}],nextBefore:null,nextBeforeId:null}):response({});
+  try{render(React.createElement(StaffApp));const q=within(document.body);await q.findByRole('button',{name:/Avisos/});await waitFor(()=>{});fireEvent.click(q.getByRole('button',{name:/Avisos/}));assert.ok(await q.findByRole('heading',{name:'Notificaciones'}));assert.ok(q.getByText('Cambio de cobertura'));assert.equal(q.queryByText(/datos de clientes|saldo|importe/i),null);}finally{cleanup();globalThis.fetch=original;dom.window.close();}
 });
 
 test("agenda presents sessions in local time and links into session detail", async () => {
