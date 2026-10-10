@@ -1,0 +1,56 @@
+{
+  "taskId": "2J-078E",
+  "title": "Platform to Training verified proof bridge / shadow E2E",
+  "status": "draft_pr_opened; independent_review_required; not_merged",
+  "repository": "2jfitnesscenter/2j-platform",
+  "baseSha": "4b75cf5ecbd17f23d1dc171c6ef32d760cfb8cfa",
+  "branch": "agent/codex/2J-078E-platform-training-proof-bridge",
+  "worktree": "C:\\Users\\juanj\\Dev\\2J\\worktrees\\codex\\platform\\2J-078E",
+  "pullRequest": null,
+  "headSha": null,
+  "schema": {
+    "assertion": "strict {v:1,code}",
+    "trainingExchangeRequest": ["v", "code", "transactionId", "personId", "audience", "purpose", "challengeDigest"],
+    "trainingExchangePath": "/api/platform/v1/link-proofs/exchange",
+    "response": "strict v1 DTO; exact transaction/person/audience/purpose; canonical trainingUserId; UTC verifiedAt"
+  },
+  "serviceAuth": {
+    "implementation": "Reuse buildTrainingServiceAuthHeaders and canonicalizeTrainingServiceRequest",
+    "freshRequestId": true,
+    "requestIdDistinctFromTransactionId": true,
+    "base64urlHmacSha256": true,
+    "goldenVector": "078D shared fixture; exact canonical/body/signature assertions pass"
+  },
+  "config": {
+    "TRAINING_SERVICE_BASE_URL": "runtime only",
+    "TRAINING_SERVICE_KEY_ID": "runtime only",
+    "TRAINING_SERVICE_SECRET": "runtime secret; minimum 32 decoded bytes",
+    "trainingVerifiedLinkingEnabledDefault": false,
+    "trainingServiceCallsEnabledDefault": false,
+    "configEnablesFlags": false
+  },
+  "runtimeLimits": { "responseMaxBytes": 16384, "adapterTimeoutMsMaximum": 8000, "redirects": "error", "databaseMigration": false },
+  "canonicalLinkCreated": false,
+  "ssoImplemented": false,
+  "liveEnabled": false,
+  "ambiguousConsumedProofResponseLoss": "unresolved until a later lifecycle/reconciliation phase; no aggressive retry",
+  "training078dPreGoLiveDependencies": [
+    "proof supersede match is narrow",
+    "disabled-account proof may become usable if re-enabled",
+    "issuance rate limit not implemented",
+    "fsync durability not implemented",
+    "encrypted file-store concurrency is single-process only"
+  ],
+  "validation": {
+    "tests": "237 passed; 0 failed; 0 skipped across monorepo",
+    "postgres17": "PASS; isolated clean PostgreSQL 17 container",
+    "migrations": "PASS; 23 checksummed migrations verified twice; no migration added",
+    "typecheck": "PASS; 9/9 tasks",
+    "build": "PASS; 9/9 tasks",
+    "audit": "PASS; 0 vulnerabilities across 360 dependencies",
+    "secretScan": "GitHub CI pending after draft PR push",
+    "gitDiffCheck": "PASS",
+    "ci": "pending"
+  },
+  "reviewRequired": "Independent security and QA review; no merge"
+}

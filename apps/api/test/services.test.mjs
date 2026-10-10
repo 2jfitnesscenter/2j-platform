@@ -1,6 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import http from 'node:http';
 import { readFile, readdir } from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import { buildServer, mapDatabaseError, planInput, serviceInput } from '../src/server.ts';
@@ -10,7 +11,7 @@ import * as schema from '../src/schema.ts';
 import { getEffectiveEntitlements } from '../src/entitlements.ts';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
-import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
+import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createRemoteTrainingLinkVerifier, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
 import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
@@ -378,7 +379,7 @@ test('link challenge is one-time, person-resolved, short-lived, replay-safe and 
   assert.equal(replayCancel.statusCode, 200); assert.equal(replayCancel.json().status, 'cancelled');
   await assert.rejects(sql`UPDATE training_link_transactions SET state='verified',version=version+1 WHERE transaction_id=${result.transaction.transactionId}`, { code: '55000' }, 'cancelled is terminal and cannot transition backwards');
   assert.equal((await sql`SELECT count(*)::int AS count FROM training_account_links WHERE person_id=${one.person.personId}`).at(0).count, 0, 'a challenge never creates a canonical or active Training link');
-  assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${result.transaction.transactionId} ORDER BY occurred_at`).map((row) => row.action).join(','), 'training.link_transaction_created,training.link_transaction_cancelled');
+  assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${result.transaction.transactionId} ORDER BY occurred_at,id`).map((row) => row.action).join(','), 'training.link_transaction_created,training.link_transaction_cancelled');
 });
 
 test('link transaction verification and consume are single-use under races, gated, and fail closed on revoked identity', async () => {
@@ -493,6 +494,166 @@ test('auth subject resolver and database reject inactive people and unbound subj
   await assert.rejects(sql`INSERT INTO platform_person_auth_subjects(person_id,provider,auth_subject,created_by) VALUES (${auth.personId},${auth.provider},${auth.authSubject},'qa-admin')`, { code: '23514' }, 'database rejects adding auth identities to inactive persons');
 });
 
+test('078D shared service-auth golden vector matches Platform canonical bytes and signature', () => {
+  const keyId = 'platform-fixture-a', secret = Buffer.alloc(32, 0x42);
+  const timestamp = '2026-10-10T12:00:00.000Z', requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const body = Buffer.from('{"v":1,"code":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","transactionId":"11111111-1111-4111-8111-111111111111","personId":"22222222-2222-4222-8222-222222222222","audience":"2j-training-account-link","purpose":"training-account-link","challengeDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}');
+  const canonical = canonicalizeTrainingServiceRequest({ keyId, timestamp, requestId, method: 'POST', path: '/api/platform/v1/link-proofs/exchange', body });
+  assert.equal(createHash('sha256').update(body).digest('hex'), '8473ddd28ddf57f9964b66dabac8ff0d4bda6a491e112be5f59633df088ca52a');
+  assert.equal(canonical, [
+    '2J-SERVICE-AUTH-V1', keyId, timestamp, requestId, 'POST', '/api/platform/v1/link-proofs/exchange',
+    '8473ddd28ddf57f9964b66dabac8ff0d4bda6a491e112be5f59633df088ca52a',
+  ].join('\n'));
+  assert.equal(createHmac('sha256', secret).update(canonical).digest('base64url'), 'F6GYp70w6TrZtTCWb4Jcmv3T92UxMyxGpUl2A6oK9oY');
+});
+
+test('remote Training proof bridge signs exact bytes and persists only the verified subject without making a canonical link', async () => {
+  const client = await createClientRequest(clientsAdminApp, { firstName: 'Bridge', lastName: `Success ${randomUUID()}` });
+  const person = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.json().id } });
+  const auth = { personId: person.json().personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `bridge-${randomUUID()}` };
+  const binding = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${auth.personId}/auth-subjects`, payload: { provider: auth.provider, providerVersion: auth.providerVersion, authSubject: auth.authSubject } });
+  assert.equal(binding.statusCode, 201, binding.body);
+  resolvedTrainingAuth = auth;
+  const challengeResponse = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(challengeResponse.statusCode, 201, challengeResponse.body);
+  const challenge = challengeResponse.json();
+  const code = Buffer.alloc(32, 0x41).toString('base64url');
+  const keyId = 'platform-fixture-a', secret = Buffer.alloc(32, 0x42);
+  let captured;
+  const receiver = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    const raw = body.toString('utf8');
+    const parsed = JSON.parse(raw);
+    const signed = canonicalizeTrainingServiceRequest({ keyId: request.headers['x-2j-key-id'], timestamp: request.headers['x-2j-timestamp'], requestId: request.headers['x-2j-request-id'], method: request.method, path: request.url, body });
+    const expectedSignature = createHmac('sha256', secret).update(signed).digest('base64url');
+    captured = { method: request.method, path: request.url, raw, headers: request.headers, validSignature: request.headers['x-2j-signature'] === expectedSignature, parsed };
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ v: 1, transactionId: parsed.transactionId, personId: parsed.personId, trainingUserId: 'training-verified-opaque-123', audience: parsed.audience, purpose: parsed.purpose, verifiedAt: new Date().toISOString() }));
+  });
+  await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = receiver.address();
+    const verifier = createRemoteTrainingLinkVerifier({
+      trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true,
+      baseUrl: `http://127.0.0.1:${address.port}`, keyId, secret: secret.toString('base64url'),
+      fetcher: globalThis.fetch, allowInsecureLoopbackForTests: true,
+    });
+    const protocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true, verifier });
+    const result = await protocol.verify({ transactionId: challenge.transaction.transactionId, challenge: challenge.challenge, assertion: { v: 1, code }, auth });
+    assert.equal(result.status, 'verified');
+    assert.equal(captured.method, 'POST');
+    assert.equal(captured.path, '/api/platform/v1/link-proofs/exchange');
+    assert.equal(captured.raw, JSON.stringify({ v: 1, code, transactionId: challenge.transaction.transactionId, personId: person.json().personId, audience: '2j-training-account-link', purpose: 'training-account-link', challengeDigest: createHash('sha256').update(challenge.challenge).digest('hex') }));
+    assert.equal(captured.headers['x-2j-key-id'], keyId);
+    assert.match(captured.headers['x-2j-timestamp'], /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    assert.match(captured.headers['x-2j-request-id'], /^[0-9a-f-]{36}$/);
+    assert.notEqual(captured.headers['x-2j-request-id'], challenge.transaction.transactionId, 'service replay ID is newly generated, not the transaction ID');
+    assert.equal(captured.validSignature, true, 'the Training-compatible HMAC verifies against exact request bytes');
+    assert.deepEqual(Object.keys(captured.parsed), ['v', 'code', 'transactionId', 'personId', 'audience', 'purpose', 'challengeDigest']);
+    const saved = (await sql`SELECT state,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${challenge.transaction.transactionId}`).at(0);
+    assert.deepEqual(saved, { state: 'verified', verified_training_user_id: 'training-verified-opaque-123' });
+    const audit = JSON.stringify(await sql`SELECT details FROM platform_identity_audit_events WHERE resource_id=${challenge.transaction.transactionId}`);
+    assert.equal(audit.includes(code), false, 'raw proof code is absent from audit');
+    assert.equal(audit.includes('training-verified-opaque-123'), false, 'verified Training ID is absent from audit details');
+    assert.equal((await sql`SELECT count(*)::int AS count FROM training_account_links WHERE person_id=${person.json().personId}`).at(0).count, 0, 'remote verification does not create a canonical Training link');
+  } finally { await new Promise((resolve) => receiver.close(resolve)); }
+});
+
+test('remote Training verifier rejects caller context overrides, bad responses and transport failures while the transaction stays pending', async () => {
+  const client = await createClientRequest(clientsAdminApp, { firstName: 'Bridge', lastName: `Reject ${randomUUID()}` });
+  const person = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.json().id } });
+  const auth = { personId: person.json().personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `bridge-reject-${randomUUID()}` };
+  const binding = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${auth.personId}/auth-subjects`, payload: { provider: auth.provider, providerVersion: auth.providerVersion, authSubject: auth.authSubject } });
+  assert.equal(binding.statusCode, 201, binding.body);
+  resolvedTrainingAuth = auth;
+  const challengeResponse = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(challengeResponse.statusCode, 201, challengeResponse.body);
+  const challenge = challengeResponse.json();
+  const secret = Buffer.alloc(32, 0x42), code = Buffer.alloc(32, 0x41).toString('base64url');
+  let mode = 'valid', calls = 0;
+  const receiver = http.createServer(async (request, response) => {
+    calls++;
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (mode === 'slow') return;
+    if (mode === 'wrong-code' && parsed.code !== code) { response.writeHead(404, { 'content-type': 'application/json' }); return response.end('{"error":"proof_not_found"}'); }
+    const errorStatuses = { disabled: 423, auth: 401, notFound: 404, expired: 410, consumed: 409, mismatch: 409 };
+    if (errorStatuses[mode]) { response.writeHead(errorStatuses[mode], { 'content-type': 'application/json' }); return response.end('{"error":"rejected"}'); }
+    if (mode === 'redirect') { response.writeHead(302, { location: 'http://127.0.0.1/other' }); return response.end(); }
+    if (mode === 'invalid-json') { response.writeHead(200, { 'content-type': 'application/json' }); return response.end('{'); }
+    if (mode === 'wrong-type') { response.writeHead(200, { 'content-type': 'text/plain' }); return response.end('{}'); }
+    if (mode === 'oversized') { response.writeHead(200, { 'content-type': 'application/json', 'content-length': '17000' }); return response.end(' '.repeat(17000)); }
+    const reply = { v: 1, transactionId: parsed.transactionId, personId: parsed.personId, trainingUserId: 'training-verified-opaque-123', audience: parsed.audience, purpose: parsed.purpose, verifiedAt: new Date().toISOString() };
+    if (mode === 'wrong-person') reply.personId = randomUUID();
+    if (mode === 'wrong-transaction') reply.transactionId = randomUUID();
+    if (mode === 'wrong-audience') reply.audience = 'other';
+    if (mode === 'wrong-purpose') reply.purpose = 'other';
+    if (mode === 'bad-user') reply.trainingUserId = ' padded ';
+    if (mode === 'extra-field') reply.email = 'must-not-be-accepted@example.test';
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(reply));
+  });
+  await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+  try {
+    const baseUrl = `http://127.0.0.1:${receiver.address().port}`;
+    const context = { transactionId: challenge.transaction.transactionId, personId: person.json().personId, audience: '2j-training-account-link', purpose: 'training-account-link', challengeDigest: createHash('sha256').update(challenge.challenge).digest('hex') };
+    const verifierFor = (overrides = {}) => createRemoteTrainingLinkVerifier({
+      trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true,
+      baseUrl, keyId: 'platform-fixture-a', secret: secret.toString('base64url'), fetcher: globalThis.fetch,
+      allowInsecureLoopbackForTests: true, timeoutMs: 80, ...overrides,
+    });
+    const originalCalls = calls;
+    const offFlags = await verifierFor({ trainingVerifiedLinkingEnabled: false })(
+      { assertion: { v: 1, code }, transactionId: challenge.transaction.transactionId, personId: person.json().personId, audience: '2j-training-account-link', purpose: 'training-account-link', challengeDigest: createHash('sha256').update(challenge.challenge).digest('hex') }, new AbortController().signal);
+    assert.equal(offFlags, null); assert.equal(calls, originalCalls, 'flags OFF make zero service calls');
+    const missingConfig = await createRemoteTrainingLinkVerifier({ trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, fetcher: async () => { calls++; throw new Error('must not call'); } })(
+      { assertion: { v: 1, code }, transactionId: challenge.transaction.transactionId, personId: person.json().personId, audience: '2j-training-account-link', purpose: 'training-account-link', challengeDigest: 'a'.repeat(64) }, new AbortController().signal);
+    assert.equal(missingConfig, null); assert.equal(calls, originalCalls, 'missing config makes zero service calls');
+    const invalidConfigs = [
+      { baseUrl: 'https://user:password@training.example.test' }, { baseUrl: 'https://training.example.test/path' },
+      { baseUrl: 'https://training.example.test/?query=1' }, { baseUrl: 'https://training.example.test/#fragment' },
+      { baseUrl: 'http://training.example.test' }, { keyId: 'bad key id' }, { secret: 'short' },
+    ];
+    for (const invalid of invalidConfigs) {
+      const rejected = await createRemoteTrainingLinkVerifier({
+        trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true,
+        baseUrl, keyId: 'platform-fixture-a', secret: secret.toString('base64url'), fetcher: async () => { calls++; throw new Error('invalid config must not call'); },
+        ...invalid,
+      })({ assertion: { v: 1, code }, ...context }, new AbortController().signal);
+      assert.equal(rejected, null, `${JSON.stringify(invalid)} fails closed`);
+    }
+    assert.equal(calls, originalCalls, 'malformed target/key configuration makes zero service calls');
+    const protocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true });
+    const hostileAssertions = [
+      { personId: randomUUID() }, { transactionId: randomUUID() }, { audience: 'other' },
+      { purpose: 'other' }, { challengeDigest: 'f'.repeat(64) }, { trainingUserId: 'training-B' },
+    ];
+    for (const fields of hostileAssertions) assert.equal(await verifierFor()({ assertion: { v: 1, code, ...fields }, ...context }, new AbortController().signal), null, 'strict assertion schema rejects caller context fields');
+    assert.equal(calls, originalCalls, 'malicious assertion never reaches Training');
+
+    const failures = [
+      ['wrong-code', { v: 1, code: 'B'.repeat(43) }],
+      ['notFound', { v: 1, code }], ['expired', { v: 1, code }], ['consumed', { v: 1, code }], ['disabled', { v: 1, code }], ['auth', { v: 1, code }], ['mismatch', { v: 1, code }],
+      ['wrong-person', { v: 1, code }], ['wrong-transaction', { v: 1, code }], ['wrong-audience', { v: 1, code }], ['wrong-purpose', { v: 1, code }],
+      ['bad-user', { v: 1, code }], ['extra-field', { v: 1, code }], ['invalid-json', { v: 1, code }], ['wrong-type', { v: 1, code }], ['oversized', { v: 1, code }], ['redirect', { v: 1, code }],
+    ];
+    for (const [failure, assertion] of failures) {
+      mode = failure;
+      const result = await protocol.verify({ ...context, challenge: challenge.challenge, assertion, auth }, verifierFor());
+      assert.equal(result.status, 'proof_rejected', `${failure} fails the proof closed`);
+      const saved = (await sql`SELECT state,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${context.transactionId}`).at(0);
+      assert.deepEqual(saved, { state: 'pending', verified_training_user_id: null }, `${failure} leaves transaction pending with no subject`);
+    }
+    mode = 'slow';
+    const timeoutResult = await protocol.verify({ ...context, challenge: challenge.challenge, assertion: { v: 1, code }, auth }, verifierFor({ timeoutMs: 20 }));
+    assert.equal(timeoutResult.status, 'proof_rejected', 'remote timeout is mapped to the internal proof-rejected outcome');
+    assert.deepEqual((await sql`SELECT state,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${context.transactionId}`).at(0), { state: 'pending', verified_training_user_id: null });
+  } finally { receiver.closeAllConnections?.(); await new Promise((resolve) => receiver.close(resolve)); }
+});
+
 test('expired link transactions cannot verify and transition once to expired with audit', async () => {
   const client = await createClientRequest(clientsAdminApp, { firstName: 'Expired', lastName: `Challenge ${randomUUID()}` });
   const person = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: client.json().id } });
@@ -511,7 +672,7 @@ test('expired link transactions cannot verify and transition once to expired wit
   assert.equal(expired.status, 'expired');
   assert.equal((await sql`SELECT state FROM training_link_transactions WHERE transaction_id=${expiredId}`).at(0).state, 'expired');
   assert.equal((await sql`SELECT verified_training_user_id FROM training_link_transactions WHERE transaction_id=${expiredId}`).at(0).verified_training_user_id, null, 'pending expiry has no Training subject');
-  assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${expiredId}`).map((row) => row.action).join(','), 'training.link_transaction_created,training.link_transaction_expired');
+  assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${expiredId} ORDER BY occurred_at,id`).map((row) => row.action).join(','), 'training.link_transaction_created,training.link_transaction_expired');
 
   const verifiedExpiryProtocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true, ttlMs: 250 });
   const verifiedChallenge = await verifiedExpiryProtocol.create({ ...auth, requestId: randomUUID() });
