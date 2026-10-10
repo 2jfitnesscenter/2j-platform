@@ -1,12 +1,13 @@
 {
   "taskId": "2J-078F-B",
   "title": "Platform canonical Training link lifecycle and receipt reconciliation",
-  "status": "implementation_complete; draft_pr_ci_pending; independent_review_required; not_merged",
+  "status": "implementation_complete; draft_pr_open; current_head_ci_running; independent_review_required; not_merged",
   "repository": "2jfitnesscenter/2j-platform",
   "baseSha": "15f559f075b947c329a42578c5abbb82e276fbc4",
   "branch": "agent/codex/2J-078F-B-platform-canonical-link-lifecycle",
   "worktree": "C:\\Users\\juanj\\Dev\\2J\\worktrees\\codex\\platform\\2J-078F-B",
-  "pullRequest": null,
+  "pullRequest": "https://github.com/2jfitnesscenter/2j-platform/pull/25",
+  "implementationCommit": "03cd6414e5318ccba507900e8254dd3245768412",
   "headSha": null,
   "migration": {
     "name": "0024_training_canonical_link_lifecycle.sql",
@@ -62,9 +63,9 @@
     "typecheck": "PASS; 9/9 workspace tasks",
     "build": "PASS; 9/9 workspace tasks",
     "audit": "PASS; 0 known vulnerabilities",
-    "secretScan": "GitHub CI pending; scanner unavailable locally",
+    "secretScan": "GitHub CI running; scanner unavailable locally",
     "gitDiffCheck": "PASS",
-    "ci": "pending"
+    "ci": "running on Draft PR current head"
   },
   "reviewRequired": "independent security and QA review; do not merge",
   "nextDependency": "Training authenticated canonical-link ACK phase"
