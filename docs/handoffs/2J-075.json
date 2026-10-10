@@ -1,12 +1,12 @@
 {
   "taskId": "2J-075",
   "title": "App Cliente V1 / Reservas 2J",
-  "status": "draft_pr_ready_for_independent_review",
+  "status": "draft_pr_ci_and_independent_review_pending",
   "repository": "2jfitnesscenter/2j-platform",
   "baseRef": "main",
   "baseSha": "3d2506bb7cd2647b0f94941b6814cbc8538df31b",
   "branch": "agent/codex/2J-075-client-app",
-  "pullRequest": null,
+  "pullRequest": 18,
   "mergeAllowed": false,
   "timezone": "Atlantic/Canary",
   "migrations": [],
@@ -47,7 +47,7 @@
     "migrations": "19/19 checked and applied on fresh temporary PostgreSQL via integration suite",
     "secretScan": "pending GitHub CI",
     "gitDiffCheck": "passed",
-    "githubCi": "pending PR"
+    "githubCi": "in progress for initial PR head; re-run after handoff commit"
   },
   "visualEvidence": "real local browser smoke checked; no archived 390/768/1440 captures because exact viewport was not verified; pending independent QA",
   "independentReview": "pending",
