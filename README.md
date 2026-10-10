@@ -2,6 +2,22 @@
 
 ## Local product preview — clean start
 
+### One-command local pilot (Windows)
+
+Start Docker Desktop and run this from the repository root:
+
+```powershell
+pnpm pilot
+```
+
+On first run, the launcher installs the locked workspace dependencies automatically. It then prepares a dedicated local PostgreSQL container/database (`2j-platform-079b-pilot`, database `2j_demo`), applies migrations, and safely adds the repository's synthetic demo records. It starts the member fixture preview, Trainer workspace/API and Admin workspace/API together. Open the printed member, Trainer and Admin URLs; the member preview URL includes the required `?preview=1` opt-in. `pnpm pilot:stop` stops only the five app/API processes created by the launcher. The disposable synthetic database is retained between launches so the owner does not need to reseed it manually.
+
+All web and API processes bind to `127.0.0.1`. Trainer and Admin use distinct API processes and process-local development roles, while sharing only the isolated synthetic database. The member surface uses fictional fixture data and does not call the API. If a preferred web/API port is already occupied, the launcher selects and prints a free loopback port; it never kills an unrelated process. PostgreSQL uses a dedicated port and named volume and fails clearly if that port is occupied. Existing local databases and containers are not reused or modified.
+
+This harness is local development only. It does not configure real authentication, production credentials, deployment, DNS, TLS, Cloudflare, or Training. The Training app remains `https://app.2jfitnesscenter.com`. Never put real member data in the synthetic pilot database.
+
+See [the 2J-079B handoff](docs/handoffs/2J-079B.md) for topology, safeguards and verification notes.
+
 The local admin preview now has a shared Command Center shell over Services, Clients 360, Calendar, Economics, Team and Communications. Inicio and global search are served by permission-filtered PostgreSQL read models. This is local-only and does not connect to the production training/Búnker application.
 
 Requirements: Node 24, pnpm 10.34.6 or compatible, and Docker.
