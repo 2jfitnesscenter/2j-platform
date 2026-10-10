@@ -8,6 +8,16 @@ export const TRAINING_LINK_TTL_MS = 5 * 60 * 1000;
 export const TRAINING_LINK_AUDIENCE = '2j-training-account-link';
 export const TRAINING_LINK_PURPOSE = 'training-account-link';
 export type ResolvedPersonAuth = { personId: string; authSubject: string; provider: string; providerVersion: number };
+export type TrainingLinkVerificationContext = Readonly<{
+  assertion: unknown;
+  transactionId: string;
+  personId: string;
+  audience: string;
+  purpose: string;
+  /** Lowercase SHA-256 hex digest of the one-time challenge; never the raw challenge. */
+  challengeDigest: string;
+}>;
+export type TrainingLinkVerifier = (context: TrainingLinkVerificationContext, signal: AbortSignal) => Promise<string | null>;
 const transactionDto = z.object({
   transactionId: uuid,
   personId: uuid,
@@ -30,8 +40,9 @@ function publicTransaction(value: Record<string, unknown>) {
   return transactionDto.parse({ transactionId: value.transactionId, personId: value.personId, state: value.state, expiresAt: value.expiresAt, version: value.version });
 }
 
-export function createTrainingLinkTransactions(database: SqlClient, options: { enabled?: boolean; serviceCallsEnabled?: boolean; ttlMs?: number } = {}) {
+export function createTrainingLinkTransactions(database: SqlClient, options: { enabled?: boolean; serviceCallsEnabled?: boolean; ttlMs?: number; verifierTimeoutMs?: number } = {}) {
   const ttlMs = Math.max(1, Math.min(options.ttlMs ?? TRAINING_LINK_TTL_MS, TRAINING_LINK_TTL_MS));
+  const verifierTimeoutMs = Math.max(1, Math.min(options.verifierTimeoutMs ?? 10_000, 30_000));
   return {
     async create(input: { personId: string; authSubject: string; provider: string; providerVersion: number; requestId: string }) {
       if (!options.enabled) return { status: 'disabled' as const };
@@ -83,12 +94,12 @@ export function createTrainingLinkTransactions(database: SqlClient, options: { e
         return { status: 'cancelled' as const, transaction: cancelled };
       });
     },
-    /** Internal future transition; no route is registered and no verifier is configured in this task. */
-    async verify(input: { transactionId: string; challenge: string; assertion: unknown; auth: ResolvedPersonAuth }, verifier?: (assertion: unknown, signal: AbortSignal) => Promise<string | null>) {
+    /** Internal future transition; a verifier must cryptographically bind its proof to every supplied context field. */
+    async verify(input: { transactionId: string; challenge: string; assertion: unknown; auth: ResolvedPersonAuth }, verifier?: TrainingLinkVerifier) {
       if (!options.enabled || !options.serviceCallsEnabled || !verifier) return { status: 'disabled' as const };
       const transactionId = uuid.parse(input.transactionId);
       const auth = { ...input.auth, personId: uuid.parse(input.auth.personId) };
-      const candidate = await database.begin(async (tx) => tx.unsafe('SELECT t.nonce_hash AS \"nonceHash\",t.person_id AS \"personId\",t.state,t.expires_at AS \"expiresAt\",t.expires_at<=now() AS \"isExpired\",s.provider,s.provider_version AS \"providerVersion\",s.auth_subject AS \"authSubject\",s.status AS \"subjectStatus\",p.status AS \"personStatus\" FROM training_link_transactions t JOIN platform_person_auth_subjects s ON s.id=t.auth_subject_link_id JOIN platform_persons p ON p.id=t.person_id WHERE t.transaction_id=$1 FOR UPDATE OF t,s,p', [transactionId]));
+      const candidate = await database.begin(async (tx) => tx.unsafe('SELECT t.nonce_hash AS \"nonceHash\",t.person_id AS \"personId\",t.state,t.expires_at AS \"expiresAt\",t.expires_at<=now() AS \"isExpired\",GREATEST(0,floor(extract(epoch FROM (t.expires_at-clock_timestamp()))*1000))::int AS \"remainingTtlMs\",t.audience,t.purpose,s.provider,s.provider_version AS \"providerVersion\",s.auth_subject AS \"authSubject\",s.status AS \"subjectStatus\",p.status AS \"personStatus\" FROM training_link_transactions t JOIN platform_person_auth_subjects s ON s.id=t.auth_subject_link_id JOIN platform_persons p ON p.id=t.person_id WHERE t.transaction_id=$1 FOR UPDATE OF t,s,p', [transactionId]));
       if (!candidate[0]) return { status: 'not_found' as const };
       if (candidate[0].personId !== auth.personId || candidate[0].provider !== auth.provider || candidate[0].providerVersion !== auth.providerVersion || candidate[0].authSubject !== auth.authSubject) return { status: 'wrong_person' as const };
       if (candidate[0].subjectStatus !== 'active' || candidate[0].personStatus !== 'active') return { status: 'identity_unavailable' as const };
@@ -96,9 +107,33 @@ export function createTrainingLinkTransactions(database: SqlClient, options: { e
       if (candidate[0].isExpired) return { status: 'expired' as const };
       const challengeHash = Buffer.from(digest(input.challenge), 'hex'), storedHash = Buffer.from(candidate[0].nonceHash.trim(), 'hex');
       if (storedHash.length !== challengeHash.length || !timingSafeEqual(storedHash, challengeHash)) return { status: 'invalid_challenge' as const };
+      if (candidate[0].remainingTtlMs <= 1) return { status: 'expired' as const };
       const controller = new AbortController();
       let trainingUserId: string | null = null;
-      try { trainingUserId = await verifier(input.assertion, controller.signal); } catch { trainingUserId = null; }
+      const deadlineMs = Math.min(verifierTimeoutMs, Math.floor(candidate[0].remainingTtlMs / 2));
+      let timedOut = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const deadline = new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+            reject(new Error('training verifier deadline exceeded'));
+          }, deadlineMs);
+        });
+        trainingUserId = await Promise.race([verifier({
+          assertion: input.assertion,
+          transactionId,
+          personId: candidate[0].personId,
+          audience: candidate[0].audience,
+          purpose: candidate[0].purpose,
+          challengeDigest: candidate[0].nonceHash.trim(),
+        }, controller.signal), deadline]);
+      } catch {
+        return { status: timedOut ? 'verifier_timeout' as const : 'proof_rejected' as const };
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
       const candidateUser = z.string().min(1).max(200).refine((value) => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value)).safeParse(trainingUserId);
       if (!candidateUser.success) return { status: 'proof_rejected' as const };
       return database.begin(async (tx) => {

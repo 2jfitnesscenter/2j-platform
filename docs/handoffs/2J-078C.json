@@ -11,11 +11,13 @@
   "featureGates": { "trainingLinkingEnabled": false, "trainingVerifiedLinkingEnabled": false, "trainingServiceCallsEnabled": false },
   "authSubjectPolicy": "explicit_admin_mapping; opaque; no inferred mapping; provider-subject retained across revocation to prevent reassignment",
   "challengePolicy": { "entropyBits": 256, "storedForm": "sha256_only", "ttlMs": 300000, "replayReturnsRawChallenge": false, "createsCanonicalLink": false },
-  "notImplemented": ["central auth", "passkeys", "SSO", "Training changes", "remote proof", "remote ACK", "LIVE calls", "access enforcement", "UI"],
+  "verifierContract": { "contextFields": ["transactionId", "personId", "audience", "purpose", "challengeDigest"], "assertionBoundToAllFieldsRequired": true, "rawChallengeIncluded": false, "futureVerifierMustRejectUnboundOrMismatchedProof": true },
+  "verifierDeadline": { "defaultMs": 10000, "maximumMs": 30000, "cap": "at most half of remaining transaction TTL and strictly shorter than the remaining TTL", "abortsSignal": true, "timeoutStatus": "verifier_timeout", "timeoutLeavesTransactionPending": true },
+  "notImplemented": ["central auth", "passkeys", "SSO", "Training changes", "production remote proof verifier", "remote ACK", "LIVE calls", "access enforcement", "UI"],
   "trainingRepositoryTouched": false,
   "credentialsStored": false,
   "visualEvidence": "not_applicable_backend_only",
-  "verification": { "fullSuite": "234/234 after verified-subject hardening; zero skipped on clean PostgreSQL 17", "apiPostgres17": "146/146", "migrations": "23 checksummed and repeat verified", "typecheck": "9/9", "build": "9/9", "audit": "no known high severity vulnerabilities", "diffCheck": "pass", "localSecretScan": "Go scanner unavailable locally; latest GitHub scan is reported on PR #23", "visualEvidence": "not applicable; backend-only" },
-  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "prior PR head passed; latest-head status is reported on PR #23" },
+  "verification": { "fullSuite": "234/234 after context-bound verifier/deadline follow-up; zero skipped on newly created clean PostgreSQL 17", "apiPostgres17": "146/146", "migrations": "23 checksummed and repeat verified", "typecheck": "9/9", "build": "9/9", "audit": "no known high severity vulnerabilities", "diffCheck": "pass", "localSecretScan": "Go scanner unavailable locally; latest GitHub scan is reported on PR #23", "visualEvidence": "not applicable; backend-only" },
+  "review": { "backendSecurity": "pending_refresh_after_context_deadline_followup; prior PASS reviewed 045e66be290e4cac09cf743da675b639f8efdab1", "independentQa": "pending_refresh_after_context_deadline_followup", "ci": "prior PR head passed; latest-head status is reported on PR #23" },
   "pullRequest": { "number": 23, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/23", "state": "open", "draft": true, "merged": false }
 }

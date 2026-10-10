@@ -411,7 +411,18 @@ test('link transaction verification and consume are single-use under races, gate
   assert.equal((await protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: {}, auth: subject.auth }, async () => '  ')).status, 'proof_rejected');
   assert.equal((await sql`SELECT verified_training_user_id FROM training_link_transactions WHERE transaction_id=${record.transaction.transactionId}`).at(0).verified_training_user_id, null, 'rejected proof cannot persist a Training subject');
   const competingTrainingIds = [`training-proof-A-${randomUUID()}`, `training-proof-B-${randomUUID()}`];
-  const proofs = await Promise.all(competingTrainingIds.map((trainingUserId, index) => protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: { fixture: true }, auth: subject.auth }, async () => { verifierCalls++; await new Promise((resolve) => setTimeout(resolve, index === 0 ? 15 : 5)); return trainingUserId; })));
+  const verifierContexts = [];
+  const proofs = await Promise.all(competingTrainingIds.map((trainingUserId, index) => protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: { fixture: true }, auth: subject.auth }, async (context) => { verifierContexts.push(context); verifierCalls++; await new Promise((resolve) => setTimeout(resolve, index === 0 ? 15 : 5)); return trainingUserId; })));
+  assert.ok(verifierContexts.length > 0);
+  for (const context of verifierContexts) assert.deepEqual(context, {
+    assertion: { fixture: true },
+    transactionId: record.transaction.transactionId,
+    personId: subject.person.personId,
+    audience: '2j-training-account-link',
+    purpose: 'training-account-link',
+    challengeDigest: createHash('sha256').update(record.challenge).digest('hex'),
+  }, 'verifier receives the exact transaction, person, protocol purpose and challenge digest context');
+  assert.ok(verifierContexts.every((context) => !JSON.stringify(context).includes(record.challenge)), 'raw challenge is never passed to the verifier context');
   assert.equal(proofs.filter((item) => item.status === 'verified').length, 1);
   assert.ok(proofs.some((item) => ['not_pending','replayed'].includes(item.status)), 'only one verifier can advance the state');
   assert.ok(verifierCalls >= 1 && verifierCalls <= 2, 'parallel attempts may reach proof verification, but only one state transition succeeds');
@@ -431,6 +442,20 @@ test('link transaction verification and consume are single-use under races, gate
   assert.deepEqual(new Set(actions), new Set(['training.link_transaction_created','training.link_transaction_verified','training.link_transaction_consumed']));
   const auditDetails = JSON.stringify(await sql`SELECT details FROM platform_identity_audit_events WHERE resource_id=${record.transaction.transactionId}`);
   for (const trainingUserId of competingTrainingIds) assert.equal(auditDetails.includes(trainingUserId), false, 'audit details omit verified Training subjects');
+
+  const deadlineSubject = await createBoundPerson('VerifierDeadline');
+  resolvedTrainingAuth = deadlineSubject.auth;
+  const deadlineChallenge = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  assert.equal(deadlineChallenge.statusCode, 201, deadlineChallenge.body);
+  const deadlineProtocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true, verifierTimeoutMs: 25 });
+  let verifierSignalAborted = false;
+  const deadlineResult = await deadlineProtocol.verify({ transactionId: deadlineChallenge.json().transaction.transactionId, challenge: deadlineChallenge.json().challenge, assertion: {}, auth: deadlineSubject.auth }, (_context, signal) => new Promise((_resolve) => {
+    signal.addEventListener('abort', () => { verifierSignalAborted = true; }, { once: true });
+  }));
+  assert.equal(deadlineResult.status, 'verifier_timeout', 'a stalled remote proof verifier is bounded by its configured deadline');
+  assert.equal(verifierSignalAborted, true, 'the verifier is told to stop when its deadline expires');
+  const timedOutRow = (await sql`SELECT state,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${deadlineChallenge.json().transaction.transactionId}`).at(0);
+  assert.deepEqual(timedOutRow, { state: 'pending', verified_training_user_id: null }, 'timed-out proof does not advance state or persist a subject');
 
   const cancelSubject = await createBoundPerson('VerifiedCancel'); resolvedTrainingAuth = cancelSubject.auth;
   const cancelChallenge = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
