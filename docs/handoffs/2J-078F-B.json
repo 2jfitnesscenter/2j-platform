@@ -1,0 +1,72 @@
+{
+  "taskId": "2J-078F-B",
+  "title": "Platform canonical Training link lifecycle and receipt reconciliation",
+  "status": "implementation_complete; draft_pr_open; current_head_ci_running; independent_review_required; not_merged",
+  "repository": "2jfitnesscenter/2j-platform",
+  "baseSha": "15f559f075b947c329a42578c5abbb82e276fbc4",
+  "branch": "agent/codex/2J-078F-B-platform-canonical-link-lifecycle",
+  "worktree": "C:\\Users\\juanj\\Dev\\2J\\worktrees\\codex\\platform\\2J-078F-B",
+  "pullRequest": "https://github.com/2jfitnesscenter/2j-platform/pull/25",
+  "implementationCommit": "03cd6414e5318ccba507900e8254dd3245768412",
+  "headSha": null,
+  "migration": {
+    "name": "0024_training_canonical_link_lifecycle.sql",
+    "countExpected": 24,
+    "legacyExplicitAdminRows": "preserved active/revoked semantics and stable identity/version",
+    "canonicalStatuses": ["pending", "active", "revocation_pending", "revoked", "conflict"],
+    "nonterminalUniqueness": ["one per person", "one per Training user"]
+  },
+  "receiptReconciliation": {
+    "path": "/api/platform/v1/link-proofs/reconcile",
+    "method": "POST",
+    "serviceAuth": "reuse 2J-SERVICE-AUTH-V1 canonicalizer and HMAC",
+    "freshRequestId": true,
+    "strictResponse": true,
+    "verifiedAtRule": "createdAt <= verifiedAt <= expiresAt and <= Platform now + 30 seconds",
+    "pendingClockExpiredMayRecover": true,
+    "durablyCancelledOrExpiredMayRecover": false
+  },
+  "lifecycle": {
+    "receiptRecovery": "pending transaction -> verified atomically; source user ID and receipt are write-once",
+    "canonicalCreation": "verified/consumed transaction plus exact receipt -> one pending link version 1",
+    "pendingToActive": "rejected; future Training ACK required",
+    "publicRouteAdded": false,
+    "identityAuthorizationSideEffects": false
+  },
+  "featureFlags": {
+    "trainingVerifiedLinkingEnabledDefault": false,
+    "trainingServiceCallsEnabledDefault": false,
+    "trainingCanonicalLinkingEnabledDefault": false,
+    "configurationCanEnableFlags": false
+  },
+  "auditActions": [
+    "training.link_reconciliation_recovered",
+    "training.link_pending_created",
+    "training.link_conflict_detected"
+  ],
+  "auditExcludes": ["proof", "challenge", "service secret", "signature", "Training user ID", "full receipt payload"],
+  "trainingRepoChanged": false,
+  "trainingAppChanged": false,
+  "trainingSidePreGoLiveRisks": [
+    "proof/receipt store does not fsync and is single-process",
+    "multi-replica Training lacks shared atomic durable receipt storage",
+    "proof issuance rate limiting is not implemented",
+    "proof supersede matching remains intentionally narrow",
+    "disabled-account re-enable behavior and receipt retention require Training-side review"
+  ],
+  "ssoImplemented": false,
+  "liveEnabled": false,
+  "validation": {
+    "postgres17": "PASS; clean local PostgreSQL 17",
+    "migrations": "PASS; all 24 migrations applied and checksums verified twice; separate active/revoked legacy upgrade rehearsal preserved rows exactly",
+    "tests": "PASS; 244 passed, 0 failed, 0 skipped across monorepo; 156 API tests",
+    "typecheck": "PASS; 9/9 workspace tasks",
+    "build": "PASS; 9/9 workspace tasks",
+    "audit": "PASS; 0 known vulnerabilities",
+    "secretScan": "GitHub CI running; scanner unavailable locally",
+    "gitDiffCheck": "PASS",
+    "ci": "running on Draft PR current head"
+  },
+  "reviewRequired": "independent security and QA review; do not merge",
+  "nextDependency": "Training authenticated canonical-link ACK phase"
+}

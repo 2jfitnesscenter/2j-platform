@@ -32,6 +32,7 @@ export type TrainingAdapter = {
 };
 
 const TRAINING_PROOF_PATH = '/api/platform/v1/link-proofs/exchange';
+const TRAINING_RECEIPT_RECONCILE_PATH = '/api/platform/v1/link-proofs/reconcile';
 const TRAINING_LINK_AUDIENCE = '2j-training-account-link';
 const TRAINING_LINK_PURPOSE = 'training-account-link';
 const proofAssertionSchema = z.object({ v: z.literal(1), code: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict();
@@ -47,9 +48,19 @@ const exchangeContextSchema = z.object({
   challengeDigest: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 
+export const trainingLinkReceiptSchema = z.object({
+  v: z.literal(1), status: z.literal('verified'), receiptId: z.string().uuid(), receiptVersion: z.literal(1),
+  transactionId: z.string().uuid(), personId: z.string().uuid(), trainingUserId: opaqueId.refine((value) => !/[\u0000-\u001f\u007f]/.test(value)),
+  audience: z.literal(TRAINING_LINK_AUDIENCE), purpose: z.literal(TRAINING_LINK_PURPOSE),
+  challengeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  verifiedAt: z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/),
+}).strict();
+export type TrainingLinkReceipt = z.infer<typeof trainingLinkReceiptSchema>;
+
 export type RemoteTrainingLinkVerifierOptions = {
   trainingVerifiedLinkingEnabled?: boolean;
   trainingServiceCallsEnabled?: boolean;
+  trainingCanonicalLinkingEnabled?: boolean;
   baseUrl?: string;
   keyId?: string;
   /** Canonical base64url-encoded key; decoded value must contain at least 32 bytes. */
@@ -60,6 +71,47 @@ export type RemoteTrainingLinkVerifierOptions = {
   /** Test-only escape hatch; applies only to explicit loopback URLs. */
   allowInsecureLoopbackForTests?: boolean;
 };
+
+export type RemoteTrainingReceiptReconcilerOptions = RemoteTrainingLinkVerifierOptions;
+
+/** Signed, fixed-path client for Training's durable 078F-A receipt endpoint. */
+export function createRemoteTrainingReceiptReconciler(options: RemoteTrainingReceiptReconcilerOptions = {}) {
+  const config = parseRemoteTrainingConfig(options);
+  return async (context: { transactionId: string; personId: string; audience: string; purpose: string; challengeDigest: string }, signal: AbortSignal): Promise<TrainingLinkReceipt | null> => {
+    if (options.trainingCanonicalLinkingEnabled !== true || !config) return null;
+    const parsedContext = exchangeContextSchema.safeParse(context);
+    if (!parsedContext.success || signal.aborted) return null;
+    const requestBody = Buffer.from(JSON.stringify({ v: 1, ...parsedContext.data }), 'utf8');
+    const requestId = randomUUID(), timestamp = new Date().toISOString(), path = TRAINING_RECEIPT_RECONCILE_PATH;
+    const signingInput: ServiceSigningInput = { keyId: options.keyId!, timestamp, requestId, method: 'POST', path, body: requestBody };
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(signal.reason);
+    signal.addEventListener('abort', abortFromCaller, { once: true });
+    const timeout = setTimeout(() => controller.abort(new Error('Training reconciliation deadline exceeded')), Math.max(1, Math.min(options.timeoutMs ?? 8_000, 8_000)));
+    const aborted = new Promise<never>((_resolve, reject) => {
+      if (controller.signal.aborted) reject(controller.signal.reason ?? new Error('request aborted'));
+      else controller.signal.addEventListener('abort', () => reject(controller.signal.reason ?? new Error('request aborted')), { once: true });
+    });
+    try {
+      const headers = await Promise.race([buildTrainingServiceAuthHeaders(signingInput, async (canonical) => createHmac('sha256', config.key).update(Buffer.from(canonical, 'utf8')).digest('base64url'), controller.signal), aborted]);
+      const response = await Promise.race([options.fetcher!(new URL(path, config.origin), {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { accept: 'application/json', 'content-type': 'application/json', ...headers }, body: requestBody,
+      }), aborted]);
+      if (response.status !== 200 || !response.ok) return null;
+      const raw = await Promise.race([readProofResponse(response, Math.max(1, Math.min(options.maxResponseBytes ?? 16_384, 16_384)), controller.signal), aborted]);
+      let decoded: unknown;
+      try { decoded = JSON.parse(raw); } catch { return null; }
+      const parsed = trainingLinkReceiptSchema.safeParse(decoded);
+      if (!parsed.success) return null;
+      const value = parsed.data, verifiedAt = new Date(value.verifiedAt);
+      if (!Number.isFinite(verifiedAt.getTime()) || verifiedAt.toISOString() !== value.verifiedAt) return null;
+      if (value.transactionId !== parsedContext.data.transactionId || value.personId !== parsedContext.data.personId || value.audience !== parsedContext.data.audience || value.purpose !== parsedContext.data.purpose || value.challengeDigest !== parsedContext.data.challengeDigest) return null;
+      return value;
+    } catch { return null; }
+    finally { clearTimeout(timeout); signal.removeEventListener('abort', abortFromCaller); }
+  };
+}
 
 function parseRemoteTrainingConfig(options: RemoteTrainingLinkVerifierOptions) {
   try {
