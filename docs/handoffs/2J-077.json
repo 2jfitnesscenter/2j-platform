@@ -1,0 +1,68 @@
+{
+  "taskId": "2J-077",
+  "title": "Notificaciones y automatización operativa V1",
+  "status": "implementation_in_review",
+  "baseSha": "5ae43a93cc1313d98ae3618524269996cf1a7238",
+  "branch": "agent/codex/2J-077-notifications-automation",
+  "draftPullRequest": true,
+  "merged": false,
+  "live": false,
+  "delivery": {
+    "channels": [
+      "in_app"
+    ],
+    "externalProvidersEnabled": false,
+    "credentialsOrTokensStored": false,
+    "worker": "standalone durable process; PostgreSQL SKIP LOCKED",
+    "timezone": "Atlantic/Canary"
+  },
+  "flows": {
+    "booking_confirm_cancel": "outbox_event_transactional",
+    "waitlist_join_and_promotion": "outbox_event_transactional",
+    "client_and_staff_messages": "client_notice_informational_nullable_deeplink; staff_client_message_opens_capability_checked_inbox",
+    "booking_reminder": "scheduled_with_durable_due_time_and_dedupe",
+    "entitlement_expiry": "scheduled_generic_client_notice",
+    "low_session_balance": "scheduled_generic_client_notice",
+    "pending_documents": "scheduled_generic_client_notice",
+    "client_inbox": "implemented_self_scoped_paginated_read_one_read_all",
+    "staff_inbox": "implemented_actor_scoped_paginated_read_one_read_all",
+    "center_preferences": "implemented_settings_manage_only",
+    "push_email_delivery": "deferred_no_provider_or_secrets",
+    "fiscal_debt_staff_timeclock_automation": "deferred",
+    "notification_deeplinks": "per_app_local_allowlist_with_safe_fallback_and_recipient_capability_check"
+  },
+  "migrations": [
+    "0020_notifications_outbox.sql",
+    "0021_notifications_optional_deeplink.sql"
+  ],
+  "verification": {
+    "migration": "21 checksummed migrations verified on PostgreSQL 17",
+    "notificationIntegrationTests": "6/6",
+    "typecheckPackages": "9/9",
+    "buildPackages": "9/9",
+    "fullSuite": "224/224 passed (API 137; admin 57; client 6; staff 7; shared packages 17), zero skipped",
+    "audit": "pnpm audit --audit-level high: no known vulnerabilities",
+    "secretScan": "GitHub secret-scan workflow required and pending for updated PR head",
+    "visualBrowserEvidence": "not captured; no authenticated local test accounts",
+    "freshPostgres": "PostgreSQL 17; 21 checksummed migrations verified"
+  },
+  "review": {
+    "independentBackendSecurity": "pending",
+    "independentUxQa": "pending",
+    "ci": "run_quality_and_secret_scan_for_each_updated_pr_head"
+  },
+  "productionBlockers": [
+    "Approve a push/email provider, cost and legal/privacy terms before external delivery",
+    "Add secret-safe token registration, revocation, health, usage/cost controls and kill switch before push",
+    "Client chat remains outside 2J-077; client message notices have no deeplink",
+    "Run independent responsive browser QA at 390, 768 and 1440 px",
+    "Deploy and monitor the API worker as a separate managed service"
+  ],
+  "pullRequest": {
+    "number": 20,
+    "url": "https://github.com/2jfitnesscenter/2j-platform/pull/20",
+    "state": "open",
+    "draft": true,
+    "merged": false
+  }
+}

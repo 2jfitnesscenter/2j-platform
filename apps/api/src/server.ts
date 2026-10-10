@@ -15,6 +15,7 @@ import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
+import { registerNotificationRoutes } from './notifications.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
@@ -135,6 +136,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerDashboardRoutes(app, client, authorizationResolver);
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }

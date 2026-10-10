@@ -6,6 +6,7 @@ import type { TransactionSql } from 'postgres';
 import { createHash, randomUUID } from 'node:crypto';
 import { createBookingEligibilityResolver, type BookingEntitlementOption, type BookingEligibilityResolver, type BookingEligibilityResult } from './booking-eligibility.js';
 import type { ClientAuthorizationContext } from './communications.js';
+import { appendNotificationEvent } from './notifications.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
 type SqlTransaction = TransactionSql<Record<string, unknown>>;
@@ -181,6 +182,7 @@ export function registerCalendarRoutes(
       await tx`UPDATE calendar_waitlist_entries SET status='promoted',promoted_reservation_id=${reservation.id},cancelled_at=now() WHERE id=${entry.id} AND status='waiting'`;
       await appendAudit(tx,actorId,'reservation.created','calendar_reservation',reservation.id,session.id,entry.clientId,{source:'waitlist_promotion'});
       await appendAudit(tx,actorId,'waitlist.promoted','calendar_waitlist_entry',entry.id,session.id,entry.clientId,{reservationId:reservation.id});
+      await appendNotificationEvent(tx,{type:'waitlist.promoted',aggregateType:'calendar_reservation',aggregateId:reservation.id,clientId:entry.clientId,dedupeKey:`waitlist-promoted:${entry.id}`});
       promoted.push(reservation.id);
     }
     return promoted;
@@ -322,6 +324,7 @@ export function registerCalendarRoutes(
           if (debtOverrideApplied) await appendAudit(tx, context.actorId, 'reservation.debt_override', 'calendar_session', session.id, session.id, parsed.data.individualClientId, { reason: parsed.data.overrideReason ?? '' });
           const [reservation] = await tx`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,entitlement_assignment_id,created_by) VALUES (${session.id},${parsed.data.individualClientId},${entitlementReference},${selectedIndividualEntitlement?.assignmentId??null},${context.actorId}) RETURNING id`;
           if (!reservation) throw new Error('Reservation insert returned no row.');
+          await appendNotificationEvent(tx,{type:'booking.confirmed',aggregateType:'calendar_reservation',aggregateId:reservation.id,clientId:parsed.data.individualClientId,dedupeKey:`booking-confirmed:${reservation.id}`});
           if(selectedIndividualEntitlement)await storeReservationRights(tx,reservation.id,parsed.data.individualClientId,selectedIndividualEntitlement,context.actorId);
           await appendAudit(tx, context.actorId, 'reservation.created', 'calendar_reservation', reservation.id, session.id, parsed.data.individualClientId);
         }
@@ -487,6 +490,7 @@ export function registerCalendarRoutes(
         if (entitlement) await storeReservationRights(tx, reservation.id, client.id, entitlement, actorId);
         if (missing.length && body.data.overrideDocuments) await appendAudit(tx, actorId, 'reservation.document_override', 'calendar_reservation', reservation.id, session.id, client.id, { requirementIds: missing.map((item:any) => String(item.requirementId)).join(','), reason: body.data.documentOverrideReason! });
         await appendAudit(tx, actorId, body.data.overbook ? 'reservation.overbooked' : 'reservation.created', 'calendar_reservation', reservation.id, session.id, client.id, { overbooked: body.data.overbook, debtOverride: overdue && body.data.overrideDebt, debtOverrideReason: overdue && body.data.overrideDebt ? body.data.overrideReason ?? '' : null });
+        await appendNotificationEvent(tx,{type:'booking.confirmed',aggregateType:'calendar_reservation',aggregateId:reservation.id,clientId:client.id,dedupeKey:`booking-confirmed:${reservation.id}`});
         const response = { id: reservation.id, overbooked: body.data.overbook, ...(entitlement ? { entitlementAssignmentId: entitlement.assignmentId, entitlementRightIds: entitlement.quotaRightIds } : {}) };
         await saveOperation(tx, idempotencyKey, 'reserve', operationPayload, response, actorId);
         return response;
@@ -539,6 +543,7 @@ export function registerCalendarRoutes(
           VALUES (${session.id},${client.id},${entitlement?.accessRightId ?? eligibility.entitlementId},${entitlement?.assignmentId ?? null},${idempotencyKey ?? randomUUID()},${actorId}) RETURNING id`;
         if (!entry) throw new Error('Waitlist insert returned no row.');
         await appendAudit(tx, actorId, 'waitlist.entered', 'calendar_waitlist_entry', entry.id, session.id, client.id);
+        await appendNotificationEvent(tx,{type:'waitlist.joined',aggregateType:'calendar_waitlist_entry',aggregateId:entry.id,clientId:client.id,dedupeKey:`waitlist-joined:${entry.id}`});
         const response = { id: entry.id, status: 'waiting', entitlementAssignmentId: entitlement?.assignmentId ?? null };
         await saveOperation(tx, idempotencyKey, 'waitlist_join', operationPayload, response, actorId);
         return response;
@@ -577,6 +582,7 @@ export function registerCalendarRoutes(
         if (!updated) return { error: 'reservation_not_active' };
         if(!consumeLate)await restoreReservationEntitlements(tx,updated.id,row.clientId,actorId,late?'Cancelación tardía con restauración':'Cancelación dentro de ventana');
         await appendAudit(tx, actorId, consumeLate?'reservation.cancelled_late':'reservation.cancelled', 'calendar_reservation', updated.id, row.sessionId, row.clientId,{previousStatus:'reserved',newStatus,late,restored:!consumeLate});
+        await appendNotificationEvent(tx,{type:'booking.cancelled',aggregateType:'calendar_reservation',aggregateId:updated.id,clientId:row.clientId,dedupeKey:`booking-cancelled:${updated.id}`});
         const promoted=await promoteEligibleWaitlist(tx,session,actorId);
         const response={id:updated.id,status:newStatus,restored:!consumeLate,promotedReservationIds:promoted};
         await saveOperation(tx,idempotencyKey,'cancel',operationPayload,response,actorId);
@@ -660,8 +666,9 @@ export function registerCalendarRoutes(
         for (const row of reservations) {
           await restoreReservationEntitlements(tx,row.id,row.clientId,context.actorId,'Sesión cancelada por el centro');
           await appendAudit(tx, context.actorId, 'reservation.cancelled_by_center', 'calendar_reservation', row.id, session.id, row.clientId, { previousStatus: row.status, newStatus: 'cancelled_by_center' });
+          await appendNotificationEvent(tx,{type:'booking.cancelled',aggregateType:'calendar_reservation',aggregateId:row.id,clientId:row.clientId,dedupeKey:`booking-cancelled:${row.id}`});
         }
-        for (const row of waitlist) await appendAudit(tx, context.actorId, 'waitlist.cancelled_by_center', 'calendar_waitlist_entry', row.id, session.id, row.clientId, { previousStatus: 'waiting', newStatus: 'cancelled_by_center' });
+        for (const row of waitlist) { await appendAudit(tx, context.actorId, 'waitlist.cancelled_by_center', 'calendar_waitlist_entry', row.id, session.id, row.clientId, { previousStatus: 'waiting', newStatus: 'cancelled_by_center' }); await appendNotificationEvent(tx,{type:'booking.cancelled',aggregateType:'calendar_waitlist_entry',aggregateId:row.id,clientId:row.clientId,dedupeKey:`waitlist-center-cancelled:${row.id}`}); }
         await appendAudit(tx, context.actorId, 'session.cancelled', 'calendar_session', session.id, session.id, null, { reservationsCancelled: reservations.length, waitlistCancelled: waitlist.length });
         const response={ id: session.id, reservationsCancelled: reservations.length, waitlistCancelled: waitlist.length };
         await saveOperation(tx,idempotencyKey,'center_cancel',operationPayload,response,context.actorId);return response;

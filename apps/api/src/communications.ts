@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { can, type AuthorizationContext } from "@2j/permissions";
 import type { createDatabase } from "./db.js";
+import { appendNotificationEvent } from "./notifications.js";
 
 type SqlClient = ReturnType<typeof createDatabase>["client"];
 export type ClientAuthorizationContext = { readonly clientId: string };
@@ -221,6 +222,7 @@ export function registerCommunicationRoutes(
           message!.id,
           p.data.clientId,
         );
+        await appendNotificationEvent(tx,{type:'message.created',aggregateType:'communication_message',aggregateId:message.id,clientId:p.data.clientId,dedupeKey:`message:${message.id}`,payload:{senderKind:'staff'}});
         return { message, replay: false };
       });
       if ("error" in result)
@@ -311,6 +313,7 @@ export function registerCommunicationRoutes(
             message!.id,
             actor.clientId,
           );
+          await appendNotificationEvent(tx,{type:'message.created',aggregateType:'communication_message',aggregateId:message.id,dedupeKey:`message:${message.id}`,payload:{senderKind:'client'}});
           return { message, replay: false };
         });
         if ("error" in result)

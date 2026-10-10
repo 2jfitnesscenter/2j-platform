@@ -10,7 +10,8 @@ type Page =
   | "messages"
   | "conversation"
   | "timeclock"
-  | "team";
+  | "team"
+  | "notifications";
 type Caps = {
   calendar: boolean;
   clients: boolean;
@@ -106,8 +107,23 @@ export function visibleDestinations(caps: Caps) {
     { id: "agenda", label: "Agenda", show: caps.calendar },
     { id: "clients", label: "Clientes", show: caps.clients },
     { id: "more", label: "Más", show: true },
+    { id: "notifications", label: "Avisos", show: true },
   ].filter((x) => x.show);
 }
+type StaffNotificationTarget = { page: 'agenda' | 'clients' | 'messages' | 'team'; sessionId?: string; clientId?: string };
+const notificationIdPattern = '[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+export function resolveStaffNotificationTarget(deeplink: unknown, caps: Caps | null): StaffNotificationTarget | null {
+  if (typeof deeplink !== 'string' || !caps) return null;
+  if (deeplink === '/agenda' && caps.calendar) return { page: 'agenda' };
+  const session = deeplink.match(new RegExp(`^/sessions/(${notificationIdPattern})$`, 'i'));
+  if (session && caps.calendar) return { page: 'agenda', sessionId: session[1]! };
+  const client = deeplink.match(new RegExp(`^/clients/(${notificationIdPattern})$`, 'i'));
+  if (client && caps.clients) return { page: 'clients', clientId: client[1]! };
+  if (deeplink === '/messages' && caps.communications) return { page: 'messages' };
+  if (deeplink === '/team' && caps.staff) return { page: 'team' };
+  return null;
+}
+export const staffAppTestHelpers = { resolveStaffNotificationTarget };
 const errorCopy = (e: unknown) =>
   e instanceof Error && e.message === "authentication_required"
     ? "Tu sesión ha terminado. Vuelve a iniciar sesión con tu cuenta de 2J."
@@ -132,6 +148,10 @@ export function StaffApp() {
     [clientPlans, setClientPlans] = React.useState<any[]>([]),
     [clock, setClock] = React.useState<any>(null),
     [inbox, setInbox] = React.useState<any[]>([]),
+    [notifications, setNotifications] = React.useState<any[]>([]),
+    [unreadNotifications, setUnreadNotifications] = React.useState(0),
+    [notificationCursor, setNotificationCursor] = React.useState<any>(null),
+    notificationInFlight = React.useRef(new Set<string>()),
     [toast, setToast] = React.useState(""),
     [busy, setBusy] = React.useState(false),
     [actions, setActions] = React.useState<any>({}),
@@ -155,6 +175,7 @@ export function StaffApp() {
     try {
       const c = await staffApi<Caps>("/api/session/capabilities");
       setCaps(c);
+      const unread = await staffApi<{count:number}>("/api/staff/notifications/unread-count"); setUnreadNotifications(unread.count);
       const jobs: Promise<unknown>[] = [];
       if (c.calendar) jobs.push(loadWeek());
       if (c.communications)
@@ -354,7 +375,45 @@ export function StaffApp() {
   const nav = (id: string) => {
     setPage(id as Page);
     setToast("");
+    if (id === "notifications") void staffApi<{items:any[];nextBefore:string|null;nextBeforeId:string|null}>('/api/staff/notifications').then(result=>{setNotifications(result.items);setNotificationCursor(result.nextBefore&&result.nextBeforeId?{before:result.nextBefore,beforeId:result.nextBeforeId}:null);}).catch(()=>setToast(errorCopy(new Error('notifications_failed'))));
   };
+  const markNotificationRead = async (item:any) => {
+    if (item.readAt) return true;
+    if (notificationInFlight.current.has(item.id)) return false;
+    notificationInFlight.current.add(item.id);
+    try { await staffApi(`/api/staff/notifications/${item.id}/read`,{method:'PATCH',body:'{}'});setNotifications((rows:any[])=>rows.map(row=>row.id===item.id?{...row,readAt:new Date().toISOString()}:row));setUnreadNotifications((count:number)=>Math.max(0,count-1));return true; }
+    catch { setToast('No se ha podido marcar como leído. Puedes volver a intentarlo.'); return false; }
+    finally { notificationInFlight.current.delete(item.id); }
+  };
+  const openNotification = async (item:any) => {
+    if (notificationInFlight.current.has(item.id)) return;
+    const target = resolveStaffNotificationTarget(item.deeplink, caps);
+    notificationInFlight.current.add(item.id);
+    let readFailed = false;
+    try {
+      if (!item.readAt) {
+        try { await staffApi(`/api/staff/notifications/${item.id}/read`,{method:'PATCH',body:'{}'});setNotifications((rows:any[])=>rows.map(row=>row.id===item.id?{...row,readAt:new Date().toISOString()}:row));setUnreadNotifications((count:number)=>Math.max(0,count-1)); }
+        catch { readFailed = true; }
+      }
+      if (target) {
+        if (target.page === 'agenda' && target.sessionId) {
+          const match = sessions.find((session) => session.id.toLowerCase() === target.sessionId!.toLowerCase());
+          if (match) await openSession(match); else setPage('agenda');
+        } else if (target.page === 'clients' && target.clientId) {
+          const match = clients.find((clientRow) => clientRow.id.toLowerCase() === target.clientId!.toLowerCase());
+          if (match) await openClient(match);
+          else {
+            setPage('clients');
+            try { const detail = await staffApi<any>(`/api/clients/${target.clientId}`); if (detail.client) await openClient(detail.client); else setToast('No se ha podido abrir ese cliente.'); }
+            catch (e) { setToast(errorCopy(e)); }
+          }
+        } else setPage(target.page);
+      } else setToast('Este aviso no tiene un destino disponible para tu cuenta.');
+      if (readFailed) setToast('No se ha podido marcar como leído. Puedes volver a intentarlo.');
+    } finally { notificationInFlight.current.delete(item.id); }
+  };
+  const readAllNotifications=async()=>{try{await staffApi('/api/staff/notifications/read-all',{method:'POST',body:'{}'});setNotifications((rows:any[])=>rows.map(row=>({...row,readAt:row.readAt??new Date().toISOString()})));setUnreadNotifications(0);}catch{setToast('No se han podido marcar como leídos.');}};
+  const loadOlderNotifications=async()=>{if(!notificationCursor)return;try{const result=await staffApi<{items:any[];nextBefore:string|null;nextBeforeId:string|null}>(`/api/staff/notifications?before=${encodeURIComponent(notificationCursor.before)}&beforeId=${notificationCursor.beforeId}`);setNotifications((rows:any[])=>[...rows,...result.items]);setNotificationCursor(result.nextBefore&&result.nextBeforeId?{before:result.nextBefore,beforeId:result.nextBeforeId}:null);}catch{setToast('No se han podido cargar más avisos.');}};
   if (loading)
     return (
       <div className="state" role="status">
@@ -983,6 +1042,7 @@ export function StaffApp() {
             <TeamSummary />
           </>
         )}
+        {page === "notifications" && <><div className="page-title"><p className="eyebrow">AVISOS OPERATIVOS</p><h1>Notificaciones</h1><p>Mensajes y cambios relevantes para tu trabajo.</p></div>{toast&&<p className="note" role="status">{toast}</p>}{unreadNotifications>0&&<button className="secondary" onClick={()=>void readAllNotifications()}>Marcar todos como leídos</button>}{notifications.length? <div className="notification-list">{notifications.map(item=><article className={`notification-item${item.readAt?' is-read':''}`} key={item.id}><button type="button" className="notification-open" aria-label={`Abrir aviso: ${item.title}`} onClick={()=>void openNotification(item)}><b>{item.title}</b><p>{item.body}</p><small>{new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',dateStyle:'medium',timeStyle:'short'}).format(new Date(item.createdAt))}</small></button>{!item.readAt&&<button type="button" className="notification-read" onClick={()=>void markNotificationRead(item)}>Marcar leída</button>}</article>)}</div>:<section className="card"><h2>Sin avisos nuevos</h2><p>Los avisos relacionados con tus permisos aparecerán aquí.</p></section>}{notificationCursor&&<button className="secondary" onClick={()=>void loadOlderNotifications()}>Cargar anteriores</button>}</>}
         {page === "more" && (
           <>
             <div className="page-title">
@@ -1049,9 +1109,9 @@ export function StaffApp() {
             aria-current={page === d.id ? "page" : undefined}
           >
             <span aria-hidden="true">
-              {{ home: "⌂", agenda: "◷", clients: "♙", more: "•••" }[d.id]}
+              {d.id === 'notifications' ? <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg> : ({ home: "⌂", agenda: "◷", clients: "♙", more: "•••" }[d.id])}
             </span>
-            <small>{d.label}</small>
+            <small>{d.label}{d.id==="notifications"&&unreadNotifications>0?` · ${unreadNotifications>99?'99+':unreadNotifications}`:''}</small>
           </button>
         ))}
       </nav>

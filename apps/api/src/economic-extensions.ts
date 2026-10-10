@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
+import { appendNotificationEvent } from './notifications.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -166,6 +167,8 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         const [proof] = await tx`INSERT INTO economic_transfer_proofs(charge_id,amount_cents,content_type,file_name,file_bytes,sha256,submitted_by) VALUES (${charge.id},${parsed.data.amountCents},${parsed.data.contentType},${parsed.data.fileName},${bytes},${digest},${context.actorId}) RETURNING id,status`;
         if (!proof) throw new Error('proof insert returned no row');
         await audit(tx, context, 'transfer_proof.submitted', 'transfer_proof', proof.id, charge.clientId, { amountCents: parsed.data.amountCents, sha256: digest });
+        const admins=await tx`SELECT auth_actor_id AS actor_id FROM staff_professionals WHERE status='active' AND base_role='admin' AND auth_actor_id IS NOT NULL`;
+        for(const recipient of admins)await appendNotificationEvent(tx,{type:'staff.transfer_pending',aggregateType:'transfer_proof',aggregateId:proof.id,staffActorId:recipient.actor_id,dedupeKey:`transfer-proof:${proof.id}:${recipient.actor_id}`});
         return { id: proof.id, status: proof.status };
       });
       if ('error' in result) return reply.code(result.error === 'charge_not_found' ? 404 : 409).send({ error: result.error });

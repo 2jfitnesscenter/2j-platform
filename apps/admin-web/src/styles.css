@@ -19,6 +19,7 @@ button { color: inherit; }
 .sidebar-toggle { width:30px; height:30px; display:grid; place-items:center; border:1px solid color-mix(in srgb,var(--2j-color-sidebar-text) 20%,transparent); border-radius:var(--2j-radius-sm); background:transparent; color:var(--2j-color-sidebar-text); cursor:pointer; }
 .sidebar-toggle:hover { background:var(--2j-color-sidebar-active); }
 .nav-glyph { width:24px; flex:0 0 24px; display:grid; place-items:center; font-size:20px; line-height:1; }
+.nav-glyph svg { width:20px; height:20px; }
 .nav-item-label { min-width:0; }
 .app-frame.is-compact { --2j-app-nav-width:76px; }
 .app-frame:not(.is-compact) { --2j-app-nav-width:220px; }
@@ -899,3 +900,4 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .module-access-editor .check-option { min-height:44px; }
 .module-access-editor > label:last-child { display:grid; gap:6px; }
 @media(max-width:620px){.module-access-editor{grid-template-columns:1fr}.module-access-editor>label:last-child{max-width:none}}
+.notification-settings{max-width:760px;display:grid;gap:12px}.notification-settings>label{display:flex;align-items:flex-start;gap:14px;padding:18px;border:1px solid var(--2j-color-border);border-radius:var(--2j-radius-lg);background:var(--2j-color-surface)}.notification-settings input[type=checkbox]{width:20px;height:20px;accent-color:var(--2j-color-brand-strong)}.notification-settings label span{display:grid;gap:4px}.notification-settings label small{color:var(--2j-color-text-secondary)}.notification-settings .setting-number{align-items:center;justify-content:space-between}.notification-settings .setting-number span:last-child{display:flex;align-items:center;gap:8px}.notification-settings .setting-number input{width:92px;min-height:42px;padding:8px;border:1px solid var(--2j-color-border);border-radius:var(--2j-radius-md);background:var(--2j-color-surface)}.notification-setting-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}.notification-setting-actions [role=status]{color:var(--2j-color-text-secondary)}

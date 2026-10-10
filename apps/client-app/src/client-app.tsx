@@ -1,6 +1,16 @@
 import React from 'react';
 
-type View = 'home' | 'book' | 'bookings' | 'profile';
+type View = 'home' | 'book' | 'bookings' | 'profile' | 'notifications';
+type NotificationItem = {id:string;type:string;title:string;body:string;deeplink:string|null;createdAt:string;readAt:string|null};
+type ClientNotificationTarget = { view: 'bookings' | 'profile' | 'book' };
+const clientNotificationId = '[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+export function resolveClientNotificationTarget(deeplink: unknown): ClientNotificationTarget | null {
+  if (typeof deeplink !== 'string') return null;
+  if (deeplink === '/bookings' || new RegExp(`^/bookings/${clientNotificationId}$`, 'i').test(deeplink)) return { view: 'bookings' };
+  if (deeplink === '/profile' || deeplink === '/profile/documents' || deeplink === '/membership') return { view: 'profile' };
+  if (new RegExp(`^/sessions/${clientNotificationId}$`, 'i').test(deeplink)) return { view: 'book' };
+  return null;
+}
 type ClientProfile = { id: string; firstName: string; lastName: string; email: string | null; phone?: string | null; status: string };
 type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; eligible?: boolean; eligibilityReason?: string | null; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
 type Booking = { id: string; status: string; sessionId: string; startsAt: string; durationMinutes: number; serviceName: string; areaName: string; sessionStatus: string; isIndividual: boolean };
@@ -50,6 +60,10 @@ export function ClientApp() {
   const [sessions, setSessions] = React.useState<ClientSession[]>([]);
   const [forms, setForms] = React.useState<FormAssignment[]>([]);
   const [consents, setConsents] = React.useState<Consent[]>([]);
+  const [notifications, setNotifications] = React.useState<NotificationItem[]>([]);
+  const [unreadNotifications, setUnreadNotifications] = React.useState(0);
+  const [notificationCursor, setNotificationCursor] = React.useState<{before:string;beforeId:string}|null>(null);
+  const notificationInFlight = React.useRef(new Set<string>());
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState<string | null>(null);
@@ -77,6 +91,7 @@ export function ClientApp() {
         api<Consent[]>('/api/client-portal/consents'),
       ]);
       setProfile(me.profile); setMembership(plans.assignments); setReservations(mine.reservations); setWaitlist(mine.waitlist); setSessions(agenda.sessions); setForms(documents); setConsents(consentItems);
+      try { const unread = await api<{count:number}>('/api/me/notifications/unread-count'); setUnreadNotifications(unread.count); } catch { setUnreadNotifications(0); }
     } catch (cause) { const message = cause instanceof Error ? cause.message : ''; setError(message === 'client_authentication_required' ? message : labels[message] ?? 'No se han podido cargar tus datos.'); }
     finally { setLoading(false); }
   }, [selectedDate]);
@@ -156,6 +171,24 @@ export function ClientApp() {
     catch (cause) { setMessage(cause instanceof Error ? labels[cause.message] ?? 'No se ha podido actualizar la lista.' : 'No se ha podido actualizar la lista.'); }
     finally { setBusy(null); }
   };
+  const openNotifications = async () => { setView('notifications'); try { const result=await api<{items:NotificationItem[];nextBefore:string|null;nextBeforeId:string|null}>('/api/me/notifications'); setNotifications(result.items);setNotificationCursor(result.nextBefore&&result.nextBeforeId?{before:result.nextBefore,beforeId:result.nextBeforeId}:null); } catch { setMessage('No se han podido cargar tus notificaciones.'); } };
+  const loadOlderNotifications=async()=>{if(!notificationCursor)return;try{const result=await api<{items:NotificationItem[];nextBefore:string|null;nextBeforeId:string|null}>(`/api/me/notifications?before=${encodeURIComponent(notificationCursor.before)}&beforeId=${notificationCursor.beforeId}`);setNotifications(rows=>[...rows,...result.items]);setNotificationCursor(result.nextBefore&&result.nextBeforeId?{before:result.nextBefore,beforeId:result.nextBeforeId}:null);}catch{setMessage('No se han podido cargar más avisos.');}};
+  const readNotification = async (item: NotificationItem) => {
+    if (item.readAt) return true;
+    if (notificationInFlight.current.has(item.id)) return false;
+    notificationInFlight.current.add(item.id);
+    try { await api(`/api/me/notifications/${item.id}/read`,{method:'PATCH',body:'{}'}); setNotifications(rows=>rows.map(row=>row.id===item.id?{...row,readAt:new Date().toISOString()}:row)); setUnreadNotifications(count=>Math.max(0,count-1)); return true; }
+    catch { setMessage('No se ha podido marcar como leída. Puedes volver a intentarlo.'); return false; }
+    finally { notificationInFlight.current.delete(item.id); }
+  };
+  const openNotification = async (item: NotificationItem) => {
+    if (notificationInFlight.current.has(item.id)) return;
+    const target = resolveClientNotificationTarget(item.deeplink);
+    const wasRead = await readNotification(item);
+    if (target) { if (wasRead) setMessage(''); setView(target.view); }
+    else if (wasRead) setMessage(item.deeplink === null ? 'Este aviso es informativo; los mensajes del centro todavía no están disponibles aquí.' : 'Este aviso no tiene un destino disponible.');
+  };
+  const readAllNotifications = async () => { try { await api('/api/me/notifications/read-all',{method:'POST',body:'{}'});setNotifications(rows=>rows.map(row=>({...row,readAt:row.readAt??new Date().toISOString()})));setUnreadNotifications(0); } catch { setMessage('No se han podido marcar como leídas.'); } };
 
   const upcoming = reservations.filter(row => row.status === 'reserved' && new Date(row.startsAt).getTime() >= Date.now()).sort((a,b) => a.startsAt.localeCompare(b.startsAt));
   const sessionsForSelectedDay = sessions.filter(session => dateKey(new Date(session.startsAt)) === selectedDate);
@@ -164,12 +197,12 @@ export function ClientApp() {
   const pendingDocuments = forms.filter(form => form.required && (form.status === 'assigned' || form.status === 'rejected'));
   const pendingConsents = consents.filter(consent => consent.required && !consent.accepted);
   return <div className="client-app">
-    <header className="client-header"><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile?.firstName?.slice(0,1) ?? '·'}</button></header>
+    <header className="client-header"><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><div className="client-header-actions"><button className="notification-bell" aria-label={`Notificaciones${unreadNotifications?`, ${unreadNotifications} sin leer`:''}`} onClick={()=>void openNotifications()}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>{unreadNotifications>0&&<span aria-hidden="true">{unreadNotifications>99?'99+':unreadNotifications}</span>}</button><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile?.firstName?.slice(0,1) ?? '·'}</button></div></header>
     <main className="client-main" id="main-content">
       {loading && <div className="loading-card" role="status"><span className="spinner"/> Cargando tu espacio…</div>}
       {!loading && error && <section className="state-card error-card" role="alert"><span className="state-icon">!</span><h1>Tu espacio no está disponible ahora</h1><p>{error === 'client_authentication_required' ? 'Inicia sesión con tu cuenta para consultar tus reservas y derechos.' : 'Comprueba tu conexión e inténtalo de nuevo.'}</p><button className="button primary" onClick={() => void refresh()}>Intentar de nuevo</button></section>}
       {!loading && !error && profile && <>
-        {message && view !== 'bookings' && !selectedSession && <p className="inline-message page-message" role="status">{message}</p>}
+        {message && view !== 'bookings' && view !== 'notifications' && !selectedSession && <p className="inline-message page-message" role="status">{message}</p>}
         {view === 'home' && <>
           <section className="welcome"><p className="eyebrow">TU CENTRO · 2J FITNESS</p><h1>Hola, {profile.firstName}</h1><p>Tu entrenamiento empieza con un buen plan.</p><button className="button primary" onClick={() => setView('book')}>Reservar una sesión <span aria-hidden="true">→</span></button></section>
           <div className="section-heading"><div><p className="eyebrow">A CONTINUACIÓN</p><h2>Próximas reservas</h2></div><button className="text-button" onClick={() => setView('bookings')}>Ver todas</button></div>
@@ -180,6 +213,7 @@ export function ClientApp() {
         </>}
         {view === 'book' && <><div className="page-intro"><p className="eyebrow">HORARIO DEL CENTRO · ATLANTIC/CANARY</p><h1>Reserva tu sesión</h1><p>Elige la actividad que mejor encaje en tu semana.</p></div><div className="week-navigation"><button className="quiet-button" aria-label="Semana anterior" onClick={() => setSelectedDate(value => shiftDateKey(value, -7))}>‹</button><span>{dateLabel(`${weekRange(selectedDate).from}T12:00:00Z`)} – {dateLabel(`${weekRange(selectedDate).to}T12:00:00Z`)}</span><button className="quiet-button" aria-label="Semana siguiente" onClick={() => setSelectedDate(value => shiftDateKey(value, 7))}>›</button></div><div className="week-strip" aria-label="Elige un día">{weekRangeDays(selectedDate).map(day => <button type="button" key={day.date} aria-pressed={selectedDate === day.date} className={`day-chip${day.today ? ' today' : ''}${selectedDate === day.date ? ' selected' : ''}`} onClick={() => setSelectedDate(day.date)}><small>{day.label}</small><strong>{day.number}</strong></button>)}</div><div className="section-heading compact"><div><p className="eyebrow">{dateLabel(`${selectedDate}T12:00:00Z`)}</p><h2>Sesiones disponibles</h2></div></div>{sessionsForSelectedDay.length ? <div className="session-list">{sessionsForSelectedDay.map(session => <SessionCard key={session.id} session={session} onSelect={() => void openSession(session)}/>)}</div> : <section className="empty-card"><span className="empty-mark">✳</span><h3>No hay sesiones este día</h3><p>Elige otra fecha o vuelve a consultar pronto.</p></section>}</>}
         {view === 'bookings' && <><div className="page-intro"><p className="eyebrow">TU ACTIVIDAD</p><h1>Mis reservas</h1><p>Consulta próximas sesiones y tu historial.</p></div>{message && <p className="inline-message" role="status">{message}</p>}<h2 className="subheading">Próximas</h2>{upcoming.length ? <div className="booking-stack">{upcoming.map(row => <BookingCard key={row.id} booking={row} busy={busy === row.id} onCancel={() => void cancelBooking(row)}/>)}</div> : <p className="muted">Todavía no tienes reservas próximas.</p>}<h2 className="subheading">Lista de espera</h2>{waitlist.filter(row => row.status === 'waiting').length ? <div className="booking-stack">{waitlist.filter(row => row.status === 'waiting').map(row => <BookingCard key={row.id} booking={row} waiting busy={busy === row.id} onCancel={() => void leaveWaitlist(row)}/>)}</div> : <p className="muted">No estás en ninguna lista de espera.</p>}<h2 className="subheading">Historial</h2>{reservations.filter(row => row.status !== 'reserved' || new Date(row.startsAt).getTime() < Date.now()).slice(0,6).map(row => <BookingCard key={row.id} booking={row} compact/>)}{waitlist.filter(row => row.status !== 'waiting').slice(0,6).map(row => <BookingCard key={row.id} booking={row} waiting compact/>)}</>}
+        {view === 'notifications' && <><div className="page-intro"><p className="eyebrow">TU ESPACIO</p><h1>Notificaciones</h1><p>Avisos importantes de tus reservas y mensajes.</p></div>{message&&<p className="inline-message" role="status">{message}</p>}{notifications.length>0&&unreadNotifications>0&&<button className="text-button" onClick={()=>void readAllNotifications()}>Marcar todas como leídas</button>}{notifications.length? <div className="notification-list">{notifications.map(item=><article className={`notification-item${item.readAt?' is-read':''}`} key={item.id}><span className="notification-dot" aria-hidden="true"/><button type="button" className="notification-open" aria-label={`Abrir aviso: ${item.title}`} onClick={()=>void openNotification(item)}><strong>{item.title}</strong><p>{item.body}</p><small>{new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',dateStyle:'medium',timeStyle:'short'}).format(new Date(item.createdAt))}</small></button>{!item.readAt&&<button type="button" className="text-button notification-read" onClick={()=>void readNotification(item)}>Marcar leída</button>}</article>)}</div>:<section className="empty-card"><h3>Todo al día</h3><p>Aquí aparecerán los avisos de tus reservas.</p></section>}{notificationCursor&&<button className="button secondary full" onClick={()=>void loadOlderNotifications()}>Cargar anteriores</button>}<button className="text-button" onClick={()=>void refresh()}>Actualizar</button></>}
         {view === 'profile' && <>
           <div className="page-intro"><p className="eyebrow">TU CUENTA</p><h1>Perfil</h1><p>Tu información y derechos activos.</p></div>
           <section className="profile-card"><div className="profile-avatar">{profile.firstName[0]}{profile.lastName[0]}</div><div><h2>{profile.firstName} {profile.lastName}</h2><p>{profile.email ?? 'Email no indicado'}</p>{profile.phone && <p>{profile.phone}</p>}</div></section>
@@ -226,4 +260,4 @@ function weekRangeDays(selected = dateKey(new Date())) {
   return Array.from({length:7},(_,index)=>{const key=shiftDateKey(start,index);const date=new Date(`${key}T12:00:00Z`);return {date:key,label:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',weekday:'short'}).format(date),number:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',day:'numeric'}).format(date),today:key===todayKey};});
 }
 
-export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, shiftDateKey, labels };
+export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, shiftDateKey, labels, resolveClientNotificationTarget };
