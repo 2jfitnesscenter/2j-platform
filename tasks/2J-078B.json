@@ -7,6 +7,8 @@
   "live": false,
   "trainingRepositoryTouched": false,
   "providerTrafficEnabled": false,
+  "trainingLiveLinking": "off",
+  "trainingLinkingEnabledDefault": false,
   "credentialsStored": false,
   "productDecisionsChanged": false,
   "acceptance": {
@@ -16,9 +18,13 @@
     "personScopedV1Contracts": true,
     "serverPermissionRequired": true,
     "trainingSummaryFailSoftReadAdapter": true,
+    "syntheticLocalLinkMutationsDefaultOff": true,
+    "syntheticActiveIsNotRemoteAcknowledgement": true,
+    "explicitAdminIsNotProofOfPossession": true,
     "noEmailPhoneMatching": true
   },
-  "verification": { "fullSuite": "227/227", "migrations": "22 on PostgreSQL 17", "typecheck": "9/9", "build": "9/9", "audit": "pass", "secretScan": "push and pull_request CI passed" },
-  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "passed" },
+  "lifecycle": { "identityFoundation": "implemented", "localLinkStorage": "implemented", "remoteLifecycle": "not_implemented", "dualProof": "not_implemented", "sso": "not_implemented", "trainingAccessEnforcement": "not_implemented" },
+  "verification": { "fullSuite": "227/227 passed; zero skipped", "migrations": "22 checksummed migrations verified on fresh PostgreSQL 17 database", "typecheck": "9/9 packages passed", "build": "9/9 packages passed", "audit": "no known high severity vulnerabilities", "diffCheck": "pass", "secretScan": "pending on updated CI head" },
+  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "pending on hardening head" },
   "pullRequest": { "number": 22, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/22", "state": "open", "draft": true, "merged": false }
 }

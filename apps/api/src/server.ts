@@ -96,6 +96,7 @@ export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
+  trainingLinkingEnabled?: boolean;
   logger?: FastifyServerOptions['logger'];
 };
 
@@ -139,7 +140,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerDashboardRoutes(app, client, authorizationResolver);
-  registerPersonIdentityRoutes(app, client, authorizationResolver);
+  registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }

@@ -9,7 +9,7 @@ const uuid = z.string().uuid().transform((value) => value.toLowerCase());
 const facetInput = z.object({ clientId: uuid.optional(), staffId: uuid.optional() }).strict().refine((value) => value.clientId || value.staffId, 'At least one Platform facet is required');
 const trainingLinkInput = z.object({ requestId: uuid, trainingUserId: z.string().trim().min(1).max(200) }).strict();
 
-export function registerPersonIdentityRoutes(app: FastifyInstance<any, any, any, any, any>, database: SqlClient, resolveAuthorization: (request: FastifyRequest) => Promise<AuthorizationContext | null>) {
+export function registerPersonIdentityRoutes(app: FastifyInstance<any, any, any, any, any>, database: SqlClient, resolveAuthorization: (request: FastifyRequest) => Promise<AuthorizationContext | null>, trainingLinkingEnabled = false) {
   async function authorized(request: FastifyRequest, reply: any) {
     reply.header('Cache-Control', 'no-store');
     const actor = await resolveAuthorization(request);
@@ -79,6 +79,7 @@ export function registerPersonIdentityRoutes(app: FastifyInstance<any, any, any,
   });
   app.post('/api/platform/v1/persons/:personId/training-link', async (request, reply) => {
     const actor = await authorized(request, reply); if (!actor) return;
+    if (!trainingLinkingEnabled) return reply.code(423).send({ error: 'training_linking_disabled' });
     const parsed = z.object({ personId: uuid }).safeParse(request.params); const body = trainingLinkInput.safeParse(request.body);
     if (!parsed.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     const linkId = randomUUID();
@@ -105,6 +106,7 @@ export function registerPersonIdentityRoutes(app: FastifyInstance<any, any, any,
   });
   app.delete('/api/platform/v1/persons/:personId/training-link', async (request, reply) => {
     const actor = await authorized(request, reply); if (!actor) return;
+    if (!trainingLinkingEnabled) return reply.code(423).send({ error: 'training_linking_disabled' });
     const parsed = z.object({ personId: uuid }).safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
     try {
