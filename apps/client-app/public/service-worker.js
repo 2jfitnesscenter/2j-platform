@@ -1,9 +1,13 @@
 self.addEventListener('install', event => event.waitUntil((async () => {
-  const cache = await caches.open('2j-client-static-v1');
+  const cache = await caches.open('2j-hub-static-v2');
   await cache.addAll(['/', '/manifest.webmanifest', '/icon.svg']);
   await self.skipWaiting();
 })()));
-self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('activate', event => event.waitUntil((async () => {
+  const names = await caches.keys();
+  await Promise.all(names.filter(name => (name.startsWith('2j-client-static-') || name.startsWith('2j-hub-static-')) && name !== '2j-hub-static-v2').map(name => caches.delete(name)));
+  await self.clients.claim();
+})()));
 self.addEventListener('fetch', event => {
   const request = event.request;
   const url = new URL(request.url);
@@ -12,7 +16,7 @@ self.addEventListener('fetch', event => {
     event.respondWith((async () => {
       try {
         const response = await fetch(request);
-        if (response.ok) { const cache = await caches.open('2j-client-static-v1'); await cache.put('/', response.clone()); }
+        if (response.ok) { const cache = await caches.open('2j-hub-static-v2'); await cache.put('/', response.clone()); }
         return response;
       } catch { return (await caches.match('/')) ?? Response.error(); }
     })());
@@ -20,7 +24,7 @@ self.addEventListener('fetch', event => {
   }
   if (!['script', 'style', 'image', 'font'].includes(request.destination)) return;
   event.respondWith((async () => {
-    const cache = await caches.open('2j-client-static-v1');
+    const cache = await caches.open('2j-hub-static-v2');
     const cached = await cache.match(request);
     if (cached) return cached;
     const response = await fetch(request);

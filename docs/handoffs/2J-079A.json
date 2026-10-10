@@ -1,0 +1,38 @@
+{
+  "taskId": "2J-079A",
+  "title": "2J Hub Client Preview / Safe Parallel Pilot",
+  "status": "ready_for_review",
+  "branch": "agent/codex/2J-079A-hub-client-preview",
+  "base": "51dc280d9e1152d0c0cd4a7703267b877929a82a",
+  "mode": "fixture_preview_gated_and_normal_api_mode_preserved",
+  "trainingProductionChanged": false,
+  "deploymentChanged": false,
+  "validation": {
+    "clientTests": "7/7 passed",
+    "clientTypecheck": "passed",
+    "clientBuild": "passed",
+    "dimensionSpecificScreenshotFiles": "not produced; available browser did not expose viewport override/export path"
+  },
+  "reviewRequired": [
+    "independent UX review with exportable captures at 1440, 768, and 390 px",
+    "backend/security review before any real-data pilot"
+  ],
+  "deploymentBlockers": [
+    "approved production identity and secure session integration",
+    "production API/database hosting and authorization",
+    "approved owner-only pilot gate",
+    "Hub static hosting and SPA/API routing",
+    "DNS, TLS, reverse proxy/CDN approval for inicio.2jfitnesscenter.com",
+    "monitoring, backup and rollback plan"
+  ],
+  "answers": {
+    "A_member_today": "Fixture preview yes; real API mode only with an existing valid client session, which is not provided by this repository's standalone runtime.",
+    "B_staff_today": "Local synthetic demo with development-only LOCAL_DEMO_ROLE=trainer; not production auth.",
+    "C_admin_today": "Local synthetic demo with development-only LOCAL_DEMO_ROLE=admin; admin surface has no production sign-in.",
+    "D_real_platform_data": "Normal client mode reads/writes existing member API routes; production identity integration is absent and booking eligibility fails closed by default.",
+    "E_fixture_only": "Clearly labeled local fictional member, plan, booking, notice, document and consent preview; API-free and mutations disabled/simulated.",
+    "F_existing_training_user_impact": "No change to 2jfitnessapp or its users.",
+    "G_training_continuity": "app.2jfitnesscenter.com remains unchanged and directly reachable.",
+    "H_domain_exposure": "Requires approved identity/security, API/DB hosting, client hosting, SPA/API routing, DNS, TLS, proxy/CDN and operations/rollback. None performed."
+  }
+}
