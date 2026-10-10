@@ -52,6 +52,7 @@
     "timeclock.manage",
     "timeclock.audit",
     "staff.timeclock.correct",
+    "identity.people.manage",
     "settings.manage",
     "entitlements.read",
     "entitlements.manage",

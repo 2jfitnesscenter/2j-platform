@@ -59,6 +59,11 @@ test('admin can perform operations unless explicitly denied', () => {
   assert.equal(can({ actorId: 'fixture', role: 'admin', deniedPermissions: ['settings.manage'] }, 'settings.manage'), false);
 });
 
+test('person identity administration is restricted to Admin', () => {
+  for (const role of ['trainer', 'reception-management', 'accountant']) assert.equal(can({ actorId: 'fixture', role }, 'identity.people.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'identity.people.manage'), true);
+});
+
 test('runtime role matrix matches its reviewable JSON contract', async () => {
   const contract = JSON.parse(await readFile(new URL('../role-permissions.json', import.meta.url), 'utf8'));
   assert.deepEqual(contract.roles, rolePermissions);

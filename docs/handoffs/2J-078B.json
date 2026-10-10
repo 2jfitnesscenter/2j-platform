@@ -1,0 +1,41 @@
+{
+  "taskId": "2J-078B",
+  "status": "ready_for_independent_review",
+  "baseSha": "fc97458100b45db51475b37470e75cf2bb76d687",
+  "branch": "agent/codex/2J-078B-person-identity-training-contracts",
+  "decision": {
+    "sharedIdentifier": "personId",
+    "personId": "opaque_immutable_lifetime_stable",
+    "platformFacets": ["clientId", "staffId"],
+    "trainingStoresCentralFacetIds": false,
+    "trainingStoresCopiedIdentity": false,
+    "emailPhoneMatching": false,
+    "dualCapabilityUsesOneTrainingLink": true,
+    "trainingRolesRemainLocal": true
+  },
+  "contracts": ["PlatformSubject/v1", "LinkProposal/v1", "AccessGrant/v1", "TrainingSummary/v1"],
+  "persistence": ["platform_persons", "platform_person_clients", "platform_person_staff", "training_account_links", "platform_identity_audit_events"],
+  "migration": "0022_person_training_identity.sql",
+  "providerTraffic": "disabled_by_default; injected signer required",
+  "linkLifecycle": "Platform canonical local record only; remote create/revoke deferred",
+  "trainingRepositoryTouched": false,
+  "credentialsStored": false,
+  "live": false,
+  "verification": {
+    "fullSuite": "227/227 passed; zero skipped",
+    "api": "139/139",
+    "adminWeb": "57/57",
+    "clientApp": "6/6",
+    "staffApp": "7/7",
+    "sharedPackages": "18/18",
+    "migrations": "22 checksummed migrations verified on fresh PostgreSQL 17 database",
+    "typecheckPackages": "9/9",
+    "buildPackages": "9/9",
+    "dependencyAudit": "no known high severity vulnerabilities",
+    "diffCheck": "pass",
+    "visualEvidence": "not applicable; backend-only",
+    "localSecretScan": "CLI unavailable; CI pending"
+  },
+  "review": { "security": "pending", "qa": "pending", "ci": "pending" },
+  "merged": false
+}

@@ -1,0 +1,23 @@
+{
+  "taskId": "2J-078B",
+  "title": "Shared person identity and Training contract foundation",
+  "status": "ready_for_independent_review",
+  "branch": "agent/codex/2J-078B-person-identity-training-contracts",
+  "baseSha": "fc97458100b45db51475b37470e75cf2bb76d687",
+  "live": false,
+  "trainingRepositoryTouched": false,
+  "providerTrafficEnabled": false,
+  "credentialsStored": false,
+  "productDecisionsChanged": false,
+  "acceptance": {
+    "opaqueImmutablePersonId": true,
+    "platformLocalClientStaffFacets": true,
+    "oneTrainingLinkPerPerson": true,
+    "personScopedV1Contracts": true,
+    "serverPermissionRequired": true,
+    "trainingSummaryFailSoftReadAdapter": true,
+    "noEmailPhoneMatching": true
+  },
+  "verification": { "fullSuite": "227/227", "migrations": "22 on PostgreSQL 17", "typecheck": "9/9", "build": "9/9", "audit": "pass", "secretScan": "CI pending" },
+  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "pending" }
+}

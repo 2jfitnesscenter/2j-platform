@@ -10,6 +10,7 @@ import * as schema from '../src/schema.ts';
 import { getEffectiveEntitlements } from '../src/entitlements.ts';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
+import { createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
 
@@ -102,7 +103,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformIdentityAuditEvents];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -133,6 +134,66 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
   const rightIndexes = await sql`SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND indexname IN ('plan_rights_global_unique','plan_rights_service_unique')`;
   assert.equal(rightIndexes.length, 2);
   for (const index of rightIndexes) assert.match(index.indexdef, /COALESCE\(period, ''(?:::text)?\)/, `${index.indexname} must distinguish quota periods`);
+});
+
+test('2J-078B contracts are person-scoped, strict, and Training adapter is disabled by default', async () => {
+  const personId = randomUUID();
+  assert.equal(platformSubjectSchema.safeParse({ v: 1, personId, clientId: randomUUID(), capabilities: ['client'], status: 'active' }).success, true);
+  assert.equal(platformSubjectSchema.safeParse({ v: 1, personId, clientId: randomUUID(), staffId: randomUUID(), capabilities: ['client','staff'], status: 'active', centralClientId: randomUUID() }).success, false);
+  assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7' }, method: 'user_confirmed', requestId: randomUUID() }).success, true);
+  assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7', centralClientId: randomUUID() }, method: 'user_confirmed', requestId: randomUUID() }).success, false);
+  assert.equal(accessGrantSchema.safeParse({ v: 1, personId, trainingAccess: 'blocked' }).success, true);
+  assert.equal(trainingSummarySchema.safeParse({ v: 1, personId, asOf: new Date().toISOString(), program: { activeCount: 2 } }).success, true);
+  let calls = 0;
+  assert.deepEqual(await createTrainingAdapter({ fetcher: async () => { calls += 1; throw new Error('must not call'); } }).getSummary(personId), { status: 'disabled' });
+  assert.equal(calls, 0);
+  const adapter = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', fetcher: async () => { calls += 1; return new Response(JSON.stringify({ v: 1, personId, asOf: new Date().toISOString() }), { status: 200 }); }, signRequest: async () => ({ 'x-signature': 'test-only' }) });
+  assert.equal((await adapter.getSummary(personId)).status, 'available');
+  assert.equal(calls, 1);
+  const failSoft = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', fetcher: async () => new Response('bad', { status: 503 }), signRequest: async () => ({}) });
+  assert.deepEqual(await failSoft.getSummary(personId), { status: 'unavailable' });
+});
+
+test('identity API creates one stable person for local facets and revokes Training links by personId', async () => {
+  const client = await createClientRequest(clientsAdminApp, { firstName: 'Person', lastName: `Identity ${randomUUID()}` });
+  assert.equal(client.statusCode, 201);
+  const clientId = client.json().id;
+  const created = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId } });
+  assert.equal(created.statusCode, 201, created.body);
+  const person = created.json();
+  assert.equal(person.v, 1); assert.equal(person.clientId, clientId); assert.deepEqual(person.capabilities, ['client']);
+  assert.equal(Object.hasOwn(person, 'email'), false);
+  assert.equal((await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId } })).statusCode, 409, 'a client facet cannot belong to two people');
+  assert.equal((await clientsTrainerApp.inject({ method: 'GET', url: `/api/platform/v1/persons/${person.personId}` })).statusCode, 403);
+  assert.equal((await anonymousApp.inject({ method: 'GET', url: `/api/platform/v1/persons/${person.personId}` })).statusCode, 401);
+  assert.equal((await clientsTrainerApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId } })).statusCode, 403);
+  assert.equal((await clientsTrainerApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${person.personId}/facets`, payload: { clientId } })).statusCode, 403);
+  assert.equal((await clientsTrainerApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${person.personId}/training-link`, payload: { requestId: randomUUID(), trainingUserId: 'opaque', method: 'user_confirmed' } })).statusCode, 403);
+  assert.equal((await clientsTrainerApp.inject({ method: 'DELETE', url: `/api/platform/v1/persons/${person.personId}/training-link` })).statusCode, 403);
+  const loaded = await clientsAdminApp.inject({ method: 'GET', url: `/api/platform/v1/persons/${person.personId}` });
+  assert.equal(loaded.statusCode, 200); assert.equal(loaded.json().personId, person.personId);
+  const requestId = randomUUID(); const trainingUserId = `training-${randomUUID()}`;
+  const linkPayload = { requestId, trainingUserId, method: 'user_confirmed' };
+  const link = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${person.personId}/training-link`, payload: linkPayload });
+  assert.equal(link.statusCode, 201, link.body);
+  const replay = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${person.personId}/training-link`, payload: linkPayload });
+  assert.equal(replay.statusCode, 200); assert.equal(replay.json().linkId, link.json().linkId);
+  const conflict = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${person.personId}/training-link`, payload: { ...linkPayload, trainingUserId: `different-${randomUUID()}` } });
+  assert.equal(conflict.statusCode, 409); assert.equal(conflict.json().error, 'idempotency_conflict');
+  const otherClient = await createClientRequest(clientsAdminApp, { firstName: 'Another', lastName: `Person ${randomUUID()}` });
+  const otherPerson = await clientsAdminApp.inject({ method: 'POST', url: '/api/platform/v1/persons', payload: { clientId: otherClient.json().id } });
+  assert.equal(otherPerson.statusCode, 201);
+  const reusedTrainingUser = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${otherPerson.json().personId}/training-link`, payload: { requestId: randomUUID(), trainingUserId, method: 'user_confirmed' } });
+  assert.equal(reusedTrainingUser.statusCode, 409, 'a Training account cannot be active for two people');
+  await assert.rejects(sql`UPDATE training_account_links SET training_user_id=${`changed-${randomUUID()}`} WHERE link_id=${link.json().linkId}`, { code: '55000' });
+  await assert.rejects(sql`UPDATE training_account_links SET link_version=9 WHERE link_id=${link.json().linkId}`, { code: '55000' });
+  const revoked = await clientsAdminApp.inject({ method: 'DELETE', url: `/api/platform/v1/persons/${person.personId}/training-link` });
+  assert.equal(revoked.statusCode, 200, revoked.body); assert.equal(revoked.json().status, 'revoked');
+  assert.equal((await clientsAdminApp.inject({ method: 'GET', url: `/api/platform/v1/persons/${person.personId}` })).json().status, 'active', 'unlink revokes the Training link, not the stable person identity');
+  assert.equal((await sql`SELECT status FROM training_account_links WHERE person_id=${person.personId}`).at(0).status, 'revoked');
+  assert.equal((await sql`SELECT count(*)::int AS count FROM platform_identity_audit_events WHERE person_id=${person.personId}`).at(0).count, 3);
+  await assert.rejects(sql`UPDATE platform_persons SET id=${randomUUID()} WHERE id=${person.personId}`, { code: '55000' });
+  await assert.rejects(sql`DELETE FROM platform_identity_audit_events WHERE person_id=${person.personId}`, { code: '55000' });
 });
 
 test('client PII endpoints deny by default and ignore caller-supplied role headers', async () => {
