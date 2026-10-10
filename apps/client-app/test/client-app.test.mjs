@@ -57,7 +57,7 @@ test('client notification bell opens a self-scoped inbox and marks notices read'
   const bell=await ui.findByRole('button',{name:/Notificaciones, 1 sin leer/});fireEvent.click(bell);await ui.findByRole('heading',{name:'Notificaciones'});assert.ok(ui.getByText('Tu plaza está confirmada.'));fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Mis reservas'});assert.ok(await ui.findByText('No se ha podido marcar como leída. Puedes volver a intentarlo.'));assert.ok(await ui.findByRole('button',{name:/Notificaciones, 1 sin leer/}));assert.equal(item.readAt,null);
   failRead=false;fireEvent.click(ui.getByRole('button',{name:/Notificaciones, 1 sin leer/}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Mis reservas'});await ui.findByRole('button',{name:'Notificaciones'});assert.equal(item.readAt!==null,true);
   item.deeplink='/profile';fireEvent.click(ui.getByRole('button',{name:'Notificaciones'}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Perfil'});
-  item.deeplink='/sessions/22222222-2222-4222-8222-222222222222';fireEvent.click(ui.getByRole('button',{name:'Notificaciones'}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Reserva tu sesión'});
+  item.deeplink='/sessions/22222222-2222-4222-8222-222222222222';fireEvent.click(ui.getByRole('button',{name:'Notificaciones'}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Reservar'});
   cleanup();dom.window.close();
 });
 
@@ -77,7 +77,7 @@ test('client can choose a center-local day, review a session, and retry a lost r
     HTMLInputElement: { configurable: true, value: dom.window.HTMLInputElement }, HTMLTextAreaElement: { configurable: true, value: dom.window.HTMLTextAreaElement }, HTMLSelectElement: { configurable: true, value: dom.window.HTMLSelectElement }, Event: { configurable: true, value: dom.window.Event },
     sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '11111111-1111-4111-8111-111111111111' } },
   });
-  const { render, cleanup, fireEvent, ClientApp, clientAppTestHelpers } = await uiHarness();
+  const { render, cleanup, fireEvent, within, ClientApp, clientAppTestHelpers } = await uiHarness();
   const days = clientAppTestHelpers.weekRangeDays();
   const dateAt = (date, hour = 18) => { const [year, month, day] = date.split('-').map(Number); return new Date(Date.UTC(year, month - 1, day, hour + 1)).toISOString(); };
   const session = {
@@ -104,8 +104,8 @@ test('client can choose a center-local day, review a session, and retry a lost r
   };
   const ui = render(React.createElement(ClientApp));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, María' }));
-  fireEvent.click(ui.getByRole('button', { name: 'Reservar', exact: true }));
-  assert.ok(await ui.findByRole('heading', { name: 'Reserva tu sesión' }));
+  fireEvent.click(within(ui.getByRole('navigation', { name: 'Navegación principal' })).getByRole('button', { name: 'Reservar', exact: true }));
+  assert.ok(await ui.findByRole('heading', { name: 'Reservar' }));
   fireEvent.click(ui.container.querySelectorAll('.day-chip')[1]);
   assert.ok(await ui.findByRole('button', { name: /Fuerza funcional.*Alex Rivera/ }));
   fireEvent.click(ui.getByRole('button', { name: /Fuerza funcional.*Alex Rivera/ }));
@@ -165,5 +165,74 @@ test('profile completes only the signed-in client’s form and records an explic
   fireEvent.click(ui.getByRole('button', { name: 'Confirmar aceptación' }));
   assert.ok(await ui.findByText('Tu aceptación se ha guardado.'));
   assert.deepEqual(acceptedPayload, { typedName: 'Lucía Díaz', accepted: true });
+  cleanup(); dom.window.close();
+});
+
+test('2J Hub preview is build-gated, presents five destinations and never calls the API', async () => {
+  const { isHubPreviewEnabled, HUB_TRAINING_URL } = await import('../src/client-app.tsx').then(({clientAppTestHelpers}) => clientAppTestHelpers);
+  assert.equal(isHubPreviewEnabled(false, '?preview=1'), false);
+  assert.equal(isHubPreviewEnabled('false', '?preview=1'), false);
+  assert.equal(isHubPreviewEnabled(true, '?preview=1'), true);
+  assert.equal(isHubPreviewEnabled('true', ''), true);
+  assert.equal(isHubPreviewEnabled('true', '?preview=0'), false);
+  assert.equal(HUB_TRAINING_URL, 'https://app.2jfitnesscenter.com');
+
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/?preview=1' });
+  const clipboard = [];
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    HTMLInputElement: { configurable: true, value: dom.window.HTMLInputElement }, HTMLTextAreaElement: { configurable: true, value: dom.window.HTMLTextAreaElement }, HTMLSelectElement: { configurable: true, value: dom.window.HTMLSelectElement }, Event: { configurable: true, value: dom.window.Event },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '11111111-1111-4111-8111-111111111111' } },
+  });
+  Object.defineProperty(dom.window.navigator, 'clipboard', { configurable: true, value: { writeText: async value => clipboard.push(value) } });
+  const requests = [];
+  globalThis.fetch = async (input, init = {}) => { requests.push({ url: String(input), method: init.method ?? 'GET' }); throw new Error('Preview must not reach fetch.'); };
+  const { render, cleanup, fireEvent, within, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp, { previewModeOverride: true }));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Juan' }));
+  assert.ok(ui.getByText('Vista previa', { selector: '.preview-pill' }));
+  assert.ok(ui.getByRole('heading', { name: 'Tu próxima actividad' }));
+  assert.ok(ui.getByText('Plan 2J'));
+
+  const navigation = ui.getByRole('navigation', { name: 'Navegación principal' });
+  assert.deepEqual(within(navigation).getAllByRole('button').map(button => button.textContent.trim()), ['Inicio', 'Reservar', 'Entrenar', 'Centro', 'Perfil']);
+  assert.equal(within(navigation).queryByRole('button', { name: /notificaciones/i }), null);
+
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Entrenar' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Entrenamiento' }));
+  const trainingLink = ui.getByRole('link', { name: /Abrir entrenamiento/ });
+  assert.equal(trainingLink.getAttribute('href'), 'https://app.2jfitnesscenter.com');
+  assert.equal(trainingLink.getAttribute('target'), '_blank');
+  assert.match(trainingLink.getAttribute('rel'), /noopener/);
+
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Centro' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Modo piloto 2J' }));
+  assert.ok(ui.getByRole('heading', { name: 'La Sala' }));
+  assert.ok(ui.getByRole('heading', { name: 'El Búnker' }));
+  assert.ok(ui.getByRole('heading', { name: 'El Estudio' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Copiar información de diagnóstico' }));
+  await ui.findByText('Información de diagnóstico copiada.');
+  assert.match(clipboard[0], /mode=fixture-preview/);
+  assert.match(clipboard[0], /viewport=\d+x\d+/);
+  assert.doesNotMatch(clipboard[0], /Juan|Demo|token|cookie|secret/i);
+
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Reservar' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Reservar' }));
+  fireEvent.click(ui.getByRole('button', { name: /Funcional.*La Sala/ }));
+  assert.ok(await ui.findByRole('dialog'));
+  assert.ok(ui.getByText('Tu plaza ya está reservada.'));
+  fireEvent.click(ui.getByRole('button', { name: 'Cerrar detalle' }));
+
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Perfil' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Completar' }));
+  assert.ok(await ui.findByRole('dialog', { name: 'Ficha de bienvenida' }));
+  assert.equal(ui.getByRole('button', { name: 'Enviar documento' }).disabled, true);
+  fireEvent.click(ui.getByRole('button', { name: 'Cerrar formulario' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Consultar' }));
+  assert.ok(await ui.findByRole('dialog', { name: 'Normas del centro' }));
+  assert.equal(ui.getByRole('button', { name: 'Confirmar aceptación' }).disabled, true);
+  assert.deepEqual(requests, []);
   cleanup(); dom.window.close();
 });

@@ -1,11 +1,11 @@
 {
-  "name": "2J Fitness",
+  "name": "2J Hub",
   "short_name": "2J",
   "lang": "es",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f5f7f2",
-  "theme_color": "#172015",
+  "background_color": "#0B0F12",
+  "theme_color": "#0B0F12",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
