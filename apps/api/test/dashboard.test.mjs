@@ -100,14 +100,16 @@ test('global search groups only entities the role can read and rejects anonymous
 test('navigation capabilities remain authorized and independent of Command Center content', async () => {
   const denied = await anonymous.inject({method:'GET',url:'/api/session/capabilities'});
   assert.equal(denied.statusCode,401);
-  const [adminCaps,trainerCaps,accountantCaps] = await Promise.all([
+  const [adminCaps,trainerCaps,receptionCaps,accountantCaps] = await Promise.all([
     admin.inject({method:'GET',url:'/api/session/capabilities'}),
     trainer.inject({method:'GET',url:'/api/session/capabilities'}),
+    reception.inject({method:'GET',url:'/api/session/capabilities'}),
     accountant.inject({method:'GET',url:'/api/session/capabilities'}),
   ]);
-  assert.deepEqual(adminCaps.json(),{calendar:true,clients:true,communications:true,billing:true,staff:true});
-  assert.deepEqual(trainerCaps.json(),{calendar:true,clients:true,communications:true,billing:false,staff:true});
-  assert.deepEqual(accountantCaps.json(),{calendar:false,clients:false,communications:false,billing:true,staff:false});
+  assert.deepEqual(adminCaps.json(),{calendar:true,clients:true,communications:true,billing:true,staff:true,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:true,paymentsManage:true,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:true});
+  assert.deepEqual(trainerCaps.json(),{calendar:true,clients:true,communications:true,billing:false,staff:true,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:false,paymentsManage:false,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:true});
+  assert.deepEqual(receptionCaps.json(),{calendar:true,clients:true,communications:true,billing:true,staff:true,reservationManage:true,attendanceManage:false,entitlementsRead:true,entitlementsManage:true,paymentsManage:false,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:false});
+  assert.deepEqual(accountantCaps.json(),{calendar:false,clients:false,communications:false,billing:true,staff:false,reservationManage:false,attendanceManage:false,entitlementsRead:false,entitlementsManage:false,paymentsManage:false,communicationSend:false,documentsRead:false,timeclockSelf:false,capacityOverride:false});
   assert.equal(adminCaps.headers['cache-control'],'no-store');
 });
 
@@ -141,6 +143,12 @@ test('cash summary follows 2J-040 selection semantics and never fails with multi
 });
 
 test('open timeclock attention uses effective timestamps and only flags an open shift from a prior local day', async () => {
+  const timeclockOnly = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({
+    actorId: `dashboard-timeclock-${randomUUID()}`,
+    role: 'admin',
+    deniedPermissions: ['calendar.read','clients.read','communication.read','documents.read','health.read','forms.responses.sensitive.read','followup.read','billing.read-basic','billing.cash.manage','billing.payments.manage','billing.validate_transfer','staff.read'],
+  }) });
+  try {
   const [personToday] = await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,created_by) VALUES ('Turno','Hoy',${`Hoy ${randomUUID()}`},'trainer','2J-070-test') RETURNING id`;
   const [personYesterday] = await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,created_by) VALUES ('Turno','Ayer',${`Ayer ${randomUUID()}`},'trainer','2J-070-test') RETURNING id`;
   const [personCorrected] = await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,created_by) VALUES ('Turno','Corregido',${`Corregido ${randomUUID()}`},'trainer','2J-070-test') RETURNING id`;
@@ -155,7 +163,7 @@ test('open timeclock attention uses effective timestamps and only flags an open 
     VALUES (${personCorrected.id},'clock_in',${times.yesterday_at},(${times.yesterday_at} AT TIME ZONE 'Atlantic/Canary')::date,(${times.yesterday_at} AT TIME ZONE 'Atlantic/Canary')::time,'qa','manual_admin') RETURNING id`;
   await sql`INSERT INTO staff_timeclock_corrections(event_id,professional_id,revision,previous_occurred_at,corrected_occurred_at,reason,actor_id)
     VALUES (${correctedEvent.id},${personCorrected.id},1,${times.yesterday_at},${times.today_at},'Correction moves shift to today','qa')`;
-  let response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
+  let response = await timeclockOnly.inject({method:'GET',url:'/api/dashboard/command-center'});
   assert.equal(response.statusCode,200,response.body);
   let ids = response.json().attention.map(item=>item.id);
   assert.equal(ids.includes(`timeclock-${personToday.id}`),false);
@@ -163,10 +171,13 @@ test('open timeclock attention uses effective timestamps and only flags an open 
   assert.equal(ids.includes(`timeclock-${personCorrected.id}`),false);
   await sql`INSERT INTO staff_timeclock_corrections(event_id,professional_id,revision,previous_occurred_at,corrected_occurred_at,reason,actor_id)
     VALUES (${correctedEvent.id},${personCorrected.id},2,${times.today_at},${times.yesterday_at},'Correction restores prior-day effective time','qa')`;
-  response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
+  response = await timeclockOnly.inject({method:'GET',url:'/api/dashboard/command-center'});
   ids = response.json().attention.map(item=>item.id);
   assert.equal(ids.includes(`timeclock-${personCorrected.id}`),true);
   assert.ok(todayEvent.id && yesterdayEvent.id);
+  } finally {
+    await timeclockOnly.close();
+  }
 });
 
 test('working now excludes inactive and archived professionals', async () => {

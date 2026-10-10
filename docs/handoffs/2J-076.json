@@ -1,0 +1,47 @@
+{
+  "taskId": "2J-076",
+  "title": "App Staff V1 / Operativa móvil 2J",
+  "status": "implementation_in_review",
+  "baseSha": "13261c64f613f5e95af21437c57171d07c0c9a07",
+  "branch": "agent/codex/2J-076-staff-app",
+  "draftPullRequest": true,
+  "merged": false,
+  "live": false,
+  "applicationId": "com.2jfitness.staff",
+  "dataCachePolicy": "public_shell_assets_only; api_and_pii_never_cached",
+  "flows": {
+    "home_agenda": "implemented",
+    "session_attendees_waitlist_read": "implemented",
+    "attendance_no_show": "implemented_via_existing_api",
+    "client_search_profile": "implemented",
+    "booking_eligibility_reservation_waitlist": "implemented_via_existing_api",
+    "fixed_price_plan_assignment_pending_charge": "implemented_via_existing_api",
+    "messages_inbox_text_reply": "implemented_when_capability_granted",
+    "own_timeclock": "implemented_via_existing_api",
+    "team_operational_summary": "implemented_when_permission_granted",
+    "payment_and_cash_collection": "deferred",
+    "plan_lifecycle_change_pause_cancel": "deferred",
+    "documents_actions_and_sensitive_health": "deferred"
+  },
+  "verification": {
+    "localTests": "214/214",
+    "apiTestsPostgres": "131/131",
+    "adminWebTests": "57/57",
+    "staffAppTests": "5/5",
+    "migrationsVerified": 19,
+    "typecheckPackages": "9/9",
+    "buildPackages": "9/9",
+    "dependencyAudit": "no known vulnerabilities",
+    "visualBrowserEvidence": "not captured; fixture-based component tests only"
+  },
+  "review": {
+    "independentBackendSecurity": "pending",
+    "independentUxQa": "pending",
+    "ci": "success on implementation SHA 259917bc18f62734a72ba7fc14f0ca914cd65cef (workflow run 38035560246)"
+  },
+  "productionBlockers": [
+    "validate central staff auth cookies and Capacitor origin with deployment origins",
+    "independent responsive QA at 390/768/1440"
+  ],
+  "migrations": []
+}
