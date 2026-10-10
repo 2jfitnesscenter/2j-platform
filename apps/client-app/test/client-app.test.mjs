@@ -168,14 +168,22 @@ test('profile completes only the signed-in client’s form and records an explic
   cleanup(); dom.window.close();
 });
 
-test('2J Hub preview is build-gated, presents five destinations and never calls the API', async () => {
+test('2J Hub preview is build-gated, presents five destinations and never calls the API', async (t) => {
   const { isHubPreviewEnabled, HUB_TRAINING_URL } = await import('../src/client-app.tsx').then(({clientAppTestHelpers}) => clientAppTestHelpers);
   assert.equal(isHubPreviewEnabled(false, '?preview=1'), false);
   assert.equal(isHubPreviewEnabled('false', '?preview=1'), false);
   assert.equal(isHubPreviewEnabled(true, '?preview=1'), true);
-  assert.equal(isHubPreviewEnabled('true', ''), true);
+  assert.equal(isHubPreviewEnabled('true', ''), false);
+  assert.equal(isHubPreviewEnabled('true', '?view=home'), false);
+  assert.equal(isHubPreviewEnabled('true', '?preview=1&view=home'), true);
   assert.equal(isHubPreviewEnabled('true', '?preview=0'), false);
+  assert.equal(isHubPreviewEnabled('true', '?preview=1&preview=1'), false);
+  assert.equal(isHubPreviewEnabled('true', '?preview=1&preview=0'), false);
   assert.equal(HUB_TRAINING_URL, 'https://app.2jfitnesscenter.com');
+
+  // 21:00 in Atlantic/Canary: the fixture correctly places the 18:00 visit tomorrow.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-10T20:00:00.000Z') });
+  t.after(() => t.mock.timers.reset());
 
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/?preview=1' });
   const clipboard = [];
@@ -192,7 +200,7 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   const ui = render(React.createElement(ClientApp, { previewModeOverride: true }));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Juan' }));
   assert.ok(ui.getByText('Vista previa', { selector: '.preview-pill' }));
-  assert.ok(ui.getByRole('heading', { name: 'Tu próxima actividad' }));
+  assert.ok(ui.getByRole('heading', { name: 'Tu próxima visita' }));
   assert.ok(ui.getByText('Plan 2J'));
 
   const navigation = ui.getByRole('navigation', { name: 'Navegación principal' });

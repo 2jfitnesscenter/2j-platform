@@ -11,7 +11,7 @@ $env:VITE_2J_ADMIN_URL='http://127.0.0.1:5174'
 pnpm --filter @2j/client-app dev -- --host 127.0.0.1 --port 5173
 ```
 
-Open `http://127.0.0.1:5173/?preview=1`. Fixture data is fictional, API-free, and write actions are disabled or simulated locally. The preview flag must be enabled at build time; a URL parameter alone cannot enable preview.
+Open `http://127.0.0.1:5173/?preview=1`. Fixture data is fictional, API-free, and write actions are disabled or simulated locally. Preview appears only when the build flag is `VITE_2J_HUB_PREVIEW=true` **and** the URL has exactly one `preview=1` parameter. A build flag or URL parameter alone cannot enable preview; `/` stays in normal API mode.
 
 ## Normal mode
 

@@ -23,8 +23,8 @@ type ApiState = { profile: ClientProfile; membership: { assignments: Assignment[
 
 export function isHubPreviewEnabled(buildFlag: unknown, search: string): boolean {
   if (buildFlag !== true && buildFlag !== 'true') return false;
-  const requested = new URLSearchParams(search).get('preview');
-  return requested === null || requested === '1';
+  const requested = new URLSearchParams(search).getAll('preview');
+  return requested.length === 1 && requested[0] === '1';
 }
 
 const labels: Record<string, string> = { session_full: 'La sesión está completa', service_archived: 'El servicio ya no está disponible', area_archived: 'El área ya no está disponible', no_active_entitlement: 'No hay un derecho activo para este servicio', no_entitlement: 'No hay un derecho activo para este servicio', entitlement_required: 'Elige un plan o bono para reservar', entitlement_unavailable: 'No hay un derecho disponible para esta sesión', entitlement_not_started: 'Tu plan aún no ha comenzado', entitlement_expired: 'Tu plan ha caducado', entitlement_paused: 'Tu plan está en pausa', entitlement_cancelled: 'Tu plan ya no está activo', entitlement_exhausted: 'Has utilizado todas las sesiones de este bono', insufficient_balance: 'No tienes saldo suficiente', weekly_limit_reached: 'Has alcanzado tu límite semanal', monthly_limit_reached: 'Has alcanzado tu límite mensual', service_not_allowed: 'Este servicio no está incluido en tu plan', client_inactive: 'Tu cuenta no está activa', session_started: 'Esta sesión ya ha comenzado', debt_restriction: 'Hay un saldo pendiente que impide reservar', booking_conflict: 'Ya tienes otra actividad a esa hora', duplicate_booking: 'Ya tienes una reserva o estás en espera', required_document_missing: 'Tienes un documento pendiente', session_cancelled: 'Esta sesión ya no está disponible', internal_error: 'Ahora no podemos consultar tu espacio.', database_unavailable: 'Ahora no podemos conectar con el centro.', authentication_required: 'Inicia sesión para continuar.' };
