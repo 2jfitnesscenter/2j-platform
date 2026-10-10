@@ -9,6 +9,7 @@ import { registerClientRoutes } from './clients.js';
 import { registerClientPlanRoutes } from './client-plans.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerCalendarRoutes } from './calendar.js';
+import { registerClientAppRoutes } from './client-app.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
@@ -114,6 +115,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   });
   const { client } = createDatabase(databaseUrl);
   const authorizationResolver = options.authorizationResolver ?? (async () => null);
+  const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (async () => null);
   const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
   const originHost = new URL(allowedOrigin).hostname.replace(/^\[|\]$/g, '');
   if (!['127.0.0.1', 'localhost', '::1'].includes(originHost)) throw new Error('CORS_ORIGIN must be loopback-only until runtime authentication is approved.');
@@ -126,11 +128,13 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
-  registerCalendarRoutes(app, client, authorizationResolver, options.bookingEligibilityResolver ?? createBookingEligibilityResolver());
+  const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
+  registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver);
+  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver);
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
-  registerCommunicationRoutes(app, client, authorizationResolver, options.clientAuthorizationResolver);
+  registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerDashboardRoutes(app, client, authorizationResolver);
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
@@ -402,6 +406,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const allowedLocalRoles: ApprovedRole[] = ['admin', 'trainer', 'reception-management', 'accountant'];
   if (localDemoRole && !allowedLocalRoles.includes(localDemoRole as ApprovedRole)) throw new Error('LOCAL_DEMO_ROLE must be an approved role.');
   const localContext: AuthorizationContext | null = localDemoRole ? { actorId: `local-demo:${localDemoRole}`, role: localDemoRole as ApprovedRole } : null;
-  const app = buildServer(undefined, { authorizationResolver: async () => localContext });
+  const localDemoClientId = process.env.LOCAL_DEMO_CLIENT_ID;
+  if (localDemoClientId && process.env.NODE_ENV !== 'development') throw new Error('LOCAL_DEMO_CLIENT_ID is only allowed in NODE_ENV=development.');
+  if (localDemoClientId && !z.string().uuid().safeParse(localDemoClientId).success) throw new Error('LOCAL_DEMO_CLIENT_ID must be a client UUID.');
+  const app = buildServer(undefined, {
+    authorizationResolver: async () => localContext,
+    ...(localDemoClientId ? { clientAuthorizationResolver: async () => ({ clientId: localDemoClientId.toLowerCase() }) } : {}),
+  });
   await app.listen({ host, port: Number(process.env.PORT ?? 3100) });
 }
