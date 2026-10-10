@@ -13,12 +13,13 @@ const admin = buildServer(process.env.DATABASE_URL, { authorizationResolver: asy
 const reception = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-reception', role: 'reception-management' }), bookingEligibilityResolver: eligible });
 const receptionNoOverride = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-reception-restricted', role: 'reception-management', deniedPermissions: ['scheduling.override_capacity'] }), bookingEligibilityResolver: eligible });
 const failClosed = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-fail-closed', role: 'reception-management' }) });
+const engineAdmin = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-engine-admin', role: 'admin' }) });
 const trainer = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-trainer', role: 'trainer' }) });
 const trainerEligible = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-trainer-eligible', role: 'trainer' }), bookingEligibilityResolver: eligible });
 const accountant = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-accountant', role: 'accountant' }) });
 const anonymous = buildServer(process.env.DATABASE_URL);
 const [area] = await sql`SELECT id FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([admin.close(), reception.close(), receptionNoOverride.close(), failClosed.close(), trainer.close(), trainerEligible.close(), accountant.close(), anonymous.close()]); await sql.end(); });
+after(async () => { await Promise.all([admin.close(), reception.close(), receptionNoOverride.close(), failClosed.close(), engineAdmin.close(), trainer.close(), trainerEligible.close(), accountant.close(), anonymous.close()]); await sql.end(); });
 
 async function createClient(firstName) {
   const result = await admin.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': randomUUID() }, payload: { firstName, lastName: `Calendar ${randomUUID().slice(0, 8)}` } });
@@ -29,6 +30,19 @@ async function createService() {
   const result = await admin.inject({ method: 'POST', url: '/api/services', payload: { name: `Calendar service ${randomUUID()}`, areaId: area.id, status: 'active' } });
   assert.equal(result.statusCode, 201, result.body);
   return result.json();
+}
+function canaryDate(date=new Date()) { const values=new Intl.DateTimeFormat('en-GB',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);const get=type=>values.find(item=>item.type===type).value;return `${get('year')}-${get('month')}-${get('day')}`; }
+async function createEntitledClient(service,{rightType='sessions_quota',quantity=2,period=null,validDays=null,validDaysStartRule=null}={}) {
+  const client=await createClient(`Entitled ${randomUUID()}`);
+  const isPack=rightType==='sessions_quota';
+  const rights=[{rightType:'service_access',serviceId:service.id},isPack?{rightType:'sessions_quota',serviceId:service.id,quotaScope:'per_service',quantity,...(validDays?{validDays,validDaysStartRule}:{})}:{rightType:'period_quota',serviceId:null,quotaScope:'shared',quantity,period,periodMode:'calendar',timezone:'Atlantic/Canary',...(validDays?{validDays,validDaysStartRule}:{})}];
+  const payload={name:`Booking plan ${randomUUID()}`,serviceIds:[service.id],kind:isPack?'session_pack':'recurring',renewalCadence:isPack?null:'monthly',basePriceCents:1000,rights};
+  const plan=await engineAdmin.inject({method:'POST',url:'/api/plans',headers:{'idempotency-key':randomUUID()},payload});assert.equal(plan.statusCode,201,plan.body);
+  assert.equal((await engineAdmin.inject({method:'POST',url:`/api/plans/${plan.json().id}/activate`})).statusCode,200);
+  const today=canaryDate();
+  const sale=await engineAdmin.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:plan.json().id,startsOn:today,endsOn:null,dueOn:today,amountCents:1000}});assert.equal(sale.statusCode,201,sale.body);
+  const [right]=await sql`SELECT id FROM plan_rights WHERE plan_id=${plan.json().id} AND right_type=${rightType}`;
+  return {client,plan:plan.json(),assignment:sale.json(),rightId:right.id};
 }
 async function createSession({ capacity = 3, startsAt = new Date(Date.now() + 86400000).toISOString(), service = null, app = reception } = {}) {
   const selectedService = service ?? await createService();
@@ -75,20 +89,24 @@ test('capacity is enforced and simultaneous attempts for the last place permit e
   assert.equal(week.json().sessions.find((item) => item.id === session.id).occupiedCount, 1);
 });
 
-test('a full session accepts a waitlist entry, supports withdrawal and re-entry, without automatic promotion', async () => {
-  const session = await createSession({ capacity: 1 }); const clients = await Promise.all([createClient('Booked'), createClient('Waiting')]);
-  assert.equal((await reserve(session.id, clients[0].id)).statusCode, 201);
-  const joined = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`, payload: { clientId: clients[1].id } });
+test('a full session accepts eligible waitlist entry, supports withdrawal and promotes in queue order on cancellation', async () => {
+  const service=await createService();const session = await createSession({ capacity: 1,service });
+  const booked=await createEntitledClient(service,{quantity:2});const waiting=await createEntitledClient(service,{quantity:2});
+  assert.equal((await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:booked.client.id}})).statusCode,201);
+  const joined = await engineAdmin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`,headers:{'idempotency-key':randomUUID()}, payload: { clientId: waiting.client.id } });
   assert.equal(joined.statusCode, 201, joined.body);
-  const duplicate = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`, payload: { clientId: clients[1].id } });
-  assert.equal(duplicate.json().error, 'client_already_added');
-  const left = await reception.inject({ method: 'PATCH', url: `/api/calendar/waitlist/${joined.json().id}/cancel` });
+  const duplicate = await engineAdmin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`, payload: { clientId: waiting.client.id } });
+  assert.equal(duplicate.json().error, 'duplicate_booking');
+  const left = await engineAdmin.inject({ method: 'PATCH', url: `/api/calendar/waitlist/${joined.json().id}/cancel` });
   assert.equal(left.statusCode, 200);
-  const reentered = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`, payload: { clientId: clients[1].id } });
+  const reentered = await engineAdmin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`,headers:{'idempotency-key':randomUUID()}, payload: { clientId: waiting.client.id } });
   assert.equal(reentered.statusCode, 201, reentered.body);
+  const cancelledBooking=await engineAdmin.inject({method:'PATCH',url:`/api/calendar/reservations/${(await sql`SELECT id FROM calendar_reservations WHERE session_id=${session.id} AND client_id=${booked.client.id}`).at(0).id}/cancel`});
+  assert.equal(cancelledBooking.statusCode,200,cancelledBooking.body);
   const data = await admin.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}/attendees` });
-  assert.equal(data.json().waitlist.filter((item) => item.status === 'waiting').length, 1);
-  assert.equal(data.json().waitlist.find((item) => item.status === 'waiting').clientId, clients[1].id);
+  assert.equal(data.json().waitlist.filter((item) => item.status === 'waiting').length, 0);
+  assert.equal(data.json().waitlist.find((item) => item.status === 'promoted').clientId, waiting.client.id);
+  assert.equal(data.json().reservations.filter((item) => item.clientId===waiting.client.id&&item.status==='reserved').length,1);
   assert.equal(data.json().waitlist.filter((item) => item.status === 'cancelled').length, 1);
 });
 
@@ -196,11 +214,11 @@ test('trainer can create and archive templates, cancel group sessions, and overr
   assert.equal((await trainerEligible.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}/cancel` })).statusCode, 200);
 });
 
-test('booking eligibility contract fails closed when no client entitlement resolver is connected', async () => {
+test('central booking eligibility blocks clients without an active explicit service entitlement', async () => {
   const session = await createSession({ capacity: 1 }); const client = await createClient('No entitlement');
   const result = await failClosed.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/reservations`, payload: { clientId: client.id } });
   assert.equal(result.statusCode, 409);
-  assert.equal(result.json().error, 'entitlement_unavailable');
+  assert.equal(result.json().error, 'service_not_allowed');
   assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_reservations WHERE session_id=${session.id}`).at(0).total, 0);
 });
 
@@ -333,4 +351,75 @@ test('reservation and waitlist revalidate service and area status at write time'
   await sql`UPDATE calendar_sessions SET starts_at=now()+interval '1 day' WHERE id=${areaSession.id}`;
   const waitlist = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${areaSession.id}/waitlist`, payload: { clientId: (await createClient('Archived at waitlist')).id } });
   assert.equal(waitlist.statusCode, 409); assert.equal(waitlist.json().error, 'area_archived');
+});
+
+test('central engine consumes one bonus session atomically, retries idempotently and restores on valid cancellation', async () => {
+  const service=await createService();const session=await createSession({service,capacity:2});
+  const {client,assignment,rightId}=await createEntitledClient(service,{rightType:'sessions_quota',quantity:1});
+  const preview=await engineAdmin.inject({method:'GET',url:`/api/calendar/sessions/${session.id}/booking-eligibility?clientId=${client.id}`});
+  assert.equal(preview.statusCode,200,preview.body);assert.equal(preview.json().allowed,true);assert.equal(preview.json().selectedEntitlement.availableBalance,1);
+  const key=randomUUID();const payload={clientId:client.id};
+  const first=await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':key},payload});
+  assert.equal(first.statusCode,201,first.body);assert.equal(first.json().entitlementAssignmentId,assignment.id);
+  const replay=await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':key},payload});
+  assert.equal(replay.statusCode,200,replay.body);assert.equal(replay.json().id,first.json().id);
+  const [balance]=await sql`SELECT COALESCE(sum(quantity),0)::int AS value FROM client_entitlement_ledger WHERE assignment_id=${assignment.id} AND right_key=${rightId}::text`;
+  assert.equal(balance.value,0);
+  assert.equal((await sql`SELECT count(*)::int AS value FROM client_entitlement_ledger WHERE assignment_id=${assignment.id} AND right_key=${rightId}::text AND entry_type='consume'`).at(0).value,1);
+  const cancelKey=randomUUID();const cancel=await engineAdmin.inject({method:'PATCH',url:`/api/calendar/reservations/${first.json().id}/cancel`,headers:{'idempotency-key':cancelKey}});
+  assert.equal(cancel.statusCode,200,cancel.body);assert.equal(cancel.json().restored,true);
+  const cancelReplay=await engineAdmin.inject({method:'PATCH',url:`/api/calendar/reservations/${first.json().id}/cancel`,headers:{'idempotency-key':cancelKey}});
+  assert.equal(cancelReplay.statusCode,200,cancelReplay.body);
+  const [restored]=await sql`SELECT COALESCE(sum(quantity),0)::int AS value FROM client_entitlement_ledger WHERE assignment_id=${assignment.id} AND right_key=${rightId}::text`;
+  assert.equal(restored.value,1);
+  const history=await sql`SELECT entry_type,quantity FROM client_entitlement_ledger WHERE assignment_id=${assignment.id} AND right_key=${rightId}::text ORDER BY occurred_at,id`;
+  assert.deepEqual(history.map(row=>[row.entry_type,row.quantity]),[['grant',1],['consume',-1],['restore',1]]);
+});
+
+test('weekly quota locks the assignment so concurrent bookings cannot exceed the configured period limit', async () => {
+  const service=await createService();const {client}=await createEntitledClient(service,{rightType:'period_quota',quantity:1,period:'week'});
+  const monday=new Date();monday.setUTCHours(12,0,0,0);monday.setUTCDate(monday.getUTCDate()+((8-monday.getUTCDay())%7));
+  const firstAt=new Date(monday.getTime()+24*60*60*1000).toISOString();const secondAt=new Date(monday.getTime()+48*60*60*1000).toISOString();
+  const first=await createSession({service,startsAt:firstAt});const second=await createSession({service,startsAt:secondAt});
+  const results=await Promise.all([first,second].map(session=>engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id}})));
+  assert.deepEqual(results.map(response=>response.statusCode).sort(),[201,409]);
+  const blocked=results.find(response=>response.statusCode===409);assert.equal(blocked.json().error,'weekly_limit_reached');
+  const [count]=await sql`SELECT count(*)::int AS value FROM calendar_reservations WHERE client_id=${client.id} AND status='reserved'`;
+  assert.equal(count.value,1);
+});
+
+test('waitlist promotion re-evaluates the candidate and consumes only after promotion', async () => {
+  const service=await createService();const session=await createSession({service,capacity:1});
+  const booked=await createEntitledClient(service,{rightType:'sessions_quota',quantity:1});
+  const waiting=await createEntitledClient(service,{rightType:'sessions_quota',quantity:1});
+  const first=await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:booked.client.id}});assert.equal(first.statusCode,201,first.body);
+  const joined=await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/waitlist`,headers:{'idempotency-key':randomUUID()},payload:{clientId:waiting.client.id}});assert.equal(joined.statusCode,201,joined.body);
+  const [before]=await sql`SELECT COALESCE(sum(quantity),0)::int AS value FROM client_entitlement_ledger WHERE assignment_id=${waiting.assignment.id} AND right_key=${waiting.rightId}::text`;
+  assert.equal(before.value,1,'waitlist entry does not consume the bonus');
+  const cancelled=await engineAdmin.inject({method:'PATCH',url:`/api/calendar/reservations/${first.json().id}/cancel`,headers:{'idempotency-key':randomUUID()}});assert.equal(cancelled.statusCode,200,cancelled.body);
+  assert.equal(cancelled.json().promotedReservationIds.length,1);
+  const [after]=await sql`SELECT COALESCE(sum(quantity),0)::int AS value FROM client_entitlement_ledger WHERE assignment_id=${waiting.assignment.id} AND right_key=${waiting.rightId}::text`;
+  assert.equal(after.value,0,'promotion atomically consumes one session');
+  const entry=(await sql`SELECT status,promoted_reservation_id FROM calendar_waitlist_entries WHERE id=${joined.json().id}`).at(0);
+  assert.equal(entry.status,'promoted');assert.equal(entry.promoted_reservation_id,cancelled.json().promotedReservationIds[0]);
+});
+
+test('first-use validity begins on the first actual booking and then expires by Canary local date', async () => {
+  const service=await createService();const {client}=await createEntitledClient(service,{rightType:'sessions_quota',quantity:3,validDays:1,validDaysStartRule:'first_use'});
+  const first=await createSession({service,startsAt:new Date(Date.now()+3*86400000).toISOString()});
+  const second=await createSession({service,startsAt:new Date(Date.now()+6*86400000).toISOString()});
+  const firstBooking=await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${first.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id}});
+  assert.equal(firstBooking.statusCode,201,firstBooking.body);
+  const expired=await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${second.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id}});
+  assert.equal(expired.statusCode,409);assert.equal(expired.json().error,'entitlement_expired');
+});
+
+test('concurrent bookings cannot spend the last session-pack credit twice', async () => {
+  const service=await createService();const {client,assignment,rightId}=await createEntitledClient(service,{rightType:'sessions_quota',quantity:1});
+  const [first,second]=await Promise.all([createSession({service,startsAt:new Date(Date.now()+86400000).toISOString()}),createSession({service,startsAt:new Date(Date.now()+2*86400000).toISOString()})]);
+  const results=await Promise.all([first,second].map(session=>engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id}})));
+  assert.deepEqual(results.map(result=>result.statusCode).sort(),[201,409]);
+  assert.equal(results.find(result=>result.statusCode===409).json().error,'entitlement_exhausted');
+  const [totals]=await sql`SELECT COALESCE(sum(quantity),0)::int AS balance,count(*) FILTER(WHERE entry_type='consume')::int AS consumed FROM client_entitlement_ledger WHERE assignment_id=${assignment.id} AND right_key=${rightId}::text`;
+  assert.equal(totals.balance,0);assert.equal(totals.consumed,1);
 });

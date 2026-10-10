@@ -165,9 +165,18 @@ export function registerClientRoutes(
         return [id, { access, dataState: 'not_connected', data: null }] as const;
       }));
       const reservations = can(context, 'calendar.read') ? await database`
-        SELECT r.id,r.status,s.starts_at AS "startsAt",s.duration_minutes AS "durationMinutes",s.status AS "sessionStatus",svc.name AS "serviceName",a.name AS "areaName"
+        SELECT r.id,r.status,s.starts_at AS "startsAt",s.duration_minutes AS "durationMinutes",s.status AS "sessionStatus",svc.name AS "serviceName",a.name AS "areaName",
+          COALESCE(p.name, r.entitlement_reference) AS "entitlementName",
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('type',l.entry_type,'quantity',l.quantity,'occurredAt',l.occurred_at) ORDER BY l.occurred_at,l.id)
+            FROM client_entitlement_ledger l WHERE l.assignment_id=r.entitlement_assignment_id AND (l.external_reference='calendar_reservation:'||r.id::text OR l.external_reference LIKE 'calendar_reservation_restore:'||r.id::text||':%')),'[]'::jsonb) AS "entitlementMovements",
+          COALESCE((SELECT jsonb_agg(DISTINCT pr.right_type ORDER BY pr.right_type) FROM calendar_reservation_rights cr JOIN plan_rights pr ON pr.id=cr.right_id WHERE cr.reservation_id=r.id),'[]'::jsonb) AS "rightsUsed"
         FROM calendar_reservations r JOIN calendar_sessions s ON s.id=r.session_id JOIN services svc ON svc.id=s.service_id JOIN areas a ON a.id=s.area_id
+        LEFT JOIN client_plan_assignments pa ON pa.id=r.entitlement_assignment_id LEFT JOIN plans p ON p.id=pa.plan_id
         WHERE r.client_id=${params.data.clientId} ORDER BY s.starts_at DESC,r.created_at DESC,r.id DESC LIMIT 100` : [];
+      const waitlistEntries = can(context, 'calendar.read') ? await database`
+        SELECT w.id,w.status,s.starts_at AS "startsAt",s.status AS "sessionStatus",svc.name AS "serviceName",a.name AS "areaName"
+        FROM calendar_waitlist_entries w JOIN calendar_sessions s ON s.id=w.session_id JOIN services svc ON svc.id=s.service_id JOIN areas a ON a.id=s.area_id
+        WHERE w.client_id=${params.data.clientId} ORDER BY s.starts_at DESC,w.created_at DESC,w.id DESC LIMIT 100` : [];
       summary.profile = { access: 'available', dataState: 'ready', data: { status: client.status } };
       if (can(context, 'communication.read')) {
         const [communication] = await database`SELECT co.last_message_at AS "lastMessageAt",(SELECT count(*)::int FROM communication_messages m LEFT JOIN communication_message_reads r ON r.message_id=m.id AND r.reader_kind='center' WHERE m.conversation_id=co.id AND m.sender_kind='client' AND COALESCE(r.is_read,false)=false) AS "unreadCount" FROM communication_conversations co WHERE co.client_id=${params.data.clientId} AND co.center_key='2j'`;
@@ -201,6 +210,7 @@ export function registerClientRoutes(
         capabilities: { manage: can(context, 'clients.manage'), readEntitlements:can(context,'entitlements.read'),manageCatalogPrice:can(context,'catalog.pricing.manage'), assignPlans: can(context, 'entitlements.manage'), collectPayments: can(context, 'billing.payments.manage'), pauseEntitlements:can(context,'entitlements.pause'),cancelEntitlements:can(context,'entitlements.cancel'),adjustEntitlements:can(context,'entitlements.adjust'),renewEntitlements:can(context,'entitlements.renew') },
         summary,
         reservations,
+        waitlistEntries,
         sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) ? 'ready' : 'not_connected' })),
         history: events.map((event) => ({ id: event.id, eventType: event.eventType, actorLabel: actorLabel(event.actorRole), occurredAt: event.occurredAt })),
       };

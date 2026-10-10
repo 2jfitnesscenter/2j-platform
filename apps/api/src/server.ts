@@ -14,7 +14,7 @@ import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
-import type { BookingEligibilityResolver } from './booking-eligibility.js';
+import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
 const timezone = 'Atlantic/Canary';
@@ -44,7 +44,7 @@ const rightInput = z.object({
   if ((right.validDays == null) !== (right.validDaysStartRule == null)) context.addIssue({ code: 'custom', message: 'La caducidad necesita indicar si comienza en la compra o en el primer uso.' });
 });
 
-export const serviceInput = z.object({ name: z.string().trim().min(1).max(100), areaId: uuid.transform((value) => value.toLowerCase()), status: serviceStatus }).strict();
+export const serviceInput = z.object({ name: z.string().trim().min(1).max(100), areaId: uuid.transform((value) => value.toLowerCase()), status: serviceStatus, cancellationWindowMinutes:z.number().int().min(0).max(10080).default(0),lateCancellationPolicy:z.enum(['restore','consume']).default('restore') }).strict();
 export const areaInput = z.object({ name: z.string().trim().min(1).max(80) }).strict();
 export const planInput = z.object({
   name: z.string().trim().min(1).max(100), serviceIds: z.array(uuid.transform((value) => value.toLowerCase())).min(1).max(20), kind: z.enum(['recurring', 'session_pack']),
@@ -126,7 +126,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
-  registerCalendarRoutes(app, client, authorizationResolver, options.bookingEligibilityResolver);
+  registerCalendarRoutes(app, client, authorizationResolver, options.bookingEligibilityResolver ?? createBookingEligibilityResolver());
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
@@ -170,7 +170,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   });
   app.get('/api/services', async (_request, reply) => {
     try {
-      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE s.status <> 'archived' GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
+      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",s.cancellation_window_minutes AS "cancellationWindowMinutes",s.late_cancellation_policy AS "lateCancellationPolicy",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE s.status <> 'archived' GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/services', async (request, reply) => {
@@ -180,7 +180,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       const row = await client.begin(async (tx) => {
         const [area] = await tx`SELECT id FROM areas WHERE id=${parsed.data.areaId} AND status='active' FOR SHARE`;
         if (!area) return null;
-        const [created] = await tx`INSERT INTO services (name,area_id,status) VALUES (${parsed.data.name},${area.id},${parsed.data.status}) RETURNING id,name,area_id AS "areaId",status,updated_at AS "updatedAt"`;
+        const [created] = await tx`INSERT INTO services (name,area_id,status,cancellation_window_minutes,late_cancellation_policy) VALUES (${parsed.data.name},${area.id},${parsed.data.status},${parsed.data.cancellationWindowMinutes},${parsed.data.lateCancellationPolicy}) RETURNING id,name,area_id AS "areaId",status,cancellation_window_minutes AS "cancellationWindowMinutes",late_cancellation_policy AS "lateCancellationPolicy",updated_at AS "updatedAt"`;
         return created ?? null;
       });
       if (!row) return reply.code(404).send({ error: 'area_not_found' });
