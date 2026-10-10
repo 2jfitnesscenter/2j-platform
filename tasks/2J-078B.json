@@ -18,6 +18,7 @@
     "trainingSummaryFailSoftReadAdapter": true,
     "noEmailPhoneMatching": true
   },
-  "verification": { "fullSuite": "227/227", "migrations": "22 on PostgreSQL 17", "typecheck": "9/9", "build": "9/9", "audit": "pass", "secretScan": "CI pending" },
-  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "pending" }
+  "verification": { "fullSuite": "227/227", "migrations": "22 on PostgreSQL 17", "typecheck": "9/9", "build": "9/9", "audit": "pass", "secretScan": "push and pull_request CI passed" },
+  "review": { "backendSecurity": "pending", "independentQa": "pending", "ci": "passed" },
+  "pullRequest": { "number": 22, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/22", "state": "open", "draft": true, "merged": false }
 }
