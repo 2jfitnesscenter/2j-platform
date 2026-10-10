@@ -351,7 +351,8 @@ test('link challenge is one-time, person-resolved, short-lived, replay-safe and 
   assert.equal(TRAINING_LINK_TTL_MS, 5 * 60 * 1000);
   const stored = (await sql`SELECT * FROM training_link_transactions WHERE transaction_id=${result.transaction.transactionId}`).at(0);
   assert.notEqual(stored.nonce_hash.trim(), result.challenge); assert.equal(stored.nonce_hash.trim(), createHash('sha256').update(result.challenge).digest('hex'));
-  assert.equal(stored.person_id, one.person.personId); assert.equal(stored.state, 'pending');
+  assert.equal(stored.person_id, one.person.personId); assert.equal(stored.state, 'pending'); assert.equal(stored.verified_training_user_id, null, 'pending challenge has no Training subject');
+  await assert.rejects(sql`UPDATE training_link_transactions SET state='verified',version=version+1 WHERE transaction_id=${result.transaction.transactionId}`, { code: '23514' }, 'database blocks verified state without a proven Training subject');
   assert.ok(new Date(stored.expires_at).getTime() - new Date(stored.created_at).getTime() <= TRAINING_LINK_TTL_MS + 5);
   assert.equal(JSON.stringify((await sql`SELECT details FROM platform_identity_audit_events WHERE resource_id=${result.transaction.transactionId}`)).includes(result.challenge), false);
   await assert.rejects(sql`INSERT INTO training_link_transactions(person_id,auth_subject_link_id,request_id,request_hash,nonce_hash,audience,purpose,state,verified_at,expires_at) VALUES (${one.person.personId},${one.binding.id},${randomUUID()},${createHash('sha256').update(randomUUID()).digest('hex')},${createHash('sha256').update(randomUUID()).digest('hex')},'2j-training-account-link','training-account-link','verified',now(),now()+interval '1 minute')`, { code: '23514' }, 'database permits transaction inserts only in pending state');
@@ -372,6 +373,7 @@ test('link challenge is one-time, person-resolved, short-lived, replay-safe and 
   resolvedTrainingAuth = one.auth;
   const cancelled = await trainingVerifiedLinkingApp.inject({ method: 'DELETE', url: `/api/platform/v1/training-link-transactions/${result.transaction.transactionId}` });
   assert.equal(cancelled.statusCode, 200); assert.equal(cancelled.json().status, 'cancelled');
+  assert.equal((await sql`SELECT verified_training_user_id FROM training_link_transactions WHERE transaction_id=${result.transaction.transactionId}`).at(0).verified_training_user_id, null, 'cancelling before proof leaves the subject empty');
   const replayCancel = await trainingVerifiedLinkingApp.inject({ method: 'DELETE', url: `/api/platform/v1/training-link-transactions/${result.transaction.transactionId}` });
   assert.equal(replayCancel.statusCode, 200); assert.equal(replayCancel.json().status, 'cancelled');
   await assert.rejects(sql`UPDATE training_link_transactions SET state='verified',version=version+1 WHERE transaction_id=${result.transaction.transactionId}`, { code: '55000' }, 'cancelled is terminal and cannot transition backwards');
@@ -405,17 +407,38 @@ test('link transaction verification and consume are single-use under races, gate
   assert.equal((await protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: {}, auth: otherAuth }, async () => { verifierCalls++; return 'training-user-verified'; })).status, 'wrong_person');
   assert.equal((await protocol.verify({ transactionId: record.transaction.transactionId, challenge: 'wrong-challenge', assertion: {}, auth: subject.auth }, async () => { verifierCalls++; return 'training-user-verified'; })).status, 'invalid_challenge');
   assert.equal(verifierCalls, 0, 'challenge is compared before any remote verifier call');
-  const proofs = await Promise.all([1,2].map(() => protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: { fixture: true }, auth: subject.auth }, async () => { verifierCalls++; await new Promise((resolve) => setTimeout(resolve, 10)); return 'training-user-verified'; })));
+  assert.equal((await sql`SELECT verified_training_user_id FROM training_link_transactions WHERE transaction_id=${record.transaction.transactionId}`).at(0).verified_training_user_id, null, 'wrong challenge cannot persist a Training subject');
+  assert.equal((await protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: {}, auth: subject.auth }, async () => '  ')).status, 'proof_rejected');
+  assert.equal((await sql`SELECT verified_training_user_id FROM training_link_transactions WHERE transaction_id=${record.transaction.transactionId}`).at(0).verified_training_user_id, null, 'rejected proof cannot persist a Training subject');
+  const competingTrainingIds = [`training-proof-A-${randomUUID()}`, `training-proof-B-${randomUUID()}`];
+  const proofs = await Promise.all(competingTrainingIds.map((trainingUserId, index) => protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: { fixture: true }, auth: subject.auth }, async () => { verifierCalls++; await new Promise((resolve) => setTimeout(resolve, index === 0 ? 15 : 5)); return trainingUserId; })));
   assert.equal(proofs.filter((item) => item.status === 'verified').length, 1);
   assert.ok(proofs.some((item) => ['not_pending','replayed'].includes(item.status)), 'only one verifier can advance the state');
   assert.ok(verifierCalls >= 1 && verifierCalls <= 2, 'parallel attempts may reach proof verification, but only one state transition succeeds');
+  const winnerIndex = proofs.findIndex((item) => item.status === 'verified');
+  const verifiedRow = (await sql`SELECT state,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${record.transaction.transactionId}`).at(0);
+  assert.equal(verifiedRow.state, 'verified'); assert.equal(verifiedRow.verified_training_user_id, competingTrainingIds[winnerIndex], 'the durable subject belongs exactly to the winning verifier');
+  await assert.rejects(sql`UPDATE training_link_transactions SET verified_training_user_id=${`replacement-${randomUUID()}`} WHERE transaction_id=${record.transaction.transactionId}`, { code: '55000' }, 'verified subject cannot be replaced');
+  await assert.rejects(sql`UPDATE training_link_transactions SET verified_training_user_id=NULL WHERE transaction_id=${record.transaction.transactionId}`, { code: '55000' }, 'verified subject cannot be cleared');
+  await assert.rejects(sql`UPDATE training_link_transactions SET verified_training_user_id=' padded-subject ' WHERE transaction_id=${record.transaction.transactionId}`, { code: '23514' }, 'database rejects whitespace-padded subjects');
   const consumes = await Promise.all([protocol.consume({ transactionId: record.transaction.transactionId }), protocol.consume({ transactionId: record.transaction.transactionId })]);
   assert.deepEqual(consumes.map((item) => item.status).sort(), ['consumed','not_consumable']);
   assert.equal((await protocol.verify({ transactionId: record.transaction.transactionId, challenge: record.challenge, assertion: {}, auth: subject.auth }, async () => 'training-user-verified')).status, 'not_pending', 'consumed challenge cannot replay');
-  assert.equal((await sql`SELECT state,version FROM training_link_transactions WHERE transaction_id=${record.transaction.transactionId}`).at(0).state, 'consumed');
+  const consumedRow = (await sql`SELECT state,version,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${record.transaction.transactionId}`).at(0);
+  assert.equal(consumedRow.state, 'consumed'); assert.equal(consumedRow.verified_training_user_id, verifiedRow.verified_training_user_id, 'consume preserves the proven subject');
   assert.equal((await sql`SELECT count(*)::int AS count FROM training_account_links WHERE person_id=${subject.person.personId}`).at(0).count, 0, 'consumption still does not pretend remote ACK or activate a canonical link');
   const actions = (await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${record.transaction.transactionId}`).map((row) => row.action);
   assert.deepEqual(new Set(actions), new Set(['training.link_transaction_created','training.link_transaction_verified','training.link_transaction_consumed']));
+  const auditDetails = JSON.stringify(await sql`SELECT details FROM platform_identity_audit_events WHERE resource_id=${record.transaction.transactionId}`);
+  for (const trainingUserId of competingTrainingIds) assert.equal(auditDetails.includes(trainingUserId), false, 'audit details omit verified Training subjects');
+
+  const cancelSubject = await createBoundPerson('VerifiedCancel'); resolvedTrainingAuth = cancelSubject.auth;
+  const cancelChallenge = await trainingVerifiedLinkingApp.inject({ method: 'POST', url: '/api/platform/v1/training-link-transactions', payload: { requestId: randomUUID() } });
+  const cancelId = `training-cancel-${randomUUID()}`;
+  assert.equal((await protocol.verify({ transactionId: cancelChallenge.json().transaction.transactionId, challenge: cancelChallenge.json().challenge, assertion: {}, auth: cancelSubject.auth }, async () => cancelId)).status, 'verified');
+  const cancelledVerified = await trainingVerifiedLinkingApp.inject({ method: 'DELETE', url: `/api/platform/v1/training-link-transactions/${cancelChallenge.json().transaction.transactionId}` });
+  assert.equal(cancelledVerified.statusCode, 200); assert.equal(cancelledVerified.json().status, 'cancelled');
+  assert.equal((await sql`SELECT state,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${cancelChallenge.json().transaction.transactionId}`).at(0).verified_training_user_id, cancelId, 'verified subject survives cancellation');
 
   const revokedSubject = await createBoundPerson('Revoked');
   resolvedTrainingAuth = revokedSubject.auth;
@@ -451,6 +474,7 @@ test('expired link transactions cannot verify and transition once to expired wit
   const auth = { personId: person.json().personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `expired-${randomUUID()}` };
   const binding = await clientsAdminApp.inject({ method: 'POST', url: `/api/platform/v1/persons/${auth.personId}/auth-subjects`, payload: { provider: auth.provider, providerVersion: auth.providerVersion, authSubject: auth.authSubject } });
   assert.equal(binding.statusCode, 201, binding.body);
+  await assert.rejects(sql`INSERT INTO training_link_transactions(person_id,auth_subject_link_id,request_id,request_hash,nonce_hash,verified_training_user_id,audience,purpose,expires_at) VALUES (${auth.personId},${binding.json().id},${randomUUID()},${createHash('sha256').update(randomUUID()).digest('hex')},${createHash('sha256').update(randomUUID()).digest('hex')},' padded-subject ','2j-training-account-link','training-account-link',now()+interval '1 minute')`, { code: '23514' }, 'database rejects a padded subject on insert');
   const req = randomUUID();
   const protocol = createTrainingLinkTransactions(sql, { enabled: true, ttlMs: 20 });
   const created = await protocol.create({ ...auth, requestId: req });
@@ -461,7 +485,17 @@ test('expired link transactions cannot verify and transition once to expired wit
   const expired = await protocol.cancel({ transactionId: expiredId, ...auth });
   assert.equal(expired.status, 'expired');
   assert.equal((await sql`SELECT state FROM training_link_transactions WHERE transaction_id=${expiredId}`).at(0).state, 'expired');
+  assert.equal((await sql`SELECT verified_training_user_id FROM training_link_transactions WHERE transaction_id=${expiredId}`).at(0).verified_training_user_id, null, 'pending expiry has no Training subject');
   assert.equal((await sql`SELECT action FROM platform_identity_audit_events WHERE resource_id=${expiredId}`).map((row) => row.action).join(','), 'training.link_transaction_created,training.link_transaction_expired');
+
+  const verifiedExpiryProtocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true, ttlMs: 250 });
+  const verifiedChallenge = await verifiedExpiryProtocol.create({ ...auth, requestId: randomUUID() });
+  const verifiedSubject = `training-expiry-${randomUUID()}`;
+  assert.equal((await verifiedExpiryProtocol.verify({ transactionId: verifiedChallenge.transaction.transactionId, challenge: verifiedChallenge.challenge, assertion: {}, auth }, async () => verifiedSubject)).status, 'verified');
+  await new Promise((resolve) => setTimeout(resolve, 270));
+  assert.equal((await verifiedExpiryProtocol.cancel({ transactionId: verifiedChallenge.transaction.transactionId, ...auth })).status, 'expired');
+  const expiredVerifiedRow = (await sql`SELECT state,verified_training_user_id FROM training_link_transactions WHERE transaction_id=${verifiedChallenge.transaction.transactionId}`).at(0);
+  assert.equal(expiredVerifiedRow.state, 'expired'); assert.equal(expiredVerifiedRow.verified_training_user_id, verifiedSubject, 'verified subject survives expiry');
 });
 
 test('client PII endpoints deny by default and ignore caller-supplied role headers', async () => {

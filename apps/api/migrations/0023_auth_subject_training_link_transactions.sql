@@ -31,6 +31,7 @@ CREATE TABLE training_link_transactions (
   request_hash char(64) NOT NULL,
   state text NOT NULL DEFAULT 'pending',
   nonce_hash char(64) NOT NULL UNIQUE,
+  verified_training_user_id text,
   audience text NOT NULL,
   purpose text NOT NULL,
   expires_at timestamptz NOT NULL,
@@ -42,6 +43,8 @@ CREATE TABLE training_link_transactions (
   version integer NOT NULL DEFAULT 1,
   CONSTRAINT training_link_transactions_state_check CHECK (state IN ('pending','verified','consumed','expired','cancelled')),
   CONSTRAINT training_link_transactions_hash_check CHECK (request_hash ~ '^[0-9a-f]{64}$' AND nonce_hash ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT training_link_tx_verified_subject_canonical_check CHECK (verified_training_user_id IS NULL OR (verified_training_user_id=btrim(verified_training_user_id) AND char_length(verified_training_user_id) BETWEEN 1 AND 200 AND verified_training_user_id !~ '[[:cntrl:]]')),
+  CONSTRAINT training_link_tx_verified_subject_state_check CHECK ((state='pending' AND verified_training_user_id IS NULL) OR (state IN ('verified','consumed') AND verified_training_user_id IS NOT NULL) OR state IN ('expired','cancelled')),
   CONSTRAINT training_link_transactions_audience_check CHECK (audience='2j-training-account-link'),
   CONSTRAINT training_link_transactions_purpose_check CHECK (purpose='training-account-link'),
   CONSTRAINT training_link_transactions_ttl_check CHECK (expires_at>created_at AND expires_at<=created_at+interval '5 minutes'),
@@ -111,8 +114,14 @@ CREATE FUNCTION protect_training_link_transaction() RETURNS trigger LANGUAGE plp
 DECLARE person_status text; subject_status text;
 BEGIN
   IF TG_OP='DELETE' THEN RAISE EXCEPTION 'link transaction history is retained' USING ERRCODE='55000'; END IF;
+  IF NEW.verified_training_user_id IS NOT NULL AND (NEW.verified_training_user_id<>btrim(NEW.verified_training_user_id) OR char_length(NEW.verified_training_user_id) NOT BETWEEN 1 AND 200 OR NEW.verified_training_user_id ~ '[[:cntrl:]]') THEN
+    RAISE EXCEPTION 'verified Training subject is not canonical' USING ERRCODE='23514';
+  END IF;
   IF NEW.transaction_id IS DISTINCT FROM OLD.transaction_id OR NEW.person_id IS DISTINCT FROM OLD.person_id OR NEW.auth_subject_link_id IS DISTINCT FROM OLD.auth_subject_link_id OR NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.request_hash IS DISTINCT FROM OLD.request_hash OR NEW.nonce_hash IS DISTINCT FROM OLD.nonce_hash OR NEW.audience IS DISTINCT FROM OLD.audience OR NEW.purpose IS DISTINCT FROM OLD.purpose OR NEW.expires_at IS DISTINCT FROM OLD.expires_at OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
     RAISE EXCEPTION 'link transaction identity is immutable' USING ERRCODE='55000';
+  END IF;
+  IF NEW.verified_training_user_id IS DISTINCT FROM OLD.verified_training_user_id AND NOT (OLD.verified_training_user_id IS NULL AND NEW.verified_training_user_id IS NOT NULL AND OLD.state='pending' AND NEW.state='verified') THEN
+    RAISE EXCEPTION 'verified Training subject is write-once during verification' USING ERRCODE='55000';
   END IF;
   IF OLD.state IN ('consumed','cancelled','expired') THEN RAISE EXCEPTION 'link transaction is final' USING ERRCODE='55000'; END IF;
   IF NEW.version<>OLD.version+1 THEN RAISE EXCEPTION 'link transaction version must advance once' USING ERRCODE='23514'; END IF;

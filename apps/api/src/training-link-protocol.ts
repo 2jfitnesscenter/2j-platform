@@ -99,13 +99,13 @@ export function createTrainingLinkTransactions(database: SqlClient, options: { e
       const controller = new AbortController();
       let trainingUserId: string | null = null;
       try { trainingUserId = await verifier(input.assertion, controller.signal); } catch { trainingUserId = null; }
-      const candidateUser = z.string().min(1).max(200).refine((value) => value === value.trim()).safeParse(trainingUserId);
+      const candidateUser = z.string().min(1).max(200).refine((value) => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value)).safeParse(trainingUserId);
       if (!candidateUser.success) return { status: 'proof_rejected' as const };
       return database.begin(async (tx) => {
-        const [row] = await tx.unsafe("UPDATE training_link_transactions SET state='verified',version=version+1 WHERE transaction_id=$1 AND state='pending' AND expires_at>now() RETURNING transaction_id AS \"transactionId\",person_id AS \"personId\",auth_subject_link_id AS \"authSubjectLinkId\",state,version", [transactionId]);
+        const [row] = await tx.unsafe("UPDATE training_link_transactions SET state='verified',verified_training_user_id=$2,version=version+1 WHERE transaction_id=$1 AND state='pending' AND expires_at>now() RETURNING transaction_id AS \"transactionId\",person_id AS \"personId\",auth_subject_link_id AS \"authSubjectLinkId\",state,version", [transactionId, candidateUser.data]);
         if (!row) return { status: 'replayed' as const };
         await tx.unsafe("INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details) VALUES ($1,$2,'training.link_transaction_verified',$3,'{}'::jsonb)", [row.personId, row.authSubjectLinkId, transactionId]);
-        return { status: 'verified' as const, transaction: row, trainingUserId: candidateUser.data };
+        return { status: 'verified' as const, transaction: row };
       });
     },
     /** Consumes a verified transaction only; deliberately creates no canonical link or remote acknowledgement. */
@@ -113,7 +113,7 @@ export function createTrainingLinkTransactions(database: SqlClient, options: { e
       if (!options.enabled || !options.serviceCallsEnabled) return { status: 'disabled' as const };
       const transactionId = uuid.parse(input.transactionId);
       return database.begin(async (tx) => {
-        const [row] = await tx.unsafe("UPDATE training_link_transactions SET state='consumed',consumed_at=now(),version=version+1 WHERE transaction_id=$1 AND state='verified' AND expires_at>now() RETURNING transaction_id AS \"transactionId\",person_id AS \"personId\",auth_subject_link_id AS \"authSubjectLinkId\",state,version", [transactionId]);
+        const [row] = await tx.unsafe("UPDATE training_link_transactions SET state='consumed',consumed_at=now(),version=version+1 WHERE transaction_id=$1 AND state='verified' AND verified_training_user_id IS NOT NULL AND expires_at>now() RETURNING transaction_id AS \"transactionId\",person_id AS \"personId\",auth_subject_link_id AS \"authSubjectLinkId\",state,version", [transactionId]);
         if (!row) return { status: 'not_consumable' as const };
         await tx.unsafe("INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details) VALUES ($1,$2,'training.link_transaction_consumed',$3,'{}'::jsonb)", [row.personId, row.authSubjectLinkId, transactionId]);
         return { status: 'consumed' as const, transaction: row };

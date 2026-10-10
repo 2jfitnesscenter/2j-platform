@@ -4,6 +4,7 @@
   "status": "ready_for_independent_review",
   "branch": "agent/codex/2J-078C-central-auth-person-link",
   "baseSha": "bddac419eed0ccb413d838bbef6d5c8463771b3e",
+  "hardeningStartedFrom": "f712cdcb82d8c8991d98dad2b323b49f05b9653c",
   "live": false,
   "trainingRepositoryTouched": false,
   "trainingLiveLinking": "off",
@@ -11,11 +12,11 @@
   "trainingServiceCallsEnabledDefault": false,
   "credentialsStored": false,
   "productDecisionsChanged": false,
-  "migration": "0023_auth_subject_training_link_transactions.sql",
+  "migration": "0023_auth_subject_training_link_transactions.sql (updated in this unmerged PR)",
   "tables": ["platform_person_auth_subjects", "training_link_transactions"],
   "contracts": ["TrainingLinkChallenge/v1", "TrainingLinkTransactionReceipt/v1", "ServiceAuthCanonicalRequest/v1"],
-  "implemented": ["explicit admin auth-subject mapping and revocation", "one-time hashed challenge foundation", "strict person-scoped resolver boundary", "hardened dormant Training service client", "request-bound service-auth canonicalization"],
+  "implemented": ["explicit admin auth-subject mapping and revocation", "one-time hashed challenge foundation", "write-once verified_training_user_id atomically stored at proof acceptance", "strict person-scoped resolver boundary", "hardened dormant Training service client", "request-bound service-auth canonicalization"],
   "notImplemented": ["central auth provider", "passkeys", "SSO", "Training counterpart", "remote proof", "remote ACK", "canonical active link creation", "entitlement enforcement", "UI", "LIVE provider traffic"],
-  "verification": { "fullSuite": "234/234 passed; zero skipped on clean PostgreSQL 17", "api": "146/146", "migrations": "23 checksummed migrations verified and reapplication verified", "typecheck": "9/9 packages passed", "build": "9/9 packages passed", "audit": "no known vulnerabilities at high severity", "diffCheck": "pass", "localSecretScan": "GitHub secret scan passed", "visualEvidence": "not applicable; backend-only", "independentReview": "pending", "ci": "quality and secret scan passed on PR head" },
+  "verification": { "fullSuite": "234/234 passed; zero skipped on clean PostgreSQL 17 after subject persistence hardening", "api": "146/146", "migrations": "23 checksummed migrations verified and reapplication verified", "typecheck": "9/9 packages passed", "build": "9/9 packages passed", "audit": "no known vulnerabilities at high severity", "diffCheck": "pass", "localSecretScan": "Go scanner unavailable locally; check latest GitHub secret scan on PR", "visualEvidence": "not applicable; backend-only", "independentReview": "pending", "ci": "previous PR head passed; latest head status is tracked on PR #23" },
   "pullRequest": { "number": 23, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/23", "state": "open", "draft": true, "merged": false }
 }
