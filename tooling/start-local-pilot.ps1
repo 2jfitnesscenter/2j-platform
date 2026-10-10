@@ -126,9 +126,11 @@ if ($Service) {
   $env:HOST = '127.0.0.1'
   $env:PORT = [string]$Port
   if ($Service -eq 'api-trainer') {
+    Remove-Item Env:TRAINING_SERVICE_BASE_URL,Env:TRAINING_SERVICE_KEY_ID,Env:TRAINING_SERVICE_SECRET -ErrorAction SilentlyContinue
     $env:DATABASE_URL = $config.databaseUrl; $env:LOCAL_DEMO_ROLE = 'trainer'; $env:CORS_ORIGIN = $config.staffUrl
     pnpm --filter @2j/api dev
   } elseif ($Service -eq 'api-admin') {
+    Remove-Item Env:TRAINING_SERVICE_BASE_URL,Env:TRAINING_SERVICE_KEY_ID,Env:TRAINING_SERVICE_SECRET -ErrorAction SilentlyContinue
     $env:DATABASE_URL = $config.databaseUrl; $env:LOCAL_DEMO_ROLE = 'admin'; $env:CORS_ORIGIN = $config.adminUrl
     pnpm --filter @2j/api dev
   } elseif ($Service -eq 'staff') {
@@ -138,6 +140,7 @@ if ($Service) {
     $env:VITE_API_URL = $config.adminApiUrl
     pnpm --filter @2j/admin-web exec vite --host 127.0.0.1 --port $Port --strictPort
   } elseif ($Service -eq 'member') {
+    Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
     $env:VITE_2J_HUB_PREVIEW = 'true'; $env:VITE_2J_STAFF_URL = $config.staffUrl; $env:VITE_2J_ADMIN_URL = $config.adminUrl
     pnpm --filter @2j/client-app exec vite --host 127.0.0.1 --port $Port --strictPort
   } else { throw "Proceso de piloto desconocido: $Service" }

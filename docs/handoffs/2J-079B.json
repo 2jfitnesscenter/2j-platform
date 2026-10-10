@@ -28,6 +28,7 @@
   "safety": [
     "No production credentials, data, deployment, DNS, TLS, Cloudflare or production auth changes.",
     "No changes to 2jfitnessapp or Training; Training URL remains https://app.2jfitnesscenter.com.",
+    "Launcher clears inherited Training service credentials and the member app API base URL.",
     "Web and API bind to loopback only.",
     "Existing local services and database containers are not terminated or modified."
   ],
