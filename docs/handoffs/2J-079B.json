@@ -1,0 +1,44 @@
+{
+  "task": "2J-079B",
+  "title": "Local pilot harness for Member, Trainer and Admin",
+  "status": "ready_for_review",
+  "branch": "agent/codex/2J-079B-local-pilot-harness",
+  "base": "c1ab2e786e742e163fcc22820f396bf4101a1aa4",
+  "local_only": true,
+  "merge": false,
+  "production_changes": false,
+  "training_changes": false,
+  "entrypoint": "pnpm pilot",
+  "stop": "pnpm pilot:stop",
+  "surfaces": {
+    "member": "client-app fixture preview; explicit preview=1; no API calls",
+    "trainer": "staff-app backed by a dedicated API process with development-only trainer role",
+    "admin": "admin-web backed by a dedicated API process with development-only admin role"
+  },
+  "database": {
+    "engine": "PostgreSQL 17",
+    "container": "2j-platform-079b-pilot",
+    "database": "2j_demo",
+    "host_binding": "127.0.0.1",
+    "port": 55436,
+    "named_volume": "2j-platform-079b-pilot-data",
+    "synthetic_data_only": true,
+    "seed": "existing additive pnpm seed:demo"
+  },
+  "safety": [
+    "No production credentials, data, deployment, DNS, TLS, Cloudflare or production auth changes.",
+    "No changes to 2jfitnessapp or Training; Training URL remains https://app.2jfitnesscenter.com.",
+    "Web and API bind to loopback only.",
+    "Existing local services and database containers are not terminated or modified."
+  ],
+  "verification": {
+    "tests": "245 passed, 0 failed, 0 skipped",
+    "postgres_migrations": "24 checksummed migrations verified on a fresh local test database",
+    "typecheck": "9 of 9 workspace tasks passed",
+    "build": "9 of 9 workspace tasks passed",
+    "dependency_audit": "passed; no known vulnerabilities",
+    "pilot_smoke": "all 5 loopback app/API processes responded; Trainer/Admin CORS origins verified; stop/restart verified without disturbing pre-existing port 5173 listener",
+    "secret_scan": "pending CI",
+    "github_ci": "pending"
+  }
+}
