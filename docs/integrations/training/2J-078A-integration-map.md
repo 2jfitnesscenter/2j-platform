@@ -84,6 +84,7 @@ The applications deploy separately and have separate origin/host configuration, 
 | WebAuthn `userID` | Registration passes `Buffer.from(uid)` as WebAuthn user id; resident key is required. | Do not change existing user handle/RP scope as part of linking. |
 | `credential.id` | WebAuthn credential id, stored in `db.creds[].id` and associated to `userId`. | Training-only authentication data. Never export to Platform. |
 | Credential public key, counter, transports | `db.creds[]` stores public key base64url, signature counter and transport hints. No private key is stored by Training; it remains in the authenticator/platform credential store. | Do not copy or centralize in Platform. |
+| User handle / credential association | Registration supplies `Buffer.from(uid)` as WebAuthn `userID`; the Training credential row stores `id` and `userId` (plus key/counter/transports), not a separately named `userHandle` field. Discoverable login resolves account ownership from the credential id. | Preserve the current association; do not build a new account by reinterpreting an authenticator user handle. |
 | Name | Registration input; stored in user row and used as display name. | Mutable display attribute; never a linking key. |
 | `username` | Unique generated slug with numeric suffix, editable via `/api/me/username`; social handle. | Not identity proof; not a Platform key. |
 | `email`, `phone` | Not present in public registration or current Training user profile response. | Do not assume available. Platform contact fields are not a cross-system match authority. |
@@ -120,6 +121,7 @@ Observed behavior:
 4. Challenges are one-use, held in memory for five minutes, and rate-limited. A server restart invalidates outstanding challenges, not existing cookies/passkeys.
 5. `gymsid` is an HMAC-signed cookie using Training's `SECRET`, `HttpOnly`, `SameSite=Lax`, `Secure` when the configured origin is HTTPS, `Path=/`, and no parent `Domain` attribute. Normal passkey sessions default to 90 days. The cookie's subject is Training `user.id`; `sv` supports `/api/logout/all` revocation. These are local Training sessions, not bearer tokens for Platform.
 6. Login/logout, registration and API calls are separate from Platform's injected authorization resolver. Browser cookie sharing across sibling hosts is neither configured nor an acceptable integration protocol.
+7. Multiple credentials can be associated with one existing Training account: the admin-assisted recovery flow generates registration options using the existing uid and adds another `db.creds` row with that `userId`. In the audited route set, there is no member-facing single-passkey revoke endpoint; `/api/logout/all` revokes sessions, while account erasure is the full account deletion path. This limitation must not be “fixed” by deleting/recreating accounts during linking.
 
 ### Can existing passkeys be kept?
 
@@ -226,6 +228,7 @@ This is a curated contract inventory, not a dump of every endpoint. Authenticati
 | `POST /api/register/verify` | Public, rate-limited + one-use challenge | `{cid, credential}` → Training user summary + `gymsid` cookie | Training; creates Training user and first passkey | No; never use to create duplicate account from Platform |
 | `POST /api/login/options` | Public, IP-rate-limited | → challenge + discoverable WebAuthn options | Training; challenge in memory, 5-minute TTL | No; local passkey login |
 | `POST /api/login/verify` | Public, rate-limited + one-use challenge | `{cid, credential}` → Training account summary + cookie | Training; verifies credential, updates counter | No direct Platform use |
+| `POST /api/recover/request`, `POST /api/recover/options`, `POST /api/recover/verify` | Public rate-limited request; then one-use challenge bound to an admin-issued recovery token | Name request or recovery token + new credential | Training; request notifies admins; successful recovery adds a passkey to the existing uid | No Platform linking authority; recovery is not proof of Platform identity |
 | `GET /api/me` | Training session cookie | → own Training id/name/username/avatar/local roles/integration booleans | Training; read account projection | Not for Platform auth or linking proof alone |
 | `POST /api/logout`, `POST /api/logout/all` | Training session cookie | Logout current or increment session version | Training session revocation | Training-only |
 | `GET /api/sync`, `POST /api/sync` | Training session cookie; owner must match session | Sync envelope/op; revisions, generation, receipts | Training state read/write | Never use cross-product; full state and owner semantics are local |
