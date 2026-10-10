@@ -19,6 +19,7 @@ button { color: inherit; }
 .sidebar-toggle { width:30px; height:30px; display:grid; place-items:center; border:1px solid color-mix(in srgb,var(--2j-color-sidebar-text) 20%,transparent); border-radius:var(--2j-radius-sm); background:transparent; color:var(--2j-color-sidebar-text); cursor:pointer; }
 .sidebar-toggle:hover { background:var(--2j-color-sidebar-active); }
 .nav-glyph { width:24px; flex:0 0 24px; display:grid; place-items:center; font-size:20px; line-height:1; }
+.nav-glyph svg { width:20px; height:20px; }
 .nav-item-label { min-width:0; }
 .app-frame.is-compact { --2j-app-nav-width:76px; }
 .app-frame:not(.is-compact) { --2j-app-nav-width:220px; }

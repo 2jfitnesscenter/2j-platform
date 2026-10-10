@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import React from "react";
-import { StaffApp, visibleDestinations } from "../src/staff-app.tsx";
+import { StaffApp, visibleDestinations, staffAppTestHelpers } from "../src/staff-app.tsx";
 
 const caps = (overrides = {}) => ({
   calendar: true,
@@ -65,6 +65,24 @@ test("capability menu omits destinations the server does not grant", () => {
   );
 });
 
+test("staff notification targets are allowlisted and capability checked", () => {
+  const resolve = staffAppTestHelpers.resolveStaffNotificationTarget;
+  const allowed = caps();
+  assert.deepEqual(resolve('/agenda', allowed), {page:'agenda'});
+  assert.deepEqual(resolve('/sessions/11111111-1111-4111-8111-111111111111', allowed), {page:'agenda',sessionId:'11111111-1111-4111-8111-111111111111'});
+  assert.deepEqual(resolve('/clients/22222222-2222-4222-8222-222222222222', allowed), {page:'clients',clientId:'22222222-2222-4222-8222-222222222222'});
+  assert.deepEqual(resolve('/messages', allowed), {page:'messages'});
+  assert.equal(resolve('/team', allowed), null);
+  assert.equal(resolve('/economics', allowed), null);
+  assert.equal(resolve('/agenda', caps({calendar:false})), null);
+  assert.equal(resolve('/clients/22222222-2222-4222-8222-222222222222', caps({clients:false})), null);
+  assert.equal(resolve('/messages', caps({communications:false})), null);
+  assert.equal(resolve('https://example.test/', allowed), null);
+  assert.equal(resolve('javascript:alert(1)', allowed), null);
+  assert.equal(resolve('//evil.test', allowed), null);
+  assert.equal(resolve('/unknown', allowed), null);
+});
+
 test("staff app loads a permission-aware home and hides unavailable links", async () => {
   const dom = setupDom();
   const original = globalThis.fetch;
@@ -117,8 +135,9 @@ test("authentication failure stops the app and offers retry without exposing ope
 
 test("staff notification inbox is available without exposing unrelated operational data", async () => {
   const dom=setupDom(),original=globalThis.fetch;
-  globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response(caps({calendar:false,clients:false,communications:false,staff:false,timeclockSelf:false})):String(url)==='/api/staff/notifications/unread-count'?response({count:1}):String(url)==='/api/staff/notifications'?response({items:[{id:'11111111-1111-4111-8111-111111111111',title:'Cambio de cobertura',body:'Hay una actualización sobre una cobertura de equipo.',createdAt:'2026-10-10T10:00:00.000Z',readAt:null}],nextBefore:null,nextBeforeId:null}):response({});
-  try{render(React.createElement(StaffApp));const q=within(document.body);await q.findByRole('button',{name:/Avisos/});await waitFor(()=>{});fireEvent.click(q.getByRole('button',{name:/Avisos/}));assert.ok(await q.findByRole('heading',{name:'Notificaciones'}));assert.ok(q.getByText('Cambio de cobertura'));assert.equal(q.queryByText(/datos de clientes|saldo|importe/i),null);}finally{cleanup();globalThis.fetch=original;dom.window.close();}
+  let itemRead=false;
+  globalThis.fetch=async(url,init={})=>String(url).includes('/api/session/capabilities')?response(caps({calendar:false,clients:false,communications:true,staff:false,timeclockSelf:false})):String(url)==='/api/communications/inbox'?response([]):String(url)==='/api/staff/notifications/unread-count'?response({count:itemRead?0:1}):String(url)==='/api/staff/notifications'?response({items:[{id:'11111111-1111-4111-8111-111111111111',title:'Cambio de cobertura',body:'Hay una actualización sobre una cobertura de equipo.',deeplink:'/messages',createdAt:'2026-10-10T10:00:00.000Z',readAt:itemRead?new Date().toISOString():null}],nextBefore:null,nextBeforeId:null}):String(url).endsWith('/read')&&init.method==='PATCH'?(itemRead=true,response({id:'11111111-1111-4111-8111-111111111111',readAt:new Date().toISOString()})):response({});
+  try{render(React.createElement(StaffApp));const q=within(document.body);await q.findByRole('button',{name:/Avisos/});fireEvent.click(q.getByRole('button',{name:/Avisos/}));assert.ok(await q.findByRole('heading',{name:'Notificaciones'}));assert.ok(q.getByText('Cambio de cobertura'));assert.equal(q.queryByText(/datos de clientes|saldo|importe/i),null);fireEvent.click(q.getByRole('button',{name:'Abrir aviso: Cambio de cobertura'}));assert.ok(await q.findByRole('heading',{name:'Mensajes'}));assert.equal(itemRead,true);assert.ok(await q.findByRole('button',{name:'Avisos'}));}finally{cleanup();globalThis.fetch=original;dom.window.close();}
 });
 
 test("agenda presents sessions in local time and links into session detail", async () => {

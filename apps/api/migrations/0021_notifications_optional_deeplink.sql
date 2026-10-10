@@ -1,0 +1,1 @@
+ALTER TABLE notifications ALTER COLUMN deeplink DROP NOT NULL;

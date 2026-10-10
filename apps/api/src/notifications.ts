@@ -21,12 +21,12 @@ export async function appendNotificationEvent(tx: Tx, event: {
     ON CONFLICT(dedupe_key) DO NOTHING`;
 }
 
-const labels: Record<NotificationEventType, { type: string; title: string; body: string; deeplink: string }> = {
+const labels: Record<NotificationEventType, { type: string; title: string; body: string; deeplink: string | null }> = {
   'booking.confirmed': { type:'booking_confirmed', title:'Reserva confirmada', body:'Tu plaza está confirmada.', deeplink:'/bookings' },
   'booking.cancelled': { type:'booking_cancelled', title:'Reserva cancelada', body:'Tu reserva ha sido cancelada.', deeplink:'/bookings' },
   'waitlist.joined': { type:'waitlist_joined', title:'Lista de espera', body:'Te hemos añadido a la lista de espera.', deeplink:'/bookings' },
-  'waitlist.promoted': { type:'waitlist_promoted', title:'Plaza disponible', body:'Se ha confirmado tu plaza en la sesión.', deeplink:'/bookings' },
-  'message.created': { type:'message_received', title:'Nuevo mensaje', body:'Tienes un mensaje nuevo del centro.', deeplink:'/messages' },
+  'waitlist.promoted': { type:'waitlist_promoted', title:'¡Tienes plaza!', body:'Se ha confirmado tu plaza en la sesión.', deeplink:'/bookings' },
+  'message.created': { type:'message_received', title:'Nuevo mensaje del centro', body:'El centro te ha enviado un mensaje.', deeplink:null },
   'reminder.booking': { type:'booking_reminder', title:'Tu próxima sesión', body:'Recuerda que tienes una sesión próximamente.', deeplink:'/bookings' },
   'entitlement.expiring': { type:'entitlement_expiring', title:'Tu plan está por terminar', body:'Revisa la vigencia de uno de tus planes.', deeplink:'/profile' },
   'entitlement.low_balance': { type:'entitlement_low_balance', title:'Te quedan pocas sesiones', body:'Consulta el saldo disponible de tu bono.', deeplink:'/profile' },

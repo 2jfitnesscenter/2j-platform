@@ -33,6 +33,19 @@ test('dispatcher persists one in-app notice under concurrent retries without cop
   assert.equal(rows.length,1);assert.equal(rows[0].title,'Reserva confirmada');assert.equal(JSON.stringify(rows[0]).includes('private data'),false);
 });
 
+test('client message notifications are informative with no dead chat link and waitlist promotion copy is clear',async()=>{
+  const client=await newClient(),messageKey=`client-message:${randomUUID()}`;
+  await sql.begin(tx=>appendNotificationEvent(tx,{type:'message.created',aggregateType:'communication_message',aggregateId:randomUUID(),clientId:client.id,dedupeKey:messageKey,payload:{senderKind:'staff'}}));
+  await dispatchNotificationBatch(sql,200);
+  const [message]=await sql`SELECT title,body,deeplink FROM notifications WHERE recipient_kind='client' AND recipient_id=${client.id} AND dedupe_key=${messageKey}`;
+  assert.deepEqual(message,{title:'Nuevo mensaje del centro',body:'El centro te ha enviado un mensaje.',deeplink:null});
+  const waitlistKey=`waitlist-promoted:${randomUUID()}`;
+  await sql.begin(tx=>appendNotificationEvent(tx,{type:'waitlist.promoted',aggregateType:'calendar_reservation',aggregateId:randomUUID(),clientId:client.id,dedupeKey:waitlistKey}));
+  await dispatchNotificationBatch(sql,200);
+  const [promotion]=await sql`SELECT title,body FROM notifications WHERE recipient_kind='client' AND recipient_id=${client.id} AND dedupe_key=${waitlistKey}`;
+  assert.deepEqual(promotion,{title:'¡Tienes plaza!',body:'Se ha confirmado tu plaza en la sesión.'});
+});
+
 test('client notification APIs are self-scoped and staff APIs are actor-scoped',async()=>{
   const first=await newClient(),second=await newClient();currentClientId=first.id;
   const event=await sql.begin(async tx=>{const [row]=await tx`INSERT INTO domain_events_outbox(event_type,aggregate_type,aggregate_id,recipient_client_id,dedupe_key) VALUES ('booking.confirmed','calendar_reservation',${randomUUID()},${second.id},${`idor:${randomUUID()}`}) RETURNING id`;return row;});
