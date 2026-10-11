@@ -45,7 +45,7 @@
     "migrationsVerified": 26,
     "dependencyAudit": "no known vulnerabilities",
     "diffCheck": "passed",
-    "localGitleaks": "unavailable; GitHub secret scan pending PR CI",
+    "localGitleaks": "unavailable; GitHub secret scan passed on implementation head 54c42441f157327be1bd56599475eeb32420b79e; docs-only head CI rerunning",
     "localPilotHttp": {"member": "200", "admin": "200", "trainer": "200", "trainerTimeclock": "200", "adminCapabilities": "200"},
     "localPilotRecurrenceSmoke": {"templateCreatedSessions": 3, "singleOccurrenceEdit": "passed", "overrideSurvivedReload": true, "templateSessionCountAfterReload": 3, "clientBooking": "passed in PostgreSQL E2E"},
     "disposablePilotEnvironment": "stopped after smoke; existing 2J-079 pilot left untouched",
