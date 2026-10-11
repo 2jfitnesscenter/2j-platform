@@ -1,0 +1,60 @@
+{
+  "task": "2J-080",
+  "title": "Calendar recurrence V2: rolling materialization and single-occurrence overrides",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-080-calendar-recurrence-v2",
+  "baseSha": "7ab8b409395b3d34070fdaeb8f37632850a0c7bd",
+  "status": "implementation_complete_draft_pr_pending",
+  "merged": false,
+  "migrations": ["0025_calendar_occurrence_overrides.sql", "0026_calendar_template_occurrence_identity.sql"],
+  "materialization": {
+    "timezone": "Atlantic/Canary",
+    "rollingCalendarDays": 90,
+    "triggers": ["single_template_create", "batch_template_create", "before_weekly_calendar_read"],
+    "concurrency": "transaction advisory lock plus unique template/start invariant and ON CONFLICT DO NOTHING",
+    "preservesCancelledOccurrences": true,
+    "preservesOverriddenOccurrences": true
+  },
+  "endToEnd": {
+    "test": "2J-080 end-to-end: recurring materialization, entitlement booking, one-date edit and cancellation",
+    "passed": 16,
+    "failed": 0,
+    "steps": [
+      {"step": 1, "name": "Create active service", "result": "PASS"},
+      {"step": 2, "name": "Create access plan/quota", "result": "PASS"},
+      {"step": 3, "name": "Activate plan", "result": "PASS"},
+      {"step": 4, "name": "Assign plan to synthetic client", "result": "PASS"},
+      {"step": 5, "name": "Create recurring timetable", "result": "PASS"},
+      {"step": 6, "name": "Materialize upcoming sessions", "result": "PASS"},
+      {"step": 7, "name": "Client sees eligible session", "result": "PASS"},
+      {"step": 8, "name": "Client reserves session", "result": "PASS"},
+      {"step": 9, "name": "Consume entitlement quota", "result": "PASS"},
+      {"step": 10, "name": "Edit one concrete occurrence", "result": "PASS"},
+      {"step": 11, "name": "Keep existing reservation attached", "result": "PASS"},
+      {"step": 12, "name": "Keep template and sibling occurrences unchanged", "result": "PASS"},
+      {"step": 13, "name": "Cancel a different occurrence", "result": "PASS"},
+      {"step": 14, "name": "Run materializer again", "result": "PASS"},
+      {"step": 15, "name": "Preserve cancelled identity without duplicate", "result": "PASS"},
+      {"step": 16, "name": "Client books another occurrence", "result": "PASS"}
+    ]
+  },
+  "checks": {
+    "tests": {"total": 250, "passed": 250, "failed": 0, "skipped": 0, "apiPostgres": 160, "adminWeb": 58, "clientApp": 7, "staffApp": 7},
+    "typecheckPackages": "9/9 passed",
+    "buildPackages": "9/9 passed",
+    "migrationsVerified": 26,
+    "dependencyAudit": "no known vulnerabilities",
+    "diffCheck": "passed",
+    "localGitleaks": "unavailable; GitHub secret scan pending PR CI",
+    "localPilotHttp": {"member": "200", "admin": "200", "trainer": "200", "trainerTimeclock": "200", "adminCapabilities": "200"},
+    "localPilotRecurrenceSmoke": {"templateCreatedSessions": 3, "singleOccurrenceEdit": "passed", "overrideSurvivedReload": true, "templateSessionCountAfterReload": 3, "clientBooking": "passed in PostgreSQL E2E"},
+    "disposablePilotEnvironment": "stopped after smoke; existing 2J-079 pilot left untouched",
+    "visualBrowserSmoke": "not performed: no controllable browser window was exposed"
+  },
+  "scope": {
+    "trainingChanged": false,
+    "2jfitnessappChanged": false,
+    "externalSchedulerAdded": false,
+    "merge": false
+  }
+}
