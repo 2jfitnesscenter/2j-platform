@@ -48,7 +48,12 @@ const updateOccurrenceInput = z.object({
   durationMinutes: z.number().int().min(5).max(480).optional(),
   capacity: z.number().int().min(1).max(500).optional(),
   professionalId: uuid.nullable().optional(),
-}).strict().refine((value) => Object.keys(value).length > 0, { message: 'Indica al menos un cambio.' });
+  overrideAvailability: z.boolean().optional().default(false),
+  availabilityReason: z.string().trim().min(3).max(240).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.overrideAvailability && !value.availabilityReason) context.addIssue({ code: 'custom', path: ['availabilityReason'], message: 'Indica el motivo de la excepción.' });
+  if (!Object.keys(value).some((key) => !['overrideAvailability', 'availabilityReason'].includes(key))) context.addIssue({ code: 'custom', message: 'Indica al menos un cambio.' });
+});
 
 export function registerCalendarRoutes(
   app: FastifyInstance<any, any, any, any, any>,
@@ -363,7 +368,7 @@ export function registerCalendarRoutes(
         const professionalId = Object.hasOwn(parsed.data, 'professionalId') ? parsed.data.professionalId ?? undefined : session.professionalId ?? undefined;
         const [occupancy] = await tx`SELECT count(*)::int AS count FROM calendar_reservations WHERE session_id=${session.id} AND status IN ('reserved','attended','no_show','cancelled_late')`;
         if (capacity < Number(occupancy?.count ?? 0)) return { error: 'capacity_below_occupancy' };
-        const availability = await checkProfessional(tx, professionalId, startsAt, durationMinutes, false, undefined, context, session.id);
+        const availability = await checkProfessional(tx, professionalId, startsAt, durationMinutes, parsed.data.overrideAvailability, parsed.data.availabilityReason, context, session.id);
         if (availability.error) return { error: availability.error };
         const changed = startsAt !== (session.startsAt instanceof Date ? session.startsAt.toISOString() : String(session.startsAt))
           || durationMinutes !== Number(session.durationMinutes) || capacity !== Number(session.capacity)
@@ -377,6 +382,7 @@ export function registerCalendarRoutes(
           previousCapacity: Number(session.capacity), capacity,
           previousProfessionalId: session.professionalId ?? null, professionalId: professionalId ?? null,
         });
+        if (availability.warnings.length && parsed.data.overrideAvailability) await appendAudit(tx, context.actorId, 'session.availability_override', 'calendar_session', session.id, session.id, null, { professionalId: professionalId ?? null, warnings: availability.warnings.join(','), reason: parsed.data.availabilityReason ?? '' });
         return { id: session.id, changed: true };
       });
       if ('error' in result) return reply.code(result.error === 'session_not_found' ? 404 : result.error === 'permission_denied' ? 403 : 409).send({ error: result.error });

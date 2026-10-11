@@ -355,6 +355,69 @@ test('editing a recurring occurrence changes only that scheduled date and preser
   assert.ok((await sql`SELECT id FROM calendar_audit_events WHERE session_id=${rows.id} AND action='session.occurrence_overridden'`).length);
 });
 
+test('member session list refills recurring horizon idempotently and preserves cancelled occurrence identity', async () => {
+  const service = await createService();
+  const { client } = await createEntitledClient(service);
+  const start = new Date(); start.setUTCDate(start.getUTCDate() + 14);
+  const startsOn = canaryDate(start); const weekday = new Date(`${startsOn}T12:00:00Z`).getUTCDay();
+  const [template] = await sql`INSERT INTO recurring_session_templates(service_id,area_id,weekday,local_start_time,duration_minutes,capacity,starts_on,created_by) VALUES (${service.id},${service.areaId},${weekday},'10:00',45,8,${startsOn},'2J-080-test') RETURNING id`;
+  assert.ok(template);
+  assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_sessions WHERE template_id=${template.id}`).at(0).total, 0, 'fixture starts with an unmaterialized horizon');
+  const member = buildServer(process.env.DATABASE_URL, { clientAuthorizationResolver: async () => ({ clientId: client.id }), bookingEligibilityResolver: eligible });
+  try {
+    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 30);
+    const url = `/api/me/sessions?from=${startsOn}&to=${canaryDate(end)}`;
+    const firstRead = await member.inject({ method: 'GET', url });
+    assert.equal(firstRead.statusCode, 200, firstRead.body);
+    const visible = firstRead.json().sessions.filter((item) => item.serviceId === service.id);
+    assert.ok(visible.length >= 2, 'newly materialized occurrences are visible to the member');
+    const cancelled = visible[0];
+    await sql`UPDATE calendar_sessions SET status='cancelled' WHERE id=${cancelled.id}`;
+    const secondRead = await member.inject({ method: 'GET', url });
+    assert.equal(secondRead.statusCode, 200, secondRead.body);
+    assert.equal((await sql`SELECT status FROM calendar_sessions WHERE id=${cancelled.id}`).at(0).status, 'cancelled');
+    const count = (await sql`SELECT count(*)::int AS total FROM calendar_sessions WHERE template_id=${template.id} AND template_occurrence_date=${canaryDate(new Date(cancelled.startsAt))}::date`).at(0).total;
+    assert.equal(count, 1, 'repeated member reads do not duplicate occurrence identities');
+    assert.ok(secondRead.json().sessions.some((item) => item.id === visible[1].id));
+  } finally { await member.close(); }
+});
+
+test('single occurrence edits require an authorized, reasoned availability override and preserve siblings', async () => {
+  const service = await createService();
+  const start = new Date(); start.setUTCDate(start.getUTCDate() + 21);
+  const startsOn = canaryDate(start); const weekday = new Date(`${startsOn}T12:00:00Z`).getUTCDay();
+  const [professional] = await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,created_by) VALUES ('Availability','Trainer',${`Availability Trainer ${randomUUID()}`},'trainer','2J-080-test') RETURNING id`;
+  assert.ok(professional);
+  await sql`INSERT INTO staff_schedule_slots(professional_id,weekday,starts_at,ends_at,valid_from,created_by) VALUES (${professional.id},${weekday},'08:00','12:00',${startsOn},'2J-080-test')`;
+  const template = await reception.inject({ method: 'POST', url: '/api/calendar/templates', payload: { serviceId: service.id, areaId: service.areaId, professionalId: professional.id, weekday, localStartTime: '09:00', durationMinutes: 45, capacity: 4, startsOn, endsOn: startsOn } });
+  assert.equal(template.statusCode, 201, template.body);
+  const [session] = await sql`SELECT id,starts_at AS "startsAt" FROM calendar_sessions WHERE template_id=${template.json().id}`;
+  assert.ok(session);
+  const ordinary = await reception.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}`, payload: { capacity: 5 } });
+  assert.equal(ordinary.statusCode, 200, ordinary.body);
+  const outside = new Date(`${startsOn}T15:00:00Z`).toISOString();
+  const warning = await admin.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}`, payload: { startsAt: outside } });
+  assert.equal(warning.statusCode, 409); assert.equal(warning.json().error, 'professional_availability_confirmation_required');
+  const missingReason = await admin.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}`, payload: { startsAt: outside, overrideAvailability: true } });
+  assert.equal(missingReason.statusCode, 400);
+  const unauthorized = await reception.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}`, payload: { startsAt: outside, overrideAvailability: true, availabilityReason: 'Cobertura extraordinaria' } });
+  assert.equal(unauthorized.statusCode, 403); assert.equal(unauthorized.json().error, 'permission_denied');
+  const approved = await admin.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}`, payload: { startsAt: outside, overrideAvailability: true, availabilityReason: 'Cobertura extraordinaria' } });
+  assert.equal(approved.statusCode, 200, approved.body);
+  const conflictStarts = new Date(`${startsOn}T16:00:00Z`).toISOString();
+  const concrete = await admin.inject({ method: 'POST', url: '/api/calendar/sessions', payload: { serviceId: service.id, areaId: service.areaId, startsAt: conflictStarts, durationMinutes: 45, capacity: 2, professionalId: professional.id, overrideAvailability: true, availabilityReason: 'Cobertura extraordinaria' } });
+  assert.equal(concrete.statusCode, 201, concrete.body);
+  const conflict = await admin.inject({ method: 'PATCH', url: `/api/calendar/sessions/${session.id}`, payload: { startsAt: new Date(new Date(conflictStarts).getTime() + 15 * 60_000).toISOString(), overrideAvailability: true, availabilityReason: 'Cobertura extraordinaria' } });
+  assert.equal(conflict.statusCode, 409); assert.equal(conflict.json().error, 'professional_session_conflict');
+  assert.equal((await sql`SELECT local_start_time::text AS value FROM recurring_session_templates WHERE id=${template.json().id}`).at(0).value.slice(0,5), '09:00');
+  assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_sessions WHERE template_id=${template.json().id}`).at(0).total, 1);
+  const audit = await sql`SELECT action,actor_id,details FROM calendar_audit_events WHERE session_id=${session.id} AND action IN ('session.occurrence_overridden','session.availability_override') ORDER BY action`;
+  assert.equal(audit.filter((item) => item.action === 'session.availability_override').length, 1);
+  assert.ok(audit.some((item) => item.action === 'session.occurrence_overridden'));
+  assert.equal(audit.find((item) => item.action === 'session.availability_override').actor_id, 'calendar-admin');
+  assert.equal(audit.find((item) => item.action === 'session.availability_override').details.reason, 'Cobertura extraordinaria');
+});
+
 test('2J-080 end-to-end: service, entitlement, rolling sessions, self booking, one-date edit, cancellation and replay safety', async () => {
   const service = await createService();
   const client = await createClient('2J-080 pilot member');

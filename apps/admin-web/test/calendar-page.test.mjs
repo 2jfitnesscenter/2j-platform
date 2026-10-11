@@ -16,7 +16,7 @@ const service = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Fuerza 2J',
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const now = new Date(); const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
 const key = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-const baseData = { weekStart: key(monday), sessions: [], areas: [area], services: [service], templates: [], capabilities: { manage: true, attendance: true, overrideCapacity: false, overrideDocuments: false } };
+const baseData = { weekStart: key(monday), sessions: [], areas: [area], services: [service], templates: [], capabilities: { manage: true, attendance: true, overrideCapacity: false, overrideAvailability: true, overrideDocuments: false } };
 
 test('renders weekly loading and empty states, then allows stepping weeks', async () => {
   const requested = [];
@@ -112,6 +112,35 @@ test('recurring occurrence editor clearly limits changes to one date and submits
   await screen.findByText(/La plantilla y las demás fechas no han cambiado/);
   assert.equal(patchPayload.capacity, 9);
   assert.equal(session.capacity, 8);
+});
+
+test('occurrence edit requires explicit availability confirmation and reason after warning', async () => {
+  let patchPayload = null; let patchCount = 0;
+  const session = { id: 'abababab-abab-4bab-8bab-abababababab', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: 'acacacac-acac-4cac-8cac-acacacacacac', source: 'template', startsAt: `${baseData.weekStart}T09:30:00Z`, durationMinutes: 45, capacity: 8, status: 'scheduled', isIndividual: false, occupiedCount: 1, waitlistCount: 0, overbookCount: 0, professionalId: 'adadadad-adad-4dad-8dad-adadadadadad', professionalName: 'Alex Rivera' };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.includes('/api/calendar/week')) return response({ ...baseData, sessions: [session] });
+    if (path.endsWith(`/api/calendar/sessions/${session.id}/attendees`)) return response({ reservations: [], waitlist: [] });
+    if (path.endsWith(`/api/calendar/sessions/${session.id}`) && options.method === 'PATCH') {
+      patchCount += 1; patchPayload = JSON.parse(options.body);
+      return patchCount === 1 ? response({ error: 'professional_availability_confirmation_required', warnings: ['outside_working_hours'] }, 409) : response({ ...session, ...patchPayload, occurrenceOverridden: true });
+    }
+    throw new Error(`Unexpected request: ${options.method ?? 'GET'} ${path}`);
+  };
+  render(React.createElement(CalendarPage));
+  fireEvent.click(await screen.findByRole('button', { name: /Fuerza 2J/ }));
+  const detail = await screen.findByRole('dialog', { name: service.name });
+  fireEvent.click(within(detail).getByRole('button', { name: 'Editar esta sesión' }));
+  fireEvent.click(within(detail).getByRole('button', { name: 'Guardar solo esta sesión' }));
+  await within(detail).findByText('Este cambio queda fuera del horario habitual del profesional.');
+  assert.equal(within(detail).getByRole('button', { name: 'Guardar solo esta sesión' }).disabled, true);
+  fireEvent.click(within(detail).getByRole('checkbox', { name: 'Confirmar excepción para esta sesión' }));
+  fireEvent.change(within(detail).getByLabelText('Motivo obligatorio'), { target: { value: 'Cambio solicitado por el centro' } });
+  fireEvent.click(within(detail).getByRole('button', { name: 'Guardar solo esta sesión' }));
+  await screen.findByText(/La plantilla y las demás fechas no han cambiado/);
+  assert.equal(patchCount, 2);
+  assert.equal(patchPayload.overrideAvailability, true);
+  assert.equal(patchPayload.availabilityReason, 'Cambio solicitado por el centro');
 });
 
 test('individual session requires a selected client and hides group capacity', async () => {

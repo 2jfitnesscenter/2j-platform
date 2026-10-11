@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { createDatabase } from './db.js';
 import type { ClientAuthorizationContext } from './communications.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
+import { materializeCalendarTemplates } from './calendar-materializer.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -81,6 +82,7 @@ export function registerClientAppRoutes(
     const actor = await client(request, reply); if (!actor) return;
     const query = z.object({ from: date, to: date }).strict().safeParse(request.query);
     if (!query.success || query.data.to < query.data.from || (Date.parse(`${query.data.to}T00:00:00Z`) - Date.parse(`${query.data.from}T00:00:00Z`)) > 31 * 86_400_000) return reply.code(400).send({ error: 'invalid_date_range' });
+    await db.begin((tx) => materializeCalendarTemplates(tx));
     const sessions = await db`
       SELECT s.id,s.starts_at AS "startsAt",s.duration_minutes AS "durationMinutes",s.capacity,s.status,s.individual_client_id IS NOT NULL AS "isIndividual",sp.display_name AS "professionalName",
         sv.id AS "serviceId",sv.name AS "serviceName",a.id AS "areaId",a.name AS "areaName",
