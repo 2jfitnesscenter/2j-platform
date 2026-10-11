@@ -27,6 +27,7 @@ const caps = (overrides = {}) => ({
   timeclockSelf: false,
   ...overrides,
 });
+const currentSessionStart = () => new Date().toISOString();
 function setupDom() {
   const dom = new JSDOM(
     '<!doctype html><html><body><div id="root"></div></body></html>',
@@ -148,7 +149,7 @@ test("agenda presents sessions in local time and links into session detail", asy
     serviceName: "Fuerza",
     areaName: "Sala 1",
     professionalName: "Alex",
-    startsAt: "2026-10-10T09:00:00.000Z",
+    startsAt: currentSessionStart(),
     durationMinutes: 50,
     capacity: 10,
     occupiedCount: 8,
@@ -200,7 +201,7 @@ test("staff booking preview gates the reserve action and reuses the established 
     serviceName: "Fuerza",
     areaName: "Sala 1",
     professionalName: "Alex",
-    startsAt: "2026-10-10T09:00:00.000Z",
+    startsAt: currentSessionStart(),
     durationMinutes: 50,
     capacity: 10,
     occupiedCount: 8,

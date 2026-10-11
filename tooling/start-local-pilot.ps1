@@ -147,9 +147,24 @@ if ($Service) {
   exit $LASTEXITCODE
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'node_modules'))) {
-  Write-Host 'Preparando dependencias del repositorio (solo la primera vez)...'
+function Test-WorkspaceDependencies {
+  $requiredBinaries = @(
+    (Join-Path $repoRoot 'apps\api\node_modules\.bin\tsx.cmd'),
+    (Join-Path $repoRoot 'apps\staff-app\node_modules\.bin\vite.cmd'),
+    (Join-Path $repoRoot 'apps\admin-web\node_modules\.bin\vite.cmd'),
+    (Join-Path $repoRoot 'apps\client-app\node_modules\.bin\vite.cmd')
+  )
+  return @($requiredBinaries | Where-Object { -not (Test-Path -LiteralPath $_) })
+}
+
+$missingDependencies = Test-WorkspaceDependencies
+if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'node_modules')) -or $missingDependencies.Count -gt 0) {
+  Write-Host 'Preparando o reparando dependencias incompletas del repositorio...'
   Invoke-Checked 'pnpm' @('install','--frozen-lockfile') $repoRoot
+}
+$missingDependencies = Test-WorkspaceDependencies
+if ($missingDependencies.Count -gt 0) {
+  throw "Faltan ejecutables de los workspaces después de instalar dependencias: $($missingDependencies -join ', '). Revisa la instalación de pnpm y vuelve a ejecutar pnpm pilot."
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $pilotHome 'logs') | Out-Null
 if (Test-Path -LiteralPath $runtimePath) {

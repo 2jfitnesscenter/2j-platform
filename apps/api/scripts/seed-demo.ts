@@ -1,18 +1,5 @@
 import { createDatabase } from '../src/db.js';
 
-const databaseUrl = process.env.DATABASE_URL;
-if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
-  throw new Error('Demo seed is restricted to development/test environments.');
-}
-if (!databaseUrl) throw new Error('DATABASE_URL is required.');
-const target = new URL(databaseUrl);
-const host = target.hostname.toLowerCase();
-const databaseName = decodeURIComponent(target.pathname.replace(/^\//, ''));
-if (!['localhost', '127.0.0.1', '::1'].includes(host) || databaseName !== '2j_demo') {
-  throw new Error('Demo seed only accepts a loopback PostgreSQL host and the database named 2j_demo.');
-}
-
-const { client } = createDatabase(databaseUrl);
 const clients = [
   ['d0700000-0000-4000-8000-000000000001', 'María', 'González', 'maria.gonzalez@example.test'],
   ['d0700000-0000-4000-8000-000000000002', 'Álvaro', 'Martín', 'alvaro.martin@example.test'],
@@ -28,8 +15,16 @@ const clients = [
   ['d0700000-0000-4000-8000-000000000012', 'Nico', 'Herrera', 'nico.herrera@example.test'],
 ].map(([id, first, last, email]) => ({ id, first, last, email }));
 
-try {
+export async function seedDemoData(client: ReturnType<typeof createDatabase>['client']) {
   await client.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(2079079)`;
+    const demoProfessionalId = 'd0700000-0000-4000-8000-000000000101';
+    const trainerActorId = 'local-demo:trainer';
+    const [existingTrainerLink] = await tx`SELECT id FROM staff_professionals
+      WHERE auth_actor_id=${trainerActorId} AND id<>${demoProfessionalId}::uuid FOR UPDATE`;
+    if (existingTrainerLink) {
+      throw new Error(`Demo trainer actor is already linked to another professional (${existingTrainerLink.id}); refusing to replace that link.`);
+    }
     for (const person of clients) {
       await tx`INSERT INTO clients(id,first_name,last_name,email,status)
         VALUES (${person.id}::uuid,${person.first},${person.last},${person.email},'active') ON CONFLICT(id) DO NOTHING`;
@@ -55,9 +50,16 @@ try {
       WHERE s.status='active' AND a.status='active' ORDER BY a.name,s.name LIMIT 2`;
     if (services.length === 0) throw new Error('No active 2J services are available in this demo database.');
 
-    await tx`INSERT INTO staff_professionals(id,first_name,last_name,display_name,email,status,base_role,created_by)
-      VALUES ('d0700000-0000-4000-8000-000000000101','Alex','Rivera','Alex Rivera','alex.rivera@example.test','active','trainer','2j-demo-seed')
+    await tx`INSERT INTO staff_professionals(id,first_name,last_name,display_name,email,status,base_role,created_by,auth_actor_id)
+      VALUES (${demoProfessionalId}::uuid,'Alex','Rivera','Alex Rivera','alex.rivera@example.test','active','trainer','2j-demo-seed',${trainerActorId})
       ON CONFLICT(id) DO NOTHING`;
+    const [demoProfessional] = await tx`SELECT auth_actor_id FROM staff_professionals WHERE id=${demoProfessionalId}::uuid FOR UPDATE`;
+    if (demoProfessional.auth_actor_id != null && demoProfessional.auth_actor_id !== trainerActorId) {
+      throw new Error(`Synthetic demo professional ${demoProfessionalId} is already linked to another actor; refusing to replace that link.`);
+    }
+    if (demoProfessional.auth_actor_id == null) {
+      await tx`UPDATE staff_professionals SET auth_actor_id=${trainerActorId},updated_at=now() WHERE id=${demoProfessionalId}::uuid AND auth_actor_id IS NULL`;
+    }
 
     const mainService = services[0];
     const sessionId = 'd0700000-0000-4000-8000-000000000201';
@@ -87,7 +89,30 @@ try {
       VALUES ('d0700000-0000-4000-8000-000000000702'::uuid,'d0700000-0000-4000-8000-000000000701'::uuid,'client','demo-client','¡Hola! ¿Podemos confirmar mi próxima sesión?','d0700000-0000-4000-8000-000000000703'::uuid)
       ON CONFLICT(id) DO NOTHING`;
   });
-  console.log('Synthetic 2J-070 demo data is ready. No existing rows were deleted or updated.');
-} finally {
-  await client.end();
+}
+
+async function runDemoSeed() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
+    throw new Error('Demo seed is restricted to development/test environments.');
+  }
+  if (!databaseUrl) throw new Error('DATABASE_URL is required.');
+  const target = new URL(databaseUrl);
+  const host = target.hostname.toLowerCase();
+  const databaseName = decodeURIComponent(target.pathname.replace(/^\//, ''));
+  if (!['localhost', '127.0.0.1', '::1'].includes(host) || databaseName !== '2j_demo') {
+    throw new Error('Demo seed only accepts a loopback PostgreSQL host and the database named 2j_demo.');
+  }
+
+  const { client } = createDatabase(databaseUrl);
+  try {
+    await seedDemoData(client);
+    console.log('Synthetic 2J-070 demo data is ready. Existing real rows were not changed; the fixed synthetic trainer link was repaired if needed.');
+  } finally {
+    await client.end();
+  }
+}
+
+if (process.argv[1]?.endsWith('seed-demo.ts')) {
+  await runDemoSeed();
 }
