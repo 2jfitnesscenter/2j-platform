@@ -578,7 +578,13 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .day-column > header strong { font-size: 14px; }
 .day-column > header small { color: var(--2j-color-text-secondary); font-size: 11px; }
 .day-sessions { display: grid; align-content: start; gap: 8px; padding: 8px; }
+.overlap-group { min-width:0; max-width:100%; display:grid; align-items:stretch; gap:5px; overflow-x:auto; scrollbar-width:thin; }
+.overlap-group:focus-visible { outline:2px solid var(--2j-color-focus); outline-offset:2px; }
 .session-card { width: 100%; min-width: 0; display: grid; gap: 5px; padding: 10px; border: 1px solid var(--2j-color-border); border-left: 3px solid var(--2j-color-brand-strong); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); text-align: left; cursor: pointer; }
+.session-card[data-service-color="1"] { border-left-color:var(--2j-color-success); }
+.session-card[data-service-color="2"] { border-left-color:var(--2j-color-warning); }
+.session-card[data-service-color="3"] { border-left-color:var(--2j-color-info); }
+.session-card[data-service-color="4"] { border-left-color:var(--2j-color-brand); }
 .session-card:hover { background: var(--2j-color-surface-subtle); }
 .session-card.cancelled { border-left-color: var(--2j-color-danger); opacity: .78; }
 .session-time { color: var(--2j-color-brand-strong); font-size: 12px; font-weight: var(--2j-type-weight-bold); }
@@ -592,6 +598,10 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .waitlist-count, .cancelled-label { color: var(--2j-color-warning); font-size: 12px; }
 .cancelled-label { color: var(--2j-color-danger); }
 .session-card.overbooked { border-left-color: var(--2j-color-danger); }
+.birthday-widget { display:grid; gap:8px; margin:0 16px 12px; padding:13px 16px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); background:var(--2j-color-surface-subtle); }
+.birthday-widget summary { min-height:28px; display:flex; align-items:center; gap:14px; cursor:pointer; font-size:13px; font-weight:var(--2j-type-weight-semibold); }
+.birthday-widget summary span { color:var(--2j-color-text-secondary); font-weight:var(--2j-type-weight-regular); }
+.birthday-widget ul { display:flex; flex-wrap:wrap; gap:8px 18px; margin:0; padding:6px 0 0 18px; color:var(--2j-color-text-secondary); font-size:13px; }
 .overbook-banner { padding: 9px 12px; border: 1px solid var(--2j-color-danger); border-radius: var(--2j-radius-sm); color: var(--2j-color-danger); font-size: 13px; font-weight: var(--2j-type-weight-semibold); }
 .day-empty { margin: 0; padding: 14px 3px; color: var(--2j-color-text-secondary); font-size: 11px; text-align: center; }
 .calendar-empty, .calendar-state { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; color: var(--2j-color-text-secondary); text-align: center; }
@@ -606,6 +616,18 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .template-list article > div:first-child { display: grid; gap: 4px; }
 .template-list article strong { font-size: 13px; }
 .template-list article span { color: var(--2j-color-text-secondary); font-size: 12px; }
+.template-week-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; overflow-x:auto; padding:0 16px 16px; }
+.template-day { min-width:135px; display:grid; align-content:start; gap:8px; padding:9px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-sm); background:var(--2j-color-canvas); }
+.template-day h3 { margin:0; color:var(--2j-color-text-secondary); font-size:11px; text-transform:uppercase; }
+.template-day article { display:grid; gap:7px; padding:9px; border:1px solid var(--2j-color-border); border-left:3px solid var(--2j-color-brand-strong); border-radius:var(--2j-radius-sm); background:var(--2j-color-surface); }
+.template-day article[data-service-color="1"] { border-left-color:var(--2j-color-success); }
+.template-day article[data-service-color="2"] { border-left-color:var(--2j-color-warning); }
+.template-day article[data-service-color="3"] { border-left-color:var(--2j-color-info); }
+.template-day article[data-service-color="4"] { border-left-color:var(--2j-color-brand); }
+.template-day article>div { display:grid; gap:5px; }
+.template-day article small,.template-day article span,.template-day-empty { color:var(--2j-color-text-secondary); font-size:11px; }
+.template-day article .text-button { justify-self:start; }
+.template-day-empty { padding:10px 0; }
 .template-generate { display: flex; align-items: center; gap: 7px; }
 .template-generate input { min-height: 44px; padding: 0 10px; border: 1px solid var(--2j-color-border-strong); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); color: var(--2j-color-text-primary); }
 .calendar-notice { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; padding: 10px 14px; border: 1px solid var(--2j-color-success); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); font-size: 13px; }
@@ -728,6 +750,7 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .confirmation-dialog p { color: var(--2j-color-text-secondary); line-height: var(--2j-type-line-height-normal); }
 .attendee-list small { font-size: 12px; }
 @media (max-width: 1120px) {
+  .template-week-grid { grid-template-columns:repeat(4,minmax(135px,1fr)); }
   .week-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .day-column { border-bottom: 1px solid var(--2j-color-border); }
   .day-column:nth-child(2n) { border-right: 0; }
@@ -735,6 +758,7 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
   .day-sessions { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }
 @media (max-width: 680px) {
+  .template-week-grid { grid-template-columns:repeat(2,minmax(145px,1fr)); }
   body { min-width: 360px; }
   .calendar-heading { align-items: flex-start; flex-direction: column; }
   .calendar-actions { width: 100%; }

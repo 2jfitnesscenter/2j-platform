@@ -65,7 +65,14 @@ test('creates a client only when the server grants manage capability and refresh
   fireEvent.change(within(dialog).getByLabelText('Email (opcional)'), { target: { value: 'ada@example.test' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Guardar' }));
   await screen.findByRole('heading', { name: 'Ada Lovelace' });
-  assert.deepEqual(submitted, { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', phone: '' });
+  assert.deepEqual(submitted, { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', phone: '', birthDate:null });
+});
+
+test('Admin client edit saves optional birth date through the protected profile endpoint', async () => {
+  let saved;
+  const profileWithDob={...profile,client:{...client,birthDate:'1990-04-06'}};
+  globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`)&&options.method==='PATCH'){saved=JSON.parse(options.body);return response({...profileWithDob.client,...saved});}if(path.endsWith(`/api/clients/${client.id}`))return response(profileWithDob);throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('button',{name:'Editar datos'}));const dialog=await screen.findByRole('dialog',{name:'Editar datos del cliente'});assert.equal(within(dialog).getByLabelText('Fecha de nacimiento (opcional)').value,'1990-04-06');fireEvent.change(within(dialog).getByLabelText('Nombre'),{target:{value:'Marta'}});fireEvent.click(within(dialog).getByRole('button',{name:'Guardar cambios'}));await waitFor(()=>assert.ok(saved));assert.equal(saved.birthDate,'1990-04-06');
 });
 
 test('fails closed when the server has no authorized session', async () => {

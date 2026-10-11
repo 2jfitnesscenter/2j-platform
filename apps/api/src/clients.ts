@@ -21,7 +21,9 @@ export const createClientInput = z.object({
   lastName: normalizedName(100),
   email: optionalEmail,
   phone: optionalPhone,
+  birthDate: z.string().date().nullable().optional(),
 }).strict();
+const updateClientInput = createClientInput;
 
 const sectionDefinitions = [
   { id: 'summary', label: 'Resumen', permission: 'clients.read', sourceLabel: 'Datos del perfil' },
@@ -128,14 +130,14 @@ export function registerClientRoutes(
     if (!key.success) return reply.code(400).send({ error: 'idempotency_key_required' });
     const parsed = createClientInput.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
-    const { firstName, lastName, email, phone } = parsed.data;
-    const requestHash = createHash('sha256').update(JSON.stringify({ firstName, lastName, email, phone })).digest('hex');
+    const { firstName, lastName, email, phone, birthDate } = parsed.data;
+    const requestHash = createHash('sha256').update(JSON.stringify({ firstName, lastName, email, phone, birthDate: birthDate ?? null })).digest('hex');
     try {
       const result = await database.begin(async (tx) => {
         await tx`SELECT pg_advisory_xact_lock(hashtextextended(${key.data.toLowerCase()},0))`;
-        const [prior] = await tx`SELECT ci.request_hash AS "requestHash",c.id,c.first_name AS "firstName",c.last_name AS "lastName",c.email,c.phone,c.status,c.created_at AS "createdAt" FROM client_creation_idempotency ci JOIN clients c ON c.id=ci.client_id WHERE ci.idempotency_key=${key.data.toLowerCase()}`;
+        const [prior] = await tx`SELECT ci.request_hash AS "requestHash",c.id,c.first_name AS "firstName",c.last_name AS "lastName",c.email,c.phone,c.birth_date AS "birthDate",c.status,c.created_at AS "createdAt" FROM client_creation_idempotency ci JOIN clients c ON c.id=ci.client_id WHERE ci.idempotency_key=${key.data.toLowerCase()}`;
         if (prior) return prior.requestHash.trim() === requestHash ? { client: prior, replay: true as const } : { error: 'idempotency_conflict' as const };
-        const [created] = await tx`INSERT INTO clients(first_name,last_name,email,phone) VALUES (${firstName},${lastName},${email},${phone}) RETURNING id,first_name AS "firstName",last_name AS "lastName",email,phone,status,created_at AS "createdAt"`;
+        const [created] = await tx`INSERT INTO clients(first_name,last_name,email,phone,birth_date) VALUES (${firstName},${lastName},${email},${phone},${birthDate ?? null}) RETURNING id,first_name AS "firstName",last_name AS "lastName",email,phone,birth_date AS "birthDate",status,created_at AS "createdAt"`;
         if (!created) throw new Error('Client insert returned no row.');
         await tx`INSERT INTO client_events(client_id,event_type,actor_id,actor_role) VALUES (${created.id},'client.created',${context.actorId},${context.role})`;
         await tx`INSERT INTO client_creation_idempotency(idempotency_key,request_hash,client_id) VALUES (${key.data.toLowerCase()},${requestHash},${created.id})`;
@@ -157,7 +159,8 @@ export function registerClientRoutes(
     const params = z.object({ clientId: uuid }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: 'invalid_client_id' });
     try {
-      const [client] = await database`SELECT id,first_name AS "firstName",last_name AS "lastName",email,phone,status,created_at AS "createdAt",updated_at AS "updatedAt" FROM clients WHERE id=${params.data.clientId}`;
+      const [row] = await database`SELECT id,first_name AS "firstName",last_name AS "lastName",email,phone,birth_date AS "birthDate",status,created_at AS "createdAt",updated_at AS "updatedAt" FROM clients WHERE id=${params.data.clientId}`;
+      const client: any = row ? { ...row, birthDate: can(context, 'clients.manage') ? row.birthDate : null } : null;
       if (!client) return reply.code(404).send({ error: 'client_not_found' });
       const events = await database`SELECT id,event_type AS "eventType",actor_role AS "actorRole",occurred_at AS "occurredAt" FROM client_events WHERE client_id=${params.data.clientId} ORDER BY occurred_at DESC,id DESC LIMIT 100`;
       const summary: Record<string, { access: 'available' | 'forbidden'; dataState: string; data: unknown }> = Object.fromEntries(summaryDomains.map(({ id, permission }) => {
@@ -215,6 +218,30 @@ export function registerClientRoutes(
         history: events.map((event) => ({ id: event.id, eventType: event.eventType, actorLabel: actorLabel(event.actorRole), occurredAt: event.occurredAt })),
       };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId' }, 'client detail failed'); return reply.code(500).send({ error: 'internal_error' }); }
+  });
+
+  app.patch('/api/clients/:clientId', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const context = await authorized(request, reply, 'clients.manage'); if (!context) return;
+    const params = z.object({ clientId: uuid }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_client_id' });
+    const parsed = updateClientInput.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    const { firstName, lastName, email, phone, birthDate } = parsed.data;
+    try {
+      const result = await database.begin(async tx => {
+        const [client] = await tx`UPDATE clients SET first_name=${firstName},last_name=${lastName},email=${email},phone=${phone},birth_date=${birthDate ?? null},updated_at=now() WHERE id=${params.data.clientId} RETURNING id,first_name AS "firstName",last_name AS "lastName",email,phone,birth_date AS "birthDate",status,created_at AS "createdAt",updated_at AS "updatedAt"`;
+        if (!client) return null;
+        await tx`INSERT INTO client_events(client_id,event_type,actor_id,actor_role) VALUES (${client.id},'client.profile_updated',${context.actorId},${context.role})`;
+        return client;
+      });
+      if (!result) return reply.code(404).send({ error: 'client_not_found' });
+      return result;
+    } catch (error) {
+      if (databaseErrorCode(error) === '23505' && databaseErrorConstraint(error) === 'clients_active_email_unique') return reply.code(409).send({ error: 'email_conflict', message: 'Ya existe un cliente activo con ese email.' });
+      app.log.error({ databaseCode: databaseErrorCode(error), route: 'PATCH /api/clients/:clientId' }, 'client update failed');
+      return reply.code(500).send({ error: 'internal_error' });
+    }
   });
 
   app.patch('/api/clients/:clientId/archive', async (request, reply) => {

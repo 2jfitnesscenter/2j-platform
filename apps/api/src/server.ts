@@ -185,6 +185,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/areas', async (request, reply) => {
+    const context = await authorizationResolver(request);
+    if (!context) return reply.code(401).send({ error: 'authentication_required' });
+    if (!can(context, 'catalog.pricing.manage')) return reply.code(403).send({ error: 'permission_denied' });
     const parsed = areaInput.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     const name = parsed.data.name.normalize('NFKC').trim();
@@ -195,6 +198,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.patch('/api/areas/:areaId/archive', async (request, reply) => {
+    const context = await authorizationResolver(request);
+    if (!context) return reply.code(401).send({ error: 'authentication_required' });
+    if (!can(context, 'catalog.pricing.manage')) return reply.code(403).send({ error: 'permission_denied' });
     const { areaId } = request.params as { areaId: string };
     if (!uuid.safeParse(areaId).success) return reply.code(400).send({ error: 'invalid_area_id' });
     try {
@@ -218,6 +224,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/services', async (request, reply) => {
+    const context = await authorizationResolver(request);
+    if (!context) return reply.code(401).send({ error: 'authentication_required' });
+    if (!can(context, 'catalog.pricing.manage')) return reply.code(403).send({ error: 'permission_denied' });
     const parsed = serviceInput.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     try {
@@ -232,6 +241,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.patch('/api/services/:serviceId/archive', async (request, reply) => {
+    const context = await authorizationResolver(request);
+    if (!context) return reply.code(401).send({ error: 'authentication_required' });
+    if (!can(context, 'catalog.pricing.manage')) return reply.code(403).send({ error: 'permission_denied' });
     const { serviceId } = request.params as { serviceId: string };
     if (!uuid.safeParse(serviceId).success) return reply.code(400).send({ error: 'invalid_service_id' });
     try {

@@ -7,7 +7,7 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http:
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
-const { CalendarPage } = await import('../src/calendar-page.tsx');
+const { CalendarPage, groupSessionsByOverlap, serviceColorIndex } = await import('../src/calendar-page.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
 after(() => dom.window.close());
 
@@ -17,6 +17,48 @@ const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && 
 const now = new Date(); const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
 const key = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 const baseData = { weekStart: key(monday), sessions: [], areas: [area], services: [service], templates: [], capabilities: { manage: true, attendance: true, overrideCapacity: false, overrideAvailability: true, overrideDocuments: false } };
+
+test('calendar collision groups overlap side by side and gives each service a stable color', () => {
+  const sessions = [
+    { id: 'a', startsAt: '2026-10-12T10:00:00Z', durationMinutes: 60 },
+    { id: 'b', startsAt: '2026-10-12T10:30:00Z', durationMinutes: 30 },
+    { id: 'c', startsAt: '2026-10-12T10:45:00Z', durationMinutes: 30 },
+    { id: 'd', startsAt: '2026-10-12T11:30:00Z', durationMinutes: 30 },
+  ];
+  assert.deepEqual(groupSessionsByOverlap(sessions).map(group => group.map(item => item.id)), [['a', 'b', 'c'], ['d']], 'half-open meeting intervals ending at the next start do not collide');
+  assert.equal(groupSessionsByOverlap([{ ...sessions[0], id:'x' }, { ...sessions[0], id:'y' }])[0].length, 2, 'identical intervals share one lane group');
+  assert.equal(serviceColorIndex(service.id), serviceColorIndex(service.id));
+  assert.ok(serviceColorIndex(service.id) >= 0 && serviceColorIndex(service.id) < 5);
+});
+
+test('overlapping session lane remains keyboard scrollable with readable minimum card widths', async () => {
+  const sessions = ['Pilates', 'Fuerza', 'Acondicionamiento'].map((name, index) => ({ id: `overlap-${index}`, serviceId: `service-${index}`, serviceName: name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${baseData.weekStart}T17:00:00.000Z`, durationMinutes: 60, capacity: 12, status: 'scheduled', isIndividual: false, occupiedCount: 0, overbookCount: 0, waitlistCount: 0 }));
+  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({ ...baseData, sessions }) : response({});
+  render(React.createElement(CalendarPage));
+  const lane = await screen.findByLabelText('3 sesiones simultáneas; desplaza horizontalmente para verlas todas');
+  assert.equal(lane.getAttribute('tabindex'), '0');
+  assert.match(lane.getAttribute('style'), /132px/);
+  assert.equal(within(lane).getAllByRole('button').length, 3);
+});
+
+test('admin calendar shows birthday counts and a minimal name/date list', async () => {
+  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({ ...baseData, birthdays:[{clientId:'client-1',firstName:'Alicia',lastName:'Rivera',birthdayDate:baseData.weekStart}], capabilities:{...baseData.capabilities,canManageClients:true} }) : response({});
+  render(React.createElement(CalendarPage));
+  await screen.findByText('Cumpleaños hoy: 0');
+  fireEvent.click(screen.getByText(/Cumpleaños hoy/));
+  assert.ok(await screen.findByText(/Esta semana: 1/));
+  assert.ok(screen.getByText(/Alicia Rivera/));
+});
+
+test('birthday widget separates a birthday today from the rest of the visible week', async () => {
+  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  globalThis.fetch=async url=>String(url).includes('/api/calendar/week')?response({...baseData,birthdays:[{clientId:'today-client',firstName:'Eva',lastName:'Hoy',birthdayDate:today}],capabilities:{...baseData.capabilities,canManageClients:true}}):response({});
+  render(React.createElement(CalendarPage));
+  assert.ok(await screen.findByText('Cumpleaños hoy: 1'));
+  assert.ok(screen.getByText(/Esta semana: 1/));
+  fireEvent.click(screen.getByText(/Cumpleaños hoy/));
+  assert.ok(await screen.findByText(/Eva Hoy/));
+});
 
 test('renders weekly loading and empty states, then allows stepping weeks', async () => {
   const requested = [];
@@ -47,6 +89,8 @@ test('creates a real staff session using the selected 2J service and capacity', 
   assert.equal(posted.serviceId, service.id);
   assert.equal(posted.areaId, area.id);
   assert.equal(posted.capacity, 8);
+  assert.equal(posted.overrideAvailability, false);
+  assert.equal(Object.hasOwn(posted, 'availabilityReason'), false);
   assert.equal(session.source, 'manual');
 });
 
@@ -69,6 +113,9 @@ test('recurring template automatically appears as a concrete session and no manu
   assert.equal(screen.queryByRole('button', { name: /Generar fecha/ }), null);
   await screen.findByRole('button', { name: /Fuerza 2J/ });
   assert.ok(screen.getByText(/Sesiones concretas generadas automáticamente/));
+  fireEvent.click(screen.getByText(/Horarios recurrentes/));
+  assert.ok(await screen.findByRole('heading', { name:'Lunes' }));
+  assert.ok(screen.getByText(/09:30–10:15/));
 });
 
 test('bulk schedule previews and submits a three-day by three-block matrix once', async () => {

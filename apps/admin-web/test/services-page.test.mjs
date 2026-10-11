@@ -46,6 +46,32 @@ test('renders the catalog with understandable product terms and noninteractive f
   assert.equal(screen.queryByText('session_pack'), null);
 });
 
+test('draft plan can be activated from the catalog and the action disappears after refresh', async () => {
+  let activationCount = 0;
+  const activePlan = { ...plan, status: 'active' };
+  globalThis.window.confirm = () => true;
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith('/api/areas')) return response([area]);
+    if (path.endsWith('/api/services')) return response([service]);
+    if (path.endsWith(`/api/services/${service.id}/plans`)) return response(activationCount ? [activePlan] : [plan]);
+    if (path.endsWith(`/api/plans/${plan.id}/activate`) && options.method === 'POST') { activationCount += 1; return response({ id: plan.id, status: 'active' }); }
+    throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
+  };
+  render(React.createElement(ServicesPage));
+  await screen.findByRole('heading', { name: service.name });
+  fireEvent.click(await screen.findByRole('button', { name: 'Activar plan' }));
+  await screen.findByText('Plan activado y disponible para asignarlo a clientes.');
+  assert.equal(activationCount, 1);
+  assert.equal(screen.queryByRole('button', { name: 'Activar plan' }), null);
+});
+
+test('draft activation errors remain visible and the plan stays available for correction', async () => {
+  globalThis.window.confirm=()=>true;
+  globalThis.fetch=async url=>String(url).endsWith('/api/areas')?response([area]):String(url).endsWith('/api/services')?response([service]):String(url).endsWith(`/api/services/${service.id}/plans`)?response([plan]):String(url).endsWith(`/api/plans/${plan.id}/activate`)?response({error:'service_not_active',message:'El servicio incluido está en borrador.'},409):Promise.reject(new Error(`Unexpected ${url}`));
+  render(React.createElement(ServicesPage));await screen.findByRole('heading',{name:service.name});fireEvent.click(await screen.findByRole('button',{name:'Activar plan'}));assert.ok(await screen.findByText('El servicio incluido está en borrador.'));assert.ok(screen.getByRole('button',{name:'Activar plan'}));
+});
+
 test('service and plan dialogs focus their first field, close on Escape and restore focus to the opener', async () => {
   initialFetch();
   render(React.createElement(ServicesPage));
