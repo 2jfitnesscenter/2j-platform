@@ -42,7 +42,7 @@
     "audit_secret_scan_quality_diff_check": "dependency audit passed; git diff --check passed; secret scan and quality CI pending",
     "browser_smoke": "passed locally: Member A login/session survives refresh/logout; Member B isolation; fixture preview; Admin; Trainer/timeclock",
     "csrf_browser_repro": "attacker origin 127.0.0.1:5185 POST /api/%6de/notifications/read-all returns 403 and synthetic notification remains unread; canonical request from 127.0.0.1:5184 succeeds and marks it read",
-    "github_ci": "pending for the final PR #31 head; independent security re-review pending"
+    "github_ci": "quality and secret scan passed on head 1909a75ba8d36f55035bf321f02d2f962315af3e; handoff documentation update triggers fresh CI; independent security re-review pending"
   },
   "production_auth_remaining": ["approved production identity provider", "account proof/linking decisions", "passkey and SSO architecture", "deployed HTTPS session operations and revocation", "independent security review"]
 }
