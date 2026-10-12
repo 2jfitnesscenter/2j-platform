@@ -5,7 +5,7 @@
   "repository": "2jfitnesscenter/2j-platform",
   "branch": "agent/codex/2J-084-member-runtime-session",
   "base_sha": "1a5ec6ef60db2332d510382af966d0af88d53d76",
-  "pr": {"number": 31, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/31", "draft": true, "head_sha": "18eeca801a5dcee7351a321bb82a48361844c167"},
+  "pr": {"number": 31, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/31", "draft": true, "head_sha": "1ec1d8feffd567732116831f9977e9ecd85df652"},
   "merge": false,
   "production_auth": false,
   "training_changes": false,
@@ -38,7 +38,7 @@
     "migrations": "28/28 checksummed migrations verified on a fresh disposable PostgreSQL database",
     "audit_secret_scan_quality_diff_check": "dependency audit passed; git diff --check passed; secret scan and quality CI pending",
     "browser_smoke": "passed locally: Member A login/session survives refresh/logout; Member B isolation; fixture preview; Admin; Trainer/timeclock",
-    "github_ci": "queued/in progress for draft PR #31 head 18eeca801a5dcee7351a321bb82a48361844c167"
+    "github_ci": "queued/in progress for draft PR #31 head 1ec1d8feffd567732116831f9977e9ecd85df652"
   },
   "production_auth_remaining": ["approved production identity provider", "account proof/linking decisions", "passkey and SSO architecture", "deployed HTTPS session operations and revocation", "independent security review"]
 }
