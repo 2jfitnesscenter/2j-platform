@@ -1,0 +1,43 @@
+{
+  "task": "2J-084",
+  "title": "Member runtime identity and limited pilot session",
+  "status": "in_progress",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-084-member-runtime-session",
+  "base_sha": "1a5ec6ef60db2332d510382af966d0af88d53d76",
+  "merge": false,
+  "production_auth": false,
+  "training_changes": false,
+  "member_runtime": {
+    "session_cookie": "2j_member_pilot",
+    "cookie_attributes": ["HttpOnly", "Path=/", "SameSite=Lax", "Secure on HTTPS", "host-only"],
+    "lifetime_hours": 8,
+    "database_token_storage": "SHA-256 digest only",
+    "identity_resolution": ["session digest", "active platform-pilot auth subject", "active personId", "active client facet", "active client", "clientId"],
+    "browser_identity_input_trusted": false,
+    "csrf": "Exact configured Origin, falling back to matching Referer, on unsafe /api/me/* and /api/client-portal/* requests"
+  },
+  "feature_flags": {
+    "server": "PILOT_MEMBER_AUTH_ENABLED=true plus exact loopback MEMBER_APP_ORIGIN; development/test only",
+    "client_login_ui": "VITE_2J_PILOT_MEMBER_LOGIN=true",
+    "fixture_preview": "unchanged: VITE_2J_HUB_PREVIEW=true plus exactly one preview=1"
+  },
+  "synthetic_members": [
+    {"member": "A", "name": "María González", "code": "2j-member-a-local", "entitlement": "active 12-session plan", "eligible_future_session": true},
+    {"member": "B", "name": "Álvaro Martín", "code": "2j-member-b-local", "entitlement": false}
+  ],
+  "migration": "0028_member_pilot_sessions.sql",
+  "database": {"container": "2j-platform-084-pilot", "database": "2j_demo", "host_binding": "127.0.0.1", "port": 55440, "synthetic_only": true, "previous_079b_database_touched": false},
+  "verification": {
+    "api_tests": "passed; included in 273-test suite",
+    "client_app_tests": "8/8 passed",
+    "full_suite": "273/273 passed; 0 failed; 0 skipped",
+    "typecheck": "9/9 packages passed",
+    "build": "9/9 packages passed",
+    "migrations": "28/28 checksummed migrations verified on a fresh disposable PostgreSQL database",
+    "audit_secret_scan_quality_diff_check": "dependency audit passed; git diff --check passed; secret scan and quality CI pending",
+    "browser_smoke": "passed locally: Member A login/session survives refresh/logout; Member B isolation; fixture preview; Admin; Trainer/timeclock",
+    "github_ci": "pending"
+  },
+  "production_auth_remaining": ["approved production identity provider", "account proof/linking decisions", "passkey and SSO architecture", "deployed HTTPS session operations and revocation", "independent security review"]
+}
