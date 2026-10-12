@@ -7,7 +7,7 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http:
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
-const { CalendarPage } = await import('../src/calendar-page.tsx');
+const { CalendarPage, groupSessionsByOverlap, serviceColorIndex } = await import('../src/calendar-page.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
 after(() => dom.window.close());
 
@@ -17,6 +17,66 @@ const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && 
 const now = new Date(); const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
 const key = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 const baseData = { weekStart: key(monday), sessions: [], areas: [area], services: [service], templates: [], capabilities: { manage: true, attendance: true, overrideCapacity: false, overrideAvailability: true, overrideDocuments: false } };
+
+test('calendar collision groups overlap side by side and gives each service a stable color', () => {
+  const sessions = [
+    { id: 'a', startsAt: '2026-10-12T10:00:00Z', durationMinutes: 60 },
+    { id: 'b', startsAt: '2026-10-12T10:30:00Z', durationMinutes: 30 },
+    { id: 'c', startsAt: '2026-10-12T10:45:00Z', durationMinutes: 30 },
+    { id: 'd', startsAt: '2026-10-12T11:30:00Z', durationMinutes: 30 },
+  ];
+  assert.deepEqual(groupSessionsByOverlap(sessions).map(group => group.map(item => item.id)), [['a', 'b', 'c'], ['d']], 'half-open meeting intervals ending at the next start do not collide');
+  assert.equal(groupSessionsByOverlap([{ ...sessions[0], id:'x' }, { ...sessions[0], id:'y' }])[0].length, 2, 'identical intervals share one lane group');
+  assert.equal(serviceColorIndex(service.id), serviceColorIndex(service.id));
+  assert.ok(serviceColorIndex(service.id) >= 0 && serviceColorIndex(service.id) < 5);
+});
+
+test('overlapping session lane remains keyboard scrollable with readable minimum card widths', async () => {
+  const sessions = ['Pilates', 'Fuerza', 'Acondicionamiento'].map((name, index) => ({ id: `overlap-${index}`, serviceId: `service-${index}`, serviceName: name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${baseData.weekStart}T17:00:00.000Z`, durationMinutes: 60, capacity: 12, status: 'scheduled', isIndividual: false, occupiedCount: 0, overbookCount: 0, waitlistCount: 0 }));
+  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({ ...baseData, sessions }) : response({});
+  render(React.createElement(CalendarPage));
+  const lane = await screen.findByLabelText('3 sesiones simultáneas; desplaza horizontalmente para verlas todas');
+  assert.equal(lane.getAttribute('tabindex'), '0');
+  assert.match(lane.getAttribute('style'), /132px/);
+  assert.equal(within(lane).getAllByRole('button').length, 3);
+});
+
+test('admin calendar shows birthday counts and a minimal name/date list', async () => {
+  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({ ...baseData, birthdaysTodayCount:0, birthdays:[{clientId:'client-1',firstName:'Alicia',lastName:'Rivera',birthdayDate:baseData.weekStart}], capabilities:{...baseData.capabilities,canManageClients:true} }) : response({});
+  render(React.createElement(CalendarPage));
+  await waitFor(()=>assert.ok(document.querySelector('.birthday-widget summary')));
+  const summary=document.querySelector('.birthday-widget summary');
+  await waitFor(()=>assert.match(summary.textContent,/Cumpleaños hoy: 0/));
+  fireEvent.click(summary);
+  await waitFor(()=>assert.match(summary.textContent,/Semana visible: 1/));
+  assert.ok(screen.getByText(/Alicia Rivera/));
+});
+
+test('birthday widget separates a birthday today from the rest of the visible week', async () => {
+  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  globalThis.fetch=async url=>String(url).includes('/api/calendar/week')?response({...baseData,birthdaysTodayCount:1,birthdays:[{clientId:'today-client',firstName:'Eva',lastName:'Hoy',birthdayDate:today}],capabilities:{...baseData.capabilities,canManageClients:true}}):response({});
+  render(React.createElement(CalendarPage));
+  assert.ok(await screen.findByText('Cumpleaños hoy: 1'));
+  const summary=document.querySelector('.birthday-widget summary');
+  assert.match(summary.textContent,/Semana visible: 1/);
+  fireEvent.click(summary);
+  assert.ok(await screen.findByText(/Eva Hoy/));
+});
+
+test('birthday widget keeps actual today count while browsing a different week', async () => {
+  let initialWeek=null;
+  globalThis.fetch=async url=>{
+    if(String(url).includes('/api/calendar/week')) { const requestedWeek=new URL(String(url)).searchParams.get('weekStart');initialWeek??=requestedWeek;return response({...baseData,weekStart:requestedWeek,birthdaysTodayCount:1,birthdays:requestedWeek===initialWeek?[{clientId:'today-client',firstName:'Eva',lastName:'Hoy',birthdayDate:requestedWeek}]:[],capabilities:{...baseData.capabilities,canManageClients:true}}); }
+    return response({});
+  };
+  render(React.createElement(CalendarPage));
+  await waitFor(()=>assert.ok(document.querySelector('.birthday-widget')));
+  const widget=document.querySelector('.birthday-widget');
+  await waitFor(()=>assert.match(widget.querySelector('summary').textContent,/Cumpleaños hoy: 1/));
+  fireEvent.click(screen.getByRole('button',{name:'Semana siguiente'}));
+  await waitFor(()=>assert.match(document.querySelector('.birthday-widget summary').textContent,/Semana visible: 0/));
+  assert.match(document.querySelector('.birthday-widget summary').textContent,/Cumpleaños hoy: 1/);
+});
 
 test('renders weekly loading and empty states, then allows stepping weeks', async () => {
   const requested = [];
@@ -47,6 +107,8 @@ test('creates a real staff session using the selected 2J service and capacity', 
   assert.equal(posted.serviceId, service.id);
   assert.equal(posted.areaId, area.id);
   assert.equal(posted.capacity, 8);
+  assert.equal(posted.overrideAvailability, false);
+  assert.equal(Object.hasOwn(posted, 'availabilityReason'), false);
   assert.equal(session.source, 'manual');
 });
 
@@ -69,27 +131,66 @@ test('recurring template automatically appears as a concrete session and no manu
   assert.equal(screen.queryByRole('button', { name: /Generar fecha/ }), null);
   await screen.findByRole('button', { name: /Fuerza 2J/ });
   assert.ok(screen.getByText(/Sesiones concretas generadas automáticamente/));
+  fireEvent.click(screen.getByText(/Horarios recurrentes/));
+  assert.ok(await screen.findByRole('heading', { name:'Lunes' }));
+  assert.ok(screen.getByText(/09:30–10:15/));
 });
 
-test('bulk schedule previews and submits a three-day by three-block matrix once', async () => {
+test('visual schedule editor creates recurring blocks from the grid and submits exact batch details', async () => {
   let posted = null;
+  const professional={id:'staff-1',displayName:'Alex Rivera',calendarColor:null};
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
-    if (path.includes('/api/calendar/week')) return response(baseData);
-    if (path.endsWith('/api/calendar/templates/batch') && options.method === 'POST') { posted = JSON.parse(options.body); return response({ templates: Array.from({ length: 9 }, (_, index) => ({ id: `template-${index}`, status: 'active' })) }, 201); }
+    if (path.includes('/api/calendar/week')) return response({ ...baseData, professionals:[professional] });
+    if (path.endsWith('/api/calendar/templates/batch') && options.method === 'POST') { posted = JSON.parse(options.body); return response({ templates: Array.from({ length: 3 }, (_, index) => ({ id: `template-${index}`, status: 'active' })) }, 201); }
     throw new Error(`Unexpected request: ${options.method ?? 'GET'} ${path}`);
   };
   render(React.createElement(CalendarPage));
   await screen.findByText('Esta semana aún no tiene sesiones');
   fireEvent.click(screen.getByRole('button', { name: 'Configurar horarios' }));
   const dialog = await screen.findByRole('dialog', { name: 'Configurar horarios' });
+  fireEvent.click(within(dialog).getByRole('button',{name:'Miércoles, 17:00, añadir horario'}));
+  assert.equal(within(dialog).getByLabelText('Empieza franja 1').value,'17:00');
+  assert.ok(within(dialog).getByRole('button',{name:/Borrador Miércoles 17:00/}));
   fireEvent.change(within(dialog).getByLabelText('Servicio'), { target: { value: service.id } });
-  assert.match(within(dialog).getByText('Se crearán 9 plantillas').textContent, /9/);
+  assert.equal(within(dialog).getByRole('button',{name:/Borrador Miércoles 17:00/}).getAttribute('data-service-color'),String(serviceColorIndex(service.id)));
+  fireEvent.change(within(dialog).getByLabelText('Profesional'),{target:{value:professional.id}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Lunes, 17:00, añadir horario'}));
+  fireEvent.click(within(dialog).getByRole('button',{name:'Viernes, 17:00, añadir horario'}));
+  fireEvent.change(within(dialog).getByLabelText('Duración franja 1'),{target:{value:'60'}});
+  fireEvent.change(within(dialog).getByLabelText('Plazas franja 1'),{target:{value:'12'}});
+  fireEvent.change(within(dialog).getByLabelText('Desde'),{target:{value:'2026-10-12'}});
+  fireEvent.change(within(dialog).getByLabelText('Hasta (opcional)'),{target:{value:'2027-12-31'}});
+  assert.match(within(dialog).getByText('Se crearán 3 plantillas').textContent, /3/);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Crear horarios' }));
-  await screen.findByText(/9 horarios creados/);
+  await screen.findByText(/3 horarios creados/);
   assert.deepEqual(posted.weekdays.sort(), [1, 3, 5]);
-  assert.deepEqual(posted.blocks.map((block) => block.localStartTime), ['07:00', '08:00', '09:00']);
+  assert.deepEqual(posted.blocks, [{localStartTime:'17:00',durationMinutes:60,capacity:12}]);
   assert.equal(posted.serviceId, service.id);
+  assert.equal(posted.areaId,area.id);
+  assert.equal(posted.professionalId,professional.id);
+  assert.equal(posted.startsOn,'2026-10-12');
+  assert.equal(posted.endsOn,'2027-12-31');
+});
+
+test('visual schedule editor shows existing templates and keeps archive available', async () => {
+  let archived=false;
+  const template={id:'template-existing',serviceId:service.id,serviceName:service.name,areaId:area.id,areaName:area.name,professionalId:'staff-1',professionalName:'Alex Rivera',weekday:1,localStartTime:'09:00',durationMinutes:60,capacity:12,startsOn:baseData.weekStart,endsOn:null};
+  globalThis.fetch=async(url,options={})=>{
+    const path=String(url);
+    if(path.includes('/api/calendar/week'))return response({...baseData,templates:[template]});
+    if(path.endsWith(`/api/calendar/templates/${template.id}/archive`)&&options.method==='PATCH'){archived=true;return response({status:'archived'});}
+    throw new Error(`Unexpected request: ${options.method??'GET'} ${path}`);
+  };
+  render(React.createElement(CalendarPage));
+  await screen.findByText('Esta semana aún no tiene sesiones');
+  fireEvent.click(screen.getByRole('button',{name:'Configurar horarios'}));
+  const dialog=await screen.findByRole('dialog',{name:'Configurar horarios'});
+  assert.ok(within(dialog).getByLabelText(/Fuerza 2J, Lunes, 09:00/));
+  fireEvent.click(within(dialog).getByRole('button',{name:'Archivar horario: Fuerza 2J Lunes 09:00'}));
+  const confirmation=await screen.findByRole('alertdialog',{name:'Archivar horario recurrente'});
+  fireEvent.click(within(confirmation).getByRole('button',{name:'Archivar horario'}));
+  await waitFor(()=>assert.equal(archived,true));
 });
 
 test('recurring occurrence editor clearly limits changes to one date and submits its override', async () => {

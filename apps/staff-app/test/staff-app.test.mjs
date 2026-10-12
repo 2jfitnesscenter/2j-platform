@@ -169,10 +169,13 @@ test("agenda presents sessions in local time and links into session detail", asy
       });
     if (u.includes("/attendees"))
       return response({
-        reservations: [
-          { id: "r1", firstName: "Eva", lastName: "Pérez", status: "reserved" },
-        ],
-        waitlist: [],
+        reservations: Array.from({ length: 8 }, (_, index) => ({
+          id: `r${index + 1}`,
+          firstName: index === 0 ? "Eva" : `Cliente ${index + 1}`,
+          lastName: index === 0 ? "Pérez" : "Prueba",
+          status: "reserved",
+        })),
+        waitlist: Array.from({ length: 2 }, (_, index) => ({ id: `w${index + 1}` })),
       });
     return response({});
   };
@@ -229,9 +232,15 @@ test("staff booking preview gates the reserve action and reuses the established 
         capabilities: { manage: true, attendance: true },
       });
     if (u.includes("/attendees"))
-      return response({ reservations: [], waitlist: [] });
+      return response({
+        reservations: [
+          ...Array.from({ length: 8 }, (_, index) => ({ id: `r${index + 1}`, firstName: `Cliente ${index + 1}`, lastName: "Prueba", status: "reserved" })),
+          ...(reservation ? [{ id: "r9", clientId: "c1", firstName: "Eva", lastName: "Pérez", status: "reserved" }] : []),
+        ],
+        waitlist: [],
+      });
     if (u.includes("/api/clients?"))
-      return response({ items: [client], capabilities: {} });
+      return response({ items: [client], capabilities: { manage: false } });
     if (u.includes("booking-eligibility"))
       return response({
         allowed: true,
@@ -264,11 +273,13 @@ test("staff booking preview gates the reserve action and reuses the established 
     );
     fireEvent.click(await q.findByRole("button", { name: /Eva Pérez/ }));
     await q.findByText("Puede reservar");
+    assert.ok(q.getByRole("heading", { name: "Añadir cliente" }), "client search capabilities must not overwrite reservation management");
     fireEvent.click(q.getByRole("button", { name: "Confirmar reserva" }));
     await waitFor(() => assert.ok(reservation));
     assert.equal(reservation.body.clientId, "c1");
     assert.match(reservation.headers["idempotency-key"], /^[0-9a-f-]{36}$/i);
     assert.equal(reservation.url, "/api/calendar/sessions/s1/reservations");
+    await waitFor(() => assert.equal(dom.window.document.querySelector(".capacity b")?.textContent, "9/10"));
   } finally {
     cleanup();
     globalThis.fetch = original;

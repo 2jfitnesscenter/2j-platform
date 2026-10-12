@@ -167,7 +167,7 @@ export function StaffApp() {
       `/api/calendar/week?weekStart=${from}`,
     );
     setSessions(r.sessions);
-    setActions((x: any) => ({ ...x, ...r.capabilities }));
+    setActions((x: any) => ({ ...x, reservationManage: r.capabilities.manage, attendance: r.capabilities.attendance }));
   }, [selectedDate]);
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -202,6 +202,9 @@ export function StaffApp() {
         `/api/calendar/sessions/${s.id}/attendees`,
       );
       setAttendees(a);
+      setSelected((current) => current?.id === s.id
+        ? { ...current, occupiedCount: a.reservations.length, overbookCount: Math.max(0, a.reservations.length - current.capacity), waitlistCount: a.waitlist.length }
+        : current);
     } catch (e) {
       setToast(errorCopy(e));
     }
@@ -217,7 +220,7 @@ export function StaffApp() {
         `/api/clients?q=${encodeURIComponent(q.trim())}&limit=20`,
       );
       setClients(r.items);
-      setActions((x: any) => ({ ...x, ...r.capabilities }));
+      setActions((x: any) => ({ ...x, clientManage: r.capabilities.manage }));
     } catch (e) {
       setToast(errorCopy(e));
     }
@@ -247,7 +250,7 @@ export function StaffApp() {
       }
       setActions((x: any) => ({
         ...x,
-        ...detail.capabilities,
+        clientManage: detail.capabilities?.manage === true,
         clientDocuments:
           detail.summary?.documents?.access === "available"
             ? detail.summary.documents.data
@@ -606,7 +609,7 @@ export function StaffApp() {
                 <strong>{selected.waitlistCount} en espera</strong>
               </div>
             </section>
-            {actions.manage && (
+            {actions.reservationManage && (
               <section className="add-booking">
                 <h2>Añadir cliente</h2>
                 <label className="search">

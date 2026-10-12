@@ -2100,3 +2100,36 @@ test('session pack reaches the derived exhausted state when its append-only ledg
   const effective=await clientsAdminApp.inject({method:'GET',url:`/api/clients/${client.id}/entitlements/effective?date=2026-10-09`});assert.equal(effective.json().assignments[0].status,'exhausted');assert.equal(effective.json().assignments[0].usable,false);assert.equal(effective.json().rights.length,0);
   const profile=await clientsAdminApp.inject({method:'GET',url:`/api/clients/${client.id}`});assert.equal(profile.json().summary.plans.data[0].derivedStatus,'exhausted');assert.equal(profile.json().summary.plans.data[0].rights[0].balance,0);
 });
+
+test('catalog writes require catalog.pricing.manage while reads remain available', async () => {
+  const roles = [
+    ['admin', clientsAdminApp, 201],
+    ['trainer', clientsTrainerApp, 403],
+    ['reception', clientsReceptionApp, 403],
+    ['accountant', clientsAccountantApp, 403],
+  ];
+  for (const [role, server, expected] of roles) {
+    const targetArea = (await clientsAdminApp.inject({ method: 'POST', url: '/api/areas', payload: { name: `Área objetivo ${role} ${randomUUID()}` } })).json();
+    const createdArea = await server.inject({ method: 'POST', url: '/api/areas', payload: { name: `Área ${role} ${randomUUID()}` } });
+    assert.equal(createdArea.statusCode, expected, `${role} area create`);
+    const createdService = await server.inject({ method: 'POST', url: '/api/services', payload: { name: `Servicio ${role} ${randomUUID()}`, areaId: defaultArea.id, status: 'active' } });
+    assert.equal(createdService.statusCode, expected, `${role} service create`);
+    const archivedArea = await server.inject({ method: 'PATCH', url: `/api/areas/${targetArea.id}/archive` });
+    assert.equal(archivedArea.statusCode, expected === 201 ? 200 : 403, `${role} area archive`);
+    assert.equal((await server.inject({ method: 'GET', url: '/api/areas' })).statusCode, 200, `${role} area read`);
+    assert.equal((await server.inject({ method: 'GET', url: '/api/services' })).statusCode, 200, `${role} service read`);
+  }
+  const service = await createService(`Servicio archivo permisos ${randomUUID()}`);
+  assert.equal((await clientsTrainerApp.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 403);
+  assert.equal((await clientsAdminApp.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 200);
+});
+
+test('Admin can update basic client profile including nullable date of birth with history; Trainer cannot', async () => {
+  const created=await createClientRequest(clientsAdminApp,{firstName:'Perfil',lastName:`Actualizable ${randomUUID()}`});assert.equal(created.statusCode,201,created.body);
+  const id=created.json().id;const payload={firstName:'Perfil',lastName:'Actualizado',email:`perfil.${randomUUID()}@example.test`,phone:'600000111',birthDate:'1990-04-06'};
+  const forbidden=await clientsTrainerApp.inject({method:'PATCH',url:`/api/clients/${id}`,payload});assert.equal(forbidden.statusCode,403);
+  const updated=await clientsAdminApp.inject({method:'PATCH',url:`/api/clients/${id}`,payload});assert.equal(updated.statusCode,200,updated.body);assert.equal(updated.json().birthDate,'1990-04-06');assert.equal(updated.json().lastName,'Actualizado');
+  const detail=await clientsAdminApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(detail.json().client.birthDate,'1990-04-06');assert.ok(detail.json().history.some(event=>event.eventType==='client.profile_updated'));
+  const trainerDetail=await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(trainerDetail.json().client.birthDate,null,'DOB remains hidden without clients.manage');
+  const cleared=await clientsAdminApp.inject({method:'PATCH',url:`/api/clients/${id}`,payload:{...payload,birthDate:null}});assert.equal(cleared.json().birthDate,null);
+});

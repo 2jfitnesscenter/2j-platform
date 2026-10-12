@@ -1,0 +1,57 @@
+{
+  "taskId": "2J-081B/082",
+  "title": "Admin UX Refresh + Pilot P1 Operational Fixes",
+  "status": "ready_for_review",
+  "branch": "agent/codex/2J-081B-082-admin-ux-pilot-p1",
+  "base": "2c2705aa07880d1ebb3c23ca639e9cc62d28a77d",
+  "trainingChanged": false,
+  "twoJFAppsChanged": false,
+  "deploymentChanged": false,
+  "liveAuthenticationOrExternalPaymentsAdded": false,
+  "changes": {
+    "catalogPermission": "catalog.pricing.manage",
+    "serviceColor": "stable deterministic mapping from service UUID to semantic 2J tokens",
+    "calendarOverlap": "interval collision groups displayed side by side; touching intervals do not overlap; crowded groups keyboard-scroll horizontally",
+    "birthdays": "nullable clients.birth_date; Admin profile edit and audited update; actual today count plus visible-week count gated by clients.manage",
+    "planActivation": "draft-only UI action calls existing activation endpoint and refreshes state",
+    "staffBooking": "separates reservationManage from clientManage and refreshes occupancy from attendee response after booking",
+    "recurrenceSeriesEdit": "not implemented; prospective replacement/edit remains P2",
+    "visualScheduleEditor": "Monday-first weekly grid; click-to-create; multi-day selection; stable service colors; date validity; uses existing batch template API with Sunday-zero conversion; archive remains supported",
+    "planTariffCatalog": "service navigation with compact tariff table and responsive cards; details preserve rights, modules, version and activation; no unsupported tax or in-app price columns"
+  },
+  "migration": "0027_client_birth_date_profile_edit.sql",
+  "validation": {
+    "tests": "266/266 passed; 0 failed; 0 skipped",
+    "apiPostgresqlTests": "165/165 passed",
+    "adminWebTests": "69/69 passed",
+    "staffAppTests": "7/7 passed",
+    "typecheck": "9/9 passed",
+    "build": "9/9 passed",
+    "postgresMigrations": "27 checksummed migrations verified",
+    "dependencyAudit": "no known vulnerabilities",
+    "diffCheck": "passed",
+    "githubCi": "pending checks on updated Draft PR head",
+    "secretScan": "pending CI secret scan; local Gitleaks not run (Go/Gitleaks unavailable)",
+    "visualBrowserSmoke": "not performed on this delta; existing pilot runtime was left untouched",
+    "viewportEvidence": "no new 1440/768/390 captures; tool output is not exportable and no images are claimed"
+  },
+  "pilotSmoke": {
+    "database": "disposable synthetic local database in a temporary container",
+    "adminCalendarAndScheduleGrid": "pass",
+    "bulkRecurringScheduleCreation": "pass",
+    "birthdayWidgetAfterSyntheticDobEdit": "pass",
+    "draftPlanActivation": "pass",
+    "trainerClientSearchAndReservation": "pass",
+    "attendanceManualSmoke": "not performed",
+    "singleOccurrenceSiblingAndCancellationManualSmoke": "not performed",
+    "screenshots": "earlier captures were shown interactively but not exported; no new captures for this delta; no breakpoint-specific screenshots claimed",
+    "preexistingPilot": "left untouched; existing runtime file was present and pilot container was already exited",
+    "validationDatabase": "separate disposable PostgreSQL 17 container; stopped and removed after migration and test run"
+  },
+  "remainingFindings": [
+    { "priority": "P2", "description": "Prospective editing/replacement of an ongoing recurrence series is not implemented." },
+    { "priority": "P3", "description": "Crowded overlapping groups use horizontal scrolling to preserve readable card widths." },
+    { "priority": "P3", "description": "Perform live visual smoke of the final grid and tariff table, then archive genuine 1440/768/390 browser captures without taking over the existing pilot runtime." }
+  ],
+  "mergePerformed": false
+}

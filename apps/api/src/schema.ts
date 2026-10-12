@@ -43,14 +43,14 @@ export const planRights = pgTable('plan_rights', {
 
 export const clients = pgTable('clients', {
   id: uuid('id').defaultRandom().primaryKey(), firstName: text('first_name').notNull(), lastName: text('last_name').notNull(),
-  email: text('email'), phone: text('phone'), status: text('status').notNull().default('active'),
+  email: text('email'), phone: text('phone'), birthDate: date('birth_date'), status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index('clients_active_name_idx').on(sql`lower(${table.lastName})`, sql`lower(${table.firstName})`, table.id).where(sql`${table.status} = 'active'`), index('clients_archived_name_idx').on(sql`lower(${table.lastName})`, sql`lower(${table.firstName})`, table.id).where(sql`${table.status} = 'archived'`), check('clients_first_name_length', sql`char_length(btrim(${table.firstName})) BETWEEN 1 AND 80`), check('clients_last_name_length', sql`char_length(btrim(${table.lastName})) BETWEEN 1 AND 100`), check('clients_email_length', sql`${table.email} IS NULL OR char_length(${table.email}) <= 254`), check('clients_phone_length', sql`${table.phone} IS NULL OR char_length(${table.phone}) <= 40`), check('clients_status_allowed', sql`${table.status} IN ('active', 'archived')`)]);
 
 export const clientEvents = pgTable('client_events', {
   id: uuid('id').defaultRandom().primaryKey(), clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
   eventType: text('event_type').notNull(), actorId: text('actor_id').notNull(), actorRole: text('actor_role'), occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [index('client_events_timeline_idx').on(table.clientId, table.occurredAt.desc(), table.id.desc()), check('client_events_type_allowed', sql`${table.eventType} IN ('client.created', 'client.archived', 'client.plan_assigned','client.plan_paused','client.plan_resumed','client.plan_cancelled','client.plan_renewed','client.plan_changed')`), check('client_events_actor_length', sql`char_length(${table.actorId}) BETWEEN 1 AND 120`), check('client_events_actor_role_allowed', sql`${table.actorRole} IS NULL OR ${table.actorRole} IN ('admin', 'trainer', 'reception-management', 'accountant')`)]);
+}, (table) => [index('client_events_timeline_idx').on(table.clientId, table.occurredAt.desc(), table.id.desc()), check('client_events_type_allowed', sql`${table.eventType} IN ('client.created', 'client.archived', 'client.profile_updated','client.plan_assigned','client.plan_paused','client.plan_resumed','client.plan_cancelled','client.plan_renewed','client.plan_changed')`), check('client_events_actor_length', sql`char_length(${table.actorId}) BETWEEN 1 AND 120`), check('client_events_actor_role_allowed', sql`${table.actorRole} IS NULL OR ${table.actorRole} IN ('admin', 'trainer', 'reception-management', 'accountant')`)]);
 
 export const clientCreationIdempotency = pgTable('client_creation_idempotency', {
   idempotencyKey: uuid('idempotency_key').primaryKey(), requestHash: char('request_hash', { length: 64 }).notNull(),
