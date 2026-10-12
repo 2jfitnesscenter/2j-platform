@@ -1,11 +1,13 @@
 {
   "task": "2J-084",
   "title": "Member runtime identity and limited pilot session",
-  "status": "draft_pr_open_ci_pending",
+  "status": "draft_pr_open_csrf_fix_pushed_ci_and_independent_rereview_pending",
   "repository": "2jfitnesscenter/2j-platform",
   "branch": "agent/codex/2J-084-member-runtime-session",
   "base_sha": "1a5ec6ef60db2332d510382af966d0af88d53d76",
-  "pr": {"number": 31, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/31", "draft": true, "head_sha": "1ec1d8feffd567732116831f9977e9ecd85df652"},
+  "pr": {"number": 31, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/31", "draft": true},
+  "csrf_fix_commit": "c73cd2244d6271abc48c28c9f5d821abdb185685",
+  "head_sha_note": "The final PR head includes this handoff update; read the authoritative current SHA from PR #31.",
   "merge": false,
   "production_auth": false,
   "training_changes": false,
@@ -16,7 +18,7 @@
     "database_token_storage": "SHA-256 digest only",
     "identity_resolution": ["session digest", "active platform-pilot auth subject", "active personId", "active client facet", "active client", "clientId"],
     "browser_identity_input_trusted": false,
-    "csrf": "Exact configured Origin, falling back to matching Referer, on unsafe /api/me/* and /api/client-portal/* requests"
+    "csrf": "Exact configured Origin, falling back to matching Referer, on unsafe requests selected by Fastify's resolved routeOptions.url for /api/me/* and /api/client-portal/*; encoded route bypass fixed in commit c73cd2244d6271abc48c28c9f5d821abdb185685"
   },
   "feature_flags": {
     "server": "PILOT_MEMBER_AUTH_ENABLED=true plus exact loopback MEMBER_APP_ORIGIN; development/test only",
@@ -32,13 +34,15 @@
   "verification": {
     "api_tests": "passed; included in 273-test suite",
     "client_app_tests": "8/8 passed",
-    "full_suite": "273/273 passed; 0 failed; 0 skipped",
+    "full_suite": "274/274 passed; 0 failed; 0 skipped after CSRF route-canonicalization fix",
+    "api_postgresql": "171/171 passed; includes encoded path Origin/Referer regression matrix",
     "typecheck": "9/9 packages passed",
     "build": "9/9 packages passed",
     "migrations": "28/28 checksummed migrations verified on a fresh disposable PostgreSQL database",
     "audit_secret_scan_quality_diff_check": "dependency audit passed; git diff --check passed; secret scan and quality CI pending",
     "browser_smoke": "passed locally: Member A login/session survives refresh/logout; Member B isolation; fixture preview; Admin; Trainer/timeclock",
-    "github_ci": "queued/in progress for draft PR #31 head 1ec1d8feffd567732116831f9977e9ecd85df652"
+    "csrf_browser_repro": "attacker origin 127.0.0.1:5185 POST /api/%6de/notifications/read-all returns 403 and synthetic notification remains unread; canonical request from 127.0.0.1:5184 succeeds and marks it read",
+    "github_ci": "pending for the final PR #31 head; independent security re-review pending"
   },
   "production_auth_remaining": ["approved production identity provider", "account proof/linking decisions", "passkey and SSO architecture", "deployed HTTPS session operations and revocation", "independent security review"]
 }
