@@ -147,8 +147,10 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.addHook('onRequest', async (request, reply) => {
     const host = request.hostname?.replace(/^\[|\]$/g, '').toLowerCase();
     if (!host || !['127.0.0.1', 'localhost', '::1'].includes(host)) return reply.code(400).send({ error: 'invalid_host' });
-    const path = request.url.split('?')[0] ?? '/';
-    const memberMutation = path.startsWith('/api/me/') || path.startsWith('/api/client-portal/');
+    // Fastify resolves percent-encoded path characters before setting routeOptions.url.
+    // Use the matched route so alternate encodings cannot skip the Member CSRF policy.
+    const routePath = request.routeOptions.url ?? '';
+    const memberMutation = routePath.startsWith('/api/me/') || routePath.startsWith('/api/client-portal/');
     if (memberPilotAuth.enabled && memberMutation && !['GET','HEAD','OPTIONS'].includes(request.method) && !memberPilotAuth.csrfAllowed(request)) return reply.code(403).send({ error: 'origin_rejected' });
   });
   app.addHook('onClose', async () => { await client.end(); });

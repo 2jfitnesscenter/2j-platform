@@ -71,6 +71,77 @@ test('expired sessions fail closed, unsafe self-service requires same-origin, an
   assert.equal((await disabledApp.inject({ method: 'GET', url: '/api/me' })).statusCode, 401);
 });
 
+test('resolved Member route metadata enforces CSRF for encoded path variants and both mutation methods', async () => {
+  const inserted = await sql`INSERT INTO notifications(recipient_kind,recipient_id,type,title,body,deeplink,dedupe_key)
+    VALUES ('client',${memberA.clientId},'document_pending','CSRF route test','Synthetic regression row','/profile',${`member-pilot-csrf-${randomUUID()}`}) RETURNING id`;
+  const notificationId = inserted[0].id;
+  const cookie = await (async () => {
+    const response = await app.inject({ method: 'POST', url: '/api/pilot/member/login', headers: { origin, 'content-type': 'application/json' }, payload: { code: memberA.code } });
+    assert.equal(response.statusCode, 200);
+    return response.headers['set-cookie'].split(';')[0];
+  })();
+  const paths = [
+    { method: 'POST', url: '/api/me/notifications/read-all', resolves: true },
+    { method: 'POST', url: '/api/%6de/notifications/read-all', resolves: true },
+    { method: 'POST', url: '/api/m%65/notifications/read-all', resolves: true },
+    { method: 'POST', url: '/api/me/notificati%6Fns/read-all', resolves: true },
+    { method: 'POST', url: '/api/%6D%65/notifications/read-all', resolves: true },
+    { method: 'PATCH', url: `/api/me/notifications/%${notificationId.charCodeAt(0).toString(16)}${notificationId.slice(1)}/read`, resolves: true },
+    { method: 'POST', url: '/api/client-portal/conversations', resolves: true },
+    { method: 'POST', url: '/api/client-%70ortal/conversations', resolves: true },
+    { method: 'POST', url: '/api/client-portal%2fconversations', resolves: false },
+  ];
+  for (const { method, url, resolves } of paths) {
+    const wrongOrigin = await app.inject({ method, url, headers: { cookie, origin: 'http://evil.example' }, payload: {} });
+    assert.equal(wrongOrigin.statusCode, resolves ? 403 : 404, `${method} ${url} must fail closed; got ${wrongOrigin.statusCode}: ${wrongOrigin.body}`);
+  }
+  const deniedNotification = await sql`SELECT read_at AS "readAt" FROM notifications WHERE id=${notificationId}`;
+  assert.equal(deniedNotification[0].readAt, null, 'denied encoded mutations must not change notification state');
+  for (const { method, url, resolves } of paths.filter(path => path.resolves)) {
+    const expectedSuccess = method === 'POST' && url.includes('conversations') ? 201 : 200;
+    const correctOrigin = await app.inject({ method, url, headers: { cookie, origin }, payload: {} });
+    assert.equal(correctOrigin.statusCode, expectedSuccess, `${method} ${url} should accept its exact configured Origin`);
+    const correctReferer = await app.inject({ method, url, headers: { cookie, referer: `${origin}/member` }, payload: {} });
+    assert.equal(correctReferer.statusCode, expectedSuccess, `${method} ${url} should accept matching Referer without Origin`);
+    const wrongReferer = await app.inject({ method, url, headers: { cookie, referer: 'http://evil.example/page' }, payload: {} });
+    assert.equal(wrongReferer.statusCode, 403, `${method} ${url} should reject a wrong Referer`);
+    const absentOriginAndReferer = await app.inject({ method, url, headers: { cookie }, payload: {} });
+    assert.equal(absentOriginAndReferer.statusCode, 403, `${method} ${url} should reject absent Origin and Referer`);
+  }
+  for (const [method, url] of [['PATCH', `/api/me/notifications/${notificationId}/read`], ['POST', '/api/me/notifications/read-all']]) {
+    const wrongOrigin = await app.inject({ method, url, headers: { cookie, origin: 'http://evil.example' }, payload: {} });
+    assert.equal(wrongOrigin.statusCode, 403);
+    const wrongReferer = await app.inject({ method, url, headers: { cookie, referer: 'http://evil.example/page' }, payload: {} });
+    assert.equal(wrongReferer.statusCode, 403);
+    const correctOrigin = await app.inject({ method, url, headers: { cookie, origin }, payload: {} });
+    assert.equal(correctOrigin.statusCode, 200, correctOrigin.body);
+    const correctReferer = await app.inject({ method, url, headers: { cookie, referer: `${origin}/member` }, payload: {} });
+    assert.equal(correctReferer.statusCode, 200, correctReferer.body);
+  }
+  const readAfterDenied = await sql`SELECT read_at AS "readAt" FROM notifications WHERE id=${notificationId}`;
+  assert.ok(readAfterDenied[0].readAt, 'an allowed Referer request should have marked the synthetic notification as read');
+  await sql`INSERT INTO notifications(recipient_kind,recipient_id,type,title,body,deeplink,dedupe_key)
+    VALUES ('client',${memberA.clientId},'document_pending','CSRF denied test','Synthetic regression row','/profile',${`member-pilot-csrf-denied-${randomUUID()}`})`;
+  for (const url of ['/api/me/notifications/read-all', '/api/%6de/notifications/read-all', '/api/m%65/notifications/read-all', '/api/me/notificati%6Fns/read-all', '/api/%6D%65/notifications/read-all']) {
+    const result = await app.inject({ method: 'POST', url, headers: { cookie, origin: 'null' }, payload: {} });
+    assert.equal(result.statusCode, 403, `${url} must reject a null Origin`);
+  }
+  const deniedRow = await sql`SELECT read_at AS "readAt" FROM notifications WHERE recipient_kind='client' AND recipient_id=${memberA.clientId} AND title='CSRF denied test'`;
+  assert.equal(deniedRow[0].readAt, null, 'rejected encoded routes must not mutate notification state');
+  const safeRead = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie, origin: 'http://evil.example' } });
+  assert.equal(safeRead.statusCode, 200, 'GET remains a safe Member read');
+  const safeHead = await app.inject({ method: 'HEAD', url: '/api/me', headers: { cookie, origin: 'http://evil.example' } });
+  assert.equal(safeHead.statusCode, 200, 'HEAD remains a safe Member read');
+  const malformed = await app.inject({ method: 'PATCH', url: '/api/%6de/notifications/%E0%A4%A/read', headers: { cookie, origin: 'http://evil.example' }, payload: {} });
+  assert.ok([400, 404].includes(malformed.statusCode), malformed.body);
+  const malformedSlash = await app.inject({ method: 'POST', url: '/api/me%2fnotifications/read-all', headers: { cookie, origin: 'http://evil.example' }, payload: {} });
+  assert.equal(malformedSlash.statusCode, 404);
+  for (const url of ['/api//me/notifications/read-all', '/api/me/notifications/read-all/', '/api/me/./notifications/read-all', '/api/me/notifications/read-all?clientId=other']) {
+    const result = await app.inject({ method: 'POST', url, headers: { cookie, origin: 'http://evil.example' }, payload: {} });
+    assert.ok([403, 404].includes(result.statusCode), `${url} must either be protected or not resolve to a route; got ${result.statusCode}`);
+  }
+});
+
 test('revoked subjects, inactive persons, archived clients, and missing facets fail closed', async () => {
   const revokedSubjectMember = await createMember('Revoked subject', `code-revoked-${randomUUID()}`);
   const inactivePersonMember = await createMember('Inactive person', `code-inactive-${randomUUID()}`);
