@@ -60,16 +60,64 @@ test('draft plan can be activated from the catalog and the action disappears aft
   };
   render(React.createElement(ServicesPage));
   await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(await screen.findByRole('button', { name: 'Activar plan' }));
+  fireEvent.click((await screen.findAllByRole('button', { name: 'Activar plan' }))[0]);
   await screen.findByText('Plan activado y disponible para asignarlo a clientes.');
   assert.equal(activationCount, 1);
   assert.equal(screen.queryByRole('button', { name: 'Activar plan' }), null);
 });
 
+test('service navigation filters a scannable plan table while details retain rights modules and version actions', async () => {
+  const fuerza={...service,id:'fuerza-service',name:'Fuerza',planCount:2};
+  const funcional={...service,id:'funcional-service',name:'Funcional',planCount:1};
+  const quota={id:'quota-1',rightType:'period_quota',serviceId:fuerza.id,quotaScope:'per_service',quantity:3,period:'week',periodMode:'calendar',validDays:null,validDaysStartRule:null};
+  const access={id:'access-1',rightType:'service_access',serviceId:fuerza.id,quotaScope:null,quantity:null,period:null,periodMode:null,validDays:null,validDaysStartRule:null};
+  const featured={...plan,id:'plan-fuerza',name:'Fuerza 3 días',status:'active',currentVersion:4,kind:'recurring',renewalCadence:'monthly',basePriceCents:4000,services:[{id:fuerza.id,name:'Fuerza',area:area.name}],rights:[access,quota],modules:[{module:'reservations',accessLevel:'full',capabilities:['book']} ]};
+  const draft={...featured,id:'plan-fuerza-draft',name:'Fuerza prueba',status:'draft',currentVersion:1,basePriceCents:2500};
+  let draftActivated=false;
+  globalThis.fetch=async(url,options={})=>{
+    const path=String(url);
+    if(path.endsWith('/api/areas'))return response([area]);
+    if(path.endsWith('/api/services'))return response([fuerza,funcional]);
+    if(path.endsWith(`/api/services/${fuerza.id}/plans`))return response([featured,{...draft,status:draftActivated?'active':'draft'}]);
+    if(path.endsWith(`/api/services/${funcional.id}/plans`))return response([{...featured,id:'plan-funcional',name:'Funcional mensual',services:[{id:funcional.id,name:'Funcional',area:area.name}]}]);
+    if(path.endsWith(`/api/plans/${draft.id}/activate`)&&options.method==='POST'){draftActivated=true;return response({id:draft.id,status:'active'});}
+    throw new Error(`Unexpected request ${options.method??'GET'} ${path}`);
+  };
+  render(React.createElement(ServicesPage));
+  await screen.findByRole('heading',{name:'Fuerza'});
+  assert.ok(screen.getAllByRole('button',{name:/Funcional/}).length>=1);
+  await screen.findByRole('columnheader',{name:'Sesiones / límite'});
+  const table=screen.getAllByRole('table').find(item=>item.classList.contains('plan-catalog-table'));
+  assert.ok(within(table).getByRole('columnheader',{name:'Sesiones / límite'}));
+  assert.equal(within(table).getAllByText('Fuerza 3 días').length,1);
+  assert.equal(within(table).getAllByText('3 accesos / semana').length,2);
+  assert.equal(within(table).getAllByText('Recurrente · mensual').length,2);
+  assert.ok(within(table).getByText(/40,00/));
+  assert.ok(within(table).getByText('Activo'));
+  fireEvent.click(within(table).getAllByRole('button',{name:'Detalles'})[0]);
+  const details=await within(table).findByRole('region',{name:'Detalles de Fuerza 3 días'});
+  assert.ok(within(details).getByText('Cuota por periodo'));
+  assert.ok(within(details).getByText('Reservas'));
+  assert.ok(within(details).getByText('Versión 4'));
+  assert.ok(within(details).getByRole('button',{name:'Crear nueva versión'}));
+  globalThis.window.confirm=()=>true;
+  fireEvent.click((await screen.findAllByRole('button',{name:'Activar plan'}))[0]);
+  await screen.findByText('Plan activado y disponible para asignarlo a clientes.');
+  assert.equal(screen.queryByRole('button',{name:'Activar plan'}),null);
+  globalThis.window.matchMedia=()=>({matches:false,addListener(){},removeListener(){},addEventListener(){},removeEventListener(){}});
+  fireEvent.click(screen.getAllByRole('button',{name:/Funcional/})[0]);
+  assert.ok(await screen.findByRole('heading',{name:'Funcional'}));
+  await waitFor(()=>{
+    const currentTable=document.querySelector('.plan-catalog-table');
+    assert.ok(currentTable.textContent.includes('Funcional mensual'));
+    assert.equal(currentTable.textContent.includes('Fuerza 3 días'),false);
+  });
+});
+
 test('draft activation errors remain visible and the plan stays available for correction', async () => {
   globalThis.window.confirm=()=>true;
   globalThis.fetch=async url=>String(url).endsWith('/api/areas')?response([area]):String(url).endsWith('/api/services')?response([service]):String(url).endsWith(`/api/services/${service.id}/plans`)?response([plan]):String(url).endsWith(`/api/plans/${plan.id}/activate`)?response({error:'service_not_active',message:'El servicio incluido está en borrador.'},409):Promise.reject(new Error(`Unexpected ${url}`));
-  render(React.createElement(ServicesPage));await screen.findByRole('heading',{name:service.name});fireEvent.click(await screen.findByRole('button',{name:'Activar plan'}));assert.ok(await screen.findByText('El servicio incluido está en borrador.'));assert.ok(screen.getByRole('button',{name:'Activar plan'}));
+  render(React.createElement(ServicesPage));await screen.findByRole('heading',{name:service.name});fireEvent.click((await screen.findAllByRole('button',{name:'Activar plan'}))[0]);assert.ok(await screen.findByText('El servicio incluido está en borrador.'));assert.ok(screen.getAllByRole('button',{name:'Activar plan'}).length>=1);
 });
 
 test('service and plan dialogs focus their first field, close on Escape and restore focus to the opener', async () => {

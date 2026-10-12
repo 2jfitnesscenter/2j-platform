@@ -72,8 +72,10 @@ test('calendar exposes current-week birthdays only to client managers and permit
   const weekStart='2026-10-12';
   const adminWeek=await admin.inject({method:'GET',url:`/api/calendar/week?weekStart=${weekStart}`});
   assert.ok(adminWeek.json().birthdays.some(item=>item.clientId===client.id&&item.birthdayDate==='2026-10-12'));
+  assert.equal(Number.isInteger(adminWeek.json().birthdaysTodayCount),true);
   const trainerWeek=await trainer.inject({method:'GET',url:`/api/calendar/week?weekStart=${weekStart}`});
   assert.deepEqual(trainerWeek.json().birthdays,[]);
+  assert.equal(trainerWeek.json().birthdaysTodayCount,0,'today count remains permission-filtered');
   const noBirthDate=await admin.inject({method:'POST',url:'/api/clients',headers:{'idempotency-key':randomUUID()},payload:{firstName:'Sin',lastName:`Fecha ${randomUUID().slice(0,8)}`}});
   assert.equal(noBirthDate.statusCode,201);
   assert.equal(noBirthDate.json().birthDate,null);
