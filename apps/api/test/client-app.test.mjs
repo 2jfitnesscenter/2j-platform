@@ -6,6 +6,8 @@ import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
 import { createBookingEligibilityResolver } from '../src/booking-eligibility.ts';
 
+process.env.NODE_ENV ??= 'test';
+
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL client-app integration tests cannot be skipped.');
 const sql = postgres(process.env.DATABASE_URL, { max: 12, connect_timeout: 5 });
 await migrateDatabase(sql);

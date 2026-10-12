@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+
+process.env.NODE_ENV ??= 'test';
 import { materializeCalendarTemplates } from '../src/calendar-materializer.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
