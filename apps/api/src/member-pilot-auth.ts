@@ -46,7 +46,7 @@ export function createMemberPilotAuth(database: DB, options: { enabled: boolean;
       if (matches[0]) await tx`UPDATE platform_member_sessions SET last_seen_at=now() WHERE session_hash=${digest} AND revoked_at IS NULL`;
       return matches;
     });
-    return rows[0] ? { clientId: rows[0].clientId } : null;
+    return rows[0] ? { clientId: rows[0].clientId, personId: rows[0].personId } : null;
   }
 
   function setCookie(reply: any, value: string, request: FastifyRequest, maxAge: number) {

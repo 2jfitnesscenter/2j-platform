@@ -44,6 +44,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
     if (url === '/api/me' && loggedIn) return new Response(JSON.stringify({ profile: { id: 'd0700000-0000-4000-8000-000000000001', firstName: 'María', lastName: 'González', email: null, status: 'active' } }), { headers: { 'content-type': 'application/json' } });
     if (url === '/api/me' && !loggedIn) return new Response(JSON.stringify({ error: 'client_authentication_required' }), { status: 401, headers: { 'content-type': 'application/json' } });
     if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
+    if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }));
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }));
     if (String(url).startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [] }));
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]));
@@ -128,6 +129,7 @@ test('client can choose a center-local day, review a session, and retry a lost r
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '55555555-5555-4555-8555-555555555555', firstName: 'María', lastName: 'González', email: 'maria@example.test', status: 'active' } }), { status: 200 });
     if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [{ id: detail.availableAlternatives[0].assignmentId, planName: 'Bono 10', kind: 'session_pack', status: 'active', startsOn: days[0].date, endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', quantity: 10, balance: 4 }], modules: [] }] }), { status: 200 });
+    if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: true }), { status: 200 });
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }), { status: 200 });
     if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ timezone: 'Atlantic/Canary', sessions: [session] }), { status: 200 });
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]), { status: 200 });
@@ -157,6 +159,43 @@ test('client can choose a center-local day, review a session, and retry a lost r
   cleanup(); dom.window.close();
 });
 
+test('Member outside the booking cohort can browse sessions but sees a clear disabled-action state', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document }, navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '12111111-1111-4111-8111-111111111111' } },
+  });
+  const { render, cleanup, fireEvent, within, ClientApp, clientAppTestHelpers } = await uiHarness();
+  const days = clientAppTestHelpers.weekRangeDays();
+  const startsAt = new Date(`${days[1].date}T19:00:00+01:00`).toISOString();
+  const session = { id: '13111111-1111-4111-8111-111111111111', serviceId: '14111111-1111-4111-8111-111111111111', serviceName: 'Fuerza', areaName: 'La Sala', professionalName: null, startsAt, durationMinutes: 45, capacity: 8, occupiedCount: 2, waitlistCount: 0, isIndividual: false, status: 'scheduled', myReservationStatus: null, myWaitlistStatus: null };
+  let mutationAttempted = false;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '15111111-1111-4111-8111-111111111111', firstName: 'Bea', lastName: 'Cliente', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
+    if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }));
+    if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }));
+    if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [session] }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]));
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    if (url === '/api/me/notifications') return new Response(JSON.stringify({ items: [] }));
+    if (url === `/api/me/sessions/${session.id}`) return new Response(JSON.stringify({ session: { ...session, eligible: true, canJoinWaitlist: false, availableAlternatives: [] } }));
+    if (init.method === 'POST' || init.method === 'PATCH') mutationAttempted = true;
+    throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
+  };
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Bea' }));
+  fireEvent.click(within(ui.getByRole('navigation', { name: 'Navegación principal' })).getByRole('button', { name: 'Reservar', exact: true }));
+  fireEvent.click(ui.container.querySelectorAll('.day-chip')[1]);
+  assert.ok(await ui.findByRole('button', { name: /Fuerza/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Fuerza/ }));
+  assert.ok(within(await ui.findByRole('dialog')).getByText('Las reservas desde la app todavía no están activadas para tu cuenta.'));
+  assert.equal(ui.getByRole('button', { name: 'Confirmar reserva' }).disabled, true);
+  assert.equal(mutationAttempted, false);
+  cleanup(); dom.window.close();
+});
+
 test('profile completes only the signed-in client’s form and records an explicit consent acceptance', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, {
@@ -172,6 +211,7 @@ test('profile completes only the signed-in client’s form and records an explic
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', firstName: 'Lucía', lastName: 'Díaz', email: null, status: 'active' } }), { status: 200 });
     if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }), { status: 200 });
+    if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }), { status: 200 });
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }), { status: 200 });
     if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ timezone: 'Atlantic/Canary', sessions: [] }), { status: 200 });
     if (url === '/api/client-portal/form-assignments') return new Response(JSON.stringify(formSubmitted ? [] : [assignment]), { status: 200 });
