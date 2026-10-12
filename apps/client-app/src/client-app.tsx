@@ -102,8 +102,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function ClientApp({ previewModeOverride }: { previewModeOverride?: boolean } = {}) {
+export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { previewModeOverride?: boolean; pilotLoginEnabledOverride?: boolean } = {}) {
   const previewMode = previewModeOverride ?? isHubPreviewEnabled(import.meta.env?.VITE_2J_HUB_PREVIEW, typeof window === 'undefined' ? '' : window.location.search);
+  const pilotLoginEnabled = !previewMode && (pilotLoginEnabledOverride ?? import.meta.env?.VITE_2J_PILOT_MEMBER_LOGIN === 'true');
   const pilotToolsEnabled = previewMode || import.meta.env?.DEV === true || import.meta.env?.VITE_2J_PILOT_TOOLS === 'true';
   const preview = React.useMemo(() => previewMode ? makeHubPreview() : null, [previewMode]);
   const [view, setView] = React.useState<View>('home');
@@ -121,6 +122,8 @@ export function ClientApp({ previewModeOverride }: { previewModeOverride?: boole
   const notificationInFlight = React.useRef(new Set<string>());
   const [loading, setLoading] = React.useState(!previewMode);
   const [error, setError] = React.useState('');
+  const [pilotCode, setPilotCode] = React.useState('');
+  const [loginError, setLoginError] = React.useState('');
   const [busy, setBusy] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState('');
   const [selectedSession, setSelectedSession] = React.useState<ClientSession | null>(null);
@@ -156,6 +159,18 @@ export function ClientApp({ previewModeOverride }: { previewModeOverride?: boole
     } catch (cause) { const message = cause instanceof Error ? cause.message : ''; setError(message === 'client_authentication_required' ? message : labels[message] ?? 'No se han podido cargar tus datos.'); }
     finally { setLoading(false); }
   }, [preview, previewMode, selectedDate]);
+  const login = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setLoginError(''); setBusy('login');
+    try { await api('/api/pilot/member/login', { method: 'POST', body: JSON.stringify({ code: pilotCode }) }); setPilotCode(''); await refresh(); }
+    catch { setLoginError('No se ha podido iniciar sesión. Comprueba el código e inténtalo de nuevo.'); }
+    finally { setBusy(null); }
+  };
+  const logout = async () => {
+    setBusy('logout');
+    try { await api('/api/pilot/member/logout', { method: 'POST', body: '{}' }); }
+    catch { setMessage('No se pudo cerrar la sesión; vuelve a intentarlo.'); return setBusy(null); }
+    setProfile(null); setMembership([]); setReservations([]); setWaitlist([]); setSessions([]); setForms([]); setConsents([]); setNotifications([]); setError('client_authentication_required'); setLoading(false); setView('home'); setBusy(null);
+  };
   React.useEffect(() => { void refresh(); }, [refresh]);
   React.useEffect(() => {
     if (!selectedSession && !selectedForm && !selectedConsent) return;
@@ -276,10 +291,11 @@ export function ClientApp({ previewModeOverride }: { previewModeOverride?: boole
     catch { setMessage('No se pudo copiar la información de diagnóstico en este navegador.'); }
   };
   return <div className="client-app hub-theme">
-    <header className="client-header"><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><div className="client-header-actions">{previewMode&&<span className="preview-pill">Vista previa</span>}<button className="notification-bell" aria-label={`Notificaciones${unreadNotifications?`, ${unreadNotifications} sin leer`:''}`} onClick={()=>void openNotifications()}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>{unreadNotifications>0&&<span aria-hidden="true">{unreadNotifications>99?'99+':unreadNotifications}</span>}</button><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile?.firstName?.slice(0,1) ?? '·'}</button></div></header>
+    <header className="client-header"><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><div className="client-header-actions">{previewMode&&<span className="preview-pill">Vista previa</span>}{pilotLoginEnabled && profile && <button className="text-button" type="button" onClick={() => void logout()} disabled={busy === 'logout'}>{busy === 'logout' ? 'Saliendo…' : 'Cerrar sesión'}</button>}{profile && <><button className="notification-bell" aria-label={`Notificaciones${unreadNotifications?`, ${unreadNotifications} sin leer`:''}`} onClick={()=>void openNotifications()}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>{unreadNotifications>0&&<span aria-hidden="true">{unreadNotifications>99?'99+':unreadNotifications}</span>}</button><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile.firstName.slice(0,1)}</button></>}</div></header>
     <main className="client-main" id="main-content">
       {loading && <div className="loading-card" role="status"><span className="spinner"/> Cargando tu espacio…</div>}
-      {!loading && error && <section className="state-card error-card" role="alert"><span className="state-icon">!</span><h1>Tu espacio no está disponible ahora</h1><p>{error === 'client_authentication_required' ? 'Inicia sesión con tu cuenta para consultar tus reservas y derechos.' : 'Comprueba tu conexión e inténtalo de nuevo.'}</p><button className="button primary" onClick={() => void refresh()}>Intentar de nuevo</button></section>}
+      {!loading && error === 'client_authentication_required' && pilotLoginEnabled && <section className="state-card error-card" aria-labelledby="member-login-title"><span className="state-icon">2J</span><p className="eyebrow">PILOTO LOCAL</p><h1 id="member-login-title">Tu espacio, a tu manera</h1><p>Introduce el código de acceso de tu piloto para consultar tus reservas y derechos.</p><form className="member-login-form" onSubmit={event => void login(event)}><label className="field-label" htmlFor="member-pilot-code">Código de acceso</label><input id="member-pilot-code" name="code" type="password" autoComplete="one-time-code" value={pilotCode} onChange={event => setPilotCode(event.target.value)} required maxLength={128}/>{loginError && <p role="alert" className="inline-message">{loginError}</p>}<button className="button primary" disabled={busy === 'login' || !pilotCode}>{busy === 'login' ? 'Entrando…' : 'Iniciar sesión'}</button></form></section>}
+      {!loading && error && !(error === 'client_authentication_required' && pilotLoginEnabled) && <section className="state-card error-card" role="alert"><span className="state-icon">!</span><h1>Tu espacio no está disponible ahora</h1><p>{error === 'client_authentication_required' ? 'Inicia sesión con tu cuenta para consultar tus reservas y derechos.' : 'Comprueba tu conexión e inténtalo de nuevo.'}</p><button className="button primary" onClick={() => void refresh()}>Intentar de nuevo</button></section>}
       {!loading && !error && profile && <>
         {message && view !== 'bookings' && view !== 'notifications' && !selectedSession && <p className="inline-message page-message" role="status">{message}</p>}
         {previewMode&&<p className="preview-note" role="status">Datos ficticios · las reservas y los trámites no se envían.</p>}

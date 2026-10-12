@@ -29,6 +29,43 @@ test('client app fails closed without a client session and offers retry', async 
   cleanup(); dom.window.close();
 });
 
+test('pilot member login uses an opaque server session and logout returns to sign-in', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://127.0.0.1:5173/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '00000000-0000-4000-8000-000000000001' } },
+  });
+  let loggedIn = false; const requests = [];
+  globalThis.fetch = async (url, init = {}) => {
+    requests.push({ url: String(url), init });
+    if (url === '/api/pilot/member/login') { assert.deepEqual(JSON.parse(init.body), { code: '2j-member-a-local' }); loggedIn = true; return new Response(JSON.stringify({ expiresAt: new Date(Date.now() + 3_600_000).toISOString() }), { headers: { 'content-type': 'application/json' } }); }
+    if (url === '/api/pilot/member/logout') { loggedIn = false; return new Response(null, { status: 204 }); }
+    if (url === '/api/me' && loggedIn) return new Response(JSON.stringify({ profile: { id: 'd0700000-0000-4000-8000-000000000001', firstName: 'María', lastName: 'González', email: null, status: 'active' } }), { headers: { 'content-type': 'application/json' } });
+    if (url === '/api/me' && !loggedIn) return new Response(JSON.stringify({ error: 'client_authentication_required' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
+    if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }));
+    if (String(url).startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [] }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]));
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    if (url === '/api/me/notifications') return new Response(JSON.stringify({ items: [] }));
+    return new Response('{}');
+  };
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp, { pilotLoginEnabledOverride: true }));
+  const code = await ui.findByLabelText('Código de acceso');
+  fireEvent.change(code, { target: { value: '2j-member-a-local' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Iniciar sesión' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, María' }));
+  const loginRequest = requests.find(item => item.url === '/api/pilot/member/login');
+  assert.equal(loginRequest.init.credentials, 'include');
+  assert.equal(JSON.stringify(loginRequest.init.body).includes('clientId'), false);
+  fireEvent.click(ui.getByRole('button', { name: 'Cerrar sesión' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Tu espacio, a tu manera' }));
+  assert.equal(requests.some(item => item.url === '/api/pilot/member/logout' && item.init.credentials === 'include'), true);
+  cleanup(); dom.window.close();
+});
+
 test('dates and times are formatted in Atlantic/Canary', () => {
   return import('../src/client-app.tsx').then(({ clientAppTestHelpers }) => {
   assert.equal(clientAppTestHelpers.timeLabel('2026-10-10T09:00:00.000Z'), '10:00');

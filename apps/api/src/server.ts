@@ -10,6 +10,7 @@ import { registerClientPlanRoutes } from './client-plans.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
+import { createMemberPilotAuth } from './member-pilot-auth.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
@@ -99,6 +100,8 @@ export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
+  memberPilotAuthEnabled?: boolean;
+  memberAppOrigin?: string | null;
   trainingLinkingEnabled?: boolean;
   trainingVerifiedLinkingEnabled?: boolean;
   trainingServiceCallsEnabled?: boolean;
@@ -109,6 +112,9 @@ export type ServerOptions = {
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
+  if (options.memberPilotAuthEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) {
+    throw new Error('Pilot member authentication is restricted to development/test environments.');
+  }
   const app = Fastify({
     logger: options.logger ?? { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/' }; } } },
     bodyLimit: 16_384,
@@ -126,14 +132,26 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   });
   const { client } = createDatabase(databaseUrl);
   const authorizationResolver = options.authorizationResolver ?? (async () => null);
-  const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (async () => null);
+  const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null });
+  const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
   const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
-  const originHost = new URL(allowedOrigin).hostname.replace(/^\[|\]$/g, '');
-  if (!['127.0.0.1', 'localhost', '::1'].includes(originHost)) throw new Error('CORS_ORIGIN must be loopback-only until runtime authentication is approved.');
-  app.register(cors, { origin: allowedOrigin, methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders: ['content-type', 'idempotency-key'] });
+  const memberOrigin = options.memberAppOrigin ?? null;
+  for (const configuredOrigin of [allowedOrigin, ...(memberOrigin ? [memberOrigin] : [])]) {
+    const parsedOrigin = new URL(configuredOrigin);
+    const originHost = parsedOrigin.hostname.replace(/^\[|\]$/g, '');
+    if (!['127.0.0.1', 'localhost', '::1'].includes(originHost) || parsedOrigin.origin !== configuredOrigin.replace(/\/$/, '')) throw new Error('CORS_ORIGIN and MEMBER_APP_ORIGIN must be exact loopback origins.');
+  }
+  if (options.memberPilotAuthEnabled && !memberOrigin) throw new Error('MEMBER_APP_ORIGIN is required when pilot member authentication is enabled.');
+  const corsOrigins = [...new Set([allowedOrigin, ...(memberOrigin ? [memberOrigin] : [])])];
+  app.register(cors, { origin: corsOrigins, credentials: true, methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders: ['content-type', 'idempotency-key'] });
   app.addHook('onRequest', async (request, reply) => {
     const host = request.hostname?.replace(/^\[|\]$/g, '').toLowerCase();
     if (!host || !['127.0.0.1', 'localhost', '::1'].includes(host)) return reply.code(400).send({ error: 'invalid_host' });
+    // Fastify resolves percent-encoded path characters before setting routeOptions.url.
+    // Use the matched route so alternate encodings cannot skip the Member CSRF policy.
+    const routePath = request.routeOptions.url ?? '';
+    const memberMutation = routePath.startsWith('/api/me/') || routePath.startsWith('/api/client-portal/');
+    if (memberPilotAuth.enabled && memberMutation && !['GET','HEAD','OPTIONS'].includes(request.method) && !memberPilotAuth.csrfAllowed(request)) return reply.code(403).send({ error: 'origin_rejected' });
   });
   app.addHook('onClose', async () => { await client.end(); });
   registerClientRoutes(app, client, authorizationResolver);
@@ -142,6 +160,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
   registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver);
   registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver);
+  memberPilotAuth.register(app);
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
@@ -463,6 +482,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   if (localDemoClientId && !z.string().uuid().safeParse(localDemoClientId).success) throw new Error('LOCAL_DEMO_CLIENT_ID must be a client UUID.');
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
+    memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
+    memberAppOrigin: process.env.MEMBER_APP_ORIGIN ?? null,
     ...(localDemoClientId ? { clientAuthorizationResolver: async () => ({ clientId: localDemoClientId.toLowerCase() }) } : {}),
   });
   await app.listen({ host, port: Number(process.env.PORT ?? 3100) });

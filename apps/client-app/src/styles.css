@@ -100,6 +100,8 @@ button:focus-visible,a:focus-visible,select:focus-visible { outline:3px solid va
 .sheet-capacity { display:flex; align-items:center; justify-content:space-between; min-height:60px; padding:0 13px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); background:var(--2j-color-surface-subtle); font-size:13px; }
 .sheet-capacity strong { font-size:23px; }
 .field-label { display:grid; gap:7px; font-size:13px; font-weight:var(--2j-type-weight-semibold); }
+.member-login-form { width:min(100%,360px); display:grid; gap:12px; text-align:left; }
+.member-login-form input { width:100%; min-height:48px; padding:10px 12px; border:1px solid var(--2j-color-border-strong); border-radius:var(--2j-radius-md); background:var(--2j-color-surface); color:var(--2j-color-text-primary); }
 .field-label select { min-height:48px; padding:0 12px; border:1px solid var(--2j-color-border-strong); border-radius:var(--2j-radius-md); background:var(--2j-color-surface); color:var(--2j-color-text-primary); }
 .eligibility-note,.inline-message { margin:0; padding:12px; border-radius:var(--2j-radius-md); background:var(--2j-color-surface-subtle); color:var(--2j-color-text-secondary); font-size:13px; line-height:1.45; }
 .sheet-footnote { margin:0; color:var(--2j-color-text-secondary); font-size:11px; line-height:1.5; }
@@ -269,7 +271,7 @@ body:has(.client-app.hub-theme) { min-width:320px; background:#0B0F12; color:#F4
 .hub-theme .notification-item.is-read { opacity:.74; }
 .hub-theme .profile-avatar { background:#1B3029; color:#8CE2BC; }
 .hub-theme .consent-copy { background:#182125; }
-.hub-theme :is(.form-field input,.form-field select,.form-field textarea,.field-label input,.field-label select) { border-color:#425258; background:#101719; color:#F4F6F8; }
+.hub-theme :is(.form-field input,.form-field select,.form-field textarea,.field-label input,.field-label select,.member-login-form input) { border-color:#425258; background:#101719; color:#F4F6F8; }
 .hub-theme .sheet-close { border-color:#39474B; background:#182125; color:#F4F6F8; }
 .hub-theme .session-sheet { border-color:#354347; background:#13191D; }
 .hub-theme .inline-message,.hub-theme .eligibility-note { background:#1A2528; color:#C6D0D0; }
