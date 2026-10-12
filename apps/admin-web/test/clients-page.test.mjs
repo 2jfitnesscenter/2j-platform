@@ -60,6 +60,7 @@ test('creates a client only when the server grants manage capability and refresh
   await screen.findByText('Aún no hay clientes');
   fireEvent.click(screen.getByRole('button', { name: /crear primer cliente/i }));
   const dialog = await screen.findByRole('dialog', { name: 'Nuevo cliente' });
+  assert.equal(within(dialog).getAllByLabelText('Fecha de nacimiento (opcional)').length, 1);
   fireEvent.change(within(dialog).getByLabelText('Nombre'), { target: { value: 'Ada' } });
   fireEvent.change(within(dialog).getByLabelText('Apellidos'), { target: { value: 'Lovelace' } });
   fireEvent.change(within(dialog).getByLabelText('Email (opcional)'), { target: { value: 'ada@example.test' } });
@@ -72,7 +73,29 @@ test('Admin client edit saves optional birth date through the protected profile 
   let saved;
   const profileWithDob={...profile,client:{...client,birthDate:'1990-04-06'}};
   globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`)&&options.method==='PATCH'){saved=JSON.parse(options.body);return response({...profileWithDob.client,...saved});}if(path.endsWith(`/api/clients/${client.id}`))return response(profileWithDob);throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
-  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('button',{name:'Editar datos'}));const dialog=await screen.findByRole('dialog',{name:'Editar datos del cliente'});assert.equal(within(dialog).getByLabelText('Fecha de nacimiento (opcional)').value,'1990-04-06');fireEvent.change(within(dialog).getByLabelText('Nombre'),{target:{value:'Marta'}});fireEvent.click(within(dialog).getByRole('button',{name:'Guardar cambios'}));await waitFor(()=>assert.ok(saved));assert.equal(saved.birthDate,'1990-04-06');
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('button',{name:'Editar datos'}));const dialog=await screen.findByRole('dialog',{name:'Editar datos del cliente'});assert.equal(within(dialog).getAllByLabelText('Fecha de nacimiento (opcional)').length,1);assert.equal(within(dialog).getByLabelText('Fecha de nacimiento (opcional)').value,'1990-04-06');fireEvent.change(within(dialog).getByLabelText('Nombre'),{target:{value:'Marta'}});fireEvent.click(within(dialog).getByRole('button',{name:'Guardar cambios'}));await waitFor(()=>assert.ok(saved));assert.equal(saved.birthDate,'1990-04-06');
+});
+
+test('Admin client creation submits the selected birth date exactly', async () => {
+  let submitted;
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith('/api/clients') && options.method === 'POST') { submitted = JSON.parse(options.body); return response({ ...client, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', firstName: submitted.firstName, lastName: submitted.lastName, birthDate: submitted.birthDate }, 201); }
+    if (path.includes('/api/clients?')) return response(listResponse([]));
+    if (path.endsWith('/cccccccc-cccc-4ccc-8ccc-cccccccccccc')) return response({ ...profile, client: { ...client, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', firstName: 'Ada', lastName: 'Lovelace', birthDate: '1985-12-10' } });
+    throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
+  };
+  render(React.createElement(ClientsPage));
+  await screen.findByText('Aún no hay clientes');
+  fireEvent.click(screen.getByRole('button', { name: /crear primer cliente/i }));
+  const dialog = await screen.findByRole('dialog', { name: 'Nuevo cliente' });
+  assert.equal(within(dialog).getAllByLabelText('Fecha de nacimiento (opcional)').length, 1);
+  fireEvent.change(within(dialog).getByLabelText('Nombre'), { target: { value: 'Ada' } });
+  fireEvent.change(within(dialog).getByLabelText('Apellidos'), { target: { value: 'Lovelace' } });
+  fireEvent.change(within(dialog).getByLabelText('Fecha de nacimiento (opcional)'), { target: { value: '1985-12-10' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Guardar' }));
+  await screen.findByRole('heading', { name: 'Ada Lovelace' });
+  assert.equal(submitted.birthDate, '1985-12-10');
 });
 
 test('fails closed when the server has no authorized session', async () => {
