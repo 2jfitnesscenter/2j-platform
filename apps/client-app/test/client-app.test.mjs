@@ -289,7 +289,7 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Juan' }));
   assert.ok(ui.getByText('Vista previa', { selector: '.preview-pill' }));
   assert.ok(ui.getByRole('heading', { name: 'Próxima reserva' }));
-  assert.ok(ui.getByText('Nuevo horario del sábado'));
+  assert.ok(ui.getByText('Bienvenido a tu espacio 2J'));
   assert.ok(ui.getByText('Funcional'));
   assert.ok(ui.getByText('Confirmada'));
 
@@ -363,6 +363,7 @@ test('Inicio V2 shows the no-upcoming-reservation state and neutral news empty s
     if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [] }));
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]));
     if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
     if (url.startsWith('/api/me/notifications')) return new Response(JSON.stringify({ items: [] }));
     throw new Error(`Unexpected request ${url}`);
   };
@@ -370,7 +371,43 @@ test('Inicio V2 shows the no-upcoming-reservation state and neutral news empty s
   const ui = render(React.createElement(ClientApp));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Eva' }));
   assert.ok(ui.getByText('No tienes ninguna reserva próxima.'));
-  assert.ok(ui.getByText('Aquí aparecerán las noticias y avisos destacados del centro.'));
+  assert.ok(ui.getByText('Ahora mismo no hay noticias publicadas.'));
   assert.equal(ui.container.querySelectorAll('.home-news,.home-book-cta,.home-next-booking').length, 3);
   cleanup(); dom.window.close();
+});
+
+test('Inicio reads Center News independently from notifications and opens a newest-first list and detail under Inicio', async()=>{
+  const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/'});
+  Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage}});
+  const olderFeatured={id:'11111111-1111-4111-8111-111111111111',title:'Aviso importante del centro',body:'Este contenido viene del dominio de noticias.',featured:true,publishedAt:'2026-10-01T10:00:00Z'};
+  const newer={id:'22222222-2222-4222-8222-222222222222',title:'Novedad más reciente',body:'Otra noticia publicada.',featured:false,publishedAt:'2026-10-02T10:00:00Z'};
+  let newsRequests=0;let notificationListRequests=0;
+  globalThis.fetch=async input=>{
+    const url=String(input);
+    if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'33333333-3333-4333-8333-333333333333',firstName:'Eva',lastName:'News',email:null,status:'active'}}));
+    if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[]}));
+    if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));
+    if(url==='/api/me/booking-access')return new Response(JSON.stringify({enabled:false}));
+    if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));
+    if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));
+    if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:0}));
+    if(url==='/api/me/news'){newsRequests++;return new Response(JSON.stringify({items:[newer,olderFeatured],featured:olderFeatured}));}
+    if(url.startsWith('/api/me/notifications')){notificationListRequests++;return new Response(JSON.stringify({items:[{id:'44444444-4444-4444-8444-444444444444',type:'center_notice',title:'No debe aparecer en Noticias',body:'Aviso de sistema.',createdAt:'2026-10-03T10:00:00Z',readAt:null,deeplink:null}]}));}
+    throw new Error(`Unexpected request ${url}`);
+  };
+  const {render,cleanup,fireEvent,within,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading',{name:'Hola, Eva'}));
+  assert.ok(ui.getByRole('heading',{name:olderFeatured.title}));
+  assert.equal(ui.queryByText('No debe aparecer en Noticias'),null);
+  assert.equal(newsRequests,1);assert.equal(notificationListRequests,0);
+  const navigation=ui.getByRole('navigation',{name:'Navegación principal'});
+  fireEvent.click(ui.getByRole('button',{name:'Ver noticias'}));
+  assert.ok(await ui.findByRole('heading',{name:newer.title}));
+  assert.equal(within(navigation).getByRole('button',{name:'Inicio',exact:true}).getAttribute('aria-current'),'page');
+  fireEvent.click(ui.getAllByRole('button',{name:'Leer noticia'})[0]);
+  assert.ok(await ui.findByRole('heading',{name:newer.title,level:1}));
+  assert.equal(within(navigation).getByRole('button',{name:'Inicio',exact:true}).getAttribute('aria-current'),'page');
+  fireEvent.click(ui.getByRole('button',{name:/Volver a noticias/}));
+  assert.ok(await ui.findByRole('heading',{name:newer.title,level:2}));
+  cleanup();dom.window.close();
 });

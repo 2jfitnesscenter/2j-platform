@@ -84,6 +84,19 @@ test('permitted Communications navigation remains visible while moving between m
   await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Comunicación/ }).getAttribute('aria-current'), 'page'));
 });
 
+test('News management navigation is visible only when the server grants its capability', async()=>{
+  globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,news:true}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  await screen.findByText('0 sesiones hoy');
+  const nav=document.querySelector('.app-navigation');
+  assert.ok(within(nav).getByRole('link',{name:'Noticias'}));
+  cleanup();
+  globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,news:false}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
+  render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  await screen.findByText('0 sesiones hoy');
+  assert.equal(within(document.querySelector('.app-navigation')).queryByRole('link',{name:'Noticias'}),null);
+});
+
 test('compact sidebar preserves accessible navigation and can expand without losing the active section',async()=>{
   dom.window.localStorage.clear();
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response(capabilities):String(url).includes('/api/dashboard/command-center')?response(model):String(url).includes('/api/dashboard/preferences')?response({order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]}):response({groups:[]});

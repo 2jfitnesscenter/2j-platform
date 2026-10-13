@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0.0",
-  "source": "DECISIONS_2J.md; calendar capability grants and 2J-073 entitlement role grants approved by Juanjo",
+  "source": "DECISIONS_2J.md; calendar and 2J-073 entitlement role grants; 2J-087 Center News management restricted to Admin",
   "knownPermissions": [
     "clients.read",
     "clients.manage",
@@ -25,6 +25,8 @@
     "documents.read",
     "documents.manage",
     "documents.requirement.override",
+    "news.read",
+    "news.manage",
     "timeclock.read",
     "reservations.manage",
     "reservations.attendance",
