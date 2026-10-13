@@ -2,6 +2,12 @@
 
 The member Hub is an additional surface; Training at `https://app.2jfitnesscenter.com` remains independent.
 
+## Member shell and Inicio V2
+
+Primary navigation is **Inicio · Búnker · Tienda · Perfil · Ajustes**. Inicio has three product blocks: Noticias, Reservar clase and Próxima reserva. News temporarily composes the newest `center_notice` from the Member notifications API; general notifications remain a separate domain and are available in the Buzón. This is an interim read source, not the final center-news model.
+
+The booking CTA opens the existing weekly booking browser, and Próxima reserva links to the existing bookings and history view. Búnker opens `https://app.2jfitnesscenter.com` in a new tab without iframe or SSO. Tienda is informational only and has no product, price, stock, cart or purchase behavior. Perfil retains the existing profile, membership/right balances, form and consent data; unsupported store/profile sections are omitted. Ajustes is an empty general-settings shell; internal pilot links appear there only in development/preview.
+
 ## Local fixture preview
 
 ```powershell

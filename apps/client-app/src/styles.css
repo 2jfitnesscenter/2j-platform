@@ -271,6 +271,46 @@ body:has(.client-app.hub-theme) { min-width:320px; background:#0B0F12; color:#F4
 .hub-theme .notification-item.is-read { opacity:.74; }
 .hub-theme .profile-avatar { background:#1B3029; color:#8CE2BC; }
 .hub-theme .consent-copy { background:#182125; }
+.home-news,.home-book-cta,.home-next-booking,.settings-empty,.store-category { min-width:0; margin:0 0 13px; padding:18px; border:1px solid #29363A; border-radius:18px; background:#13191D; }
+.home-block-heading { display:flex; align-items:center; gap:12px; }
+.home-block-heading h2 { margin:2px 0 0; font-size:18px; letter-spacing:-.025em; }
+.home-news { display:grid; gap:10px; }
+.home-news h3 { margin:3px 0 0; font-size:16px; }
+.home-news>p,.home-book-cta>div>p:not(.eyebrow),.next-booking-content>p,.settings-empty>p,.store-category>p { margin:0; color:#B1BEC2; font-size:13px; line-height:1.5; }
+.home-news .text-button,.home-next-booking>.text-button { justify-self:start; min-height:44px; }
+.home-book-cta { display:grid; gap:17px; padding:22px; border-color:#315847; background:radial-gradient(ellipse at 100% 0%,#174130 0%,transparent 54%),linear-gradient(145deg,#17251F,#13191D 75%); box-shadow:0 16px 38px rgb(0 0 0 / 20%); }
+.home-book-cta h2 { margin:4px 0; font-size:clamp(24px,6vw,32px); letter-spacing:-.04em; }
+.home-book-cta .button { width:100%; min-height:50px; }
+.home-next-booking { display:grid; gap:12px; }
+.next-booking-content { display:grid; gap:6px; padding:14px; border-radius:13px; background:#182125; }
+.next-booking-content .next-booking-service { display:flex; flex-wrap:wrap; align-items:center; gap:8px; color:#F4F6F8; font-size:16px; font-weight:700; }
+.individual-tag,.confirmed-pill { display:inline-flex; align-items:center; width:max-content; min-height:27px; padding:0 9px; border:1px solid #315847; border-radius:999px; background:#1B3029; color:#9DE5C7; font-size:11px; font-weight:700; }
+.store-categories { display:grid; gap:12px; }
+.store-category { min-height:150px; display:grid; align-content:start; justify-items:start; gap:9px; margin:0; padding:20px; background:radial-gradient(ellipse at 100% 0%,#19352B 0%,transparent 57%),#13191D; }
+.store-category h2 { margin:0; font-size:18px; }
+.store-category-icon,.settings-mark { display:grid; place-items:center; width:42px; height:42px; border:1px solid #335347; border-radius:13px; background:#172D25; color:#78DDB5; font-size:20px; }
+.store-notice { margin:14px 0; padding:13px 14px; border-left:3px solid #10B981; border-radius:0 10px 10px 0; background:#151F1C; color:#C2CECB; font-size:12px; line-height:1.5; }
+.settings-empty { display:grid; justify-items:start; gap:10px; min-height:190px; align-content:center; }
+.settings-empty h2 { margin:0; font-size:18px; }
+.profile-rights { display:grid; gap:3px; margin-top:4px; }
+.profile-rights span { color:#9EADAF; font-size:11px; }
+.pilot-access .pilot-links { grid-template-columns:1fr; }
+.hub-theme .bottom-nav { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.hub-theme .nav-button { min-height:56px; }
+.hub-theme .nav-button small { font-size:clamp(9px,2.5vw,11px); white-space:nowrap; }
+.hub-theme .nav-button.active { color:#7BE0B7; }
+.hub-theme .nav-button.active::before { background:#10B981; }
+@media (min-width:700px) {
+  .home-book-cta { grid-template-columns:minmax(0,1fr) auto; align-items:center; padding:24px; }
+  .home-book-cta .button { width:auto; min-width:235px; }
+  .store-categories { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .store-category { min-height:190px; align-content:center; padding:25px; }
+}
+@media (max-width:370px) {
+  .hub-theme .nav-button>span { width:26px; }
+  .hub-theme .nav-button small { font-size:9px; }
+  .home-news,.home-book-cta,.home-next-booking { padding:15px; }
+}
 .hub-theme :is(.form-field input,.form-field select,.form-field textarea,.field-label input,.field-label select,.member-login-form input) { border-color:#425258; background:#101719; color:#F4F6F8; }
 .hub-theme .sheet-close { border-color:#39474B; background:#182125; color:#F4F6F8; }
 .hub-theme .session-sheet { border-color:#354347; background:#13191D; }

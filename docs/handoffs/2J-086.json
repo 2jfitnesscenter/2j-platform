@@ -1,0 +1,76 @@
+{
+  "task": "2J-086",
+  "title": "Member Hub Shell + Inicio V2",
+  "repository": "2jfitnesscenter/2j-platform",
+  "status": "draft_pr_open_ci_pending",
+  "branch": "agent/codex/2J-086-member-hub-shell",
+  "base_sha": "60a5f57fcee5d2a78f65b573f399afe7f6aadfc0",
+  "implementation_commit_sha": "8ce4a9aee4adbe3d4d6cb50d88a6377df0cbaef9",
+  "pull_request": {
+    "number": 33,
+    "url": "https://github.com/2jfitnesscenter/2j-platform/pull/33",
+    "state": "OPEN",
+    "draft": true,
+    "merge": false
+  },
+  "draft": true,
+  "merge": false,
+  "backend_changes": false,
+  "training_changes": false,
+  "navigation": ["Inicio", "Búnker", "Tienda", "Perfil", "Ajustes"],
+  "home_primary_blocks": ["Noticias", "Reservar clase", "Próxima reserva"],
+  "news_source": {
+    "temporary": true,
+    "source": "newest visible center_notice in Member notifications",
+    "final_news_domain_decided": false,
+    "general_notifications_remain_separate": true
+  },
+  "next_booking": {
+    "selection": "nearest future reservation with reserved status and non-cancelled session",
+    "excludes": ["waitlist", "cancelled booking", "cancelled session", "past booking"],
+    "empty_state": "No tienes ninguna reserva próxima."
+  },
+  "destinations": {
+    "bunker_url": "https://app.2jfitnesscenter.com",
+    "bunker_new_tab": true,
+    "bunker_iframe": false,
+    "bunker_sso": false,
+    "store_categories": ["Nutrición", "Merchandising"],
+    "store_is_informational_only": true,
+    "profile_preserves": ["member profile", "membership and rights", "forms", "consents", "notification inbox"],
+    "settings_empty_shell": true,
+    "pilot_tools_dev_or_preview_only": true
+  },
+  "preview": {
+    "exact_query_opt_in": "one preview=1 parameter plus VITE_2J_HUB_PREVIEW=true",
+    "fictional_data_only": true,
+    "api_calls": 0,
+    "mutations": false
+  },
+  "validation": {
+    "client_tests": "10/10 pass",
+    "full_suite": "280/280 pass: packages 19, API/PostgreSQL 174, Admin 70, Client 10, Staff 7",
+    "typecheck": "9/9 pass",
+    "build": "9/9 pass",
+    "migrations": "29/29 checksummed on fresh disposable PostgreSQL; no migration changed in this task",
+    "audit": "pnpm audit --audit-level high: no known vulnerabilities",
+    "git_diff_check": "pass",
+    "github_ci": "pending final pushed head",
+    "preview": "Inicio, five primary destinations, weekly booking view, Bunker target, Store/Profile/Settings visually inspected",
+    "member_a": "synthetic disposable DB: login, browse, cancel reservation, join and leave waitlist",
+    "member_b": "synthetic disposable DB: read-only booking message shown; mutation gate unchanged",
+    "exact_viewport_smoke": "in-app browser viewport approximately 491x741; exact 1440/768/390 override/export unavailable; no captures claimed"
+  },
+  "independent_reviews": {
+    "claude": "pending final SHA",
+    "antigravity": "pending final SHA"
+  },
+  "deferred": [
+    "admin-managed News domain",
+    "Store catalog, inventory and commerce",
+    "unsupported unified Profile sections and profile synchronization",
+    "production identity, passkeys/MFA, recovery and account linking",
+    "Bunker SSO and Training integration",
+    "exact 1440/768/390 visual review"
+  ]
+}

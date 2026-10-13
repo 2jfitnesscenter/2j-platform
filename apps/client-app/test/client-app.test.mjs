@@ -80,6 +80,17 @@ test('dates and times are formatted in Atlantic/Canary', () => {
   assert.deepEqual(clientAppTestHelpers.resolveClientNotificationTarget('/profile/documents'), {view:'profile'});
   assert.deepEqual(clientAppTestHelpers.resolveClientNotificationTarget('/membership'), {view:'profile'});
   assert.deepEqual(clientAppTestHelpers.resolveClientNotificationTarget('/sessions/22222222-2222-4222-8222-222222222222'), {view:'book'});
+  const now = Date.parse('2026-10-10T10:00:00.000Z');
+  const booking = (id, status, startsAt, sessionStatus = 'scheduled') => ({ id, status, startsAt, sessionStatus });
+  assert.equal(clientAppTestHelpers.selectNextConfirmedBooking([
+    booking('waiting', 'waiting', '2026-10-10T11:00:00.000Z'),
+    booking('cancelled', 'cancelled_by_center', '2026-10-10T12:00:00.000Z'),
+    booking('past', 'reserved', '2026-10-10T09:00:00.000Z'),
+    booking('cancelled-session', 'reserved', '2026-10-10T12:30:00.000Z', 'cancelled_by_center'),
+    booking('later', 'reserved', '2026-10-10T13:00:00.000Z'),
+    booking('nearest', 'reserved', '2026-10-10T12:00:00.000Z'),
+  ], now)?.id, 'nearest');
+  assert.equal(clientAppTestHelpers.selectNextConfirmedBooking([booking('wait', 'waiting', '2026-10-10T11:00:00.000Z')], now), null);
   assert.equal(clientAppTestHelpers.resolveClientNotificationTarget('/unknown'), null);
   assert.equal(clientAppTestHelpers.resolveClientNotificationTarget('https://example.test/'), null);
   assert.equal(clientAppTestHelpers.resolveClientNotificationTarget('javascript:alert(1)'), null);
@@ -143,7 +154,7 @@ test('client can choose a center-local day, review a session, and retry a lost r
   };
   const ui = render(React.createElement(ClientApp));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, María' }));
-  fireEvent.click(within(ui.getByRole('navigation', { name: 'Navegación principal' })).getByRole('button', { name: 'Reservar', exact: true }));
+  fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Reservar' }));
   fireEvent.click(ui.container.querySelectorAll('.day-chip')[1]);
   assert.ok(await ui.findByRole('button', { name: /Fuerza funcional.*Alex Rivera/ }));
@@ -186,7 +197,7 @@ test('Member outside the booking cohort can browse sessions but sees a clear dis
   };
   const ui = render(React.createElement(ClientApp));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Bea' }));
-  fireEvent.click(within(ui.getByRole('navigation', { name: 'Navegación principal' })).getByRole('button', { name: 'Reservar', exact: true }));
+  fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   fireEvent.click(ui.container.querySelectorAll('.day-chip')[1]);
   assert.ok(await ui.findByRole('button', { name: /Fuerza/ }));
   fireEvent.click(ui.getByRole('button', { name: /Fuerza/ }));
@@ -277,32 +288,42 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   const ui = render(React.createElement(ClientApp, { previewModeOverride: true }));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Juan' }));
   assert.ok(ui.getByText('Vista previa', { selector: '.preview-pill' }));
-  assert.ok(ui.getByRole('heading', { name: 'Tu próxima visita' }));
-  assert.ok(ui.getByText('Plan 2J'));
+  assert.ok(ui.getByRole('heading', { name: 'Próxima reserva' }));
+  assert.ok(ui.getByText('Nuevo horario del sábado'));
+  assert.ok(ui.getByText('Funcional'));
+  assert.ok(ui.getByText('Confirmada'));
 
   const navigation = ui.getByRole('navigation', { name: 'Navegación principal' });
-  assert.deepEqual(within(navigation).getAllByRole('button').map(button => button.textContent.trim()), ['Inicio', 'Reservar', 'Entrenar', 'Centro', 'Perfil']);
+  assert.deepEqual(within(navigation).getAllByRole('button').map(button => button.textContent.trim()), ['Inicio', 'Búnker', 'Tienda', 'Perfil', 'Ajustes']);
+  assert.equal(within(navigation).getByRole('button', { name: 'Inicio', exact: true }).getAttribute('aria-current'), 'page');
+  for (const oldLabel of ['Reservar', 'Entrenar', 'Centro']) assert.equal(within(navigation).queryByRole('button', { name: oldLabel, exact: true }), null);
+  assert.equal(ui.container.querySelectorAll('.home-news,.home-book-cta,.home-next-booking').length, 3);
+  assert.equal(ui.getByText('Selecciona actividad, día y hora.' ) != null, true);
   assert.equal(within(navigation).queryByRole('button', { name: /notificaciones/i }), null);
 
-  fireEvent.click(within(navigation).getByRole('button', { name: 'Entrenar' }));
-  assert.ok(await ui.findByRole('heading', { name: 'Entrenamiento' }));
-  const trainingLink = ui.getByRole('link', { name: /Abrir entrenamiento/ });
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Búnker' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Búnker' }));
+  const trainingLink = ui.getByRole('link', { name: /Abrir Búnker/ });
   assert.equal(trainingLink.getAttribute('href'), 'https://app.2jfitnesscenter.com');
   assert.equal(trainingLink.getAttribute('target'), '_blank');
   assert.match(trainingLink.getAttribute('rel'), /noopener/);
 
-  fireEvent.click(within(navigation).getByRole('button', { name: 'Centro' }));
-  assert.ok(await ui.findByRole('heading', { name: 'Modo piloto 2J' }));
-  assert.ok(ui.getByRole('heading', { name: 'La Sala' }));
-  assert.ok(ui.getByRole('heading', { name: 'El Búnker' }));
-  assert.ok(ui.getByRole('heading', { name: 'El Estudio' }));
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Tienda' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Tienda' }));
+  assert.ok(ui.getByRole('heading', { name: 'Nutrición' }));
+  assert.ok(ui.getByRole('heading', { name: 'Merchandising' }));
+  assert.ok(ui.getByText('Catálogo informativo. Las compras se gestionan directamente en el centro.'));
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Ajustes' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Ajustes' }));
+  assert.ok(ui.getByRole('heading', { name: 'Herramientas del piloto' }));
   fireEvent.click(ui.getByRole('button', { name: 'Copiar información de diagnóstico' }));
   await ui.findByText('Información de diagnóstico copiada.');
   assert.match(clipboard[0], /mode=fixture-preview/);
   assert.match(clipboard[0], /viewport=\d+x\d+/);
   assert.doesNotMatch(clipboard[0], /Juan|Demo|token|cookie|secret/i);
 
-  fireEvent.click(within(navigation).getByRole('button', { name: 'Reservar' }));
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Inicio' }));
+  fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Reservar' }));
   fireEvent.click(ui.getByRole('button', { name: /Funcional.*La Sala/ }));
   assert.ok(await ui.findByRole('dialog'));
@@ -311,6 +332,10 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Perfil' }));
   assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
+  assert.ok(ui.getByText('Plan 2J'));
+  assert.ok(ui.getByRole('heading', { name: 'Cuotas y saldo' }));
+  assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));
+  assert.ok(ui.getByRole('heading', { name: 'Buzón' }));
   fireEvent.click(ui.getByRole('button', { name: 'Completar' }));
   assert.ok(await ui.findByRole('dialog', { name: 'Ficha de bienvenida' }));
   assert.equal(ui.getByRole('button', { name: 'Enviar documento' }).disabled, true);
@@ -319,5 +344,33 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   assert.ok(await ui.findByRole('dialog', { name: 'Normas del centro' }));
   assert.equal(ui.getByRole('button', { name: 'Confirmar aceptación' }).disabled, true);
   assert.deepEqual(requests, []);
+  cleanup(); dom.window.close();
+});
+
+test('Inicio V2 shows the no-upcoming-reservation state and neutral news empty state', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' } },
+  });
+  globalThis.fetch = async input => {
+    const url = String(input);
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Eva', lastName: 'Piloto', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
+    if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }));
+    if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [{ status: 'waiting', startsAt: new Date(Date.now() + 86_400_000).toISOString() }] }));
+    if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [] }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]));
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    if (url.startsWith('/api/me/notifications')) return new Response(JSON.stringify({ items: [] }));
+    throw new Error(`Unexpected request ${url}`);
+  };
+  const { render, cleanup, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Eva' }));
+  assert.ok(ui.getByText('No tienes ninguna reserva próxima.'));
+  assert.ok(ui.getByText('Aquí aparecerán las noticias y avisos destacados del centro.'));
+  assert.equal(ui.container.querySelectorAll('.home-news,.home-book-cta,.home-next-booking').length, 3);
   cleanup(); dom.window.close();
 });
