@@ -3,7 +3,7 @@
   "repository": "2jfitnesscenter/2j-platform",
   "baseSha": "b919624f381a5a7c29ca072e40cd942d0ff169f8",
   "branch": "agent/codex/2J-089-platform-bunker-contract",
-  "status": "local_validation_passed_pr_pending",
+  "status": "draft_prs_ci_passed_review_pending",
   "pullRequest": { "number": 36, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/36", "draft": true, "implementationHeadSha": "f4facbd7ab68e673459117e818e0bdf58ac36d60" },
   "mergeAllowed": false,
   "crossRepositoryTask": true,
