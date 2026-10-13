@@ -19,7 +19,7 @@ type FormAssignment = { id: string; status: string; required: boolean; dueAt: st
 type FormField = { id: string; label: string; type: string; required: boolean; options?: string[] };
 type FormDetail = FormAssignment & { description: string; sensitivity: string; fields: FormField[] };
 type Consent = { consentId: string; versionId: string; title: string; body: string; version: number; required: boolean; accepted: boolean };
-type Assignment = { id: string; planName: string; kind: string; status: string; startsOn: string; endsOn: string | null; lastEvent: string; rights: Array<{ rightType: string; quantity: number | null; balance: number | null }>; modules?: Array<{ module: string; accessLevel: string }> };
+type Assignment = { id: string; planName: string; kind: string; status: string; startsOn: string; endsOn: string | null; lastEvent: string; rights: Array<{ rightType: string; serviceId?: string | null; serviceName?: string | null; serviceStatus?: string | null; quantity: number | null; balance: number | null }>; modules?: Array<{ module: string; accessLevel: string }> };
 type ApiState = { profile: ClientProfile; membership: { assignments: Assignment[]; active: Assignment[] }; bookings: { reservations: Booking[]; waitlist: Booking[] }; sessions: ClientSession[] };
 
 export function isHubPreviewEnabled(buildFlag: unknown, search: string): boolean {
@@ -81,8 +81,8 @@ const makeHubPreview = (now = new Date()) => {
     myReservationStatus: 'reserved', myWaitlistStatus: null, eligible: true, eligibilityReason: null, canJoinWaitlist: false,
   };
   return {
-    profile: { id: ids.client, firstName: 'Juan', lastName: 'Demo', email: null, status: 'active' } satisfies ClientProfile,
-    membership: [{ id: ids.plan, planName: 'Plan 2J', kind: 'monthly', status: 'active', startsOn: dateKey(now), endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', quantity: 12, balance: 8 }], modules: [{ module: 'training', accessLevel: 'read' }] }] satisfies Assignment[],
+    profile: { id: ids.client, firstName: 'Juan', lastName: 'Demo', email: 'juan.demo@example.test', phone: '+34 600 000 001', status: 'active' } satisfies ClientProfile,
+    membership: [{ id: ids.plan, planName: 'Plan 2J', kind: 'monthly', status: 'active', startsOn: dateKey(now), endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', serviceId: ids.service, serviceName: 'Funcional', serviceStatus: 'active', quantity: 12, balance: 8 }], modules: [{ module: 'training', accessLevel: 'read' }] }] satisfies Assignment[],
     reservations: [{ id: ids.reservation, status: 'reserved', sessionId: ids.session, startsAt, durationMinutes: 45, serviceName: 'Funcional', areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] satisfies Booking[],
     waitlist: [] as Booking[],
     sessions: [session, { ...session, id: '30000000-0000-4000-8000-000000000002', startsAt: previewDateTime(new Date(`${tomorrow}T12:00:00Z`), 19), serviceName: 'Fuerza', areaName: 'El Búnker', myReservationStatus: null }],
@@ -296,6 +296,17 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   const readAllNotifications = async () => { if (previewMode) { setNotifications(rows=>rows.map(row=>({...row,readAt:row.readAt??new Date().toISOString()})));setUnreadNotifications(0);return; } try { await api('/api/me/notifications/read-all',{method:'POST',body:'{}'});setNotifications(rows=>rows.map(row=>({...row,readAt:row.readAt??new Date().toISOString()})));setUnreadNotifications(0); } catch { setMessage('No se han podido marcar como leídas.'); } };
 
   const upcoming = reservations.filter(row => row.status === 'reserved' && !row.sessionStatus.toLowerCase().startsWith('cancelled') && new Date(row.startsAt).getTime() >= Date.now()).sort((a,b) => a.startsAt.localeCompare(b.startsAt));
+  const activeMembership = membership.filter(item => item.status === 'active');
+  const otherMembership = membership.filter(item => item.status !== 'active');
+  const profileServiceMap = new Map<string, { id: string; name: string; status: string; rights: Assignment['rights'] }>();
+  for (const plan of membership.filter(item => item.status === 'active')) for (const right of plan.rights) {
+    if (!right.serviceId || !right.serviceName) continue;
+    const service = profileServiceMap.get(right.serviceId) ?? { id: right.serviceId, name: right.serviceName, status: right.serviceStatus ?? 'active', rights: [] };
+    service.rights.push(right); profileServiceMap.set(right.serviceId, service);
+  }
+  const profileServices = [...profileServiceMap.values()];
+  const pendingForms = forms.filter(form => ['assigned','review_required','rejected'].includes(form.status));
+  const completedForms = forms.filter(form => ['submitted','approved','expired'].includes(form.status));
   const nextBooking = selectNextConfirmedBooking(reservations);
   const sessionsForSelectedDay = sessions.filter(session => dateKey(new Date(session.startsAt)) === selectedDate);
   const groupedSessions = Array.from(sessionsForSelectedDay.reduce((groups, session) => groups.set(session.areaName, [...(groups.get(session.areaName) ?? []), session]), new Map<string, ClientSession[]>()));
@@ -329,20 +340,32 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
         {view === 'notifications' && <><div className="page-intro"><p className="eyebrow">TU ESPACIO</p><h1>Notificaciones</h1><p>Avisos importantes de tus reservas y mensajes.</p></div>{message&&<p className="inline-message" role="status">{message}</p>}{notifications.length>0&&unreadNotifications>0&&<button className="text-button" onClick={()=>void readAllNotifications()}>Marcar todas como leídas</button>}{notifications.length? <div className="notification-list">{notifications.map(item=><article className={`notification-item${item.readAt?' is-read':''}`} key={item.id}><span className="notification-dot" aria-hidden="true"/><button type="button" className="notification-open" aria-label={`Abrir aviso: ${item.title}`} onClick={()=>void openNotification(item)}><strong>{item.title}</strong><p>{item.body}</p><small>{new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',dateStyle:'medium',timeStyle:'short'}).format(new Date(item.createdAt))}</small></button>{!item.readAt&&<button type="button" className="text-button notification-read" onClick={()=>void readNotification(item)}>Marcar leída</button>}</article>)}</div>:<section className="empty-card"><h3>Todo al día</h3><p>Aquí aparecerán los avisos de tus reservas.</p></section>}{notificationCursor&&<button className="button secondary full" onClick={()=>void loadOlderNotifications()}>Cargar anteriores</button>}<button className="text-button" onClick={()=>void refresh()}>Actualizar</button></>}
         {view === 'settings' && <><div className="page-intro"><p className="eyebrow">TU CUENTA</p><h1>Ajustes</h1><p>Preferencias generales de tu experiencia 2J.</p></div><section className="settings-empty"><span className="settings-mark" aria-hidden="true"><NavIcon name="settings"/></span><h2>Todo en su sitio</h2><p>Cuando haya ajustes generales disponibles, podrás gestionarlos aquí.</p></section>{pilotToolsEnabled&&<section className="pilot-access" aria-labelledby="pilot-access-title"><div><p className="eyebrow">SOLO PARA EL EQUIPO</p><h2 id="pilot-access-title">Herramientas del piloto</h2><p>Accesos internos para revisar las experiencias por separado.</p></div><div className="pilot-links">{HUB_STAFF_URL&&<a className="button secondary" href={HUB_STAFF_URL} target="_blank" rel="noopener noreferrer">Abrir área de entrenador <span aria-hidden="true">↗</span></a>}{HUB_ADMIN_URL&&<a className="button secondary" href={HUB_ADMIN_URL} target="_blank" rel="noopener noreferrer">Abrir administración <span aria-hidden="true">↗</span></a>}</div>{(!HUB_STAFF_URL||!HUB_ADMIN_URL)&&<p className="pilot-setup-note">Configura VITE_2J_STAFF_URL y VITE_2J_ADMIN_URL para mostrar los accesos del piloto.</p>}</section>}</>}
         {view === 'profile' && <>
-          <div className="page-intro"><p className="eyebrow">TU CUENTA</p><h1>Perfil</h1><p>Tu información y derechos activos.</p></div>
-          <section className="profile-card"><div className="profile-avatar">{profile.firstName[0]}{profile.lastName[0]}</div><div><p className="eyebrow">MI PERFIL</p><h2>{profile.firstName} {profile.lastName}</h2><p>{profile.email ?? 'Email no indicado'}</p>{profile.phone && <p>{profile.phone}</p>}</div></section>
-          <div className="section-heading"><div><p className="eyebrow">MEMBRESÍA</p><h2>Cuotas y saldo</h2></div></div>
-          {membership.length ? membership.map(plan => (
-            <section className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ''}</span>{plan.rights.length > 0 && <div className="profile-rights">{plan.rights.map((right,index) => <span key={`${right.rightType}-${index}`}>{rightLabel(right.rightType)} · {right.balance ?? right.quantity ?? '—'} disponibles</span>)}</div>}</div><span className="active-pill">{plan.status === 'active' ? 'Activo' : plan.status === 'paused' ? 'Pausado' : plan.status}</span></section>
-          )) : <p className="muted">No encontramos planes asociados a tu cuenta.</p>}
-          <div className="section-heading"><div><p className="eyebrow">DOCUMENTACIÓN</p><h2>Contratos y certificados</h2></div></div>
-          {forms.length ? forms.map(form => (
-            <section className="plan-row document-row" key={form.id}><div><strong>{form.name}</strong><span>{form.status === 'assigned' ? 'Pendiente de completar' : form.status === 'rejected' ? 'Requiere una corrección · consulta en recepción' : 'En revisión por el centro'}</span></div>{form.status === 'assigned' && <button className="quiet-button" onClick={() => void openForm(form)}>Completar</button>}</section>
-          )) : <p className="muted">No tienes formularios pendientes.</p>}
-          {consents.map(consent => (
-            <section className="plan-row document-row" key={consent.versionId}><div><strong>{consent.title}</strong><span>{consent.accepted ? 'Aceptado' : consent.required ? 'Pendiente de aceptar' : 'Opcional'}</span></div>{!consent.accepted && <button className="quiet-button" onClick={() => openConsent(consent)}>Consultar</button>}</section>
-          ))}
-          <div className="section-heading"><div><p className="eyebrow">COMUNICACIÓN</p><h2>Buzón</h2></div><button className="text-button" onClick={() => void openNotifications()}>Abrir <span aria-hidden="true">→</span></button></div>
+          <div className="page-intro"><p className="eyebrow">TU CUENTA</p><h1>Perfil</h1><p>Tu información y servicios del centro.</p></div>
+          <section className="profile-card profile-hero"><div className="profile-avatar" aria-hidden="true">{profile.firstName[0]}{profile.lastName[0]}</div><div className="profile-identity"><p className="eyebrow">MI PERFIL</p><h2>{profile.firstName} {profile.lastName}</h2><p>{profile.email ?? 'Email no indicado'}</p><p>{profile.phone ?? 'Teléfono no indicado'}</p></div><span className="active-pill">{profile.status === 'active' ? 'Cuenta activa' : 'Cuenta inactiva'}</span></section>
+
+          <section className="profile-section" aria-labelledby="profile-membership-title"><div className="section-heading"><div><p className="eyebrow">CUOTAS Y SALDO</p><h2 id="profile-membership-title">Tus cuotas</h2></div></div>
+          {activeMembership.length ? activeMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ' · Sin fecha de fin'}</span>{plan.rights.filter(right => right.rightType === 'sessions_quota').map((right,index) => <span key={`${right.rightType}-${index}`}>Saldo de sesiones: {right.balance ?? 0} disponibles</span>)}</div><span className="active-pill">Activa</span></article>) : <section className="empty-card profile-empty"><h3>No tienes ninguna cuota activa.</h3><p>Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.</p></section>}
+          {otherMembership.length > 0 && <><h3 className="profile-subheading">Otras cuotas</h3>{otherMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ''}</span></div><span className="active-pill muted-pill">{plan.status === 'paused' ? 'En pausa' : plan.status === 'scheduled' ? 'Programada' : plan.status === 'expired' ? 'Finalizada' : plan.status === 'cancelled' ? 'Cancelada' : 'Inactiva'}</span></article>)}</>}
+          </section>
+
+          <section className="profile-section" aria-labelledby="profile-services-title"><div className="section-heading"><div><p className="eyebrow">MIS SERVICIOS</p><h2 id="profile-services-title">Servicios asociados</h2></div></div>
+          {profileServices.length ? profileServices.map(service => <article className="plan-row" key={service.id}><div><strong>{service.name}</strong>{service.rights.map((right,index) => <span key={`${right.rightType}-${index}`}>{rightLabel(right.rightType)}{right.rightType === 'sessions_quota' ? ` · ${right.balance ?? 0} disponibles` : ''}</span>)}</div><span className="active-pill">{service.status === 'active' ? 'Activo' : 'No activo'}</span></article>) : <section className="empty-card profile-empty"><h3>No hay servicios activos asociados.</h3><p>Los servicios aparecerán aquí cuando estén respaldados por tus derechos vigentes.</p></section>}
+          </section>
+
+          <section className="profile-section" aria-labelledby="profile-purchases-title"><div className="section-heading"><div><p className="eyebrow">TICKETS Y COMPRAS</p><h2 id="profile-purchases-title">Tus compras</h2></div></div><section className="empty-card profile-empty"><h3>Aún no hay compras para mostrar.</h3><p>Tus compras y tickets del centro aparecerán aquí.</p></section></section>
+
+          <section className="profile-section" aria-labelledby="profile-inbox-title"><div className="section-heading"><div><p className="eyebrow">BUZÓN</p><h2 id="profile-inbox-title">Mensajes y avisos</h2></div></div><button className="profile-link-card" type="button" onClick={() => void openNotifications()}><span><strong>Abrir buzón</strong><small>{unreadNotifications > 0 ? `${unreadNotifications} ${unreadNotifications === 1 ? 'aviso sin leer' : 'avisos sin leer'}` : 'No tienes avisos sin leer'}</small></span><span aria-hidden="true">→</span></button><p className="profile-caption">Las noticias del centro se muestran por separado en Inicio.</p></section>
+
+          <section className="profile-section" aria-labelledby="profile-documents-title"><div className="section-heading"><div><p className="eyebrow">DOCUMENTACIÓN</p><h2 id="profile-documents-title">Contratos y certificados</h2></div></div>
+          <h3 className="profile-subheading">Pendientes</h3>
+          {pendingForms.map(form => <article className="plan-row document-row" key={form.id}><div><strong>{form.name}</strong><span>{form.status === 'assigned' ? 'Pendiente de completar' : form.status === 'rejected' ? 'Necesita una corrección' : 'En revisión por el centro'}</span>{form.required && <span>Requerido</span>}</div>{form.status === 'assigned' && <button className="quiet-button" onClick={() => void openForm(form)}>Completar</button>}</article>)}
+          {consents.filter(consent => !consent.accepted).map(consent => <article className="plan-row document-row" key={consent.versionId}><div><strong>{consent.title}</strong><span>{consent.required ? 'Pendiente de aceptar' : 'Opcional'}</span>{consent.required && <span>Requerido</span>}</div><button className="quiet-button" onClick={() => openConsent(consent)}>Consultar</button></article>)}
+          {pendingForms.length === 0 && consents.every(consent => consent.accepted) && <p className="muted profile-doc-empty">No tienes documentos pendientes.</p>}
+          <h3 className="profile-subheading">Completados y enviados</h3>
+          {completedForms.map(form => <article className="plan-row document-row" key={form.id}><div><strong>{form.name}</strong><span>{form.status === 'approved' ? 'Completado' : form.status === 'submitted' ? 'Enviado · pendiente de revisión' : 'Caducado'}</span></div></article>)}
+          {consents.filter(consent => consent.accepted).map(consent => <article className="plan-row document-row" key={consent.versionId}><div><strong>{consent.title}</strong><span>Aceptado</span></div></article>)}
+          {completedForms.length === 0 && consents.every(consent => !consent.accepted) && <p className="muted profile-doc-empty">Todavía no hay documentos completados o enviados.</p>}
+          <p className="profile-caption">Las aceptaciones se muestran según el estado registrado por el centro.</p></section>
         </>}
       </>}
     </main>
