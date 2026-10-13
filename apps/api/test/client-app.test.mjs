@@ -1,10 +1,12 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
 import { createBookingEligibilityResolver } from '../src/booking-eligibility.ts';
+import { createTrainingLinkTransactions } from '../src/training-link-protocol.ts';
+import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
 
 process.env.NODE_ENV ??= 'test';
 
@@ -18,14 +20,36 @@ const makeClient = async name => {
   const response = await admin.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': randomUUID() }, payload: { firstName: name, lastName: `Client app ${randomUUID().slice(0,8)}` } });
   assert.equal(response.statusCode, 201, response.body); return response.json();
 };
-const a = await makeClient('Ada'); const b = await makeClient('Bea');
-const memberPersons = { [a.id]: randomUUID(), [b.id]: randomUUID() };
-for (const client of [a, b]) {
+const a = await makeClient('Ada'); const b = await makeClient('Bea'); const c = await makeClient('Celia');
+const memberPersons = { [a.id]: randomUUID(), [b.id]: randomUUID(), [c.id]: randomUUID() };
+for (const client of [a, b, c]) {
   const personId = memberPersons[client.id];
   await sql`INSERT INTO platform_persons(id,status,created_by) VALUES (${personId}::uuid,'active','client-app-test')`;
   await sql`INSERT INTO platform_person_clients(person_id,client_id,linked_by) VALUES (${personId}::uuid,${client.id}::uuid,'client-app-test')`;
   await sql`INSERT INTO platform_member_booking_pilot_cohort(person_id,status,enabled_by) VALUES (${personId}::uuid,'active','client-app-test')`;
 }
+const trainingUserA = `training-${randomUUID()}`;
+const trainingUserB = `training-revoked-${randomUUID()}`;
+await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${memberPersons[a.id]}::uuid,${trainingUserA},'explicit_admin','client-app-test','client-app-test')`;
+const [revokedTrainingLink] = await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${memberPersons[b.id]}::uuid,${trainingUserB},'explicit_admin','client-app-test','client-app-test') RETURNING link_id`;
+await sql`UPDATE training_account_links SET status='revoked',revoked_at=now(),updated_by='client-app-test' WHERE link_id=${revokedTrainingLink.link_id}`;
+const pendingAuth = { personId: memberPersons[c.id], provider: 'fixture-central-auth', providerVersion: 1, authSubject: `client-app-pending-${randomUUID()}` };
+await sql`INSERT INTO platform_person_auth_subjects(person_id,auth_subject,provider,provider_version,created_by) VALUES (${pendingAuth.personId}::uuid,${pendingAuth.authSubject},${pendingAuth.provider},${pendingAuth.providerVersion},'client-app-test')`;
+const linkProtocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true });
+const pendingTransaction = await linkProtocol.create({ ...pendingAuth, requestId: randomUUID() });
+const pendingTrainingUser = `training-pending-${randomUUID()}`;
+assert.equal((await linkProtocol.verify({ transactionId: pendingTransaction.transaction.transactionId, challenge: pendingTransaction.challenge, assertion: {}, auth: pendingAuth }, async () => pendingTrainingUser)).status, 'verified');
+const [pendingStored] = await sql`SELECT nonce_hash,verified_at FROM training_link_transactions WHERE transaction_id=${pendingTransaction.transaction.transactionId}`;
+const pendingReceipt = { v: 1, status: 'verified', receiptId: randomUUID(), receiptVersion: 1, transactionId: pendingTransaction.transaction.transactionId, personId: pendingAuth.personId, trainingUserId: pendingTrainingUser, audience: '2j-training-account-link', purpose: 'training-account-link', challengeDigest: pendingStored.nonce_hash.trim(), verifiedAt: new Date(pendingStored.verified_at).toISOString() };
+const linkLifecycle = createTrainingCanonicalLinkLifecycle(sql, { trainingVerifiedLinkingEnabled: true, trainingServiceCallsEnabled: true, trainingCanonicalLinkingEnabled: true, reconcileReceipt: async () => pendingReceipt });
+assert.equal((await linkLifecycle.reconcile({ transactionId: pendingTransaction.transaction.transactionId, auth: { authSubject: pendingAuth.authSubject, provider: pendingAuth.provider, providerVersion: pendingAuth.providerVersion, personId: pendingAuth.personId } })).status, 'pending');
+const summaryRequests = [];
+let summaryUnavailable = false;
+const trainingAdapter = { getSummary: async trainingUserId => {
+  summaryRequests.push(trainingUserId);
+  if (summaryUnavailable) return { status: 'unavailable' };
+  return { status: 'available', summary: { v: 1, trainingUserId, trainingStatus: 'active', asOf: new Date().toISOString(), currentProgram: { id: 'program-private-id', name: 'Fuerza' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } } };
+} };
 const [area] = await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;
 const serviceResponse = await admin.inject({ method: 'POST', url: '/api/services', payload: { name: `App client ${randomUUID()}`, areaId: area.id, status: 'active' } });
 assert.equal(serviceResponse.statusCode, 201, serviceResponse.body);
@@ -48,19 +72,36 @@ const byClient = clientId => buildServer(process.env.DATABASE_URL, {
   memberPilotAuthEnabled: true, memberPilotBookingEnabled: true, memberAppOrigin: 'http://127.0.0.1:5173',
   clientAuthorizationResolver: async () => ({ clientId, personId: memberPersons[clientId] }),
   bookingEligibilityResolver: eligibility,
+  trainingServiceCallsEnabled: true, trainingSummaryEnabled: true,
+  trainingSummaryAdapter: trainingAdapter,
 });
 const appA = byClient(a.id); const appB = byClient(b.id);
+const appC = byClient(c.id);
 const cohortAdmin = buildServer(process.env.DATABASE_URL, { memberPilotCohortManagementEnabled: true, authorizationResolver: async () => ({ actorId: 'cohort-test-admin', role: 'admin' }) });
 const cohortTrainer = buildServer(process.env.DATABASE_URL, { memberPilotCohortManagementEnabled: true, authorizationResolver: async () => ({ actorId: 'cohort-test-trainer', role: 'trainer' }) });
 const readOnlyMember = buildServer(process.env.DATABASE_URL, { memberPilotAuthEnabled: true, memberAppOrigin: 'http://127.0.0.1:5173', clientAuthorizationResolver: async () => ({ clientId: b.id, personId: memberPersons[b.id] }) });
 after(async () => {
-  await Promise.all([admin.close(), anonymous.close(), appA.close(), appB.close(), cohortAdmin.close(), cohortTrainer.close(), readOnlyMember.close()]);
+  await Promise.all([admin.close(), anonymous.close(), appA.close(), appB.close(), appC.close(), cohortAdmin.close(), cohortTrainer.close(), readOnlyMember.close()]);
   await sql.end();
 });
 
 test('self-service facade derives the identity server-side and hides another client’s bookings', async () => {
   const me = await appA.inject({ method: 'GET', url: '/api/me' });
   assert.equal(me.statusCode, 200); assert.equal(me.json().profile.id, a.id);
+  const linkedSummary = await appA.inject({ method: 'GET', url: `/api/me/training-summary?trainingUserId=${trainingUserB}` });
+  assert.equal(linkedSummary.statusCode, 200);
+  assert.equal(linkedSummary.json().status, 'linked'); assert.equal(linkedSummary.json().summaryStatus, 'available');
+  assert.deepEqual(linkedSummary.json().summary, { trainingStatus: 'active', asOf: linkedSummary.json().summary.asOf, currentProgram: { name: 'Fuerza' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } });
+  assert.deepEqual(summaryRequests, [trainingUserA], 'the server looks up only the canonical active-link Training ID');
+  assert.equal(JSON.stringify(linkedSummary.json()).includes(trainingUserA), false, 'raw remote identity stays server-side');
+  assert.equal(JSON.stringify(linkedSummary.json()).includes('program-private-id'), false, 'remote program IDs stay server-side');
+  assert.deepEqual((await appB.inject({ method: 'GET', url: `/api/me/training-summary?trainingUserId=${trainingUserA}` })).json(), { status: 'not_linked' }, 'revoked links and browser-supplied alternate IDs are ignored');
+  assert.deepEqual((await appC.inject({ method: 'GET', url: '/api/me/training-summary' })).json(), { status: 'not_linked' }, 'a verified-but-pending canonical link is not exposed');
+  summaryUnavailable = true;
+  const unavailable = await appA.inject({ method: 'GET', url: '/api/me/training-summary' });
+  assert.deepEqual(unavailable.json(), { status: 'linked', summaryStatus: 'unavailable' });
+  assert.equal((await appA.inject({ method: 'GET', url: '/api/me' })).statusCode, 200, 'profile remains available while Training is down');
+  summaryUnavailable = false;
   const querySpoof = await appA.inject({ method: 'GET', url: `/api/me?clientId=${b.id}` });
   assert.equal(querySpoof.statusCode, 200); assert.equal(querySpoof.json().profile.id, a.id);
   const ownMembership = await appA.inject({ method: 'GET', url: '/api/me/membership' });

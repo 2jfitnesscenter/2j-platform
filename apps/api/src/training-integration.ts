@@ -16,11 +16,17 @@ export const linkProposalSchema = z.object({
   method: z.literal('explicit_admin'), requestId: z.string().uuid(),
 }).strict();
 export const accessGrantSchema = z.object({ v: z.literal(1), personId: personUuid, trainingAccess: z.enum(['enabled', 'blocked', 'unknown']), asOf: z.string().datetime().optional() }).strict();
+const trainingUserIdSchema = opaqueId.refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
+const calendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}, 'Date must be a real calendar date');
+const summaryText = z.string().trim().min(1).max(120).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
 export const trainingSummarySchema = z.object({
-  v: z.literal(1), personId: personUuid, asOf: z.string().datetime(),
-  activity: z.object({ lastActivityAt: z.string().datetime().nullable() }).strict().optional(),
-  program: z.object({ activeCount: z.number().int().nonnegative() }).strict().optional(),
-  coach: z.object({ assigned: z.boolean() }).strict().optional(),
+  v: z.literal(1), trainingUserId: trainingUserIdSchema, trainingStatus: z.literal('active'),
+  asOf: z.string().datetime(),
+  currentProgram: z.object({ id: trainingUserIdSchema, name: summaryText }).strict().optional(),
+  recentActivity: z.object({ lastTrainingAt: calendarDate.nullable(), sessionsLast30Days: z.number().int().min(0).max(10_000) }).strict().optional(),
 }).strict();
 
 export type PlatformSubject = z.infer<typeof platformSubjectSchema>;
@@ -33,6 +39,7 @@ export type TrainingAdapter = {
 
 const TRAINING_PROOF_PATH = '/api/platform/v1/link-proofs/exchange';
 const TRAINING_RECEIPT_RECONCILE_PATH = '/api/platform/v1/link-proofs/reconcile';
+export const TRAINING_SUMMARY_PATH = '/api/platform/v1/training-summary';
 const TRAINING_LINK_AUDIENCE = '2j-training-account-link';
 const TRAINING_LINK_PURPOSE = 'training-account-link';
 const proofAssertionSchema = z.object({ v: z.literal(1), code: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict();
@@ -239,14 +246,12 @@ function isLoopback(hostname: string) {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
-function boundedUrl(baseUrl: string, allowedOrigins: string[], allowInsecureLocalForTests: boolean, personId: string) {
-  const normalizedPersonId = personUuid.parse(personId);
+function boundedUrl(baseUrl: string, allowedOrigins: string[], allowInsecureLocalForTests: boolean) {
   const base = new URL(baseUrl);
   if (base.username || base.password || base.pathname !== '/' || base.search || base.hash) throw new Error('base URL must be an origin');
   if (base.protocol !== 'https:' && !(allowInsecureLocalForTests && base.protocol === 'http:' && isLoopback(base.hostname))) throw new Error('HTTPS is required');
   if (!allowedOrigins.includes(base.origin)) throw new Error('origin is not allowed');
-  const path = '/api/platform/v1/persons/' + normalizedPersonId + '/summary';
-  return { url: new URL(path, base.origin), path };
+  return { url: new URL(TRAINING_SUMMARY_PATH, base.origin), path: TRAINING_SUMMARY_PATH };
 }
 
 async function readBoundedBody(response: Response, maxBytes: number, signal: AbortSignal) {
@@ -281,28 +286,30 @@ export function createTrainingAdapter(options: {
   timeoutMs?: number; maxResponseBytes?: number; allowInsecureLocalForTests?: boolean;
 } = {}): TrainingAdapter {
   return {
-    async getSummary(personId, externalSignal) {
+    async getSummary(trainingUserId, externalSignal) {
       if (!options.enabled || !options.baseUrl || !options.fetcher || !options.signRequest || !options.keyId || !options.allowedOrigins?.length) return { status: 'disabled' };
       const controller = new AbortController();
       const abortFromExternal = () => controller.abort(externalSignal?.reason);
       if (externalSignal?.aborted) abortFromExternal();
       else externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
-      const timeout = setTimeout(() => controller.abort(new Error('deadline exceeded')), options.timeoutMs ?? 2_000);
+      const timeout = setTimeout(() => controller.abort(new Error('deadline exceeded')), Math.max(1, Math.min(options.timeoutMs ?? 2_000, 5_000)));
       const abortPromise = new Promise<never>((_resolve, reject) => {
         if (controller.signal.aborted) reject(controller.signal.reason ?? new Error('request aborted'));
         else controller.signal.addEventListener('abort', () => reject(controller.signal.reason ?? new Error('request aborted')), { once: true });
       });
       try {
-        const { url, path } = boundedUrl(options.baseUrl, options.allowedOrigins, options.allowInsecureLocalForTests === true, personId);
+        const canonicalTrainingUserId = trainingUserIdSchema.parse(trainingUserId);
+        const { url, path } = boundedUrl(options.baseUrl, options.allowedOrigins, options.allowInsecureLocalForTests === true);
         const timestamp = new Date().toISOString(), requestId = randomUUID();
-        const signing: ServiceSigningInput = { keyId: options.keyId, timestamp, requestId, method: 'GET', path, body: new Uint8Array() };
+        const body = Buffer.from(JSON.stringify({ v: 1, trainingUserId: canonicalTrainingUserId }), 'utf8');
+        const signing: ServiceSigningInput = { keyId: options.keyId, timestamp, requestId, method: 'POST', path, body };
         const headers = await Promise.race([buildTrainingServiceAuthHeaders(signing, options.signRequest, controller.signal), abortPromise]);
         if (controller.signal.aborted) return { status: 'unavailable' };
-        const response = await Promise.race([options.fetcher(url, { method: 'GET', redirect: 'error', signal: controller.signal, headers: { accept: 'application/json', ...headers } }), abortPromise]);
-        if (!response.ok) return { status: 'unavailable' };
-        const raw = await Promise.race([readBoundedBody(response, options.maxResponseBytes ?? 16_384, controller.signal), abortPromise]);
+        const response = await Promise.race([options.fetcher(url, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { accept: 'application/json', 'content-type': 'application/json', ...headers }, body }), abortPromise]);
+        if (response.status !== 200 || !response.ok) return { status: 'unavailable' };
+        const raw = await Promise.race([readBoundedBody(response, Math.max(1, Math.min(options.maxResponseBytes ?? 16_384, 16_384)), controller.signal), abortPromise]);
         const parsed = trainingSummarySchema.safeParse(JSON.parse(raw));
-        return parsed.success && parsed.data.personId === personUuid.parse(personId) ? { status: 'available', summary: parsed.data } : { status: 'unavailable' };
+        return parsed.success && parsed.data.trainingUserId === canonicalTrainingUserId ? { status: 'available', summary: parsed.data } : { status: 'unavailable' };
       } catch { return { status: 'unavailable' }; }
       finally {
         clearTimeout(timeout);

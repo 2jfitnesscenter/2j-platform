@@ -212,7 +212,7 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
   for (const index of rightIndexes) assert.match(index.indexdef, /COALESCE\(period, ''(?:::text)?\)/, `${index.indexname} must distinguish quota periods`);
 });
 
-test('2J-078B contracts are person-scoped, strict, and Training adapter is disabled by default', async () => {
+test('2J-078B identity stays person-scoped and 2J-089 summary contract is strict and disabled by default', async () => {
   const personId = randomUUID();
   assert.equal(platformSubjectSchema.safeParse({ v: 1, personId, clientId: randomUUID(), capabilities: ['client'], status: 'active' }).success, true);
   assert.equal(platformSubjectSchema.safeParse({ v: 1, personId, clientId: randomUUID(), staffId: randomUUID(), capabilities: ['client','staff'], status: 'active', centralClientId: randomUUID() }).success, false);
@@ -221,15 +221,21 @@ test('2J-078B contracts are person-scoped, strict, and Training adapter is disab
   assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7' }, method: 'migration', requestId: randomUUID() }).success, false);
   assert.equal(linkProposalSchema.safeParse({ v: 1, personId, candidate: { trainingUserId: 'opaque-user-7', centralClientId: randomUUID() }, method: 'explicit_admin', requestId: randomUUID() }).success, false);
   assert.equal(accessGrantSchema.safeParse({ v: 1, personId, trainingAccess: 'blocked' }).success, true);
-  assert.equal(trainingSummarySchema.safeParse({ v: 1, personId, asOf: new Date().toISOString(), program: { activeCount: 2 } }).success, true);
+  const trainingUserId = 'training-user-7';
+  const contractFixture = JSON.parse(await readFile(new URL('../../../contracts/2J-089-training-summary-v1.json', import.meta.url), 'utf8'));
+  assert.equal(trainingSummarySchema.safeParse(contractFixture).success, true);
+  const summary = { ...contractFixture, trainingUserId };
+  assert.equal(trainingSummarySchema.safeParse(summary).success, true);
+  assert.equal(trainingSummarySchema.safeParse({ ...summary, currentProgram: { ...summary.currentProgram, privateNotes: 'secret' } }).success, false);
+  assert.equal(trainingSummarySchema.safeParse({ ...summary, recentActivity: { ...summary.recentActivity, lastTrainingAt: '2026-02-30' } }).success, false);
   let calls = 0;
-  assert.deepEqual(await createTrainingAdapter({ fetcher: async () => { calls += 1; throw new Error('must not call'); } }).getSummary(personId), { status: 'disabled' });
+  assert.deepEqual(await createTrainingAdapter({ fetcher: async () => { calls += 1; throw new Error('must not call'); } }).getSummary(trainingUserId), { status: 'disabled' });
   assert.equal(calls, 0);
-  const adapter = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1', fetcher: async (_url, init) => { calls += 1; assert.equal(init.redirect, 'error'); return new Response(JSON.stringify({ v: 1, personId, asOf: new Date().toISOString() }), { status: 200, headers: { 'content-type': 'application/json' } }); }, signRequest: async (canonical, signal) => { assert.match(canonical, /2J-SERVICE-AUTH-V1/); assert.equal(signal.aborted, false); return 'A'.repeat(43); } });
-  assert.equal((await adapter.getSummary(personId)).status, 'available');
+  const adapter = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1', fetcher: async (url, init) => { calls += 1; assert.equal(String(url), 'https://training.example.test/api/platform/v1/training-summary'); assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'error'); assert.deepEqual(JSON.parse(init.body), { v: 1, trainingUserId }); return new Response(JSON.stringify(summary), { status: 200, headers: { 'content-type': 'application/json' } }); }, signRequest: async (canonical, signal) => { assert.match(canonical, /2J-SERVICE-AUTH-V1/); assert.equal(signal.aborted, false); return 'A'.repeat(43); } });
+  assert.equal((await adapter.getSummary(trainingUserId)).status, 'available');
   assert.equal(calls, 1);
   const failSoft = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1', fetcher: async () => new Response('bad', { status: 503 }), signRequest: async () => 'A'.repeat(43) });
-  assert.deepEqual(await failSoft.getSummary(personId), { status: 'unavailable' });
+  assert.deepEqual(await failSoft.getSummary(trainingUserId), { status: 'unavailable' });
 });
 
 test('Training service auth canonicalization signs request identity, method, path and raw body digest', async () => {
@@ -247,39 +253,39 @@ test('Training service auth canonicalization signs request identity, method, pat
 });
 
 test('Training adapter fails closed for invalid targets, redirects, bad content, size, timeout, malformed and non-strict responses', async () => {
-  const personId = randomUUID(), valid = { v: 1, personId, asOf: new Date().toISOString() };
+  const trainingUserId = 'opaque-training-user', valid = { v: 1, trainingUserId, trainingStatus: 'active', asOf: new Date().toISOString() };
   const base = { enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1', signRequest: async () => 'A'.repeat(43) };
   let calls = 0;
   const spy = createTrainingAdapter({ ...base, fetcher: async () => { calls += 1; return new Response(JSON.stringify(valid), { headers: { 'content-type': 'application/json' } }); } });
-  assert.deepEqual(await spy.getSummary('not-a-uuid'), { status: 'unavailable' });
-  assert.equal(calls, 0, 'reject malformed personId before fetch/URL construction');
+  assert.deepEqual(await spy.getSummary('bad\u0000id'), { status: 'unavailable' });
+  assert.equal(calls, 0, 'reject malformed Training ID before fetch');
   const notAllowed = createTrainingAdapter({ ...base, baseUrl: 'https://other.example.test', fetcher: async () => { calls += 1; throw new Error('must not fetch'); } });
-  assert.deepEqual(await notAllowed.getSummary(personId), { status: 'unavailable' }); assert.equal(calls, 0);
+  assert.deepEqual(await notAllowed.getSummary(trainingUserId), { status: 'unavailable' }); assert.equal(calls, 0);
   const noTls = createTrainingAdapter({ ...base, baseUrl: 'http://training.example.test', allowedOrigins: ['http://training.example.test'], fetcher: async () => { calls += 1; throw new Error('must not fetch'); } });
-  assert.deepEqual(await noTls.getSummary(personId), { status: 'unavailable' }); assert.equal(calls, 0);
+  assert.deepEqual(await noTls.getSummary(trainingUserId), { status: 'unavailable' }); assert.equal(calls, 0);
   const cases = [
     ['redirect', async (_url, init) => { assert.equal(init.redirect, 'error'); return new Response('', { status: 302, headers: { location: 'https://attacker.example' } }); }],
     ['wrong content type', async () => new Response(JSON.stringify(valid), { headers: { 'content-type': 'text/plain' } })],
     ['oversized body', async () => new Response('x'.repeat(4000), { headers: { 'content-type': 'application/json', 'content-length': '4000' } })],
     ['streamed oversized body', async () => new Response('x'.repeat(4000), { headers: { 'content-type': 'application/json' } })],
     ['malformed JSON', async () => new Response('{', { headers: { 'content-type': 'application/json' } })],
-    ['wrong person', async () => new Response(JSON.stringify({ ...valid, personId: randomUUID() }), { headers: { 'content-type': 'application/json' } })],
+    ['wrong Training identity', async () => new Response(JSON.stringify({ ...valid, trainingUserId: 'different-user' }), { headers: { 'content-type': 'application/json' } })],
     ['extra fields', async () => new Response(JSON.stringify({ ...valid, trainingUserId: 'must-not-leak' }), { headers: { 'content-type': 'application/json' } })],
   ];
-  for (const [name, fetcher] of cases) assert.deepEqual(await createTrainingAdapter({ ...base, maxResponseBytes: 2048, fetcher }).getSummary(personId), { status: 'unavailable' }, name);
+  for (const [name, fetcher] of cases) assert.deepEqual(await createTrainingAdapter({ ...base, maxResponseBytes: 2048, fetcher }).getSummary(trainingUserId), { status: 'unavailable' }, name);
   const oversized = createTrainingAdapter({ ...base, maxResponseBytes: 32, fetcher: cases[2][1] });
-  assert.deepEqual(await oversized.getSummary(personId), { status: 'unavailable' }, 'oversized response is bounded before parsing');
+  assert.deepEqual(await oversized.getSummary(trainingUserId), { status: 'unavailable' }, 'oversized response is bounded before parsing');
   const streamOversized = createTrainingAdapter({ ...base, maxResponseBytes: 32, fetcher: cases[3][1] });
-  assert.deepEqual(await streamOversized.getSummary(personId), { status: 'unavailable' }, 'stream size is bounded when Content-Length is absent');
+  assert.deepEqual(await streamOversized.getSummary(trainingUserId), { status: 'unavailable' }, 'stream size is bounded when Content-Length is absent');
   const signerFailure = createTrainingAdapter({ ...base, signRequest: async () => { throw new Error('test signer failure'); }, fetcher: async () => { calls += 1; throw new Error('must not fetch'); } });
-  assert.deepEqual(await signerFailure.getSummary(personId), { status: 'unavailable' }); assert.equal(calls, 0);
+  assert.deepEqual(await signerFailure.getSummary(trainingUserId), { status: 'unavailable' }); assert.equal(calls, 0);
   let signerSignal;
   const timed = createTrainingAdapter({ ...base, timeoutMs: 10, signRequest: async (_canonical, signal) => { signerSignal = signal; await new Promise((resolve) => setTimeout(resolve, 100)); return 'A'.repeat(43); }, fetcher: async () => { calls += 1; throw new Error('must timeout before fetch'); } });
-  assert.deepEqual(await timed.getSummary(personId), { status: 'unavailable' });
+  assert.deepEqual(await timed.getSummary(trainingUserId), { status: 'unavailable' });
   assert.equal(signerSignal.aborted, true); assert.equal(calls, 0, 'the deadline covers signer execution before fetch');
   let fetchSignal;
   const fetchTimed = createTrainingAdapter({ ...base, timeoutMs: 10, fetcher: async (_url, init) => { fetchSignal = init.signal; return new Promise((resolve) => setTimeout(() => resolve(new Response(JSON.stringify(valid), { headers: { 'content-type': 'application/json' } })), 100)); } });
-  assert.deepEqual(await fetchTimed.getSummary(personId), { status: 'unavailable' }); assert.equal(fetchSignal.aborted, true, 'the deadline covers fetch execution');
+  assert.deepEqual(await fetchTimed.getSummary(trainingUserId), { status: 'unavailable' }); assert.equal(fetchSignal.aborted, true, 'the deadline covers fetch execution');
 });
 
 test('identity API keeps Training linking disabled by default and gates synthetic local links independently', async () => {

@@ -1,6 +1,6 @@
 import Fastify, { type FastifyError, type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -19,7 +19,7 @@ import { registerCommunicationRoutes, type ClientAuthorizationContext } from './
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
 import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
-import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler } from './training-integration.js';
+import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, type TrainingAdapter } from './training-integration.js';
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
@@ -110,6 +110,8 @@ export type ServerOptions = {
   trainingVerifiedLinkingEnabled?: boolean;
   trainingServiceCallsEnabled?: boolean;
   trainingCanonicalLinkingEnabled?: boolean;
+  trainingSummaryEnabled?: boolean;
+  trainingSummaryAdapter?: TrainingAdapter;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
   logger?: FastifyServerOptions['logger'];
@@ -140,6 +142,23 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const authorizationResolver = options.authorizationResolver ?? (async () => null);
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
+  const trainingSummaryAdapter = options.trainingSummaryEnabled === true && options.trainingServiceCallsEnabled === true
+    ? options.trainingSummaryAdapter ?? (() => {
+    try {
+      const baseUrl = process.env.TRAINING_SERVICE_BASE_URL ?? '';
+      const keyId = process.env.TRAINING_SERVICE_KEY_ID ?? '';
+      const encodedSecret = process.env.TRAINING_SERVICE_SECRET ?? '';
+      const secret = Buffer.from(encodedSecret, 'base64url');
+      const origins = (process.env.TRAINING_SERVICE_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
+      const base = new URL(baseUrl);
+      if (!/^[A-Za-z0-9._-]{1,80}$/.test(keyId) || secret.length < 32 || secret.toString('base64url') !== encodedSecret || !origins.includes(base.origin)) return createTrainingAdapter();
+      return createTrainingAdapter({
+        enabled: true, baseUrl, allowedOrigins: origins, keyId, fetcher: globalThis.fetch,
+        signRequest: async canonical => createHmac('sha256', secret).update(Buffer.from(canonical, 'utf8')).digest('base64url'),
+      });
+    } catch { return createTrainingAdapter(); }
+  })()
+    : createTrainingAdapter();
   const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
   const memberOrigin = options.memberAppOrigin ?? null;
   for (const configuredOrigin of [allowedOrigin, ...(memberOrigin ? [memberOrigin] : [])]) {
@@ -180,7 +199,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     return Boolean(row);
   };
   registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver, allowMemberBooking);
-  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true);
+  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter);
   registerMemberBookingCohortRoutes(app, client, authorizationResolver, options.memberPilotCohortManagementEnabled === true);
   memberPilotAuth.register(app);
   registerEconomicRoutes(app, client, authorizationResolver);
@@ -508,6 +527,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
     memberPilotBookingEnabled: process.env.PILOT_MEMBER_BOOKING_ENABLED === 'true',
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
+    trainingServiceCallsEnabled: process.env.TRAINING_SERVICE_CALLS_ENABLED === 'true',
+    trainingSummaryEnabled: process.env.TRAINING_SUMMARY_ENABLED === 'true',
     memberAppOrigin: process.env.MEMBER_APP_ORIGIN ?? null,
     ...(localDemoClientId ? { clientAuthorizationResolver: async () => ({ clientId: localDemoClientId.toLowerCase() }) } : {}),
   });
