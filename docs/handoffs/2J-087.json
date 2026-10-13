@@ -1,0 +1,70 @@
+{
+  "task": "2J-087",
+  "title": "Center News V1 — Admin-managed news for Member Home",
+  "repository": "2jfitnesscenter/2j-platform",
+  "status": "ready_to_push",
+  "branch": "agent/codex/2J-087-center-news",
+  "base_sha": "0d2e30661c2f56e07f8c2d8e0cff68ffbebcf037",
+  "pull_request": null,
+  "draft": true,
+  "merge": false,
+  "training_changes": false,
+  "production_infrastructure_changes": false,
+  "news_domain": {
+    "tables": ["center_news", "center_news_audit_events"],
+    "separate_from_notifications": true,
+    "old_center_notice_migrated": false,
+    "member_home_center_notice_source_removed": true,
+    "publication_states": ["draft", "published", "withdrawn"],
+    "schedule_windows": false,
+    "feature_selection": "newest currently-visible featured, then newest currently-visible published; published_at DESC, id DESC",
+    "withdrawal_retains_history": true,
+    "withdrawal_clears_featured": true,
+    "republish_with_new_publication_timestamp": true,
+    "member_limit": 100,
+    "member_cursor_pagination": false
+  },
+  "permissions": {
+    "read": "news.read",
+    "manage": "news.manage",
+    "role_grants": {"admin": ["news.read", "news.manage"], "trainer": [], "reception-management": [], "accountant": []},
+    "server_enforced": true,
+    "navigation_capability": "news"
+  },
+  "member": {
+    "endpoint": "GET /api/me/news",
+    "requires_active_client_facet": true,
+    "requires_booking_cohort": false,
+    "requires_entitlement": false,
+    "list_detail_view": true,
+    "inicio_parent_navigation_preserved": true,
+    "preview_fixture_only": true,
+    "preview_api_calls": 0
+  },
+  "admin": {
+    "create_edit_publish_withdraw_feature": true,
+    "audit_actor_action_time": true,
+    "audit_append_only": true,
+    "optimistic_concurrency": false
+  },
+  "migration": "0030_center_news.sql",
+  "validation": {
+    "full_suite": "284/284 pass: packages 19, API/PostgreSQL 175, Admin 72, Client 11, Staff 7",
+    "typecheck": "9/9 pass",
+    "build": "9/9 pass",
+    "migration_checksums": "30/30 verified on fresh disposable PostgreSQL",
+    "audit": "pnpm audit --audit-level high: no known vulnerabilities",
+    "git_diff_check": "pass",
+    "browser_smoke": "synthetic loopback Admin draft/edit/publish/feature/withdraw/audit; Member featured Home/list/detail/empty; booking navigation regression; screenshots viewed but not committed",
+    "ci": "pending final pushed head"
+  },
+  "independent_reviews": {"claude": "pending final SHA", "antigravity": "pending final SHA"},
+  "deferred_p3": [
+    "scheduled visibility windows",
+    "optimistic edit concurrency (last-write-wins in V1)",
+    "Member cursor pagination beyond 100 entries",
+    "image uploads and rich text",
+    "categories/tags, sharing, reactions, comments and analytics",
+    "automatic push/email notifications on publish"
+  ]
+}

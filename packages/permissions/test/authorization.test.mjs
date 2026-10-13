@@ -13,6 +13,12 @@ test('approved role matrix grants only named operations and denies by default', 
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'communication.send'), true);
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'communication.internal_notes.write'), true);
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'forms.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'news.read'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'news.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'news.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'news.read'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'news.read'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'news.manage'), true);
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'documents.override'), false);
   assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'forms.responses.sensitive.read'), false);
   assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'forms.responses.sensitive.read'), true);

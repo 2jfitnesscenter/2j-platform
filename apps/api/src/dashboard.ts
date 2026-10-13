@@ -55,6 +55,7 @@ export function registerDashboardRoutes(
       billing: can(context, 'billing.read-basic'),
       staff: can(context, 'staff.read'),
       notificationSettings: can(context, 'settings.manage'),
+      news: can(context, 'news.manage'),
       reservationManage: can(context, 'reservations.manage'),
       attendanceManage: can(context, 'reservations.attendance'),
       entitlementsRead: can(context, 'entitlements.read'),

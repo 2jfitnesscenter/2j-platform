@@ -22,6 +22,7 @@ import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type Tr
 import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler } from './training-integration.js';
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
+import { registerCenterNewsRoutes } from './center-news.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
 
@@ -187,6 +188,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerStaffRoutes(app, client, authorizationResolver);
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
