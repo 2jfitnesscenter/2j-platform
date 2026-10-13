@@ -66,6 +66,8 @@ test('self-service facade derives the identity server-side and hides another cli
   const ownMembership = await appA.inject({ method: 'GET', url: '/api/me/membership' });
   const assignment = await sql`SELECT id FROM client_plan_assignments WHERE client_id=${a.id} ORDER BY created_at DESC,id DESC LIMIT 1`;
   assert.equal(ownMembership.statusCode, 200); assert.equal(ownMembership.json().assignments[0].id, assignment[0].id);
+  assert.equal(ownMembership.json().assignments[0].rights.some(right => right.serviceId === service.id && right.serviceName === service.name), true);
+  assert.equal(JSON.stringify(ownMembership.json()).includes(b.firstName), false);
   const spoof = await appA.inject({ method: 'POST', url: `/api/me/sessions/${session.id}/reservations`, headers: { origin: 'http://127.0.0.1:5173' }, payload: { clientId: b.id } });
   assert.equal(spoof.statusCode, 400); assert.equal(spoof.json().error, 'invalid_self_service_request');
   const reserved = await appA.inject({ method: 'POST', url: `/api/me/sessions/${session.id}/reservations`, headers: { origin: 'http://127.0.0.1:5173', 'idempotency-key': randomUUID() }, payload: {} });
@@ -85,6 +87,25 @@ test('self-service facade derives the identity server-side and hides another cli
   const foreignPreview = await appB.inject({ method: 'GET', url: `/api/me/bookings/${reserved.json().id}/cancellation-preview` });
   assert.equal(foreignPreview.statusCode, 404);
   assert.equal((await sql`SELECT status FROM calendar_reservations WHERE id=${reserved.json().id}`)[0].status, 'reserved');
+});
+
+test('an active Member without any fee can still read Profile, inbox and documents', async () => {
+  const client = await makeClient('No fee');
+  const member = buildServer(process.env.DATABASE_URL, { clientAuthorizationResolver: async () => ({ clientId: client.id }) });
+  try {
+    const [profile, membership, forms, consents, unread] = await Promise.all([
+      member.inject({ method: 'GET', url: '/api/me' }),
+      member.inject({ method: 'GET', url: '/api/me/membership' }),
+      member.inject({ method: 'GET', url: '/api/client-portal/form-assignments' }),
+      member.inject({ method: 'GET', url: '/api/client-portal/consents' }),
+      member.inject({ method: 'GET', url: '/api/me/notifications/unread-count' }),
+    ]);
+    assert.equal(profile.statusCode, 200); assert.equal(profile.json().profile.id, client.id);
+    assert.equal(membership.statusCode, 200); assert.deepEqual(membership.json().assignments, []);
+    assert.equal(forms.statusCode, 200); assert.deepEqual(forms.json(), []);
+    assert.equal(consents.statusCode, 200); assert.deepEqual(consents.json(), []);
+    assert.equal(unread.statusCode, 200); assert.deepEqual(unread.json(), { count: 0 });
+  } finally { await member.close(); }
 });
 
 test('self-service waitlist and cancellation are owner-scoped and use the central booking engine', async () => {

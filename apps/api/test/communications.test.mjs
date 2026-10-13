@@ -488,6 +488,9 @@ test("concurrent identical form responses replay the committed submission",async
   assert.equal(results[0].json().id,results[1].json().id);
   const count=await sql`SELECT count(*)::int AS count FROM client_form_responses WHERE assignment_id=${assignment.json().id}`;
   assert.equal(count[0].count,1);
+  const profileDocuments=await portal.inject({method:"GET",url:"/api/client-portal/form-assignments"});
+  assert.equal(profileDocuments.statusCode,200,profileDocuments.body);
+  assert.equal(profileDocuments.json().some(item=>item.id===assignment.json().id&&item.status==='submitted'),true);
 });
 
 test("client portal has no session without identity and cannot read another client's assignment", async()=>{

@@ -61,6 +61,15 @@ test('pilot member login uses an opaque server session and logout returns to sig
   const loginRequest = requests.find(item => item.url === '/api/pilot/member/login');
   assert.equal(loginRequest.init.credentials, 'include');
   assert.equal(JSON.stringify(loginRequest.init.body).includes('clientId'), false);
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
+  assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
+  assert.ok(ui.getByText('No tienes ninguna cuota activa.'));
+  assert.ok(ui.getByText('Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.'));
+  assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));
+  assert.ok(ui.getByText('No tienes documentos pendientes.'));
+  fireEvent.click(ui.getByRole('button', { name: /Abrir buzón/ }));
+  assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));
+  assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
   fireEvent.click(ui.getByRole('button', { name: 'Cerrar sesión' }));
   assert.ok(await ui.findByRole('heading', { name: 'Tu espacio, a tu manera' }));
   assert.equal(requests.some(item => item.url === '/api/pilot/member/logout' && item.init.credentials === 'include'), true);
@@ -217,16 +226,19 @@ test('profile completes only the signed-in client’s form and records an explic
   });
   const assignment = { id: '88888888-8888-4888-8888-888888888888', name: 'Cuestionario de bienvenida', status: 'assigned', required: true, dueAt: null, category: 'onboarding', version: 1 };
   const consent = { consentId: '99999999-9999-4999-8999-999999999999', versionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'Normas del centro', body: 'Texto de las normas.', version: 1, required: true, accepted: false };
+  const activePlan = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', planName: 'Plan mensual', kind: 'monthly', status: 'active', startsOn: '2026-10-01', endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', serviceId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', serviceName: 'Pilates', serviceStatus: 'active', quantity: 8, balance: 3 }] };
   let acceptedPayload; let formSubmitted = false;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', firstName: 'Lucía', lastName: 'Díaz', email: null, status: 'active' } }), { status: 200 });
-    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }), { status: 200 });
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [activePlan] }), { status: 200 });
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }), { status: 200 });
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }), { status: 200 });
     if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ timezone: 'Atlantic/Canary', sessions: [] }), { status: 200 });
-    if (url === '/api/client-portal/form-assignments') return new Response(JSON.stringify(formSubmitted ? [] : [assignment]), { status: 200 });
-    if (url === '/api/client-portal/consents') return new Response(JSON.stringify([consent]), { status: 200 });
+    if (url === '/api/client-portal/form-assignments') return new Response(JSON.stringify(formSubmitted ? [{ ...assignment, status: 'submitted' }] : [assignment]), { status: 200 });
+    if (url === '/api/client-portal/consents') return new Response(JSON.stringify([{ ...consent, accepted: Boolean(acceptedPayload) }]), { status: 200 });
+    if (url === '/api/me/notifications') return new Response(JSON.stringify({ items: [], nextBefore: null, nextBeforeId: null }), { status: 200 });
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 2 }), { status: 200 });
     if (url === `/api/client-portal/form-assignments/${assignment.id}`) return new Response(JSON.stringify({ ...assignment, description: 'Datos básicos.', sensitivity: 'operational', fields: [{ id: 'goal', label: 'Objetivo principal', type: 'short_text', required: true }] }), { status: 200 });
     if (url.endsWith('/respond') && init.method === 'POST') { formSubmitted = true; return new Response(JSON.stringify({ status: 'submitted' }), { status: 201 }); }
     if (url === `/api/client-portal/consents/${consent.versionId}/accept` && init.method === 'POST') { acceptedPayload = JSON.parse(init.body); return new Response(JSON.stringify({ id: 'acceptance', acceptedAt: new Date().toISOString() }), { status: 201 }); }
@@ -235,6 +247,20 @@ test('profile completes only the signed-in client’s form and records an explic
   const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
   const ui = render(React.createElement(ClientApp));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Lucía' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
+  assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
+  for (const section of ['Tus cuotas', 'Servicios asociados', 'Tus compras', 'Mensajes y avisos', 'Contratos y certificados']) assert.ok(ui.getByRole('heading', { name: section }));
+  assert.ok(ui.getByText('Plan mensual'));
+  assert.ok(ui.getByText('Pilates'));
+  assert.ok(ui.getAllByText(/3 disponibles/).length >= 2);
+  assert.ok(ui.getByText('Tus compras y tickets del centro aparecerán aquí.'));
+  assert.ok(ui.getByText('2 avisos sin leer'));
+  assert.ok(ui.getByText('Pendiente de completar'));
+  assert.ok(ui.getAllByText('Requerido').length >= 2);
+  assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
+  fireEvent.click(ui.getByRole('button', { name: /Abrir buzón/ }));
+  assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));
+  assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
   fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
   fireEvent.click(ui.getByRole('button', { name: 'Completar' }));
   assert.ok(await ui.findByRole('dialog', { name: 'Cuestionario de bienvenida' }));
@@ -245,7 +271,9 @@ test('profile completes only the signed-in client’s form and records an explic
   goal.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
   assert.equal(goal.value, 'Mejorar fuerza');
   fireEvent.click(ui.getByRole('button', { name: 'Enviar documento' }));
-  assert.ok(await ui.findByText('No tienes formularios pendientes.'));
+  assert.ok(await ui.findByText('Cuestionario de bienvenida'));
+  assert.ok(ui.getByText('Enviado · pendiente de revisión'));
+  assert.equal(ui.queryByText('Todavía no hay documentos completados o enviados.'), null);
   fireEvent.click(ui.getByRole('button', { name: 'Consultar' }));
   assert.ok(await ui.findByRole('dialog', { name: 'Normas del centro' }));
   fireEvent.click(ui.getByLabelText('He leído y acepto este consentimiento.'));
@@ -253,6 +281,7 @@ test('profile completes only the signed-in client’s form and records an explic
   fireEvent.click(ui.getByRole('button', { name: 'Confirmar aceptación' }));
   assert.ok(await ui.findByText('Tu aceptación se ha guardado.'));
   assert.deepEqual(acceptedPayload, { typedName: 'Lucía Díaz', accepted: true });
+  assert.ok(ui.getByText('Aceptado'));
   cleanup(); dom.window.close();
 });
 
@@ -296,6 +325,14 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   const navigation = ui.getByRole('navigation', { name: 'Navegación principal' });
   assert.deepEqual(within(navigation).getAllByRole('button').map(button => button.textContent.trim()), ['Inicio', 'Búnker', 'Tienda', 'Perfil', 'Ajustes']);
   assert.equal(within(navigation).getByRole('button', { name: 'Inicio', exact: true }).getAttribute('aria-current'), 'page');
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Perfil' }));
+  assert.ok(await ui.findByText('Plan 2J'));
+  assert.ok(ui.getByText('Funcional'));
+  assert.ok(ui.getAllByText(/8 disponibles/).length >= 2);
+  assert.ok(ui.getByText('juan.demo@example.test'));
+  assert.ok(ui.getByRole('button', { name: /Abrir buzón/ }));
+  assert.equal(within(navigation).getByRole('button', { name: 'Perfil' }).getAttribute('aria-current'), 'page');
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Inicio' }));
   for (const oldLabel of ['Reservar', 'Entrenar', 'Centro']) assert.equal(within(navigation).queryByRole('button', { name: oldLabel, exact: true }), null);
   assert.equal(ui.container.querySelectorAll('.home-news,.home-book-cta,.home-next-booking').length, 3);
   assert.equal(ui.getByText('Selecciona actividad, día y hora.' ) != null, true);
@@ -333,9 +370,9 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Perfil' }));
   assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
   assert.ok(ui.getByText('Plan 2J'));
-  assert.ok(ui.getByRole('heading', { name: 'Cuotas y saldo' }));
+  assert.ok(ui.getByRole('heading', { name: 'Tus cuotas' }));
   assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));
-  assert.ok(ui.getByRole('heading', { name: 'Buzón' }));
+  assert.ok(ui.getByRole('heading', { name: 'Mensajes y avisos' }));
   fireEvent.click(ui.getByRole('button', { name: 'Completar' }));
   assert.ok(await ui.findByRole('dialog', { name: 'Ficha de bienvenida' }));
   assert.equal(ui.getByRole('button', { name: 'Enviar documento' }).disabled, true);

@@ -1648,7 +1648,7 @@ export function registerCommunicationRoutes(
     const actor = await client(req, reply);
     if (!actor) return;
     try {
-      return await db`SELECT a.id,a.status,a.required,a.due_at AS "dueAt",a.assigned_at AS "assignedAt",f.name,f.category,v.version FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id WHERE a.client_id=${actor.clientId} AND a.status IN ('assigned','review_required','rejected') ORDER BY a.required DESC,a.due_at NULLS LAST,a.assigned_at DESC LIMIT 100`;
+      return await db`SELECT a.id,a.status,a.required,a.due_at AS "dueAt",a.assigned_at AS "assignedAt",f.name,f.category,v.version FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id WHERE a.client_id=${actor.clientId} AND a.status IN ('assigned','submitted','review_required','approved','rejected','expired') ORDER BY (a.status IN ('assigned','review_required','rejected')) DESC,a.required DESC,a.due_at NULLS LAST,a.assigned_at DESC LIMIT 100`;
     } catch {
       req.log.error(
         { route: "GET /api/client-portal/form-assignments" },
