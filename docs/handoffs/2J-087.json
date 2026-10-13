@@ -2,10 +2,17 @@
   "task": "2J-087",
   "title": "Center News V1 — Admin-managed news for Member Home",
   "repository": "2jfitnesscenter/2j-platform",
-  "status": "ready_to_push",
+  "status": "draft_pr_open_ci_pending",
   "branch": "agent/codex/2J-087-center-news",
   "base_sha": "0d2e30661c2f56e07f8c2d8e0cff68ffbebcf037",
-  "pull_request": null,
+  "implementation_commit_sha": "8dfdf85e2b39cb5c7451be4e3c6fd4a4327b08cc",
+  "pull_request": {
+    "number": 34,
+    "url": "https://github.com/2jfitnesscenter/2j-platform/pull/34",
+    "state": "OPEN",
+    "draft": true,
+    "merge": false
+  },
   "draft": true,
   "merge": false,
   "training_changes": false,
@@ -56,7 +63,7 @@
     "audit": "pnpm audit --audit-level high: no known vulnerabilities",
     "git_diff_check": "pass",
     "browser_smoke": "synthetic loopback Admin draft/edit/publish/feature/withdraw/audit; Member featured Home/list/detail/empty; booking navigation regression; screenshots viewed but not committed",
-    "ci": "pending final pushed head"
+    "ci": "pending final docs update head"
   },
   "independent_reviews": {"claude": "pending final SHA", "antigravity": "pending final SHA"},
   "deferred_p3": [
