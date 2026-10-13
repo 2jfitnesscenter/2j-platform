@@ -1,0 +1,84 @@
+{
+  "task": "2J-085",
+  "title": "Limited Member real-data booking pilot: reservations, cancellations and waitlist",
+  "repository": "2jfitnesscenter/2j-platform",
+  "status": "draft_open_implementation_ci_passed",
+  "branch": "agent/codex/2J-085-limited-member-booking",
+  "base_sha": "d82f979464533b0f763267bed2abfa370cef7c90",
+  "tested_code_sha": "64f2049ef7db9d49d3b25200d03d9aa493a0c23a",
+  "ci_verified_head_sha": "aac6b0c6f603c333b4c37fd2114d67040f7cc0db",
+  "pull_request": { "number": 32, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/32", "draft": true },
+  "merge": false,
+  "production_deployment": false,
+  "training_changes": false,
+  "cohort": {
+    "identity_key": "personId",
+    "states": ["active", "revoked"],
+    "event_history": "append-only actor, reason and timestamp",
+    "member_a_seeded": true,
+    "member_b_seeded": false,
+    "automatic_enrollment": false,
+    "management_permission": "member.pilot.booking.manage",
+    "management_flag": "PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED; development/test only"
+  },
+  "feature_flags": {
+    "auth": "PILOT_MEMBER_AUTH_ENABLED; default false; development/test only",
+    "booking": "PILOT_MEMBER_BOOKING_ENABLED; default false; requires auth flag and development/test",
+    "member_read_behavior_when_booking_off": "authenticated profile, membership, sessions and bookings remain available",
+    "preview": "fictional fixtures only; no real session and all mutations disabled"
+  },
+  "server_guard": {
+    "checked_on_every_mutation": true,
+    "routes": [
+      "POST /api/me/sessions/:sessionId/reservations",
+      "POST /api/me/sessions/:sessionId/waitlist",
+      "PATCH /api/me/bookings/:reservationId/cancel",
+      "PATCH /api/me/waitlist/:entryId/cancel"
+    ],
+    "non_cohort_response": "403 member_pilot_action_not_enabled",
+    "booking_engine": "existing calendar eligibility, quota, idempotency, capacity, promotion, audit and notification outbox reused",
+    "csrf": "request.routeOptions.url guard preserved; wrong Origin, allowed Origin, encoded path and Referer fallback covered"
+  },
+  "rollback": {
+    "global": "PILOT_MEMBER_BOOKING_ENABLED=false",
+    "per_person": "Admin revokes cohort row with reason",
+    "preserves_booking_history": true
+  },
+  "migration": "0029_member_booking_pilot_cohort.sql",
+  "synthetic_data": {
+    "database": "loopback-only disposable PostgreSQL",
+    "member_a": "active 12-session entitlement, active cohort, available session and full waitlist session",
+    "member_b": "no entitlement, outside cohort, synthetic reservation occupies waitlist session",
+    "real_member_data": false
+  },
+  "observability": "PII-free structured attempt logs by route template, outcome and HTTP status; existing calendar audit and notification outbox reused",
+  "notification_worker": "ISO timestamp parameter fix; notification scheduler/dispatcher regression tested and booking, cancellation, waitlist notifications received in local browser smoke",
+  "browser_smoke": {
+    "local_only": true,
+    "member_a_desktop": "reserve, view, cancel, join/leave waitlist and receive in-app notifications; ~1264x713",
+    "member_b_mobile": "browse with actions disabled, clear pilot copy; direct API reservation returns 403; 390x844",
+    "admin": "local Command Center loaded with occupancy read model",
+    "trainer": "local home and agenda loaded; no clock-in record created"
+  },
+  "verification": {
+    "full_suite": "279/279 pass (packages 19, API/PostgreSQL 174, Admin 70, Client 9, Staff 7)",
+    "focused_seeded_booking_acceptance": "1/1 pass",
+    "focused_notification_worker": "6/6 pass",
+    "typecheck": "9/9 pass",
+    "build": "9/9 pass",
+    "migrations": "29/29 checksummed on fresh disposable PostgreSQL",
+    "dependency_audit": "0 known vulnerabilities",
+    "git_diff_check": "pass",
+    "local_secret_scan": "not run: Go is unavailable on this workstation; GitHub secret scan passed on implementation head",
+    "github_ci": "quality and secret scan passed on implementation head; documentation-only follow-up checks are visible on PR #32",
+    "claude_review": "pending final pushed SHA",
+    "antigravity_review": "pending final pushed SHA"
+  },
+  "remaining_before_real_member_production_rollout": [
+    "production identity provider and account proof/recovery/linking",
+    "MFA/passkey decisions and production security acceptance",
+    "HTTPS/proxy/cookie/session operations and revocation acceptance",
+    "throttling, abuse monitoring, operational retention and incident process",
+    "explicit real-member cohort/privacy approval and independent review"
+  ]
+}

@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+
+process.env.NODE_ENV ??= 'test';
 import { materializeCalendarTemplates } from '../src/calendar-materializer.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
@@ -452,7 +454,11 @@ test('2J-080 end-to-end: service, entitlement, rolling sessions, self booking, o
   const occurrences = await sql`SELECT id,starts_at AS "startsAt",status,capacity FROM calendar_sessions WHERE template_id=${template.json().id} ORDER BY starts_at`;
   assert.ok(occurrences.length >= 3);
   assert.ok(occurrences.every((item) => item.status === 'scheduled'));
-  const member = buildServer(process.env.DATABASE_URL, { clientAuthorizationResolver: async () => ({ clientId: client.id }) });
+  const personId = randomUUID();
+  await sql`INSERT INTO platform_persons(id,status,created_by) VALUES (${personId}::uuid,'active','calendar-080-test')`;
+  await sql`INSERT INTO platform_person_clients(person_id,client_id,linked_by) VALUES (${personId}::uuid,${client.id}::uuid,'calendar-080-test')`;
+  await sql`INSERT INTO platform_member_booking_pilot_cohort(person_id,status,enabled_by) VALUES (${personId}::uuid,'active','calendar-080-test')`;
+  const member = buildServer(process.env.DATABASE_URL, { memberPilotAuthEnabled: true, memberPilotBookingEnabled: true, memberAppOrigin: 'http://127.0.0.1:5173', clientAuthorizationResolver: async () => ({ clientId: client.id, personId }) });
   try {
     const rangeEnd = new Date(start); rangeEnd.setUTCDate(rangeEnd.getUTCDate()+28);
     const memberSessions = await member.inject({ method: 'GET', url: `/api/me/sessions?from=${startsOn}&to=${canaryDate(rangeEnd)}` });
@@ -461,7 +467,7 @@ test('2J-080 end-to-end: service, entitlement, rolling sessions, self booking, o
     assert.ok(visible);
     const details = await member.inject({ method: 'GET', url: `/api/me/sessions/${first.id}` });
     assert.equal(details.statusCode, 200, details.body); assert.equal(details.json().session.eligible, true);
-    const reservation = await member.inject({ method: 'POST', url: `/api/me/sessions/${first.id}/reservations`, headers: { 'idempotency-key': randomUUID() }, payload: {} });
+    const reservation = await member.inject({ method: 'POST', url: `/api/me/sessions/${first.id}/reservations`, headers: { origin: 'http://127.0.0.1:5173', 'idempotency-key': randomUUID() }, payload: {} });
     assert.equal(reservation.statusCode, 201, reservation.body);
     const consumed = await sql`SELECT quantity FROM client_entitlement_ledger WHERE external_reference LIKE ${`calendar_reservation:${reservation.json().id}%`}`;
     assert.equal(consumed.reduce((total, row) => total + Number(row.quantity), 0), -1);
@@ -480,7 +486,7 @@ test('2J-080 end-to-end: service, entitlement, rolling sessions, self booking, o
     assert.equal(new Date(sessionsAfter.find((item) => item.id === first.id).startsAt).toISOString(), moved.toISOString());
     assert.equal(Number((await sql`SELECT count(*)::int AS total FROM calendar_sessions WHERE template_id=${template.json().id} AND starts_at=(SELECT starts_at FROM calendar_sessions WHERE id=${sibling.id})`).at(0).total), 1);
     const nextAvailable = occurrences[2];
-    const finalBooking = await member.inject({ method: 'POST', url: `/api/me/sessions/${nextAvailable.id}/reservations`, headers: { 'idempotency-key': randomUUID() }, payload: {} });
+    const finalBooking = await member.inject({ method: 'POST', url: `/api/me/sessions/${nextAvailable.id}/reservations`, headers: { origin: 'http://127.0.0.1:5173', 'idempotency-key': randomUUID() }, payload: {} });
     assert.equal(finalBooking.statusCode, 201, finalBooking.body);
     assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_audit_events WHERE session_id=${first.id} AND action='session.occurrence_overridden'`).at(0).total, 1);
   } finally { await member.close(); }

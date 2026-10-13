@@ -15,6 +15,7 @@ export function registerClientAppRoutes(
   db: DB,
   resolveClient: (request: FastifyRequest) => Promise<ClientAuthorizationContext | null>,
   resolveEligibility: BookingEligibilityResolver,
+  memberBookingEnabled = false,
 ) {
   async function client(request: FastifyRequest, reply: any) {
     reply.header('Cache-Control', 'no-store');
@@ -24,8 +25,15 @@ export function registerClientAppRoutes(
     const clientId = actor.clientId.toLowerCase();
     const [activeClient] = await db`SELECT id FROM clients WHERE id=${clientId} AND status='active'`;
     if (!activeClient) { reply.code(401).send({ error: 'client_authentication_required' }); return null; }
-    return { clientId };
+    return { clientId, ...(actor.personId ? { personId: actor.personId } : {}) };
   }
+
+  app.get('/api/me/booking-access', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    if (!memberBookingEnabled || !actor.personId) return { enabled: false };
+    const [row] = await db`SELECT 1 AS enabled FROM platform_member_booking_pilot_cohort WHERE person_id=${actor.personId}::uuid AND status='active'`;
+    return { enabled: Boolean(row) };
+  });
 
   app.get('/api/me', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;

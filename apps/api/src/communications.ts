@@ -6,7 +6,7 @@ import type { createDatabase } from "./db.js";
 import { appendNotificationEvent } from "./notifications.js";
 
 type SqlClient = ReturnType<typeof createDatabase>["client"];
-export type ClientAuthorizationContext = { readonly clientId: string };
+export type ClientAuthorizationContext = { readonly clientId: string; readonly personId?: string };
 const uuid = z
   .string()
   .uuid()

@@ -49,7 +49,7 @@ test('pilot login issues hashed opaque sessions, binds each member server-side, 
   const ownB = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie: cookieB } });
   assert.equal(ownB.statusCode, 200); assert.equal(ownB.json().profile.id, memberB.clientId); assert.equal(ownB.json().profile.firstName, 'Bea');
   const spoofBody = await app.inject({ method: 'POST', url: `/api/me/sessions/${randomUUID()}/reservations`, headers: { cookie: cookieB, origin, 'content-type': 'application/json' }, payload: { clientId: memberA.clientId } });
-  assert.equal(spoofBody.statusCode, 400); assert.equal(spoofBody.json().error, 'invalid_self_service_request');
+  assert.equal(spoofBody.statusCode, 403); assert.equal(spoofBody.json().error, 'member_pilot_action_not_enabled');
   assert.equal((await app.inject({ method: 'POST', url: `/api/me/sessions/${randomUUID()}/reservations`, headers: { cookie: cookieB, origin: 'https://attacker.example', 'content-type': 'application/json' }, payload: {} })).statusCode, 403);
   assert.equal((await app.inject({ method: 'POST', url: '/api/client-portal/conversations', headers: { cookie: cookieB, origin: 'https://attacker.example', 'content-type': 'application/json' }, payload: {} })).statusCode, 403);
   const logout = await app.inject({ method: 'POST', url: '/api/pilot/member/logout', headers: { origin, cookie: cookieB, 'content-type': 'application/json' }, payload: {} });
@@ -97,6 +97,13 @@ test('resolved Member route metadata enforces CSRF for encoded path variants and
   }
   const deniedNotification = await sql`SELECT read_at AS "readAt" FROM notifications WHERE id=${notificationId}`;
   assert.equal(deniedNotification[0].readAt, null, 'denied encoded mutations must not change notification state');
+  const sessionId = randomUUID();
+  const encodedWrongOrigin = await app.inject({ method: 'POST', url: `/api/%6de/sessions/${sessionId}/reservations`, headers: { cookie, origin: 'http://evil.example', 'idempotency-key': randomUUID() }, payload: {} });
+  assert.equal(encodedWrongOrigin.statusCode, 403); assert.equal(encodedWrongOrigin.json().error, 'origin_rejected');
+  const encodedCorrectOrigin = await app.inject({ method: 'POST', url: `/api/%6de/sessions/${sessionId}/reservations`, headers: { cookie, origin, 'idempotency-key': randomUUID() }, payload: {} });
+  assert.equal(encodedCorrectOrigin.statusCode, 403); assert.equal(encodedCorrectOrigin.json().error, 'member_pilot_action_not_enabled', 'the valid Origin passes CSRF and is then blocked by the off-by-default booking flag');
+  const refererFallback = await app.inject({ method: 'POST', url: `/api/me/sessions/${sessionId}/waitlist`, headers: { cookie, referer: `${origin}/member`, 'idempotency-key': randomUUID() }, payload: {} });
+  assert.equal(refererFallback.statusCode, 403); assert.equal(refererFallback.json().error, 'member_pilot_action_not_enabled');
   for (const { method, url, resolves } of paths.filter(path => path.resolves)) {
     const expectedSuccess = method === 'POST' && url.includes('conversations') ? 201 : 200;
     const correctOrigin = await app.inject({ method, url, headers: { cookie, origin }, payload: {} });
@@ -164,6 +171,10 @@ test('revoked subjects, inactive persons, archived clients, and missing facets f
 
 test('pilot member auth cannot be enabled outside development or test', () => {
   const prior = process.env.NODE_ENV; process.env.NODE_ENV = 'production';
-  try { assert.throws(() => buildServer(process.env.DATABASE_URL, { memberPilotAuthEnabled: true, memberAppOrigin: origin }), /restricted to development\/test/); }
+  try {
+    assert.throws(() => buildServer(process.env.DATABASE_URL, { memberPilotAuthEnabled: true, memberAppOrigin: origin }), /restricted to development\/test/);
+    assert.throws(() => buildServer(process.env.DATABASE_URL, { memberPilotBookingEnabled: true }), /development\/test Member pilot authentication/);
+    assert.throws(() => buildServer(process.env.DATABASE_URL, { memberPilotCohortManagementEnabled: true }), /restricted to development\/test/);
+  }
   finally { process.env.NODE_ENV = prior; }
 });

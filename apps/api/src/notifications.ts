@@ -38,10 +38,12 @@ const labels: Record<NotificationEventType, { type: string; title: string; body:
 
 /** Durable, replay-safe dispatcher. Delivery here means persisted in-app inbox, never provider push. */
 export async function dispatchNotificationBatch(db: SqlClient, batchSize = 50, now = new Date()) {
+  const nowIso = now.toISOString();
+  const staleBeforeIso = new Date(now.getTime() - 5 * 60_000).toISOString();
   const rows = await db.begin(async (tx) => tx`WITH picked AS (
-      SELECT id FROM domain_events_outbox WHERE (status='pending' AND available_at<=${now}) OR (status='processing' AND locked_at<${new Date(now.getTime()-5*60_000)})
+      SELECT id FROM domain_events_outbox WHERE (status='pending' AND available_at<=${nowIso}) OR (status='processing' AND locked_at<${staleBeforeIso})
       ORDER BY occurred_at,id FOR UPDATE SKIP LOCKED LIMIT ${Math.max(1,Math.min(batchSize,200))}
-    ) UPDATE domain_events_outbox o SET status='processing',locked_at=${now},attempts=o.attempts+1 FROM picked WHERE o.id=picked.id
+    ) UPDATE domain_events_outbox o SET status='processing',locked_at=${nowIso},attempts=o.attempts+1 FROM picked WHERE o.id=picked.id
       RETURNING o.id,o.event_type AS type,o.aggregate_type AS "aggregateType",o.aggregate_id AS "aggregateId",o.recipient_client_id AS "clientId",o.recipient_staff_actor_id AS "staffActorId",o.payload,o.dedupe_key AS "dedupeKey",o.attempts`);
   let delivered = 0;
   for (const row of rows) {
@@ -63,13 +65,13 @@ export async function dispatchNotificationBatch(db: SqlClient, batchSize = 50, n
               VALUES ('staff',${person.actor_id},${row.id},'message_received','Nuevo mensaje','Un cliente ha enviado un mensaje.','/messages',${row.dedupeKey}) ON CONFLICT(recipient_kind,recipient_id,dedupe_key) DO NOTHING`;
           }
         }
-        await tx`UPDATE domain_events_outbox SET status='delivered',delivered_at=${now},locked_at=NULL,last_error_code=NULL WHERE id=${row.id} AND status='processing'`;
+        await tx`UPDATE domain_events_outbox SET status='delivered',delivered_at=${nowIso},locked_at=NULL,last_error_code=NULL WHERE id=${row.id} AND status='processing'`;
       });
       delivered++;
     } catch {
       const attempts = Number(row.attempts);
       const delayMs = Math.min(60*60_000, 1_000 * 2 ** Math.min(attempts, 12));
-      await db`UPDATE domain_events_outbox SET status=${attempts>=8?'dead_letter':'pending'},available_at=${new Date(now.getTime()+delayMs)},locked_at=NULL,last_error_code='dispatch_failed' WHERE id=${row.id} AND status='processing'`;
+      await db`UPDATE domain_events_outbox SET status=${attempts>=8?'dead_letter':'pending'},available_at=${new Date(now.getTime()+delayMs).toISOString()},locked_at=NULL,last_error_code='dispatch_failed' WHERE id=${row.id} AND status='processing'`;
     }
   }
   return { claimed: rows.length, delivered };
@@ -77,13 +79,15 @@ export async function dispatchNotificationBatch(db: SqlClient, batchSize = 50, n
 
 /** Minute-window scheduler; unique dedupe keys make overlapping/restarted schedulers safe. */
 export async function enqueueDueBookingReminders(db: SqlClient, now = new Date()) {
+  const nowIso = now.toISOString();
+  const horizonIso = new Date(now.getTime() + 90 * 24 * 60 * 60_000).toISOString();
   return db.begin(async (tx) => {
     const [settings] = await tx`SELECT booking_reminders_enabled AS enabled,booking_reminder_minutes AS minutes,entitlement_expiry_enabled AS entitlement_expiry_enabled,entitlement_expiry_days AS entitlement_expiry_days,low_balance_enabled AS low_balance_enabled,low_balance_threshold AS low_balance_threshold,document_reminders_enabled AS document_reminders_enabled FROM notification_settings WHERE center_key='2j'`;
     if (!settings) return 0;
     let count = 0;
     const rows = settings.enabled ? await tx`SELECT r.id AS "reservationId",r.client_id AS "clientId",s.starts_at AS "startsAt"
       FROM calendar_reservations r JOIN calendar_sessions s ON s.id=r.session_id
-      WHERE r.status='reserved' AND s.status='scheduled' AND s.starts_at>${now} AND s.starts_at<=${new Date(now.getTime()+90*24*60*60_000)} ORDER BY s.starts_at,r.id LIMIT 1000` : [];
+      WHERE r.status='reserved' AND s.status='scheduled' AND s.starts_at>${nowIso} AND s.starts_at<=${horizonIso} ORDER BY s.starts_at,r.id LIMIT 1000` : [];
     for (const row of rows) { const dueAt=new Date(new Date(row.startsAt).getTime()-Number(settings.minutes)*60_000);await appendNotificationEvent(tx,{type:'reminder.booking',aggregateType:'calendar_reservation',aggregateId:row.reservationId,clientId:row.clientId,dedupeKey:`booking-reminder:${row.reservationId}:${new Date(row.startsAt).toISOString()}`,availableAt:dueAt>now?dueAt:now}); count++; }
     if (settings.entitlement_expiry_enabled) {
       const expiring = await tx`SELECT id,client_id AS "clientId",ends_on AS "endsOn" FROM client_plan_assignments WHERE status='active' AND ends_on BETWEEN (now() AT TIME ZONE 'Atlantic/Canary')::date AND (now() AT TIME ZONE 'Atlantic/Canary')::date+${Number(settings.entitlement_expiry_days)}::int ORDER BY ends_on,id`;

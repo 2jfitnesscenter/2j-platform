@@ -128,6 +128,10 @@ async function seedMemberPilot(tx: Parameters<Parameters<ReturnType<typeof creat
       VALUES (${subject.id},${codeHash},'active') ON CONFLICT(auth_subject_link_id) DO NOTHING`;
     const [credential] = await tx`SELECT code_hash,status FROM platform_member_pilot_credentials WHERE auth_subject_link_id=${subject.id}`;
     if (credential?.code_hash.trim() !== codeHash || credential.status !== 'active') throw new Error(`Synthetic member credential ${member.subject} differs from the fixed pilot credential; refusing to overwrite it.`);
+    if (member.subject === 'member-a') {
+      const [cohort] = await tx`INSERT INTO platform_member_booking_pilot_cohort(person_id,status,enabled_by) VALUES (${personId}::uuid,'active','2j-demo-seed') ON CONFLICT(person_id) DO NOTHING RETURNING person_id`;
+      if (cohort) await tx`INSERT INTO platform_member_booking_pilot_cohort_events(person_id,action,actor_id,reason) VALUES (${personId}::uuid,'booking_cohort.enabled','2j-demo-seed','Synthetic local Member A pilot cohort')`;
+    }
   }
 
   const planId = 'd0840000-0000-4000-8000-000000000101';
@@ -170,6 +174,13 @@ async function seedMemberPilot(tx: Parameters<Parameters<ReturnType<typeof creat
     SELECT ${individualSessionId}::uuid,s.id,s.area_id,'manual',(((now() AT TIME ZONE 'Atlantic/Canary')::date + interval '3 days 17 hours') AT TIME ZONE 'Atlantic/Canary'),60,8,'scheduled',${actor}
     FROM services s WHERE s.id=${serviceId}::uuid AND s.status='active'
     ON CONFLICT(id) DO NOTHING`;
+  const fullSessionId = 'd0840000-0000-4000-8000-000000000113';
+  await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by)
+    SELECT ${fullSessionId}::uuid,s.id,s.area_id,'manual',(((now() AT TIME ZONE 'Atlantic/Canary')::date + interval '4 days 19 hours') AT TIME ZONE 'Atlantic/Canary'),45,1,'scheduled',${actor}
+    FROM services s WHERE s.id=${serviceId}::uuid AND s.status='active' ON CONFLICT(id) DO NOTHING`;
+  await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,created_by)
+    SELECT 'd0840000-0000-4000-8000-000000000114'::uuid,${fullSessionId}::uuid,${memberPilot[1].clientId}::uuid,'synthetic-local-pilot',${actor}
+    WHERE EXISTS(SELECT 1 FROM calendar_sessions WHERE id=${fullSessionId}::uuid AND status='scheduled') ON CONFLICT(id) DO NOTHING`;
 }
 
 async function runDemoSeed() {

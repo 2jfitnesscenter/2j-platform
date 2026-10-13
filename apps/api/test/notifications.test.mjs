@@ -5,6 +5,7 @@ import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { appendNotificationEvent, dispatchNotificationBatch, enqueueDueBookingReminders } from '../src/notifications.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+import { createDatabase } from '../src/db.ts';
 
 if(!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
 const sql=postgres(process.env.DATABASE_URL,{max:12,connect_timeout:5});
@@ -70,9 +71,11 @@ test('scheduler is safe to overlap and runs reminder lookup against Canary-confi
   const {client,service}=await createEntitledClient(),now=new Date(),startsAt=new Date(now.getTime()+119*60_000);
   const session=await admin.inject({method:'POST',url:'/api/calendar/sessions',payload:{serviceId:service.id,areaId:service.areaId,startsAt:startsAt.toISOString(),durationMinutes:45,capacity:3}});assert.equal(session.statusCode,201,session.body);
   const reservation=await admin.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id}});assert.equal(reservation.statusCode,201,reservation.body);
-  const result=await enqueueDueBookingReminders(sql,now);
+  const workerClient=createDatabase(process.env.DATABASE_URL).client;
+  let result,dispatched;
+  try { result=await enqueueDueBookingReminders(workerClient,now); dispatched=await dispatchNotificationBatch(workerClient,200,now); } finally { await workerClient.end(); }
   assert.equal(typeof result,'number');
-  const [reminder]=await sql`SELECT id,status,available_at FROM domain_events_outbox WHERE dedupe_key=${`booking-reminder:${reservation.json().id}:${startsAt.toISOString()}`}`;assert.ok(reminder);assert.ok(new Date(reminder.available_at)<=now);
+  const [reminder]=await sql`SELECT id,status,available_at FROM domain_events_outbox WHERE dedupe_key=${`booking-reminder:${reservation.json().id}:${startsAt.toISOString()}`}`;assert.ok(reminder);assert.ok(new Date(reminder.available_at)<=now);assert.ok(dispatched.delivered>=1);assert.equal(reminder.status,'delivered');
   const {assignment}=await createEntitledClient();await enqueueDueBookingReminders(sql,now);
   const expiry=await sql`SELECT event_type FROM domain_events_outbox WHERE aggregate_id=${assignment.id} AND event_type='entitlement.expiring'`;assert.equal(expiry.length,1);
   const low=await sql`SELECT event_type FROM domain_events_outbox WHERE aggregate_id=${assignment.id} AND event_type='entitlement.low_balance'`;assert.equal(low.length,1);

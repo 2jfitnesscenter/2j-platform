@@ -53,6 +53,7 @@
     "timeclock.audit",
     "staff.timeclock.correct",
     "identity.people.manage",
+    "member.pilot.booking.manage",
     "settings.manage",
     "entitlements.read",
     "entitlements.manage",

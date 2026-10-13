@@ -11,6 +11,7 @@ import { registerEntitlementRoutes } from './entitlements.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
 import { createMemberPilotAuth } from './member-pilot-auth.js';
+import { registerMemberBookingCohortRoutes } from './member-booking-cohort.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
@@ -101,6 +102,8 @@ export type ServerOptions = {
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
   memberPilotAuthEnabled?: boolean;
+  memberPilotBookingEnabled?: boolean;
+  memberPilotCohortManagementEnabled?: boolean;
   memberAppOrigin?: string | null;
   trainingLinkingEnabled?: boolean;
   trainingVerifiedLinkingEnabled?: boolean;
@@ -115,6 +118,8 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   if (options.memberPilotAuthEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) {
     throw new Error('Pilot member authentication is restricted to development/test environments.');
   }
+  if (options.memberPilotBookingEnabled && (!options.memberPilotAuthEnabled || !['development', 'test'].includes(process.env.NODE_ENV ?? ''))) throw new Error('Member booking pilot mutations require development/test Member pilot authentication.');
+  if (options.memberPilotCohortManagementEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Member pilot cohort management is restricted to development/test environments.');
   const app = Fastify({
     logger: options.logger ?? { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/' }; } } },
     bodyLimit: 16_384,
@@ -153,13 +158,29 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const memberMutation = routePath.startsWith('/api/me/') || routePath.startsWith('/api/client-portal/');
     if (memberPilotAuth.enabled && memberMutation && !['GET','HEAD','OPTIONS'].includes(request.method) && !memberPilotAuth.csrfAllowed(request)) return reply.code(403).send({ error: 'origin_rejected' });
   });
+  app.addHook('onSend', async (request, reply, payload) => {
+    const route = request.routeOptions.url ?? '';
+    if (['/api/me/sessions/:sessionId/reservations','/api/me/sessions/:sessionId/waitlist','/api/me/bookings/:reservationId/cancel','/api/me/waitlist/:entryId/cancel'].includes(route)) {
+      let code = '';
+      if (typeof payload === 'string') { try { const parsed = JSON.parse(payload); if (typeof parsed?.error === 'string') code = parsed.error; } catch {} }
+      const outcome = reply.statusCode < 400 ? 'success' : code === 'member_pilot_action_not_enabled' ? 'cohort_blocked' : ['no_active_entitlement','entitlement_required','entitlement_unavailable','debt_restriction','required_document_missing','session_full','booking_conflict','service_archived','area_archived'].includes(code) ? 'eligibility_blocked' : 'failure';
+      request.log.info({ pilotAction: route, outcome, statusCode: reply.statusCode }, 'member booking pilot attempt');
+    }
+    return payload;
+  });
   app.addHook('onClose', async () => { await client.end(); });
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
-  registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver);
-  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver);
+  const allowMemberBooking = async (personId: string | undefined, request: import('fastify').FastifyRequest) => {
+    if (!options.memberPilotBookingEnabled || !personId) return false;
+    const [row] = await client`SELECT 1 AS enabled FROM platform_member_booking_pilot_cohort WHERE person_id=${personId}::uuid AND status='active'`;
+    return Boolean(row);
+  };
+  registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver, allowMemberBooking);
+  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true);
+  registerMemberBookingCohortRoutes(app, client, authorizationResolver, options.memberPilotCohortManagementEnabled === true);
   memberPilotAuth.register(app);
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
@@ -483,6 +504,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
     memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
+    memberPilotBookingEnabled: process.env.PILOT_MEMBER_BOOKING_ENABLED === 'true',
+    memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
     memberAppOrigin: process.env.MEMBER_APP_ORIGIN ?? null,
     ...(localDemoClientId ? { clientAuthorizationResolver: async () => ({ clientId: localDemoClientId.toLowerCase() }) } : {}),
   });

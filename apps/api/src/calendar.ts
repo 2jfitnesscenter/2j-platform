@@ -61,6 +61,7 @@ export function registerCalendarRoutes(
   resolveAuthorization: (request: FastifyRequest) => Promise<AuthorizationContext | null>,
   resolveBookingEligibility: BookingEligibilityResolver = createBookingEligibilityResolver(),
   resolveClient?: (request: FastifyRequest) => Promise<ClientAuthorizationContext | null>,
+  allowMemberBooking?: (personId: string | undefined, request: FastifyRequest) => Promise<boolean>,
 ) {
   async function authorized(request: FastifyRequest, reply: any, permission: string) {
     const context = await resolveAuthorization(request);
@@ -502,6 +503,7 @@ export function registerCalendarRoutes(
     if (context && !can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
     const clientActor = selfService ? await resolveClient?.(request) : null;
     if (selfService && !clientActor) return reply.code(401).send({ error: 'client_authentication_required' });
+    if (selfService && !await allowMemberBooking?.(clientActor?.personId, request)) return reply.code(403).send({ error: 'member_pilot_action_not_enabled' });
     if (selfService && !uuid.safeParse(clientActor?.clientId).success) return reply.code(401).send({ error: 'client_authentication_required' });
     const params = z.object({ sessionId: uuid }).safeParse(request.params);
     const body = z.object({ clientId: uuid.optional(), entitlementAssignmentId: uuid.optional(), overbook: z.boolean().optional().default(false), overrideDebt: z.boolean().optional().default(false), overrideReason: z.string().trim().min(3).max(240).optional(), overrideDocuments: z.boolean().optional().default(false), documentOverrideReason: z.string().trim().min(3).max(240).optional() }).strict().superRefine((value, issue) => {
@@ -569,6 +571,7 @@ export function registerCalendarRoutes(
     if (context && !can(context, 'clients.read')) return reply.code(403).send({ error: 'permission_denied' });
     const clientActor = selfService ? await resolveClient?.(request) : null;
     if (selfService && (!clientActor || !uuid.safeParse(clientActor.clientId).success)) return reply.code(401).send({ error: 'client_authentication_required' });
+    if (selfService && !await allowMemberBooking?.(clientActor?.personId, request)) return reply.code(403).send({ error: 'member_pilot_action_not_enabled' });
     const params = z.object({ sessionId: uuid }).safeParse(request.params);
     const body = z.object({ clientId: uuid.optional(), entitlementAssignmentId: uuid.optional() }).strict().safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
@@ -621,6 +624,7 @@ export function registerCalendarRoutes(
     const context = selfService ? null : await authorized(request, reply, 'reservations.manage'); if (!selfService && !context) return;
     const clientActor = selfService ? await resolveClient?.(request) : null;
     if (selfService && (!clientActor || !uuid.safeParse(clientActor.clientId).success)) return reply.code(401).send({ error: 'client_authentication_required' });
+    if (selfService && !await allowMemberBooking?.(clientActor?.personId, request)) return reply.code(403).send({ error: 'member_pilot_action_not_enabled' });
     const clientId = selfService ? clientActor!.clientId.toLowerCase() : null;
     const actorId = selfService ? `client:${clientId}` : context!.actorId;
     const params = z.object({ reservationId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error: 'invalid_reservation_id' });
@@ -661,6 +665,7 @@ export function registerCalendarRoutes(
     const context = selfService ? null : await authorized(request, reply, 'reservations.manage'); if (!selfService && !context) return;
     const clientActor = selfService ? await resolveClient?.(request) : null;
     if (selfService && (!clientActor || !uuid.safeParse(clientActor.clientId).success)) return reply.code(401).send({ error: 'client_authentication_required' });
+    if (selfService && !await allowMemberBooking?.(clientActor?.personId, request)) return reply.code(403).send({ error: 'member_pilot_action_not_enabled' });
     const clientId = selfService ? clientActor!.clientId.toLowerCase() : null;
     const actorId = selfService ? `client:${clientId}` : context!.actorId;
     const params = z.object({ entryId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error: 'invalid_waitlist_id' });

@@ -126,18 +126,24 @@ if ($Service) {
   $env:HOST = '127.0.0.1'
   $env:PORT = [string]$Port
   if ($Service -eq 'api-trainer') {
+    Remove-Item Env:PILOT_MEMBER_AUTH_ENABLED,Env:PILOT_MEMBER_BOOKING_ENABLED,Env:PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED,Env:MEMBER_APP_ORIGIN -ErrorAction SilentlyContinue
     Remove-Item Env:TRAINING_SERVICE_BASE_URL,Env:TRAINING_SERVICE_KEY_ID,Env:TRAINING_SERVICE_SECRET -ErrorAction SilentlyContinue
     $env:DATABASE_URL = $config.databaseUrl; $env:LOCAL_DEMO_ROLE = 'trainer'; $env:CORS_ORIGIN = $config.staffUrl
     pnpm --filter @2j/api dev
   } elseif ($Service -eq 'api-admin') {
+    Remove-Item Env:PILOT_MEMBER_AUTH_ENABLED,Env:PILOT_MEMBER_BOOKING_ENABLED,Env:MEMBER_APP_ORIGIN -ErrorAction SilentlyContinue
     Remove-Item Env:TRAINING_SERVICE_BASE_URL,Env:TRAINING_SERVICE_KEY_ID,Env:TRAINING_SERVICE_SECRET -ErrorAction SilentlyContinue
-    $env:DATABASE_URL = $config.databaseUrl; $env:LOCAL_DEMO_ROLE = 'admin'; $env:CORS_ORIGIN = $config.adminUrl
+    $env:DATABASE_URL = $config.databaseUrl; $env:LOCAL_DEMO_ROLE = 'admin'; $env:CORS_ORIGIN = $config.adminUrl; $env:PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED = 'true'
     pnpm --filter @2j/api dev
   } elseif ($Service -eq 'api-member') {
-    Remove-Item Env:TRAINING_SERVICE_BASE_URL,Env:TRAINING_SERVICE_KEY_ID,Env:TRAINING_SERVICE_SECRET,Env:LOCAL_DEMO_ROLE,Env:LOCAL_DEMO_CLIENT_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:TRAINING_SERVICE_BASE_URL,Env:TRAINING_SERVICE_KEY_ID,Env:TRAINING_SERVICE_SECRET,Env:LOCAL_DEMO_ROLE,Env:LOCAL_DEMO_CLIENT_ID,Env:PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED -ErrorAction SilentlyContinue
     $env:DATABASE_URL = $config.databaseUrl; $env:CORS_ORIGIN = $config.memberOrigin
-    $env:PILOT_MEMBER_AUTH_ENABLED = 'true'; $env:MEMBER_APP_ORIGIN = $config.memberOrigin
+    $env:PILOT_MEMBER_AUTH_ENABLED = 'true'; $env:PILOT_MEMBER_BOOKING_ENABLED = 'true'; $env:MEMBER_APP_ORIGIN = $config.memberOrigin
     pnpm --filter @2j/api dev
+  } elseif ($Service -eq 'notification-worker') {
+    Remove-Item Env:TRAINING_SERVICE_BASE_URL,Env:TRAINING_SERVICE_KEY_ID,Env:TRAINING_SERVICE_SECRET,Env:LOCAL_DEMO_ROLE,Env:LOCAL_DEMO_CLIENT_ID,Env:PILOT_MEMBER_AUTH_ENABLED,Env:PILOT_MEMBER_BOOKING_ENABLED,Env:PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED,Env:MEMBER_APP_ORIGIN -ErrorAction SilentlyContinue
+    $env:DATABASE_URL = $config.databaseUrl
+    pnpm --filter @2j/api notifications:worker
   } elseif ($Service -eq 'staff') {
     $env:VITE_API_PROXY = $config.trainerApiUrl
     pnpm --filter @2j/staff-app exec vite --host 127.0.0.1 --port $Port --strictPort
@@ -209,6 +215,7 @@ try {
     @{ name = 'api-trainer'; port = $trainerApiPort },
     @{ name = 'api-admin'; port = $adminApiPort },
     @{ name = 'api-member'; port = $memberApiPort },
+    @{ name = 'notification-worker'; port = 0 },
     @{ name = 'staff'; port = $staffPort },
     @{ name = 'admin'; port = $adminPort },
     @{ name = 'member'; port = $memberPort }
@@ -237,4 +244,4 @@ Write-Host "  API Trainer:               $($config.trainerApiUrl)/health"
 Write-Host "  API Admin:                 $($config.adminApiUrl)/health"
 Write-Host "  PostgreSQL sintético:      127.0.0.1:$databasePort/2j_demo"
 Write-Host "  Logs:                      $pilotHome\logs"
-Write-Host 'Para detener las seis apps/APIs: pnpm pilot:stop (la base y sus datos sintéticos se conservan).'
+Write-Host 'Para detener los siete procesos: pnpm pilot:stop (la base y sus datos sintéticos se conservan).'
