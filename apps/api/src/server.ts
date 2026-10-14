@@ -325,13 +325,21 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.get('/api/services/:serviceId/plans', async (request, reply) => {
+    const context = await authorizationResolver(request);
+    if (!context) return reply.code(401).send({ error: 'authentication_required' });
+    if (!can(context, 'calendar.read')) return reply.code(403).send({ error: 'permission_denied' });
     const { serviceId } = request.params as { serviceId: string };
     if (!uuid.safeParse(serviceId).success) return reply.code(400).send({ error: 'invalid_service_id' });
     try {
       const [service] = await client`SELECT id,status FROM services WHERE id=${serviceId}`;
       if (!service) return reply.code(404).send({ error: 'service_not_found' });
       if (service.status === 'archived') return reply.code(409).send({ error: 'service_archived' });
-      return await listPlans(client, serviceId);
+      const plans = await listPlans(client, serviceId);
+      if (can(context, 'catalog.pricing.manage')) return plans;
+      return plans.map((plan) => {
+        const { basePriceCents: _hiddenPrice, ...safePlan } = plan as typeof plan & { basePriceCents?: number | null };
+        return safePlan;
+      });
     }
     catch (error) { return sendDatabaseError(app, reply, error); }
   });

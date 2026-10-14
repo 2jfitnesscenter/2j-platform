@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { describePlan, kindLabel, periodLabel, rightLabel, statusLabel } from './product-copy.js';
+import { useProfessionalCapabilities } from './app-shell.js';
 
 type Area = { id: string; name: string };
 type Service = { id: string; name: string; area: string; areaId: string; status: 'active' | 'draft'; planCount: number; rightCount: number; updatedAt: string };
@@ -62,18 +63,25 @@ function PlanCatalog({plans,activatingPlanId,onActivate,onVersion}:{plans:Plan[]
 }
 
 export function ServicesPage() {
+  const shellCapabilities = useProfessionalCapabilities();
+  const canManageCatalog = shellCapabilities?.catalogPricingManage === true;
+  const [catalogView, setCatalogView] = useState<'services'|'areas'|'plans'>('services');
   const [areas, setAreas] = useState<Area[]>([]);
+  const [areasLoading, setAreasLoading] = useState(true);
   const [services, setServices] = useState<Service[]>([]);
   const [query, setQuery] = useState('');
   const [areaFilter, setAreaFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [areaError, setAreaError] = useState('');
-  const [dialog, setDialog] = useState<'service' | 'plan' | null>(null);
+  const [dialog, setDialog] = useState<'area' | 'service' | 'plan' | null>(null);
   const dialogOpener = useRef<HTMLElement | null>(null);
   const planIdempotencyKey = useRef<string | null>(null);
   const detailPanel = useRef<HTMLElement>(null);
   const [name, setName] = useState('');
+  const [areaName, setAreaName] = useState('');
+  const [areaActionError, setAreaActionError] = useState('');
+  const [catalogNotice, setCatalogNotice] = useState('');
   const [serviceAreaId, setServiceAreaId] = useState('');
   const [serviceStatus, setServiceStatus] = useState<Service['status'] | ''>('');
   const [saveError, setSaveError] = useState('');
@@ -98,8 +106,10 @@ export function ServicesPage() {
   const visible = useMemo(() => services.filter((item) => item.name.toLocaleLowerCase('es').includes(query.toLocaleLowerCase('es')) && (areaFilter === 'all' || item.areaId === areaFilter)), [services, query, areaFilter]);
 
   async function refreshAreas() {
+    setAreasLoading(true); setAreaError('');
     try { const response = await fetch(`${apiUrl}/api/areas`); if (!response.ok) throw new Error(); const rows = await response.json() as Area[]; setAreas(rows); if (!serviceAreaId && rows[0]) setServiceAreaId(rows[0].id); }
     catch { setAreaError('No se pudieron cargar las áreas del centro.'); }
+    finally { setAreasLoading(false); }
   }
   async function refreshServices() {
     setLoading(true); setError('');
@@ -114,6 +124,7 @@ export function ServicesPage() {
     finally { setLoading(false); }
   }
   async function loadPlans(serviceId: string) {
+    if (!canManageCatalog) { setPlans([]); setPlansState('idle'); return; }
     setPlansState('loading'); setPlansError('');
     try {
       const response = await fetch(`${apiUrl}/api/services/${serviceId}/plans`);
@@ -122,7 +133,7 @@ export function ServicesPage() {
     } catch { setPlans([]); setPlansError('No se pudieron cargar los planes de este servicio.'); setPlansState('error'); }
   }
   async function activatePlan(plan: Plan) {
-    if (plan.status !== 'draft' || activatingPlanId || !selectedId) return;
+    if (!canManageCatalog || plan.status !== 'draft' || activatingPlanId || !selectedId) return;
     if (!window.confirm('Al activar el plan, esta versión quedará disponible para asignarla a clientes.')) return;
     setActivatingPlanId(plan.id); setPlanActionFeedback('');
     try {
@@ -135,16 +146,40 @@ export function ServicesPage() {
     finally { setActivatingPlanId(null); }
   }
   useEffect(() => { void refreshAreas(); void refreshServices(); }, []);
-  useEffect(() => { if (selectedId) void loadPlans(selectedId); else { setPlans([]); setPlansState('idle'); } }, [selectedId]);
+  useEffect(() => { if (selectedId && canManageCatalog && catalogView === 'plans') void loadPlans(selectedId); else { setPlans([]); setPlansState('idle'); } }, [selectedId, canManageCatalog, catalogView]);
 
-  function openServiceDialog(event?: React.MouseEvent<HTMLButtonElement>) { dialogOpener.current = event?.currentTarget ?? document.activeElement as HTMLElement; setSaveError(''); setDialog('service'); }
+  function openAreaDialog(event?: React.MouseEvent<HTMLButtonElement>) { if (!canManageCatalog) return; dialogOpener.current = event?.currentTarget ?? document.activeElement as HTMLElement; setAreaName(''); setAreaActionError(''); setDialog('area'); }
+  function openServiceDialog(event?: React.MouseEvent<HTMLButtonElement>) { if (!canManageCatalog) return; dialogOpener.current = event?.currentTarget ?? document.activeElement as HTMLElement; setSaveError(''); setDialog('service'); }
   function openPlanDialog(event?: React.MouseEvent<HTMLButtonElement>) {
-    if (!selected) return;
+    if (!canManageCatalog || !selected) return;
+    setCatalogView('plans');
     dialogOpener.current = event?.currentTarget ?? document.activeElement as HTMLElement;
     planIdempotencyKey.current = crypto.randomUUID();
     setSaveError(''); setEditingPlanId(null);setPlanName(''); setKind(''); setCadence(''); setPeriodDays(''); setServiceIds([selected.id]); setRights([emptyRight(selected.id)]);setBasePrice('');setModuleAccesses([]); setDialog('plan');
   }
-  function openVersionDialog(plan:Plan,event:React.MouseEvent<HTMLButtonElement>){dialogOpener.current=event.currentTarget;planIdempotencyKey.current=crypto.randomUUID();setEditingPlanId(plan.id);setSaveError('');setPlanName(plan.name);setKind(plan.kind);setCadence(plan.renewalCadence??'');setPeriodDays(plan.periodDays?String(plan.periodDays):'');setServiceIds(plan.services.map(item=>item.id));setRights(plan.rights.map(right=>({rightType:right.rightType as RightDraft['rightType'],serviceId:right.serviceId??'',quotaScope:right.quotaScope??'shared',quantity:right.quantity?String(right.quantity):'',period:(right.period??'month') as RightDraft['period'],periodMode:right.periodMode??'calendar',validDays:right.validDays?String(right.validDays):'',validDaysStartRule:right.validDaysStartRule??'purchase'})));setBasePrice(plan.basePriceCents==null?'':(plan.basePriceCents/100).toFixed(2));setModuleAccesses(plan.modules??[]);setDialog('plan');}
+  async function createArea(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!canManageCatalog || !areaName.trim()) return;
+    setSaving(true); setAreaActionError('');
+    try {
+      const response = await fetch(`${apiUrl}/api/areas`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: areaName.trim() }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error === 'duplicate_area' ? 'Ya existe un espacio con ese nombre.' : 'No se pudo crear el espacio.');
+      const created = body as Area; await refreshAreas(); setDialog(null); setAreaName(''); setAreaActionError('');
+      if (created?.id) setCatalogNotice(`${created.name} está listo para asociar servicios.`);
+    } catch (cause) { setAreaActionError(cause instanceof Error ? cause.message : 'No se pudo crear el espacio.'); }
+    finally { setSaving(false); }
+  }
+  async function archiveArea(area: Area) {
+    if (!canManageCatalog || !window.confirm(`¿Archivar ${area.name}? El historial se conserva. No se puede archivar mientras tenga sesiones o plantillas futuras activas.`)) return;
+    setAreaActionError('');
+    try {
+      const response = await fetch(`${apiUrl}/api/areas/${area.id}/archive`, { method: 'PATCH' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error === 'future_calendar_items_exist' ? 'Resuelve primero las sesiones y plantillas futuras de este espacio.' : 'No se pudo archivar el espacio.');
+      await Promise.all([refreshAreas(), refreshServices()]); setAreaActionError(''); setCatalogNotice(`${area.name} se ha archivado. El historial se conserva.`);
+    } catch (cause) { setAreaActionError(cause instanceof Error ? cause.message : 'No se pudo archivar el espacio.'); }
+  }
+  function openVersionDialog(plan:Plan,event:React.MouseEvent<HTMLButtonElement>){if(!canManageCatalog)return;setCatalogView('plans');dialogOpener.current=event.currentTarget;planIdempotencyKey.current=crypto.randomUUID();setEditingPlanId(plan.id);setSaveError('');setPlanName(plan.name);setKind(plan.kind);setCadence(plan.renewalCadence??'');setPeriodDays(plan.periodDays?String(plan.periodDays):'');setServiceIds(plan.services.map(item=>item.id));setRights(plan.rights.map(right=>({rightType:right.rightType as RightDraft['rightType'],serviceId:right.serviceId??'',quotaScope:right.quotaScope??'shared',quantity:right.quantity?String(right.quantity):'',period:(right.period??'month') as RightDraft['period'],periodMode:right.periodMode??'calendar',validDays:right.validDays?String(right.validDays):'',validDaysStartRule:right.validDaysStartRule??'purchase'})));setBasePrice(plan.basePriceCents==null?'':(plan.basePriceCents/100).toFixed(2));setModuleAccesses(plan.modules??[]);setDialog('plan');}
   async function createService(event: React.FormEvent) {
     event.preventDefault(); if (!name.trim() || !serviceAreaId || !serviceStatus) return; setSaving(true); setSaveError('');
     try {
@@ -193,26 +228,37 @@ export function ServicesPage() {
   const missingSessionPackQuota = kind === 'session_pack' && !rights.some((right) => right.rightType === 'sessions_quota');
   const incompleteRights = rights.some((right) => (right.rightType === 'service_access' && !right.serviceId) || (right.rightType !== 'service_access' && !right.quantity) || (right.quotaScope === 'per_service' && !right.serviceId));
 
-  return <div className="shell">
-    <aside className="sidebar"><a className="brand" href="#services" aria-label="2J Platform, inicio"><span className="brand-mark">2J</span><span className="brand-copy">FITNESS CENTER<small>OPERACIONES</small></span></a><div className="nav-label">GESTIÓN</div><nav aria-label="Gestión"><a className="nav-item active" href="#services" aria-current="page"><Icon name="grid"/> Servicios y planes</a><a className="nav-item" href="#clients">Clientes</a><a className="nav-item" href="#calendar">Calendario</a><a className="nav-item" href="#economics">Pagos</a><a className="nav-item" href="#staff">Equipo</a><a className="nav-item" href="#communications">Comunicación</a></nav></aside>
-    <main className="main" id="services"><header className="topbar"><div className="crumb">Gestión <Icon name="chevron" size={14}/> Servicios y planes</div><div className="local-pill"><span className="status-dot"/> Entorno local</div></header>
-      <section className="page-heading"><div><div className="eyebrow">CATÁLOGO DEL CENTRO</div><h1>Servicios y planes</h1><p>Organiza la oferta y define con claridad qué incluye cada plan.</p></div><button className="button primary" onClick={openServiceDialog}><Icon name="plus"/> Nuevo servicio</button></section>
-      <section className="catalog" aria-label="Catálogo de servicios">
-        <div className="panel service-panel"><div className="panel-heading"><div><h2>Servicios</h2><p>Selecciona uno para revisar sus planes y derechos.</p></div><span className="count">{visible.length} {visible.length === 1 ? 'servicio' : 'servicios'}</span></div>
+  return <main className="main gym-page gym-services-page" id="services">
+      <section className="page-heading gym-page-heading"><div><div className="eyebrow">OPERACIÓN DEL CENTRO</div><h1>Espacios y servicios</h1><p>Organiza dónde y qué actividades suceden. Las cuotas se gestionan aparte.</p></div>{catalogView === 'areas' ? canManageCatalog && <button className="button primary" onClick={openAreaDialog}><Icon name="plus"/> Nuevo espacio</button> : catalogView === 'services' ? canManageCatalog && <button className="button primary" onClick={openServiceDialog}><Icon name="plus"/> Nuevo servicio</button> : selected && <button className="button primary" onClick={openPlanDialog}><Icon name="plus"/> Nuevo plan</button>}</section>
+      <nav className="gym-view-tabs" aria-label="Vistas de Mi gimnasio">
+        <button type="button" aria-pressed={catalogView === 'services'} onClick={() => setCatalogView('services')}>Servicios</button>
+        <button type="button" aria-pressed={catalogView === 'areas'} onClick={() => setCatalogView('areas')}>Espacios</button>
+        {canManageCatalog && <button type="button" aria-pressed={catalogView === 'plans'} onClick={() => setCatalogView('plans')}>Cuotas y planes</button>}
+      </nav>
+      {catalogNotice && <p className="form-note" role="status">{catalogNotice}</p>}
+      {catalogView === 'areas' ? (<section className="gym-areas" aria-label="Espacios del centro" aria-busy={areasLoading}>
+        <div className="gym-section-heading"><div><h2>Espacios</h2><p>Áreas operativas configuradas en este centro. La capacidad se define por sesión.</p></div><span className="count">{areas.length} {areas.length === 1 ? 'espacio' : 'espacios'}</span></div>
+        {areaActionError && <div className="form-error" role="alert">{areaActionError}</div>}
+        {areaError ? <div className="state-panel error-panel" role="alert"><strong>No se pudieron cargar los espacios</strong><span>{areaError}</span><button className="button secondary" onClick={() => void refreshAreas()}>Reintentar</button></div> : areasLoading ? <div className="state-panel" role="status"><span className="spinner"/>Cargando espacios…</div> : areas.length === 0 ? <div className="state-panel"><strong>Aún no hay espacios configurados</strong><span>Crea un espacio para poder asociarle servicios.</span>{canManageCatalog && <button className="button secondary" onClick={openAreaDialog}>Crear primer espacio</button>}</div> : <div className="gym-area-grid">{areas.map((area) => { const related = services.filter((service) => service.areaId === area.id); return <article className="gym-area-card" key={area.id}><div className="gym-area-heading"><div><span className="eyebrow">ESPACIO ACTIVO</span><h3>{area.name}</h3></div>{canManageCatalog && <button className="text-button danger-text" onClick={() => void archiveArea(area)}>Archivar</button>}</div><div className="gym-area-services"><strong>{related.length} {related.length === 1 ? 'servicio' : 'servicios'}</strong>{related.length ? <ul>{related.map((service) => <li key={service.id}><span>{service.name}</span><span className={`badge ${service.status}`}>{statusLabel[service.status]}</span></li>)}</ul> : <p>Sin servicios asociados.</p>}</div></article>; })}</div>}
+      </section>) : (<section className="catalog" aria-label={catalogView === 'plans' ? 'Planes y cuotas' : 'Servicios del centro'}>
+        <div className="panel service-panel"><div className="panel-heading"><div><h2>{catalogView === 'plans' ? 'Servicios' : 'Servicios activos y en borrador'}</h2><p>{catalogView === 'plans' ? 'Elige un servicio para consultar las definiciones comerciales asociadas.' : 'Actividades disponibles y el espacio donde se realizan.'}</p></div><span className="count">{visible.length} {visible.length === 1 ? 'servicio' : 'servicios'}</span></div>
           <div className="toolbar"><label className="search"><Icon name="search" size={17}/><span className="sr-only">Buscar servicio</span><input aria-label="Buscar servicio" placeholder="Buscar servicio" value={query} onChange={(event) => setQuery(event.target.value)}/></label><label className="filter-label"><span>Área</span><select aria-label="Filtrar por área" value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}><option value="all">Todas</option>{areas.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
           {error ? <div className="state-panel error-panel" role="alert"><strong>No se pudo cargar el catálogo</strong><span>{error}</span><button className="button secondary" onClick={() => void refreshServices()}>Reintentar</button></div> : loading ? <div className="state-panel" role="status"><span className="spinner"/><span>Cargando servicios…</span></div> : visible.length === 0 ? <div className="state-panel"><span className="state-icon"><Icon name="layers" size={22}/></span><strong>{services.length ? 'Sin resultados' : 'Aún no hay servicios'}</strong><span>{services.length ? 'Prueba con otro nombre o área.' : 'Crea el primer servicio para preparar el catálogo.'}</span>{!services.length && <button className="button secondary" onClick={openServiceDialog}>Crear servicio</button>}</div> : <>
-            <div className="desktop-list"><table><thead><tr><th>Servicio</th><th>Área</th><th>Planes</th><th>Estado</th></tr></thead><tbody>{visible.map((item) => <tr key={item.id} className={item.id === selectedId ? 'selected-row' : ''}><td><button className="service-select" aria-pressed={item.id === selectedId} aria-controls="service-detail" onClick={() => selectService(item.id)}><span className="service-mark"><Icon name="grid" size={16}/></span><span>{item.name}</span></button></td><td>{item.area}</td><td>{item.planCount}</td><td><span className={`badge ${item.status}`}>{statusLabel[item.status]}</span></td></tr>)}</tbody></table></div>
-            <div className="mobile-list">{visible.map((item) => <button key={item.id} className={`service-card ${item.id === selectedId ? 'selected' : ''}`} aria-pressed={item.id === selectedId} aria-controls="service-detail" onClick={() => selectService(item.id)}><span className="service-mark"><Icon name="grid" size={16}/></span><span className="mobile-card-copy"><strong>{item.name}</strong><span>{item.area} · {item.planCount} {item.planCount === 1 ? 'plan' : 'planes'}</span></span><span className={`badge ${item.status}`}>{statusLabel[item.status]}</span></button>)}</div>
+            <div className="desktop-list"><table><thead><tr><th>Servicio</th><th>Espacio</th><th>Estado</th></tr></thead><tbody>{visible.map((item) => <tr key={item.id} className={item.id === selectedId ? 'selected-row' : ''}><td><button className="service-select" aria-pressed={item.id === selectedId} aria-controls="service-detail" onClick={() => selectService(item.id)}><span className="service-mark"><Icon name="grid" size={16}/></span><span>{item.name}</span></button></td><td>{item.area}</td><td><span className={`badge ${item.status}`}>{statusLabel[item.status]}</span></td></tr>)}</tbody></table></div>
+            <div className="mobile-list">{visible.map((item) => <button key={item.id} className={`service-card ${item.id === selectedId ? 'selected' : ''}`} aria-pressed={item.id === selectedId} aria-controls="service-detail" onClick={() => selectService(item.id)}><span className="service-mark"><Icon name="grid" size={16}/></span><span className="mobile-card-copy"><strong>{item.name}</strong><span>{item.area}</span></span><span className={`badge ${item.status}`}>{statusLabel[item.status]}</span></button>)}</div>
           </>}
         </div>
-        <section ref={detailPanel} className="panel detail-panel" id="service-detail" tabIndex={-1} aria-live="polite">{selected ? <><div className="detail-heading"><div><div className="eyebrow">{selected.area}</div><h2>{selected.name}</h2><p>Planes asociados y derechos incluidos.</p></div><button className="button secondary" onClick={openPlanDialog}><Icon name="plus"/> Nuevo plan</button></div>
-          {plansState==='ready'&&plans.length>0&&<div className="plan-content"><PlanCatalog plans={plans} activatingPlanId={activatingPlanId} onActivate={plan=>void activatePlan(plan)} onVersion={openVersionDialog}/></div>}
-          <div className="plan-content">{planActionFeedback && <p className="form-note" role="status">{planActionFeedback}</p>}{plansState === 'loading' ? <div className="detail-state" role="status"><span className="spinner"/> Cargando planes…</div> : plansState === 'error' ? <div className="detail-state detail-error" role="alert"><strong>No se pudieron cargar los planes</strong><span>{plansError}</span><button className="button secondary" onClick={() => void loadPlans(selected.id)}>Reintentar</button></div> : plans.length === 0 ? <div className="detail-state"><span className="state-icon"><Icon name="layers" size={20}/></span><strong>Aún no hay planes</strong><span>Los planes reúnen servicios y derechos en una definición versionada.</span><button className="button primary" onClick={openPlanDialog}>Crear primer plan</button></div> : <div className="plan-list">{plans.map((plan) => <article className="plan-card" key={plan.id}><div className="plan-card-heading"><div><span className="plan-kind">{kindLabel[plan.kind]}</span><h3>{plan.name}</h3></div><span className={`badge ${plan.status}`}>{statusLabel[plan.status]}</span></div>{plan.basePriceCents!=null&&<div className="plan-catalog-price">Precio base · {new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(plan.basePriceCents/100)}</div>}<div className="associated-services" aria-label="Servicios incluidos">{plan.services.map((item) => <span className="service-chip" key={item.id}>{item.name}<span>{item.area}</span></span>)}</div><div className="rights-block"><div className="rights-title"><Icon name="shield" size={16}/> Derechos</div><ul>{plan.rights.map((right) => <li key={right.id}><span>{rightLabel[right.rightType] ?? 'Derecho'}</span><strong>{right.rightType === 'service_access' ? right.serviceId ? plan.services.find((service) => service.id === right.serviceId)?.name ?? 'Servicio' : 'Destino sin especificar' : right.rightType === 'sessions_quota' ? right.quotaScope === 'shared' ? `${right.quantity} sesiones compartidas` : `${right.quantity} sesiones para ${plan.services.find((service) => service.id === right.serviceId)?.name ?? 'el servicio seleccionado'}` : `${right.quantity} accesos / ${periodLabel[right.period ?? ''] ?? 'periodo'}${right.period === 'plan_period' ? ' del plan' : ` · ${right.periodMode === 'calendar' ? 'calendario' : 'móvil'}`}${right.quotaScope === 'per_service' ? ` · ${plan.services.find((service) => service.id === right.serviceId)?.name ?? 'servicio'}` : ''}`}</strong>{right.validDays && <small>Caduca {right.validDays} días desde {right.validDaysStartRule === 'purchase' ? 'la compra' : 'el primer uso'}</small>}</li>)}</ul></div>{Boolean(plan.modules?.length)&&<div className="rights-block module-rights"><div className="rights-title"><Icon name="layers" size={16}/> Accesos a módulos</div><ul>{plan.modules?.map(access=><li key={access.module}><span>{{reservations:'Reservas',training:'Training',nutrition:'Nutrición',health:'Health'}[access.module]}</span><strong>{access.accessLevel==='full'?'Completo':'Limitado'}{access.capabilities.length?` · ${access.capabilities.length} capacidades`:''}</strong></li>)}</ul></div>}{plan.status==='draft'&&<button className="button primary" disabled={activatingPlanId!==null} onClick={()=>void activatePlan(plan)}>{activatingPlanId===plan.id?'Activando…':'Activar plan'}</button>}{plan.status!=='archived'&&<button className="button secondary catalog-version-button" onClick={(event)=>openVersionDialog(plan,event)}>Crear nueva versión</button>}</article>)}</div>}</div>
-        </> : <div className="detail-state detail-placeholder"><span className="state-icon"><Icon name="layers" size={21}/></span><strong>Elige un servicio</strong><span>Su información y planes aparecerán aquí.</span></div>}</section>
-      </section>
-      <footer className="footer-note">2J Platform <span>·</span> Catálogo de servicios</footer>
-    </main>
+        <section ref={detailPanel} className="panel detail-panel" id="service-detail" tabIndex={-1} aria-live="polite">{selected ? catalogView === 'services' ? <><div className="detail-heading"><div><div className="eyebrow">SERVICIO · {selected.area}</div><h2>{selected.name}</h2><p>Actividad operativa asociada a un espacio configurable.</p></div></div><dl className="gym-service-facts"><div><dt>Espacio</dt><dd>{selected.area}</dd></div><div><dt>Estado</dt><dd><span className={`badge ${selected.status}`}>{statusLabel[selected.status]}</span></dd></div></dl>{canManageCatalog && <p className="field-note">Las cuotas y derechos se consultan en la sección comercial, sin mezclarlos con la operación diaria.</p>}</> : <><div className="detail-heading"><div><div className="eyebrow">CUOTAS Y PLANES · {selected.area}</div><h2>{selected.name}</h2><p>Definiciones comerciales separadas de la actividad y el espacio.</p></div><button className="button secondary" onClick={openPlanDialog}><Icon name="plus"/> Nuevo plan</button></div>
+           {planActionFeedback && <p className="form-note" role="status">{planActionFeedback}</p>}
+           {plansState==='ready'&&plans.length>0&&<div className="plan-content"><PlanCatalog plans={plans} activatingPlanId={activatingPlanId} onActivate={plan=>void activatePlan(plan)} onVersion={openVersionDialog}/></div>}
+           {plansState === 'loading' && <div className="detail-state" role="status"><span className="spinner"/> Cargando planes…</div>}
+           {plansState === 'error' && <div className="detail-state detail-error" role="alert"><strong>No se pudieron cargar los planes</strong><span>{plansError}</span><button className="button secondary" onClick={() => void loadPlans(selected.id)}>Reintentar</button></div>}
+           {plansState === 'ready' && plans.length === 0 && <div className="detail-state"><span className="state-icon"><Icon name="layers" size={20}/></span><strong>Aún no hay planes</strong><span>Los planes reúnen servicios y derechos en una definición versionada.</span><button className="button primary" onClick={openPlanDialog}>Crear primer plan</button></div>}
+        </> : <div className="detail-state detail-placeholder"><span className="state-icon"><Icon name="layers" size={21}/></span><strong>Elige un servicio</strong><span>Verás aquí su espacio o las cuotas asociadas según la sección.</span></div>}</section>
+       </section>)}
+      <footer className="footer-note">2J Platform <span>·</span> Operación del centro</footer>
 
+    {dialog === 'area' && <Dialog titleId="area-dialog-title" onClose={closeDialog} opener={dialogOpener.current}><div className="eyebrow">ESPACIOS DEL CENTRO</div><h2 id="area-dialog-title">Nuevo espacio</h2><p>El espacio agrupa servicios; la capacidad se configura en cada sesión.</p><form onSubmit={createArea}><label>Nombre del espacio<input data-dialog-initial-focus required maxLength={100} placeholder="Ej. Sala norte" value={areaName} onChange={(event) => setAreaName(event.target.value)}/></label>{areaActionError && <div className="form-error" role="alert">{areaActionError}</div>}<div className="dialog-actions"><button type="button" className="button secondary" onClick={closeDialog}>Cancelar</button><button className="button primary" disabled={saving || !areaName.trim()}>{saving ? 'Guardando…' : 'Crear espacio'}</button></div></form></Dialog>}
     {dialog === 'service' && <Dialog titleId="service-dialog-title" onClose={closeDialog} opener={dialogOpener.current}><div className="eyebrow">CATÁLOGO</div><h2 id="service-dialog-title">Nuevo servicio</h2><p>Añade una actividad disponible en un área del centro.</p><form onSubmit={createService}><label>Nombre<input data-dialog-initial-focus required maxLength={100} placeholder="Ej. Entrenamiento personal" value={name} onChange={(event) => setName(event.target.value)}/></label><label>Área<select required value={serviceAreaId} onChange={(event) => setServiceAreaId(event.target.value)}>{!areas.length && <option value="">{areaError || 'Cargando áreas…'}</option>}{areas.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{areaError && <small className="field-error">{areaError}</small>}</label><label>Estado<select required value={serviceStatus} onChange={(event) => setServiceStatus(event.target.value as Service['status'] | '')}><option value="">Selecciona un estado</option><option value="draft">Borrador</option><option value="active">Activo</option></select></label>{saveError && <div className="form-error" role="alert">{saveError}</div>}<div className="dialog-actions"><button type="button" className="button secondary" onClick={closeDialog}>Cancelar</button><button className="button primary" disabled={saving || !areas.length}>{saving ? 'Guardando…' : 'Crear servicio'}</button></div></form></Dialog>}
     {dialog === 'plan' && selected && <Dialog titleId="plan-dialog-title" onClose={closeDialog} opener={dialogOpener.current} className="plan-dialog"><div className="eyebrow">DEFINICIÓN DEL PLAN</div><h2 id="plan-dialog-title">{editingPlanId?'Nueva versión de plan':'Nuevo plan'}</h2><p>{editingPlanId?'Los cambios se guardan como una nueva versión y conservan intactas las asignaciones existentes.':'Se guardará como borrador con derechos, módulos y precio de catálogo opcional.'}</p><form onSubmit={createPlan}>
       <label>Nombre del plan<input autoFocus data-dialog-initial-focus required maxLength={100} placeholder="Ej. Funcional 3 días" value={planName} onChange={(event) => setPlanName(event.target.value)}/></label>
@@ -228,5 +274,5 @@ export function ServicesPage() {
       {missingSessionPackQuota && <p className="field-note" role="status">Un bono de sesiones debe incluir una cantidad concreta de sesiones.</p>}{summaryPlan && <div className="plan-preview"><span>Resumen del plan</span><p>{describePlan(summaryPlan)}</p></div>}
       {saveError && <div className="form-error" role="alert">{saveError}</div>}<div className="dialog-actions"><button type="button" className="button secondary" onClick={closeDialog}>Cancelar</button><button className="button primary" disabled={saving || !serviceIds.length || !kind || missingSessionPackQuota || incompleteRights || (kind === 'recurring' && !cadence) || (cadence === 'custom_period' && !periodDays)}>{saving?'Guardando…':editingPlanId?'Guardar nueva versión':'Crear borrador'}</button></div>
     </form></Dialog>}
-  </div>;
+  </main>;
 }

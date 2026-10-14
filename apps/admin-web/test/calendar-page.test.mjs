@@ -16,7 +16,7 @@ const service = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Fuerza 2J',
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const now = new Date(); const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
 const key = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-const baseData = { weekStart: key(monday), sessions: [], areas: [area], services: [service], templates: [], capabilities: { manage: true, attendance: true, overrideCapacity: false, overrideAvailability: true, overrideDocuments: false } };
+const baseData = { weekStart: key(monday), timezone: 'Atlantic/Canary', sessions: [], areas: [area], services: [service], templates: [], capabilities: { manage: true, attendance: true, overrideCapacity: false, overrideAvailability: true, overrideDocuments: false } };
 
 test('calendar collision groups overlap side by side and gives each service a stable color', () => {
   const sessions = [
@@ -41,41 +41,20 @@ test('overlapping session lane remains keyboard scrollable with readable minimum
   assert.equal(within(lane).getAllByRole('button').length, 3);
 });
 
-test('admin calendar shows birthday counts and a minimal name/date list', async () => {
-  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({ ...baseData, birthdaysTodayCount:0, birthdays:[{clientId:'client-1',firstName:'Alicia',lastName:'Rivera',birthdayDate:baseData.weekStart}], capabilities:{...baseData.capabilities,canManageClients:true} }) : response({});
+test('professional calendar shows Canary-local operational metrics without birthday or client PII data', async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const session = { id: 'today-session', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${today}T12:00:00Z`, durationMinutes: 60, capacity: 8, status: 'scheduled', isIndividual: false, occupiedCount: 3, overbookCount: 0, waitlistCount: 2 };
+  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({ ...baseData, sessions: [session], birthdaysTodayCount: 1, birthdays: [{ clientId: 'private-client', firstName: 'Eva', lastName: 'Privada', birthdayDate: today }] }) : response({});
   render(React.createElement(CalendarPage));
-  await waitFor(()=>assert.ok(document.querySelector('.birthday-widget summary')));
-  const summary=document.querySelector('.birthday-widget summary');
-  await waitFor(()=>assert.match(summary.textContent,/Cumpleaños hoy: 0/));
-  fireEvent.click(summary);
-  await waitFor(()=>assert.match(summary.textContent,/Semana visible: 1/));
-  assert.ok(screen.getByText(/Alicia Rivera/));
-});
-
-test('birthday widget separates a birthday today from the rest of the visible week', async () => {
-  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-  globalThis.fetch=async url=>String(url).includes('/api/calendar/week')?response({...baseData,birthdaysTodayCount:1,birthdays:[{clientId:'today-client',firstName:'Eva',lastName:'Hoy',birthdayDate:today}],capabilities:{...baseData.capabilities,canManageClients:true}}):response({});
-  render(React.createElement(CalendarPage));
-  assert.ok(await screen.findByText('Cumpleaños hoy: 1'));
-  const summary=document.querySelector('.birthday-widget summary');
-  assert.match(summary.textContent,/Semana visible: 1/);
-  fireEvent.click(summary);
-  assert.ok(await screen.findByText(/Eva Hoy/));
-});
-
-test('birthday widget keeps actual today count while browsing a different week', async () => {
-  let initialWeek=null;
-  globalThis.fetch=async url=>{
-    if(String(url).includes('/api/calendar/week')) { const requestedWeek=new URL(String(url)).searchParams.get('weekStart');initialWeek??=requestedWeek;return response({...baseData,weekStart:requestedWeek,birthdaysTodayCount:1,birthdays:requestedWeek===initialWeek?[{clientId:'today-client',firstName:'Eva',lastName:'Hoy',birthdayDate:requestedWeek}]:[],capabilities:{...baseData.capabilities,canManageClients:true}}); }
-    return response({});
-  };
-  render(React.createElement(CalendarPage));
-  await waitFor(()=>assert.ok(document.querySelector('.birthday-widget')));
-  const widget=document.querySelector('.birthday-widget');
-  await waitFor(()=>assert.match(widget.querySelector('summary').textContent,/Cumpleaños hoy: 1/));
-  fireEvent.click(screen.getByRole('button',{name:'Semana siguiente'}));
-  await waitFor(()=>assert.match(document.querySelector('.birthday-widget summary').textContent,/Semana visible: 0/));
-  assert.match(document.querySelector('.birthday-widget summary').textContent,/Cumpleaños hoy: 1/);
+  assert.ok(await screen.findByRole('region', { name: 'Operativa de hoy' }));
+  assert.ok(screen.getByText('Plazas ocupadas'));
+  assert.ok(screen.getByText('Plazas libres'));
+  assert.ok(screen.getByText('En espera'));
+  assert.equal(screen.getByText('3', { selector: 'dd' }).textContent, '3');
+  assert.equal(screen.getByText('5', { selector: 'dd' }).textContent, '5');
+  assert.equal(screen.getByText('2', { selector: 'dd' }).textContent, '2');
+  assert.equal(screen.queryByText(/cumpleaños/i), null);
+  assert.equal(screen.queryByText(/Eva Privada|private-client/i), null);
 });
 
 test('renders weekly loading and empty states, then allows stepping weeks', async () => {
@@ -283,6 +262,22 @@ test('weekly individual marker labels card and detail without returning client P
   assert.equal(within(card).getByText('Cita individual').textContent, 'Cita individual');
   fireEvent.click(card);
   assert.equal((await screen.findByText('CITA INDIVIDUAL · Sesión puntual')).textContent, 'CITA INDIVIDUAL · Sesión puntual');
+});
+
+test('waitlist row uses neutral waiting copy', async () => {
+  const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 1, status: 'scheduled', isIndividual: false, occupiedCount: 0, overbookCount: 1, waitlistCount: 1 };
+  globalThis.fetch = async (url) => {
+    const path = String(url);
+    if (path.includes('/api/calendar/week')) return response({ ...baseData, sessions: [session] });
+    if (path.endsWith(`/api/calendar/sessions/${session.id}/attendees`)) return response({ reservations: [], waitlist: [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', clientId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', firstName: 'Lucía', lastName: 'Martín', status: 'waiting' }] });
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  render(React.createElement(CalendarPage));
+  fireEvent.click(await screen.findByRole('button', { name: /Fuerza 2J/ }));
+  await screen.findByText('Lista de espera');
+  const waitingRow = screen.getByText('Lucía Martín').closest('li');
+  assert.ok(within(waitingRow).getByText('En espera'));
+  assert.equal(within(waitingRow).queryByText(/sin promoción automática/i), null);
 });
 
 test('reopen reservation is only offered after attendance or no-show', async () => {

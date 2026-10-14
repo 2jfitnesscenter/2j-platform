@@ -8,6 +8,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, H
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 const { ServicesPage } = await import('../src/services-page.tsx');
+const { ProfessionalCapabilitiesProvider } = await import('../src/app-shell.tsx');
 const { describePlan } = await import('../src/product-copy.ts');
 
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
@@ -18,10 +19,11 @@ const service = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', areaId: area.id, a
 const plan = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Funcional mensual', status: 'draft', currentVersion: 1, kind: 'recurring', renewalCadence: 'monthly', periodDays: null, services: [{ id: service.id, name: service.name, area: area.name }], rights: [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', rightType: 'service_access', serviceId: service.id, quotaScope: null, quantity: null, period: null, periodMode: null, timezone: null, validDays: null, validDaysStartRule: null }] };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 
-function initialFetch({ plans = [], onPlanCreate = () => response(plan, 201), onServiceList = () => response([service]) } = {}) {
+function initialFetch({ plans = [], onPlanCreate = () => response(plan, 201), onServiceList = () => response([service]), onAreaList = () => response([area]), onAreaCreate = () => response({ ...area, id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', name: 'North room' }, 201) } = {}) {
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
-    if (path.endsWith('/api/areas')) return response([area]);
+    if (path.endsWith('/api/areas') && options.method === 'POST') return onAreaCreate(url, options);
+    if (path.endsWith('/api/areas')) return onAreaList();
     if (path.endsWith('/api/services') && options.method === 'POST') return response(service, 201);
     if (path.endsWith('/api/services')) return onServiceList();
     if (path.endsWith('/api/plans') && options.method === 'POST') return onPlanCreate(url, options);
@@ -30,20 +32,67 @@ function initialFetch({ plans = [], onPlanCreate = () => response(plan, 201), on
   };
 }
 
+const adminCapabilities = { calendar: true, clients: true, communications: true, billing: true, staff: true, catalogPricingManage: true };
+function renderServices(capabilities = adminCapabilities) {
+  return render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities }, React.createElement(ServicesPage)));
+}
+
 async function openPlanDialog() {
   await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: /nuevo plan/i }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click(screen.getAllByRole('button', { name: /nuevo plan/i })[0]);
   return screen.findByRole('dialog', { name: 'Nuevo plan' });
 }
 
 test('renders the catalog with understandable product terms and noninteractive future sections', async () => {
   initialFetch();
-  render(React.createElement(ServicesPage));
+  renderServices();
   await screen.findByRole('heading', { name: service.name });
   assert.ok(screen.getByRole('button', { name: service.name }));
-  assert.ok(screen.getByRole('link', { name: 'Clientes' }));
-  assert.ok(screen.getByRole('link', { name: /calendario/i }));
+  assert.equal(document.querySelectorAll('.sidebar, .topbar').length, 0);
   assert.equal(screen.queryByText('session_pack'), null);
+});
+
+test('Trainer receives operational spaces and services without commercial configuration or prices', async () => {
+  initialFetch({ plans: [plan] });
+  const trainerCapabilities = { calendar: true, clients: true, communications: true, billing: false, staff: true, catalogPricingManage: false };
+  renderServices(trainerCapabilities);
+  await screen.findByRole('heading', { name: service.name });
+  assert.ok(screen.getByRole('button', { name: 'Servicios' }));
+  assert.ok(screen.getByRole('button', { name: 'Espacios' }));
+  assert.equal(screen.queryByRole('button', { name: 'Cuotas y planes' }), null);
+  assert.equal(screen.queryByRole('button', { name: /nuevo servicio/i }), null);
+  fireEvent.click(screen.getByRole('button', { name: 'Espacios' }));
+  assert.ok(await screen.findByRole('heading', { name: 'Espacios' }));
+  assert.ok(screen.getByText(area.name));
+  assert.equal(screen.queryByRole('button', { name: 'Archivar' }), null);
+  assert.equal(screen.queryByText(/Precio base/), null);
+});
+
+test('spaces are data-driven for more than three areas and show associated service state', async () => {
+  const spaces = ['North room', 'Studio 2', 'Yoga loft', 'Functional floor', 'Recovery room'].map((name, index) => ({ id: index === 0 ? area.id : `area-${index}`, name }));
+  initialFetch({ onAreaList: () => response(spaces) });
+  renderServices();
+  await screen.findByRole('heading', { name: service.name });
+  fireEvent.click(screen.getByRole('button', { name: 'Espacios' }));
+  for (const space of spaces) assert.ok(await screen.findByRole('heading', { name: space.name }));
+  assert.ok(screen.getAllByText('Sin servicios asociados.').length >= 4);
+  assert.ok(screen.getByText('Entrenamiento funcional'));
+  assert.equal(document.querySelectorAll('.gym-area-card').length, 5);
+});
+
+test('Admin creates an operational area through the existing API and receives inline success feedback', async () => {
+  let posted;
+  initialFetch({ onAreaCreate: (_url, options) => { posted = JSON.parse(options.body); return response({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', name: posted.name }, 201); } });
+  renderServices();
+  await screen.findByRole('heading', { name: service.name });
+  fireEvent.click(screen.getByRole('button', { name: 'Espacios' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Nuevo espacio' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Nuevo espacio' });
+  fireEvent.change(within(dialog).getByLabelText('Nombre del espacio'), { target: { value: '  Yoga loft  ' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Crear espacio' }));
+  assert.ok(await screen.findByRole('status'));
+  assert.deepEqual(posted, { name: 'Yoga loft' });
 });
 
 test('draft plan can be activated from the catalog and the action disappears after refresh', async () => {
@@ -58,8 +107,9 @@ test('draft plan can be activated from the catalog and the action disappears aft
     if (path.endsWith(`/api/plans/${plan.id}/activate`) && options.method === 'POST') { activationCount += 1; return response({ id: plan.id, status: 'active' }); }
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
   };
-  render(React.createElement(ServicesPage));
+  renderServices();
   await screen.findByRole('heading', { name: service.name });
+  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
   fireEvent.click((await screen.findAllByRole('button', { name: 'Activar plan' }))[0]);
   await screen.findByText('Plan activado y disponible para asignarlo a clientes.');
   assert.equal(activationCount, 1);
@@ -83,8 +133,9 @@ test('service navigation filters a scannable plan table while details retain rig
     if(path.endsWith(`/api/plans/${draft.id}/activate`)&&options.method==='POST'){draftActivated=true;return response({id:draft.id,status:'active'});}
     throw new Error(`Unexpected request ${options.method??'GET'} ${path}`);
   };
-  render(React.createElement(ServicesPage));
+  renderServices();
   await screen.findByRole('heading',{name:'Fuerza'});
+  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
   assert.ok(screen.getAllByRole('button',{name:/Funcional/}).length>=1);
   await screen.findByRole('columnheader',{name:'Sesiones / límite'});
   const table=screen.getAllByRole('table').find(item=>item.classList.contains('plan-catalog-table'));
@@ -99,6 +150,7 @@ test('service navigation filters a scannable plan table while details retain rig
   assert.ok(within(details).getByText('Cuota por periodo'));
   assert.ok(within(details).getByText('Reservas'));
   assert.ok(within(details).getByText('Versión 4'));
+  assert.ok(within(details).getByText('Acceso al servicio'));
   assert.ok(within(details).getByRole('button',{name:'Crear nueva versión'}));
   globalThis.window.confirm=()=>true;
   fireEvent.click((await screen.findAllByRole('button',{name:'Activar plan'}))[0]);
@@ -117,12 +169,12 @@ test('service navigation filters a scannable plan table while details retain rig
 test('draft activation errors remain visible and the plan stays available for correction', async () => {
   globalThis.window.confirm=()=>true;
   globalThis.fetch=async url=>String(url).endsWith('/api/areas')?response([area]):String(url).endsWith('/api/services')?response([service]):String(url).endsWith(`/api/services/${service.id}/plans`)?response([plan]):String(url).endsWith(`/api/plans/${plan.id}/activate`)?response({error:'service_not_active',message:'El servicio incluido está en borrador.'},409):Promise.reject(new Error(`Unexpected ${url}`));
-  render(React.createElement(ServicesPage));await screen.findByRole('heading',{name:service.name});fireEvent.click((await screen.findAllByRole('button',{name:'Activar plan'}))[0]);assert.ok(await screen.findByText('El servicio incluido está en borrador.'));assert.ok(screen.getAllByRole('button',{name:'Activar plan'}).length>=1);
+  renderServices();await screen.findByRole('heading',{name:service.name});fireEvent.click(screen.getByRole('button',{name:'Cuotas y planes'}));fireEvent.click((await screen.findAllByRole('button',{name:'Activar plan'}))[0]);assert.ok(await screen.findByText('El servicio incluido está en borrador.'));assert.ok(screen.getAllByRole('button',{name:'Activar plan'}).length>=1);
 });
 
 test('service and plan dialogs focus their first field, close on Escape and restore focus to the opener', async () => {
   initialFetch();
-  render(React.createElement(ServicesPage));
+  renderServices();
   const serviceOpener = screen.getByRole('button', { name: /nuevo servicio/i });
   fireEvent.click(serviceOpener);
   const serviceDialog = await screen.findByRole('dialog', { name: 'Nuevo servicio' });
@@ -131,7 +183,8 @@ test('service and plan dialogs focus their first field, close on Escape and rest
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => assert.equal(document.activeElement, serviceOpener));
 
-  const planOpener = await screen.findByRole('button', { name: /nuevo plan/i });
+  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  const planOpener = (await screen.findAllByRole('button', { name: /nuevo plan/i }))[0];
   fireEvent.click(planOpener);
   const planDialog = await screen.findByRole('dialog', { name: 'Nuevo plan' });
   assert.equal(document.activeElement, within(planDialog).getByLabelText('Nombre del plan'));
@@ -147,9 +200,10 @@ test('a selected draft service is visible and clearly labeled in the new plan di
     if (String(url).endsWith(`/api/services/${draftService.id}/plans`)) return response([]);
     throw new Error('unexpected request');
   };
-  render(React.createElement(ServicesPage));
+  renderServices();
   await screen.findByRole('heading', { name: draftService.name });
-  fireEvent.click(await screen.findByRole('button', { name: /nuevo plan/i }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click((await screen.findAllByRole('button', { name: /nuevo plan/i }))[0]);
   const dialog = await screen.findByRole('dialog', { name: 'Nuevo plan' });
   assert.equal(within(dialog).getByRole('checkbox', { name: /Borrador/ }).checked, true);
   assert.match(within(dialog).getByText(/Borrador/).textContent, /Borrador/);
@@ -172,7 +226,7 @@ test('created plan refreshes the visible plan detail and service plan count with
     if (String(url).endsWith(`/api/services/${service.id}/plans`) && planRevision > 0) return response([plan]);
     return originalFetch(url, options);
   };
-  render(React.createElement(ServicesPage));
+  renderServices();
   const dialog = await openPlanDialog();
   fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: plan.name } });
   fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
@@ -182,9 +236,11 @@ test('created plan refreshes the visible plan detail and service plan count with
     await new Promise((resolve) => setTimeout(resolve, 50));
   });
   await waitFor(() => assert.equal(screen.queryByRole('dialog'), null), { timeout: 2500 });
-  assert.ok(await screen.findByRole('heading', { name: plan.name }));
-  assert.ok(screen.getByRole('row', { name: /Entrenamiento funcional La Sala 1 Activo/ }));
-  assert.ok(screen.getByText('Acceso al servicio'));
+  assert.ok(await screen.findByText(plan.name, { selector: '.plan-catalog-row strong' }));
+  assert.ok(screen.getAllByRole('button', { name: /Entrenamiento funcional/ }).length >= 1);
+  const table = document.querySelector('.plan-catalog-table');
+  fireEvent.click(within(table).getByRole('button', { name: 'Detalles' }));
+  assert.ok(await within(table).findByText('Acceso al servicio'));
   assert.ok(serviceReads >= 2, 'service list should refresh after the save');
   assert.ok(planReads >= 2, 'selected plan detail should refresh after the save');
 });
@@ -193,18 +249,25 @@ test('an access right without a target is described neutrally in multi-service p
   const second = { ...service, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Valoración inicial' };
   const unscopedPlan = { ...plan, services: [{ id: service.id, name: service.name, area: service.area }, { id: second.id, name: second.name, area: second.area }], rights: [{ ...plan.rights[0], serviceId: null }] };
   initialFetch({ plans: [unscopedPlan] });
-  render(React.createElement(ServicesPage));
-  await screen.findByRole('heading', { name: unscopedPlan.name });
-  assert.ok(screen.getByText(service.name, { selector: '.service-chip' }));
-  assert.ok(screen.getByText(second.name, { selector: '.service-chip' }));
-  assert.ok(screen.getByText('Destino sin especificar'));
+  renderServices();
+  await screen.findByRole('heading', { name: service.name });
+  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  await screen.findByText(unscopedPlan.name, { selector: '.plan-catalog-row strong' });
+  fireEvent.click(screen.getAllByRole('button', { name: 'Detalles' })[0]);
+  await screen.findByRole('region', { name: `Detalles de ${unscopedPlan.name}` });
+  const table = document.querySelector('.plan-catalog-table');
+  assert.ok(within(table).getByText(service.name, { selector: '.service-chip' }));
+  assert.ok(within(table).getByText(second.name, { selector: '.service-chip' }));
+  assert.ok(within(table).getByText('Destino sin especificar'));
   assert.equal(screen.queryByText('Todos los servicios incluidos'), null);
 });
 
 test('service access requires an included service target before plan creation', async () => {
   let submitted;
   initialFetch({ onPlanCreate: (_url, options) => { submitted = JSON.parse(options.body); return response(plan, 201); } });
-  render(React.createElement(ServicesPage));
+  renderServices();
+  await screen.findByRole('heading', { name: service.name });
+  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
   const dialog = await openPlanDialog();
   fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: plan.name } });
   fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
@@ -234,7 +297,7 @@ test('creating a plan without the currently selected service selects a service t
     if (path.endsWith(`/api/services/${second.id}/plans`)) return response([secondPlan]);
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
   };
-  render(React.createElement(ServicesPage));
+  renderServices();
   const dialog = await openPlanDialog();
   fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: secondPlan.name } });
   fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
@@ -248,13 +311,13 @@ test('creating a plan without the currently selected service selects a service t
   });
   await waitFor(() => assert.equal(screen.queryByRole('dialog'), null));
   assert.ok(await screen.findByRole('heading', { name: second.name }));
-  assert.ok(await screen.findByRole('heading', { name: secondPlan.name }));
+  assert.ok(await screen.findByText(secondPlan.name, { selector: '.plan-catalog-row strong' }));
 });
 
 test('failed save is announced inside the open dialog and leaves the user input intact', async () => {
   const keys = [];
   initialFetch({ onPlanCreate: (_url, options) => { keys.push(options.headers['idempotency-key']); return response({ error: 'conflict', message: 'Ya existe un plan con ese nombre.' }, 409); } });
-  render(React.createElement(ServicesPage));
+  renderServices();
   const dialog = await openPlanDialog();
   fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: plan.name } });
   fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
@@ -276,8 +339,9 @@ test('plan loading, fetch failure and valid empty response have distinct states 
     if (String(url).endsWith(`/api/services/${service.id}/plans`)) return fail ? Promise.reject(new Error('offline')) : response([]);
     throw new Error('unexpected request');
   };
-  render(React.createElement(ServicesPage));
+  renderServices();
   await screen.findByRole('heading', { name: service.name });
+  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
   assert.ok(await screen.findByRole('alert'));
   assert.equal(screen.queryByText('Aún no hay planes'), null);
   fail = false;
