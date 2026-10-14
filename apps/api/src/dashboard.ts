@@ -65,6 +65,7 @@ export function registerDashboardRoutes(
       documentsRead: can(context, 'documents.read'),
       timeclockSelf: can(context, 'timeclock.self'),
       capacityOverride: can(context, 'scheduling.override_capacity'),
+      store: can(context, 'store.catalog.read'),
     };
   });
 

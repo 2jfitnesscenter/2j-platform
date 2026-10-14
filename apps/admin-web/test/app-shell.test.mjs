@@ -65,6 +65,15 @@ test('navigation stays available from independent capabilities when Command Cent
   assert.equal(screen.queryByRole('link',{name:'Equipo'}),null);
 });
 
+test('Store navigation is exposed only when the server grants store capability',async()=>{
+  globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,store:true}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
+  const {unmount}=render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  assert.ok(await screen.findByRole('link',{name:'Tienda'}));unmount();
+  globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,store:false}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
+  render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  await screen.findByText('0 sesiones hoy');assert.equal(screen.queryByRole('link',{name:'Tienda'}),null);
+});
+
 test('permitted Communications navigation remains visible while moving between modules', async () => {
   globalThis.fetch = async (url) => String(url).includes('/api/session/capabilities')
     ? response({calendar:true,clients:true,communications:true,billing:true,staff:true})

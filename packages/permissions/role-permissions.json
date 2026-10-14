@@ -63,7 +63,14 @@
     "entitlements.cancel",
     "entitlements.pause",
     "entitlements.renew",
-    "catalog.pricing.manage"
+    "catalog.pricing.manage",
+    "store.catalog.read",
+    "store.catalog.manage",
+    "store.inventory.read",
+    "store.inventory.manage",
+    "store.sales.read",
+    "store.sales.create",
+    "store.sales.void"
   ],
   "roles": {
     "admin": [
