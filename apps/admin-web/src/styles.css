@@ -379,7 +379,7 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
   .app-location { gap:5px; font-size:11px; }
   .app-location>span:first-child { font-size:9px; }
   .app-location strong { max-width:112px; font-size:12px; }
-  .global-search-trigger { width:42px; min-height:42px; flex:0 0 42px; justify-content:center; padding:0; }
+  .global-search-trigger { width:44px; min-height:44px; flex:0 0 44px; justify-content:center; padding:0; }
   .global-search-trigger>span:nth-child(2),.global-search-trigger kbd { display:none; }
   .app-topbar>.local-pill { padding:6px 7px; font-size:0; }
   .app-topbar>.local-pill .status-dot { margin:0; }
@@ -822,7 +822,7 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
   .calendar-toolbar { min-height: 82px; padding: 14px; }
   .calendar-toolbar h2 { font-size: 15px; }
   .week-controls { gap: 3px; }
-  .week-controls .icon-button { width: 40px; height: 44px; }
+  .week-controls .icon-button { width: 44px; height: 44px; }
   .today-button { min-height: 44px; padding: 0 10px; }
   .week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; padding: 10px; border-bottom: 1px solid var(--2j-color-border); }
   .week-strip button { min-width: 0; min-height: 60px; display: grid; justify-items: center; align-content: center; gap: 2px; padding: 3px; border: 1px solid transparent; border-radius: var(--2j-radius-sm); background: transparent; cursor: pointer; }
@@ -991,6 +991,62 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .center-news-layout{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(0,1.2fr);align-items:start;gap:18px}.center-news-editor,.center-news-list{display:grid;gap:13px;padding:20px}.center-news-editor>label{font-size:13px;font-weight:var(--2j-type-weight-semibold)}.center-news-editor>input,.center-news-editor>textarea{width:100%;min-width:0;padding:12px;border:1px solid var(--2j-color-border-strong);border-radius:var(--2j-radius-md);background:var(--2j-color-canvas);color:var(--2j-color-text-primary);resize:vertical}.center-news-editor>input{min-height:46px}.center-news-editor>textarea{min-height:180px;line-height:1.6}.center-news-editor :is(input,textarea):focus-visible{outline:3px solid var(--2j-color-focus);outline-offset:2px}.center-news-helper{margin:0;color:var(--2j-color-text-secondary);font-size:12px;line-height:1.5}.center-news-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.center-news-saved{margin:0;color:var(--2j-color-success,var(--2j-color-brand-strong));font-size:13px}.center-news-empty{padding:22px 4px;color:var(--2j-color-text-secondary)}.center-news-empty h3{margin:0 0 5px;color:var(--2j-color-text-primary)}.center-news-empty p{margin:0}.center-news-items{display:grid}.center-news-item{display:grid;gap:12px;padding:17px 0;border-top:1px solid var(--2j-color-border)}.center-news-item-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.center-news-item-heading>div{min-width:0}.center-news-item-heading h3{margin:8px 0 0;font-size:17px;overflow-wrap:anywhere}.center-news-item-heading>small{flex:0 0 auto;color:var(--2j-color-text-secondary);font-size:11px}.center-news-item>p{margin:0;color:var(--2j-color-text-secondary);line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.center-news-status,.center-news-featured{display:inline-flex;align-items:center;min-height:24px;padding:0 9px;border-radius:var(--2j-radius-pill);background:var(--2j-color-surface-subtle);color:var(--2j-color-text-secondary);font-size:11px;font-weight:var(--2j-type-weight-semibold)}.center-news-status.status-published{background:color-mix(in srgb,var(--2j-color-brand) 18%,var(--2j-color-surface));color:var(--2j-color-text-primary)}.center-news-status.status-withdrawn{background:color-mix(in srgb,var(--2j-color-danger,#C05252) 12%,var(--2j-color-surface));color:var(--2j-color-text-secondary)}.center-news-featured{margin-left:6px;background:color-mix(in srgb,var(--2j-color-brand) 12%,var(--2j-color-surface));color:var(--2j-color-brand-strong)}.center-news-audit{display:grid;gap:8px;margin:0;padding:12px 12px 12px 30px;border-radius:var(--2j-radius-md);background:var(--2j-color-surface-subtle)}.center-news-audit li{padding-left:3px}.center-news-audit li>span{display:block;color:var(--2j-color-text-secondary);font-size:12px}.center-news-page .inline-error{margin:0}
 @media(max-width:900px){.center-news-layout{grid-template-columns:1fr}.center-news-editor{max-width:none}}
 @media(max-width:560px){.center-news-editor,.center-news-list{padding:15px}.center-news-item-heading{display:grid;gap:6px}.center-news-item-heading>small{font-size:12px}.center-news-actions .button{min-height:42px}.center-news-actions{gap:7px}}
+
+/* 2J-097: Mi gimnasio operational surfaces */
+.gym-page { width:100%; max-width:1480px; margin:0 auto; padding:clamp(18px,2vw,30px) clamp(16px,2.3vw,34px) 34px; }
+.gym-page-heading { align-items:flex-end; margin:0 0 20px; }
+.gym-page-heading h1 { margin:5px 0 7px; }
+.gym-page-heading p { max-width:640px; }
+.gym-view-tabs { display:flex; gap:5px; width:max-content; max-width:100%; overflow:auto; margin:0 0 16px; padding:4px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-pill); background:var(--2j-color-surface-subtle); }
+.gym-view-tabs button { min-height:44px; padding:0 16px; border:0; border-radius:var(--2j-radius-pill); background:transparent; color:var(--2j-color-text-secondary); font:inherit; font-size:13px; font-weight:var(--2j-type-weight-semibold); white-space:nowrap; cursor:pointer; }
+.gym-view-tabs button[aria-pressed="true"] { background:var(--2j-color-surface-raised); color:var(--2j-color-text-primary); }
+.gym-view-tabs button:focus-visible { outline:3px solid var(--2j-color-focus); outline-offset:2px; }
+.gym-areas { display:grid; gap:14px; }
+.gym-section-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; padding:3px 2px; }
+.gym-section-heading h2 { margin:0; font-size:20px; }
+.gym-section-heading p { margin:5px 0 0; color:var(--2j-color-text-secondary); font-size:13px; }
+.gym-area-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:13px; }
+.gym-area-card { min-width:0; padding:17px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-lg); background:var(--2j-color-surface-raised); }
+.gym-area-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--2j-color-border); }
+.gym-area-heading .eyebrow { font-size:10px; }
+.gym-area-heading h3 { margin:5px 0 0; overflow-wrap:anywhere; font-size:18px; }
+.gym-area-services { padding-top:12px; color:var(--2j-color-text-secondary); font-size:13px; }
+.gym-area-services strong { color:var(--2j-color-text-primary); font-size:12px; }
+.gym-area-services ul { display:grid; gap:8px; margin:10px 0 0; padding:0; list-style:none; }
+.gym-area-services li { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+.gym-area-services li>span:first-child { min-width:0; overflow:hidden; color:var(--2j-color-text-primary); text-overflow:ellipsis; white-space:nowrap; }
+.gym-area-services p { margin:9px 0 0; }
+.gym-service-facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:18px 0; }
+.gym-service-facts>div { display:grid; gap:5px; padding:13px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); background:var(--2j-color-surface-subtle); }
+.gym-service-facts dt { color:var(--2j-color-text-secondary); font-size:12px; }
+.gym-service-facts dd { margin:0; color:var(--2j-color-text-primary); font-weight:var(--2j-type-weight-semibold); }
+.gym-calendar-page .calendar-heading { margin-bottom:16px; }
+.today-operational-summary { display:grid; gap:12px; margin:0 0 14px; padding:16px 18px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-lg); background:linear-gradient(115deg,var(--2j-color-surface-raised),var(--2j-color-surface-subtle)); }
+.today-operational-heading { display:flex; align-items:center; justify-content:space-between; gap:15px; }
+.today-operational-heading h2 { margin:4px 0 0; font-size:18px; text-transform:capitalize; }
+.today-operational-heading .text-button { min-height:44px; }
+.today-operational-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; margin:0; }
+.today-operational-metrics>div { display:grid; gap:4px; padding:10px 12px; border-left:2px solid var(--2j-color-brand); background:var(--2j-color-surface); }
+.today-operational-metrics dt { color:var(--2j-color-text-secondary); font-size:12px; }
+.today-operational-metrics dd { margin:0; color:var(--2j-color-text-primary); font-size:20px; font-weight:var(--2j-type-weight-semibold); font-variant-numeric:tabular-nums; }
+.today-operational-empty { margin:0; color:var(--2j-color-text-secondary); font-size:13px; }
+.gym-page .service-panel,.gym-page .detail-panel { min-width:0; }
+@media(max-width:900px) { .gym-area-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:680px) {
+  .gym-page { padding:16px 14px 28px; }
+  .gym-page-heading { align-items:stretch; flex-direction:column; gap:13px; }
+  .gym-page-heading>.button { width:100%; min-height:46px; }
+  .gym-view-tabs { width:100%; border-radius:var(--2j-radius-md); }
+  .gym-view-tabs button { flex:1 0 auto; padding:0 12px; }
+  .gym-area-grid { grid-template-columns:minmax(0,1fr); gap:10px; }
+  .gym-area-card { padding:15px; }
+  .gym-section-heading { align-items:flex-start; }
+  .gym-service-facts { grid-template-columns:minmax(0,1fr); }
+  .today-operational-summary { padding:14px; }
+  .today-operational-heading { align-items:flex-start; flex-direction:column; }
+  .today-operational-heading .text-button { align-self:flex-start; }
+  .today-operational-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
 
 /* 2J-081B/082 review delta: visual recurring schedule editor */
 .catalog { grid-template-columns:minmax(250px,.68fr) minmax(0,1.72fr); }

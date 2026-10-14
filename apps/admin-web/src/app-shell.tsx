@@ -12,9 +12,13 @@ export type CommandCenterModel = {
   unread: number;
   quickActions: Array<{id:string;label:string;href:string}>;
 };
-const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void}>({data:null,state:'loading',error:'',reload:()=>{}});
+const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
-export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;news?:boolean;store?:boolean};
+export const useProfessionalCapabilities = () => React.useContext(CommandContext).capabilities;
+export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;news?:boolean;store?:boolean;catalogPricingManage?:boolean};
+export function ProfessionalCapabilitiesProvider({capabilities,children}:{capabilities:NavigationCapabilities|null;children:React.ReactNode}) {
+  return <CommandContext.Provider value={{data:null,state:'loading',error:'',reload:()=>{},capabilities}}>{children}</CommandContext.Provider>;
+}
 type NavRoute = {id:string;label:string;href:string;permission:keyof NavigationCapabilities|null};
 type NavSection = {id:string;label:string;icon:string;route?:NavRoute;children?:NavRoute[]};
 const routes={
@@ -22,7 +26,7 @@ const routes={
   communications:{id:'communications',label:'Comunicación',href:'#communications',permission:'communications'},
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients'},
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar'},
-  services:{id:'services',label:'Servicios y cuotas',href:'#services',permission:'calendar'},
+  services:{id:'services',label:'Espacios y servicios',href:'#services',permission:'calendar'},
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff'},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing'},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store'},
@@ -84,7 +88,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const pageContext=getProfessionalPageContext(route);
   const toggleGroup=(groupId:string)=>setExpandedGroups(current=>{const next=new Set(current);if(next.has(groupId))next.delete(groupId);else next.add(groupId);return next;});
   const toggleCompact=()=>setCompact(value=>{const next=!value;if(next)setExpandedGroups(new Set());else setExpandedGroups(new Set(['activity','gym','business']));return next;});
-  return <CommandContext.Provider value={{data,state,error,reload}}><div className={`app-frame ${compact?'is-compact':''}`}>
+  return <CommandContext.Provider value={{data,state,error,reload,capabilities}}><div className={`app-frame ${compact?'is-compact':''}`}>
     <aside className="app-sidebar" aria-label="Navegación principal">
       <div className="app-sidebar-brand"><a className="brand" href="#home" aria-label="2J Platform, Resumen"><span className="brand-mark">2J</span><span className="brand-copy">FITNESS CENTER<small>OPERACIONES</small></span></a><button className="sidebar-toggle" type="button" onClick={toggleCompact} aria-label={compact?'Expandir menú':'Compactar menú'} title={compact?'Expandir menú':'Compactar menú'}>{compact?'»':'«'}</button></div>
       <nav className="app-navigation" aria-label="Secciones">

@@ -1929,7 +1929,7 @@ test('local Host handling rejects unexpected hosts while health reports database
 });
 
 test('GET plan database connectivity failures return a structured 503', async () => {
-  const unavailable = buildServer('postgres://local:local@127.0.0.1:1/unavailable');
+  const unavailable = buildServer('postgres://local:local@127.0.0.1:1/unavailable', { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }) });
   try {
     const response = await unavailable.inject({ method: 'GET', url: `/api/services/${randomUUID()}/plans` });
     assert.equal(response.statusCode, 503);
@@ -2148,6 +2148,24 @@ test('catalog writes require catalog.pricing.manage while reads remain available
   const service = await createService(`Servicio archivo permisos ${randomUUID()}`);
   assert.equal((await clientsTrainerApp.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 403);
   assert.equal((await clientsAdminApp.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 200);
+});
+
+test('service plan lookup requires calendar access and hides base prices from Trainer', async () => {
+  const service = await createService(`Mi gimnasio ${randomUUID()}`);
+  const created = await createPlan([service.id], { basePriceCents: 4250 });
+  assert.equal(created.response.statusCode, 201, created.response.body);
+
+  const adminPlans = await clientsAdminApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
+  assert.equal(adminPlans.statusCode, 200);
+  assert.equal(adminPlans.json()[0].basePriceCents, '4250');
+
+  const trainerPlans = await clientsTrainerApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
+  assert.equal(trainerPlans.statusCode, 200);
+  assert.equal(Object.hasOwn(trainerPlans.json()[0], 'basePriceCents'), false);
+  assert.equal(JSON.stringify(trainerPlans.json()).includes('4250'), false);
+
+  assert.equal((await anonymousApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans` })).statusCode, 401);
+  assert.equal((await clientsAccountantApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans` })).statusCode, 403);
 });
 
 test('Admin can update basic client profile including nullable date of birth with history; Trainer cannot', async () => {

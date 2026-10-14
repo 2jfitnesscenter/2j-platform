@@ -68,16 +68,19 @@ test('creates a session from active service and area and returns it in the Canar
   assert.equal(row.source, 'manual');
 });
 
-test('calendar exposes current-week birthdays only to client managers and permits nullable birth dates', async () => {
+test('professional calendar omits client birth-date data and permits nullable birth dates', async () => {
   const client = (await admin.inject({ method:'POST', url:'/api/clients', headers:{'idempotency-key':randomUUID()}, payload:{firstName:'Cumple',lastName:`Semana ${randomUUID().slice(0,8)}`,birthDate:'2000-10-12'} })).json();
   assert.equal(client.birthDate,'2000-10-12');
   const weekStart='2026-10-12';
   const adminWeek=await admin.inject({method:'GET',url:`/api/calendar/week?weekStart=${weekStart}`});
-  assert.ok(adminWeek.json().birthdays.some(item=>item.clientId===client.id&&item.birthdayDate==='2026-10-12'));
-  assert.equal(Number.isInteger(adminWeek.json().birthdaysTodayCount),true);
+  assert.equal(adminWeek.statusCode,200);
+  assert.equal('birthdays' in adminWeek.json(),false);
+  assert.equal('birthdaysTodayCount' in adminWeek.json(),false);
+  assert.equal(JSON.stringify(adminWeek.json()).includes(client.id),false,'client identity should not be present in the general agenda payload');
+  assert.equal(JSON.stringify(adminWeek.json()).includes('birthDate'),false);
   const trainerWeek=await trainer.inject({method:'GET',url:`/api/calendar/week?weekStart=${weekStart}`});
-  assert.deepEqual(trainerWeek.json().birthdays,[]);
-  assert.equal(trainerWeek.json().birthdaysTodayCount,0,'today count remains permission-filtered');
+  assert.equal(trainerWeek.statusCode,200);
+  assert.equal(JSON.stringify(trainerWeek.json()).includes('birthDate'),false);
   const noBirthDate=await admin.inject({method:'POST',url:'/api/clients',headers:{'idempotency-key':randomUUID()},payload:{firstName:'Sin',lastName:`Fecha ${randomUUID().slice(0,8)}`}});
   assert.equal(noBirthDate.statusCode,201);
   assert.equal(noBirthDate.json().birthDate,null);
