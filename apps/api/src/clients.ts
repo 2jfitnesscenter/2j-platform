@@ -30,9 +30,6 @@ const sectionDefinitions = [
   { id: 'plans', label: 'Cuotas', permission: 'entitlements.read', sourceLabel: 'Planes asignados' },
   { id: 'reservations', label: 'Reservas', permission: 'calendar.read', sourceLabel: 'Calendario' },
   { id: 'payments', label: 'Pagos', permission: 'billing.read-basic', sourceLabel: 'Pagos' },
-  { id: 'training', label: 'Entrenamiento', permission: 'training.read', sourceLabel: 'Entrenamiento en 2J Fitness App' },
-  { id: 'progress', label: 'Progreso', permission: 'training.read', sourceLabel: 'Progreso en 2J Fitness App' },
-  { id: 'health', label: 'Salud', permission: 'health.read', sourceLabel: 'Salud en 2J Fitness App' },
   { id: 'documents', label: 'Documentos/Formularios', permission: 'documents.read', sourceLabel: 'Documentos y formularios' },
   { id: 'messages', label: 'Mensajes', permission: 'communication.read', sourceLabel: 'Comunicación' },
   { id: 'followup', label: 'Seguimiento', permission: 'followup.read', sourceLabel: 'Seguimiento' },
@@ -44,9 +41,6 @@ const summaryDomains = [
   { id: 'plans', permission: 'entitlements.read' },
   { id: 'reservations', permission: 'calendar.read' },
   { id: 'payments', permission: 'billing.read-basic' },
-  { id: 'training', permission: 'training.read' },
-  { id: 'progress', permission: 'training.read' },
-  { id: 'health', permission: 'health.read' },
   { id: 'documents', permission: 'documents.read' },
   { id: 'messages', permission: 'communication.read' },
   { id: 'followup', permission: 'followup.read' },
@@ -102,15 +96,16 @@ export function registerClientRoutes(
     const cursor = parseCursor(query.data.cursor);
     if (cursor === false) return reply.code(400).send({ error: 'invalid_cursor' });
     const term = (query.data.q ?? '').normalize('NFKC').toLocaleLowerCase('es').trim();
+    const canSearchContact = can(context, 'clients.manage');
     const status = query.data.status ?? 'active';
     const pageCursor = cursor || null;
     try {
       const rows = await database`
-        SELECT id,first_name AS "firstName",last_name AS "lastName",email,phone,status,created_at AS "createdAt",
+          SELECT id,first_name AS "firstName",last_name AS "lastName",status,created_at AS "createdAt",
           lower(last_name) AS "cursorLastName",lower(first_name) AS "cursorFirstName"
         FROM clients
         WHERE status=${status}
-          AND (${term}='' OR strpos(lower(concat_ws(' ',first_name,last_name,email,phone)),${term}) > 0)
+          AND (${term}='' OR strpos(lower(concat_ws(' ',first_name,last_name)),${term}) > 0 OR (${canSearchContact} AND strpos(lower(concat_ws(' ',email,phone)),${term}) > 0))
           AND (${pageCursor === null} OR (lower(last_name),lower(first_name),id) > (${pageCursor?.lastName ?? ''},${pageCursor?.firstName ?? ''},${pageCursor?.id ?? '00000000-0000-0000-0000-000000000000'}::uuid))
         ORDER BY lower(last_name),lower(first_name),id
         LIMIT ${query.data.limit + 1}`;
@@ -160,7 +155,11 @@ export function registerClientRoutes(
     if (!params.success) return reply.code(400).send({ error: 'invalid_client_id' });
     try {
       const [row] = await database`SELECT id,first_name AS "firstName",last_name AS "lastName",email,phone,birth_date AS "birthDate",status,created_at AS "createdAt",updated_at AS "updatedAt" FROM clients WHERE id=${params.data.clientId}`;
-      const client: any = row ? { ...row, birthDate: can(context, 'clients.manage') ? row.birthDate : null } : null;
+      const client: any = row ? {
+        id: row.id, firstName: row.firstName, lastName: row.lastName, status: row.status,
+        createdAt: row.createdAt, updatedAt: row.updatedAt,
+        ...(can(context, 'clients.manage') ? { email: row.email, phone: row.phone, birthDate: row.birthDate } : {}),
+      } : null;
       if (!client) return reply.code(404).send({ error: 'client_not_found' });
       const events = await database`SELECT id,event_type AS "eventType",actor_role AS "actorRole",occurred_at AS "occurredAt" FROM client_events WHERE client_id=${params.data.clientId} ORDER BY occurred_at DESC,id DESC LIMIT 100`;
       const summary: Record<string, { access: 'available' | 'forbidden'; dataState: string; data: unknown }> = Object.fromEntries(summaryDomains.map(({ id, permission }) => {
@@ -200,12 +199,19 @@ export function registerClientRoutes(
         summary.payments = { access: 'available', dataState: 'ready', data: { ...economicSummary, charges, movements } };
       }
       if (can(context, 'entitlements.read')) {
-        const assignments = await database`SELECT x.id,x.plan_id AS "planId",x.plan_version AS "planVersion",COALESCE(x.snapshot->>'name',p.name) AS "planName",v.kind,x.starts_on AS "startsOn",x.ends_on AS "endsOn",x.status,x.snapshot,x.sale_price_cents AS "salePriceCents",
+        const assignmentRows = await database`SELECT x.id,x.plan_id AS "planId",x.plan_version AS "planVersion",COALESCE(x.snapshot->>'name',p.name) AS "planName",v.kind,x.starts_on AS "startsOn",x.ends_on AS "endsOn",x.status,x.snapshot,x.sale_price_cents AS "salePriceCents",
           CASE WHEN le.event_type IN ('cancelled','changed') OR x.status='cancelled' THEN 'cancelled' WHEN le.event_type='paused' THEN 'paused' WHEN x.starts_on>(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'scheduled' WHEN x.ends_on<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'expired' WHEN v.kind='session_pack' AND EXISTS(SELECT 1 FROM plan_rights rq WHERE rq.plan_id=x.plan_id AND rq.plan_version=x.plan_version AND rq.right_type='sessions_quota') AND NOT EXISTS(SELECT 1 FROM plan_rights rq WHERE rq.plan_id=x.plan_id AND rq.plan_version=x.plan_version AND rq.right_type='sessions_quota' AND COALESCE((SELECT sum(l.quantity) FROM client_entitlement_ledger l WHERE l.assignment_id=x.id AND l.right_key=rq.id::text),0)>0) THEN 'exhausted' ELSE 'active' END AS "derivedStatus",
           x.charge_id AS "chargeId",c.concept,c.amount_cents AS "amountCents",c.due_on AS "dueOn",
           (SELECT COALESCE(jsonb_agg(jsonb_build_object('id',r.id,'rightType',r.right_type,'serviceId',r.service_id,'serviceName',s.name,'quantity',r.quantity,'period',r.period,'quotaScope',r.quota_scope,'balance',(SELECT COALESCE(sum(l.quantity),0)::int FROM client_entitlement_ledger l WHERE l.assignment_id=x.id AND l.right_key=r.id::text)) ORDER BY r.right_type,r.service_id NULLS FIRST,r.id),'[]'::jsonb) FROM plan_rights r LEFT JOIN services s ON s.id=r.service_id WHERE r.plan_id=x.plan_id AND r.plan_version=x.plan_version) AS rights,
           (SELECT COALESCE(jsonb_agg(jsonb_build_object('module',m.module,'accessLevel',m.access_level,'capabilities',COALESCE((SELECT jsonb_agg(mc.capability ORDER BY mc.capability) FROM plan_module_capabilities mc WHERE mc.plan_id=m.plan_id AND mc.plan_version=m.plan_version AND mc.module=m.module),'[]'::jsonb)) ORDER BY m.module),'[]'::jsonb) FROM plan_module_accesses m WHERE m.plan_id=x.plan_id AND m.plan_version=x.plan_version) AS modules
           FROM client_plan_assignments x JOIN plans p ON p.id=x.plan_id JOIN plan_versions v ON v.plan_id=x.plan_id AND v.version=x.plan_version JOIN economic_charges c ON c.id=x.charge_id LEFT JOIN LATERAL (SELECT event_type FROM client_plan_assignment_events e WHERE e.assignment_id=x.id AND e.effective_on<=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1) le ON true WHERE x.client_id=${params.data.clientId} ORDER BY x.starts_on DESC,x.created_at DESC,x.id DESC LIMIT 100`;
+        const assignments = assignmentRows.map((assignment) => {
+          if (can(context, 'billing.read-basic')) return assignment;
+          const { salePriceCents: _salePriceCents, amountCents: _amountCents, dueOn: _dueOn, concept: _concept, ...operationalAssignment } = assignment;
+          const snapshot = assignment.snapshot && typeof assignment.snapshot === 'object' ? assignment.snapshot : {};
+          const { planId, planVersion, name, kind, currency, services, rights, modules, startsOn, endsOn, terms } = snapshot;
+          return { ...operationalAssignment, snapshot: { planId, planVersion, name, kind, currency, services, rights, modules, startsOn, endsOn, terms } };
+        });
         summary.plans = { access: 'available', dataState: 'ready', data: assignments };
       }
       return {

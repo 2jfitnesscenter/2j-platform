@@ -15,16 +15,15 @@ after(() => dom.window.close());
 
 const client = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Marta', lastName: 'Santos', email: 'marta@example.test', phone: '+34 600 000 000', status: 'active', createdAt: '2026-10-01T10:00:00Z' };
 const sections = [
-  ['summary', 'Resumen', 'Datos del perfil', 'available', 'ready'], ['reservations', 'Reservas', 'Calendario', 'available', 'not_connected'], ['payments', 'Pagos', 'Pagos', 'available', 'not_connected'],
-  ['training', 'Entrenamiento', 'Entrenamiento en 2J Fitness App', 'available', 'not_connected'], ['progress', 'Progreso', 'Progreso en 2J Fitness App', 'available', 'not_connected'], ['health', 'Salud', 'Salud en 2J Fitness App', 'available', 'not_connected'],
+  ['summary', 'Resumen', 'Datos del perfil', 'available', 'ready'], ['reservations', 'Reservas', 'Calendario', 'available', 'ready'], ['plans','Cuotas','Planes asignados','available','ready'], ['payments', 'Pagos', 'Pagos', 'forbidden', 'ready'],
   ['documents', 'Documentos/Formularios', 'Documentos y formularios', 'available', 'ready'], ['messages', 'Mensajes', 'Comunicación', 'available', 'not_connected'], ['followup','Seguimiento','Seguimiento','available','ready'], ['history', 'Historial', 'Historial del perfil', 'available', 'ready'],
 ].map(([id, label, sourceLabel, access, dataState]) => ({ id, label, sourceLabel, access, dataState }));
-const summary = Object.fromEntries(['profile', 'plans', 'reservations', 'payments', 'training', 'progress', 'health', 'documents', 'messages'].map((id) => [id, { access: id === 'payments' ? 'forbidden' : 'available', dataState: id === 'profile' ? 'ready' : 'not_connected', data: null }]));
+const summary = Object.fromEntries(['profile', 'plans', 'reservations', 'payments', 'documents', 'messages', 'followup'].map((id) => [id, { access: id === 'payments' ? 'forbidden' : 'available', dataState: id === 'profile' ? 'ready' : 'not_connected', data: null }]));
 const profile = { client, capabilities: { manage: true }, summary, sections, history: [{ id: 'event-1', eventType: 'client.created', actorLabel: 'Administración', occurredAt: client.createdAt }] };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const listResponse = (items = [client], overrides = {}) => ({ items, capabilities: { manage: true }, hasMore: false, nextCursor: null, ...overrides });
 
-test('shows real clients, searches the server, and opens a 360 profile with clearly unconnected sections', async () => {
+test('shows minimized clients, searches the server, and opens only backed Client 360 sections', async () => {
   const requests = [];
   globalThis.fetch = async (url) => {
     requests.push(String(url));
@@ -38,11 +37,26 @@ test('shows real clients, searches the server, and opens a 360 profile with clea
   await waitFor(() => assert.ok(requests.some((url) => url.includes('q=marta'))), { timeout: 1500 });
   fireEvent.click(screen.getByRole('button', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
-  for (const label of ['Resumen', 'Reservas', 'Pagos', 'Entrenamiento', 'Progreso', 'Salud', 'Documentos/Formularios', 'Mensajes', 'Historial']) assert.ok(screen.getByRole('tab', { name: new RegExp(label) }));
-  assert.equal(screen.getAllByText('marta@example.test').length, 2);
-  fireEvent.click(screen.getByRole('tab', { name: /Entrenamiento/ }));
-  assert.ok(screen.getByText(/El entrenamiento mantiene su fuente de verdad en 2J Fitness App y El Búnker/));
-  assert.equal(screen.queryByText(/rutina asignada/), null);
+  for (const label of ['Resumen', 'Reservas', 'Cuotas', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']) assert.ok(screen.getByRole('tab', { name: new RegExp(label) }));
+  assert.equal(screen.queryByRole('tab', { name: /Pagos|Salud|Nutrición|Progreso|Entrenamiento|Competición|Objetivos/ }), null);
+  assert.equal(screen.queryByText('marta@example.test'), null);
+  assert.equal(screen.queryByText('+34 600 000 000'), null);
+  assert.equal(screen.getByRole('button', { name: /Marta Santos.*Activo.*abrir ficha/i }).getAttribute('aria-pressed'), 'true');
+  assert.equal(screen.getByRole('heading', { name: 'Contexto del cliente' }).textContent, 'Contexto del cliente');
+});
+
+test('Admin can open the existing finance section while unsupported Training and Health remain absent', async () => {
+  const adminSections = sections.map((section) => section.id === 'payments' ? { ...section, access: 'available' } : section);
+  const adminProfile = { ...profile, sections: adminSections, summary: { ...summary, payments: { access: 'available', dataState: 'ready', data: { balanceCents: 2400, overdueCount: 1, charges: [], movements: [] } } } };
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(adminProfile);
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('button', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  const financeTab = screen.getByRole('tab', { name: 'Cuotas y pagos' });
+  fireEvent.click(financeTab);
+  assert.ok(screen.getByText('Saldo pendiente'));
+  assert.ok(screen.getByText(/24,00/));
+  assert.equal(screen.queryByRole('tab', { name: /Entrenamiento|Progreso|Salud/ }), null);
 });
 
 test('creates a client only when the server grants manage capability and refreshes its profile', async () => {
@@ -108,7 +122,7 @@ test('fails closed when the server has no authorized session', async () => {
 
 test('Client 360 pauses an entitlement with reason and idempotency key, then refreshes its effective status', async () => {
   const assignment={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',planId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',planName:'Funcional 2 días',kind:'recurring',startsOn:'2026-10-01',endsOn:'2026-10-31',derivedStatus:'active',concept:'Funcional · Cuota',amountCents:4500,salePriceCents:4500,dueOn:'2026-10-01',rights:[{id:'right-1',rightType:'period_quota',serviceName:'La Sala',quantity:2,period:'week',quotaScope:'per_service'}],modules:[{module:'training',accessLevel:'limited',capabilities:['training.routines.read']}]};
-  const taskProfile={...profile,capabilities:{manage:true,readEntitlements:true,pauseEntitlements:true,cancelEntitlements:true,adjustEntitlements:true,renewEntitlements:true,assignPlans:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[assignment]}}};
+  const taskProfile={...profile,capabilities:{manage:true,readEntitlements:true,pauseEntitlements:true,cancelEntitlements:true,adjustEntitlements:true,renewEntitlements:true,assignPlans:true,collectPayments:true},summary:{...summary,plans:{access:'available',dataState:'ready',data:[assignment]}}};
   let posted;
   globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`))return response(taskProfile);if(path.endsWith(`/api/clients/${client.id}/plans/${assignment.id}/pause`)&&options.method==='POST'){posted={body:JSON.parse(options.body),key:options.headers['idempotency-key']};return response({status:'paused'},201);}throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
   render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:'Cuotas'}));assert.ok(screen.getByRole('heading',{name:'Activas'}));assert.ok(screen.getByText('Entrenamiento: Limitado'));fireEvent.click(await screen.findByRole('button',{name:'Pausar'}));
@@ -117,7 +131,7 @@ test('Client 360 pauses an entitlement with reason and idempotency key, then ref
 
 test('Reception can open a base-price sale while Trainer remains read-only', async () => {
   const plan = { id:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',name:'Plan Sala',kind:'recurring',basePriceCents:3200,services:[{name:'La Sala'}],rights:[{rightType:'service_access',serviceName:'La Sala'}] };
-  const receptionProfile={...profile,capabilities:{manage:false,readEntitlements:true,assignPlans:true,manageCatalogPrice:false,collectPayments:false,pauseEntitlements:true,cancelEntitlements:true,renewEntitlements:true,adjustEntitlements:false},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
+  const receptionProfile={...profile,capabilities:{manage:false,readEntitlements:true,assignPlans:true,manageCatalogPrice:false,collectPayments:false,pauseEntitlements:true,cancelEntitlements:true,renewEntitlements:true,adjustEntitlements:false},summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
   globalThis.fetch=async(url)=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse([client],{capabilities:{manage:false,assignPlans:true}}));if(path.endsWith(`/api/clients/${client.id}`))return response(receptionProfile);if(path.endsWith('/api/plans/assignable'))return response([plan]);throw new Error(`Unexpected request ${path}`);};
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
@@ -188,7 +202,7 @@ test('Guardar y añadir cuota creates the client, assigns the active plan and re
   const assigned={id:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',planName:'Fuerza 3 días',kind:'recurring',startsOn:'2026-10-09',endsOn:null,derivedStatus:'active',concept:'Fuerza 3 días · Cuota',amountCents:5900,dueOn:'2026-10-09',rights:[{rightType:'sessions_quota',serviceName:'Fuerza',quantity:12,period:null,quotaScope:'shared'}]};
   const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,basePriceCents:5900,services:[{id:'service-1',name:'Fuerza',area:'Sala'}],rights:[{rightType:'sessions_quota',serviceName:'Fuerza',quantity:12,period:null,quotaScope:'shared'}]};
   const created={...client,id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',firstName:'Ada',lastName:'Lovelace'};
-  const saleProfile={...profile,client:created,capabilities:{manage:true,assignPlans:true,manageCatalogPrice:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}],summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
+  const saleProfile={...profile,client:created,capabilities:{manage:true,assignPlans:true,manageCatalogPrice:true,collectPayments:true},summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
   const requests=[];let assignmentPayload;let assignmentKey;
   globalThis.fetch=async(url,options={})=>{
     const path=String(url);requests.push({path,method:options.method??'GET'});
@@ -214,7 +228,7 @@ test('Guardar y añadir cuota creates the client, assigns the active plan and re
 
 test('plan sale retries reuse one key after a lost response, while success and cancel start fresh operations',async()=>{
   const plan={id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Fuerza 3 días',kind:'recurring',renewalCadence:'monthly',periodDays:null,services:[],rights:[]};
-  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,manageCatalogPrice:true,collectPayments:true},sections:[...sections,{id:'plans',label:'Cuotas',sourceLabel:'Planes asignados',access:'available',dataState:'ready'}]};
+  const saleProfile={...profile,capabilities:{manage:true,assignPlans:true,manageCatalogPrice:true,collectPayments:true}};
   const saleRequests=[];let loseFirstResponse=true;
   globalThis.fetch=async(url,options={})=>{
     const path=String(url);
@@ -316,12 +330,14 @@ test('search waits for typing to pause before querying and keeps current results
   assert.ok(requests.at(-1).includes('q=mar'));
 });
 
-test('loads additional client pages and announces when more results remain', async () => {
+test('loads more than 100 clients using the server cursor without local filtering', async () => {
   const firstPage = Array.from({ length: 50 }, (_, index) => ({ ...client, id: `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, '0')}`, firstName: `Cliente ${index}` }));
-  const lastPage = { ...client, id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', firstName: 'Cliente 51' };
+  const secondPage = Array.from({ length: 50 }, (_, index) => ({ ...client, id: `cccccccc-cccc-4ccc-8ccc-${String(index).padStart(12, '0')}`, firstName: `Cliente ${index + 50}` }));
+  const lastPage = { ...client, id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', firstName: 'Cliente 101' };
+  const cursors = [];
   let page = 0;
   globalThis.fetch = async (url) => {
-    if (String(url).includes('/api/clients?')) return page++ === 0 ? response(listResponse(firstPage, { hasMore: true, nextCursor: 'next-page' })) : response(listResponse([lastPage]));
+    if (String(url).includes('/api/clients?')) { cursors.push(new URL(String(url)).searchParams.get('cursor')); return page++ === 0 ? response(listResponse(firstPage, { hasMore: true, nextCursor: 'page-two' })) : page === 2 ? response(listResponse(secondPage, { hasMore: true, nextCursor: 'page-three' })) : response(listResponse([lastPage])); }
     if (String(url).endsWith(`/api/clients/${lastPage.id}`)) return response({ ...profile, client: lastPage });
     throw new Error(`Unexpected request ${url}`);
   };
@@ -329,8 +345,21 @@ test('loads additional client pages and announces when more results remain', asy
   await screen.findByRole('button', { name: /Cliente 0/ });
   assert.ok(screen.getByText(/Hay más resultados disponibles/));
   fireEvent.click(screen.getByRole('button', { name: 'Cargar más clientes' }));
-  await screen.findByRole('button', { name: /Cliente 51/ });
-  assert.equal(screen.getAllByRole('listitem').length, 51);
+  await screen.findByRole('button', { name: /Cliente 50/ });
+  fireEvent.click(screen.getByRole('button', { name: 'Cargar más clientes' }));
+  await screen.findByRole('button', { name: /Cliente 101/ });
+  assert.equal(screen.getAllByRole('listitem').length, 101);
+  assert.deepEqual(cursors, [null, 'page-two', 'page-three']);
+});
+
+test('deep link opens the opaque client id without putting personal data in the URL', async () => {
+  window.location.hash = `#clients?clientId=${client.id}`;
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
+  render(React.createElement(ClientsPage));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  assert.equal(window.location.hash, `#clients?clientId=${client.id}`);
+  assert.equal(window.location.hash.includes(client.email), false);
+  assert.equal(window.location.hash.includes(client.phone), false);
 });
 
 test('selecting a client scrolls and focuses its detail on tablet layouts', async () => {
@@ -346,9 +375,8 @@ test('selecting a client scrolls and focuses its detail on tablet layouts', asyn
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
 });
 
-test('profile tabs support arrow keys, Home/End, roving focus, and explain denied sections', async () => {
-  const restrictedSections = sections.map((section) => section.id === 'payments' ? { ...section, access: 'forbidden' } : section);
-  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response({ ...profile, sections: restrictedSections });
+test('profile tabs support keyboard navigation and hide unauthorized financial sections', async () => {
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('button', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
@@ -360,8 +388,7 @@ test('profile tabs support arrow keys, Home/End, roving focus, and explain denie
   assert.equal(history.tabIndex, 0);
   fireEvent.keyDown(history, { key: 'Home' });
   assert.equal(document.activeElement, selected);
-  fireEvent.click(screen.getByRole('tab', { name: /Pagos/ }));
-  assert.ok(screen.getByText('Esta sección requiere otro permiso'));
+  assert.equal(screen.queryByRole('tab', { name: /Pagos/ }), null);
   assert.equal(screen.queryByText(/billing\.read-basic|source:/i), null);
 });
 
