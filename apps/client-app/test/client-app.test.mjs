@@ -353,9 +353,10 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Tienda' }));
   assert.ok(await ui.findByRole('heading', { name: 'Tienda' }));
-  assert.ok(ui.getByRole('heading', { name: 'Nutrición' }));
-  assert.ok(ui.getByRole('heading', { name: 'Merchandising' }));
-  assert.ok(ui.getByText('Catálogo informativo. Las compras se gestionan directamente en el centro.'));
+  assert.ok(ui.getByRole('button', { name: 'Nutrición' }));
+  assert.ok(ui.getByRole('button', { name: 'Merchandising' }));
+  assert.ok(ui.getByRole('heading', { name: 'Proteína 2J' }));
+  assert.ok(ui.getByText('Consulta los productos disponibles. Las compras se gestionan directamente en el centro.'));
   fireEvent.click(within(navigation).getByRole('button', { name: 'Ajustes' }));
   assert.ok(await ui.findByRole('heading', { name: 'Ajustes' }));
   assert.ok(ui.getByRole('heading', { name: 'Herramientas del piloto' }));
@@ -452,5 +453,16 @@ test('Inicio reads Center News independently from notifications and opens a newe
   assert.equal(within(navigation).getByRole('button',{name:'Inicio',exact:true}).getAttribute('aria-current'),'page');
   fireEvent.click(ui.getByRole('button',{name:/Volver a noticias/}));
   assert.ok(await ui.findByRole('heading',{name:newer.title,level:2}));
+  cleanup();dom.window.close();
+});
+
+test('preview Store uses fictional nutrition and merchandising fixtures without API calls; Profile shows fictional purchase',async()=>{
+  const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/?preview=1'});
+  Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage}});
+  let fetchCount=0;globalThis.fetch=async()=>{fetchCount++;throw new Error('preview must not call the API');};
+  const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp,{previewModeOverride:true}));
+  fireEvent.click(ui.getByRole('button',{name:/Tienda/}));assert.ok(ui.getByRole('heading',{name:'Tienda'}));assert.ok(ui.getByRole('heading',{name:'Proteína 2J'}));assert.ok(ui.getByText('Creatina'));assert.equal(ui.queryByRole('button',{name:/Comprar|Carrito|Pagar/}),null);
+  fireEvent.click(ui.getByRole('button',{name:'Merchandising'}));assert.ok(ui.getByRole('heading',{name:'Camiseta 2J'}));assert.ok(ui.getByText('Sudadera 2J'));
+  fireEvent.click(ui.getByRole('button',{name:'Perfil'}));assert.ok(ui.getByText('Proteína 2J · Chocolate · 900 g × 1'));assert.equal(fetchCount,0);
   cleanup();dom.window.close();
 });

@@ -14,7 +14,7 @@ export type CommandCenterModel = {
 };
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void}>({data:null,state:'loading',error:'',reload:()=>{}});
 export const useCommandCenter = () => React.useContext(CommandContext);
-type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;news?:boolean};
+type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;news?:boolean;store?:boolean};
 
 const nav = [
   {id:'home',label:'Inicio',href:'#home',permission:null,group:'OPERACIÓN'},
@@ -26,8 +26,9 @@ const nav = [
   {id:'services',label:'Servicios',href:'#services',permission:'calendar',group:'GESTIÓN'},
   {id:'notification-settings',label:'Avisos',href:'#notification-settings',permission:'notificationSettings',group:'GESTIÓN'},
   {id:'news',label:'Noticias',href:'#news',permission:'news',group:'GESTIÓN'},
+  {id:'store',label:'Tienda',href:'#store',permission:'store',group:'GESTIÓN'},
 ] as const;
-const navGlyph:Record<string,React.ReactNode>={home:'⌂',calendar:'▦',clients:'◉',staff:'♙',communications:'✉',economics:'€',services:'◇','notification-settings':<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>,news:'✦'};
+const navGlyph:Record<string,React.ReactNode>={home:'⌂',calendar:'▦',clients:'◉',staff:'♙',communications:'✉',economics:'€',services:'◇',store:'▣','notification-settings':<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>,news:'✦'};
 const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
 
 export function AppShell({children}:{children:React.ReactNode}) {
