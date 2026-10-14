@@ -73,6 +73,20 @@ export function registerClientAppRoutes(
     return { enabled: Boolean(row) };
   });
 
+  app.get('/api/me/booking-services', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    const services = await db`
+      SELECT DISTINCT sv.id,sv.name
+      FROM services sv
+      WHERE sv.status='active' AND EXISTS (
+        SELECT 1 FROM calendar_sessions s JOIN areas a ON a.id=s.area_id
+        WHERE s.service_id=sv.id AND s.status='scheduled' AND s.starts_at>now() AND a.status='active'
+          AND (s.individual_client_id IS NULL OR s.individual_client_id=${actor.clientId})
+      )
+      ORDER BY sv.name,sv.id LIMIT 100`;
+    return { services };
+  });
+
   app.get('/api/me', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;
     const [profile] = await db`SELECT id,first_name AS "firstName",last_name AS "lastName",email,phone,status FROM clients WHERE id=${actor.clientId} AND status='active'`;
