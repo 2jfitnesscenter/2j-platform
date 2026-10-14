@@ -82,6 +82,26 @@ test('Command Center aggregates today occupancy and waitlist from calendar sourc
   assert.equal(agenda.some((item, index) => index > 0 && new Date(agenda[index - 1].startsAt) > new Date(item.startsAt)), false);
 });
 
+test('unassigned-session attention keeps its timestamp separate from the human-readable service context',async()=>{
+  const [area]=await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;
+  const serviceName=`Readable attention ${randomUUID()}`;
+  const [service]=await sql`INSERT INTO services(name,area_id,status) VALUES (${serviceName},${area.id},'active') RETURNING id`;
+  const [session]=await sql`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,created_by)
+    VALUES (${service.id},${area.id},now()+interval '15 minutes',45,4,'2J-095-test') RETURNING id,starts_at`;
+  const calendarOnly=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({
+    actorId:`dashboard-calendar-only-${randomUUID()}`,role:'admin',deniedPermissions:['clients.read','communication.read','documents.read','health.read','forms.responses.sensitive.read','followup.read','billing.read-basic','billing.cash.manage','billing.payments.manage','billing.validate_transfer','staff.read','staff.absence.read','timeclock.read'],
+  })});
+  try{
+    const response=await calendarOnly.inject({method:'GET',url:'/api/dashboard/command-center'});
+    assert.equal(response.statusCode,200,response.body);
+    const item=response.json().attention.find(entry=>entry.id===`unassigned-${session.id}`);
+    assert.ok(item,JSON.stringify(response.json().attention));
+    assert.equal(item.summary,serviceName);
+    assert.equal(item.ageAt.toISOString?.()??new Date(item.ageAt).toISOString(),new Date(session.starts_at).toISOString());
+    assert.equal(/T\d{2}:\d{2}:\d{2}\.\d{3}Z/.test(item.summary),false);
+  }finally{await calendarOnly.close();}
+});
+
 test('global search groups only entities the role can read and rejects anonymous access', async () => {
   const [area] = await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;
   const name = `Findable ${randomUUID()}`;

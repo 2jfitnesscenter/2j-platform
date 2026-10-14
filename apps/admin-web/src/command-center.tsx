@@ -1,47 +1,105 @@
 import React from 'react';
 import { useCommandCenter } from './app-shell.js';
 
-type BlockId='agenda'|'attention'|'clients'|'communication'|'economics'|'team'|'shortcuts';
-type Layout={order:BlockId[];hidden:BlockId[]};
-const defaults:Layout={order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]};
-const labels:Record<BlockId,string>={agenda:'Agenda de hoy',attention:'Requiere atención',clients:'Clientes',communication:'Comunicación',economics:'Economía',team:'Equipo',shortcuts:'Acciones rápidas'};
-const api=import.meta.env?.VITE_API_URL??'http://127.0.0.1:3100';
-function money(cents:number){return new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(cents/100);}
-function dateTime(value:string){return new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',hour:'2-digit',minute:'2-digit'}).format(new Date(value));}
-function date(value:string|null){return value?new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'';}
-function validLayout(value:unknown):Layout|null{
-  if(!value||typeof value!=='object')return null;const candidate=value as Partial<Layout>;
-  const valid=(items:unknown):items is BlockId[]=>Array.isArray(items)&&items.every(item=>Object.hasOwn(labels,item))&&new Set(items).size===items.length;
-  if(!valid(candidate.order)||!valid(candidate.hidden))return null;
-  return {order:[...candidate.order,...defaults.order.filter(id=>!candidate.order!.includes(id))],hidden:candidate.hidden};
+const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const pendingKinds = new Set(['sensitive_review', 'document_pending', 'consent_pending', 'overdue_checkin', 'pending_transfers']);
+
+function money(cents: number) {
+  return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(cents / 100);
 }
 
-export function CommandCenter(){
-  const {data,state,error,reload}=useCommandCenter();
-  const [layout,setLayout]=React.useState<Layout>(defaults);
-  const [editing,setEditing]=React.useState(false);
-  const [preferencesReady,setPreferencesReady]=React.useState(false);
-  const [preferenceError,setPreferenceError]=React.useState('');
-  React.useEffect(()=>{let current=true;void fetch(`${api}/api/dashboard/preferences`).then(async response=>{if(!response.ok)throw new Error();return response.json();}).then(value=>{if(current){setLayout(validLayout(value)??defaults);setPreferencesReady(true);}}).catch(()=>{if(current){setLayout(defaults);setPreferencesReady(true);}});return()=>{current=false;};},[]);
-  const persist=React.useCallback(async(next:Layout)=>{setLayout(next);setPreferenceError('');try{const response=await fetch(`${api}/api/dashboard/preferences`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(next)});if(!response.ok)throw new Error();}catch{setPreferenceError('No se pudo guardar la disposición.');}},[]);
-  const today=new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',weekday:'long',day:'numeric',month:'long'}).format(new Date());
-  if(state==='loading')return <main className="command-center" id="home"><section className="command-heading"><div><div className="eyebrow">CENTRO DE OPERACIONES</div><h1>Inicio</h1><p>{today} · Una vista clara de lo que ocurre en tu centro.</p></div></section><section className="command-state" role="status"><span className="spinner"/> Preparando tu centro…</section></main>;
-  if(state==='error'||!data)return <main className="command-center" id="home"><section className="command-heading"><div><div className="eyebrow">CENTRO DE OPERACIONES</div><h1>Inicio</h1><p>{today} · Una vista clara de lo que ocurre en tu centro.</p></div></section><section className="command-state command-error" role="alert"><strong>No se pudo abrir el Command Center</strong><span>{error}</span><button className="button secondary" onClick={()=>void reload()}>Reintentar</button></section></main>;
-  const permissions=data?.permissions;
-  const blocks:Partial<Record<BlockId,React.ReactNode>>={
-    agenda:permissions?.calendar&&<><section className="command-hero panel" aria-labelledby="today-heading"><div className="command-hero-copy"><div className="eyebrow">HOY EN EL CENTRO · ATLANTIC/CANARY</div><h2 id="today-heading">{data.today.sessionCount} {data.today.sessionCount===1?'sesión':'sesiones'} hoy</h2><p>{data.today.occupied} reservas · {Math.max(0,data.today.capacity-data.today.occupied)} plazas libres · {data.today.waitlistCount} en espera</p><div className="command-actions"><a className="button primary" href="#calendar">Abrir agenda</a>{data.today.nextSession&&<a className="text-button" href="#calendar">Abrir próxima sesión · {dateTime(data.today.nextSession.startsAt)}</a>}</div></div><div className="occupancy-ring" aria-label={`${data.today.occupied} de ${data.today.capacity} plazas ocupadas`}><strong>{data.today.capacity?Math.round(data.today.occupied/data.today.capacity*100):0}%</strong><span>ocupación</span></div></section><section className="panel today-agenda" aria-labelledby="today-agenda-title"><div className="command-panel-heading"><div><div className="eyebrow">AGENDA DEL DÍA</div><h2 id="today-agenda-title">Qué está pasando hoy</h2></div><span className="command-badge">{data.today.sessions?.length??0}</span></div>{(data.today.sessions?.length??0)===0?<div className="command-empty"><strong>Aún no hay sesiones</strong><span>Configura tus primeros días y franjas horarias para organizar la agenda.</span><a className="button secondary" href="#calendar">Crear tu primer horario</a></div>:<div className="today-agenda-list">{data.today.sessions.map(session=><a className={`today-agenda-item ${session.isNow?'in-progress':''}`} href="#calendar" key={session.id}><time>{dateTime(session.startsAt)}</time><span className="today-agenda-service"><strong>{session.serviceName}</strong><small>{session.state==='in_progress'?'En curso':session.state==='finished'?'Finalizada':session.professionalName??'Profesional sin asignar'}</small></span><span className="today-agenda-capacity"><strong>{session.occupied}/{session.capacity}</strong><small>reservas</small></span><span className="today-agenda-free"><strong>{session.free}</strong><small>{session.free===1?'libre':'libres'}</small></span><span className={`today-agenda-waitlist ${session.waitlistCount?'':'muted'}`}>{session.waitlistCount?`${session.waitlistCount} en espera`:'Sin espera'}</span></a>)}</div>}</section></>,
-    attention:permissions?.clients||permissions?.calendar||permissions?.documents||permissions?.billing||permissions?.staff?<section className="panel command-panel attention-panel"><div className="command-panel-heading"><div><div className="eyebrow">OPERACIÓN</div><h2>Requiere atención</h2></div><span className="command-badge">{data.attention.length}</span></div>{data.attention.length===0?<div className="command-empty"><strong>Todo en orden</strong><span>No hay incidencias pendientes según tus permisos.</span></div>:<div className="attention-list">{data.attention.map(item=><a className="attention-item" href={item.href} key={item.id}><span className={`attention-indicator ${item.kind}`}/><span className="attention-copy"><strong>{item.title}</strong><small>{item.summary}</small></span><time>{date(item.ageAt)}</time><span aria-hidden="true">›</span></a>)}</div>}</section>:undefined,
-    clients:permissions?.clients&&<section className="panel command-panel"><div className="command-panel-heading"><div><div className="eyebrow">RELACIÓN</div><h2>Clientes</h2></div><a className="text-button" href="#clients">Ver clientes</a></div>{data.clients?<div className="command-metrics"><div><strong>{data.clients.active}</strong><span>activos</span></div><div><strong>{data.clients.recentSignups}</strong><span>altas · 30 días</span></div></div>:<div className="command-empty"><strong>Sin actividad de clientes</strong></div>}</section>,
-    communication:permissions?.communications&&<section className="panel command-panel"><div className="command-panel-heading"><div><div className="eyebrow">COMUNICACIÓN</div><h2>Bandeja del centro</h2></div><a className="text-button" href="#communications">Abrir mensajes</a></div><div className="command-metrics"><div><strong>{data.unread}</strong><span>mensajes sin leer</span></div></div></section>,
-    economics:permissions?.billing&&data.economics&&<section className="panel command-panel"><div className="command-panel-heading"><div><div className="eyebrow">GESTIÓN</div><h2>Economía</h2></div><a className="text-button" href="#economics">Abrir economía</a></div><div className="economics-command-metrics"><div><span>Cobrado hoy</span><strong>{money(Number(data.economics.collectedTodayCents))}</strong></div><div><span>Pendiente de cobro</span><strong>{money(Number(data.economics.pendingCents))}</strong></div><div><span>Impagados</span><strong>{data.economics.overdueCount}</strong></div>{data.permissions.cash&&<div><span>Caja de hoy</span><strong>{data.economics.cashSession?data.economics.cashSession.status==='open'?'Abierta':'Cerrada':'Sin abrir'}</strong></div>}</div></section>,
-    team:permissions?.staff&&data.team&&<section className="panel command-panel"><div className="command-panel-heading"><div><div className="eyebrow">EQUIPO</div><h2>En el centro</h2></div><a className="text-button" href="#staff">Ver equipo</a></div><div className="command-metrics"><div><strong>{data.team.workingNow}</strong><span>trabajando ahora</span></div><div><strong>{data.team.activeAbsences}</strong><span>ausencias activas</span></div><div><strong>{data.team.substitutions}</strong><span>coberturas</span></div></div></section>,
-    shortcuts:data.quickActions.length>0&&<section className="quick-actions" aria-label="Acciones rápidas"><div><div className="eyebrow">ATAJOS</div><h2>Acciones rápidas</h2></div><div>{data.quickActions.slice(0,6).map(action=><a href={action.href} className="quick-action" key={action.id}>{action.label}<span aria-hidden="true">↗</span></a>)}</div></section>,
-  };
-  const move=(id:BlockId,offset:-1|1)=>{const order=[...layout.order];const from=order.indexOf(id);const to=from+offset;if(from<0||to<0||to>=order.length)return;[order[from],order[to]]=[order[to]!,order[from]!];void persist({...layout,order});};
-  const toggle=(id:BlockId)=>void persist({...layout,hidden:layout.hidden.includes(id)?layout.hidden.filter(item=>item!==id):[...layout.hidden,id]});
+function dateTime(value: string) {
+  return new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
+function date(value: string | null) {
+  return value ? new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '';
+}
+
+function safeInternalHref(value: string) {
+  return /^#[a-z][a-z0-9-]*(?:\?[a-zA-Z0-9_=&%-]*)?$/.test(value);
+}
+
+function attentionStatus(kind: string) {
+  if (kind === 'overdue_payments') return 'Vencido';
+  if (kind === 'waitlist') return 'Lista de espera';
+  if (kind === 'unassigned_session') return 'Sin asignar';
+  if (kind === 'open_timeclock') return 'Por cerrar';
+  if (kind === 'absence_sessions') return 'Sesiones afectadas';
+  return 'Revisar';
+}
+
+function ItemLink({ href, children, className = '' }: { href: string; children: React.ReactNode; className?: string }) {
+  return safeInternalHref(href)
+    ? <a className={className} href={href}>{children}</a>
+    : <div className={`${className} is-unlinked`}>{children}</div>;
+}
+
+export function CommandCenter() {
+  const { data, state, error, reload } = useCommandCenter();
+  const today = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
+
+  if (state === 'loading') return <main className="command-center" id="home"><header className="summary-heading"><div><div className="eyebrow">CENTRO DE OPERACIONES</div><h1>Resumen</h1><p>{today} · Lo importante de hoy y lo que requiere tu atención.</p></div></header><section className="summary-state" role="status"><span className="spinner"/> Preparando tu resumen…</section></main>;
+  if (state === 'error' || !data) return <main className="command-center" id="home"><header className="summary-heading"><div><div className="eyebrow">CENTRO DE OPERACIONES</div><h1>Resumen</h1><p>{today} · Lo importante de hoy y lo que requiere tu atención.</p></div></header><section className="summary-state summary-error" role="alert"><strong>No se pudo cargar el resumen</strong><span>{error}</span><button className="button secondary" onClick={() => void reload()}>Reintentar</button></section></main>;
+
+  const permissions = data.permissions;
+  const attentionItems = data.attention.filter(item => !pendingKinds.has(item.kind));
+  const pendingItems = data.attention.filter(item => pendingKinds.has(item.kind));
+  const canSeeAttention = permissions.calendar || permissions.billing || permissions.staff;
+  const canSeePending = permissions.communications || permissions.transfers || (permissions.documents && permissions.clients) || (permissions.followup && permissions.clients);
+  const sessions = data.today.sessions ?? [];
+
   return <main className="command-center" id="home">
-    <section className="command-heading"><div><div className="eyebrow">CENTRO DE OPERACIONES</div><h1>Inicio</h1><p>{today} · Una vista clara de lo que ocurre en tu centro.</p></div><div className="command-heading-actions"><button className="button secondary" onClick={()=>void reload()}>Actualizar</button><button className="button secondary" aria-expanded={editing} onClick={()=>setEditing(value=>!value)}>{editing?'Terminar':'Personalizar inicio'}</button></div></section>
-    {editing&&<section className="home-layout-editor panel" aria-label="Personalizar bloques del Inicio"><div><strong>Tu disposición</strong><span>Se guarda en tu perfil y se aplica al volver a Inicio.</span></div>{layout.order.map((id,index)=><div className="home-layout-row" key={id}><span>{labels[id]}</span><button className="text-button" disabled={index===0} aria-label={`Mover ${labels[id]} arriba`} onClick={()=>move(id,-1)}>↑</button><button className="text-button" disabled={index===layout.order.length-1} aria-label={`Mover ${labels[id]} abajo`} onClick={()=>move(id,1)}>↓</button><button className="text-button" aria-pressed={!layout.hidden.includes(id)} onClick={()=>toggle(id)}>{layout.hidden.includes(id)?'Mostrar':'Ocultar'}</button></div>)}<button className="text-button" onClick={()=>void persist(defaults)}>Restaurar disposición por defecto</button>{preferenceError&&<span role="alert">{preferenceError}</span>}{!preferencesReady&&<span role="status">Cargando disposición…</span>}</section>}
-    <div className="home-blocks">{layout.order.filter(id=>!layout.hidden.includes(id)&&blocks[id]).map(id=><React.Fragment key={id}>{blocks[id]}</React.Fragment>)}</div>
+    <header className="summary-heading">
+      <div><div className="eyebrow">CENTRO DE OPERACIONES</div><h1>Resumen</h1><p>{today} · Lo importante de hoy y lo que requiere tu atención.</p></div>
+      <button className="button secondary" onClick={() => void reload()}>Actualizar</button>
+    </header>
+
+    {permissions.calendar && <section className="summary-agenda panel" aria-labelledby="summary-agenda-title">
+      <div className="summary-section-heading">
+        <div><div className="eyebrow">HOY · ATLANTIC/CANARY</div><h2 id="summary-agenda-title">Agenda de hoy</h2><p>{data.today.sessionCount} {data.today.sessionCount === 1 ? 'sesión programada' : 'sesiones programadas'}</p></div>
+        <a className="button secondary" href="#calendar">Abrir agenda</a>
+      </div>
+      <dl className="summary-agenda-stats">
+        <div><dt>Reservas</dt><dd>{data.today.occupied}</dd></div>
+        <div><dt>Plazas libres</dt><dd>{Math.max(0, data.today.capacity - data.today.occupied)}</dd></div>
+        <div><dt>En lista de espera</dt><dd>{data.today.waitlistCount}</dd></div>
+      </dl>
+      {sessions.length === 0
+        ? <div className="summary-empty"><strong>No hay sesiones programadas hoy</strong><span>Consulta la agenda para ver otros días o preparar la próxima sesión.</span><a href="#calendar">Ir a la agenda <span aria-hidden="true">↗</span></a></div>
+        : <ul className="summary-session-list" aria-label="Sesiones de hoy">{sessions.map(session => <li key={session.id}>
+          <ItemLink href="#calendar" className={`summary-session-row ${session.isNow ? 'is-current' : ''}`}>
+            <time dateTime={session.startsAt}>{dateTime(session.startsAt)}</time>
+            <span className="summary-session-main"><strong>{session.serviceName}</strong><small>{session.professionalName ?? 'Profesional sin asignar'} · {session.state === 'in_progress' ? 'En curso' : session.state === 'finished' ? 'Finalizada' : 'Próxima'}</small></span>
+            <span className="summary-session-capacity"><strong>{session.occupied}/{session.capacity}</strong><small>reservas</small></span>
+            <span className="summary-session-free"><strong>{session.free}</strong><small>{session.free === 1 ? 'plaza libre' : 'plazas libres'}</small></span>
+            <span className={`summary-session-waitlist ${session.waitlistCount ? 'has-waitlist' : ''}`}>{session.waitlistCount ? `${session.waitlistCount} en espera` : 'Sin espera'}</span>
+            <span className="summary-row-arrow" aria-hidden="true">↗</span>
+          </ItemLink>
+        </li>)}</ul>}
+    </section>}
+
+    <div className="summary-work-grid">
+      {canSeeAttention && <section className="summary-panel panel" aria-labelledby="summary-attention-title">
+        <div className="summary-section-heading"><div><div className="eyebrow">ACCIÓN</div><h2 id="summary-attention-title">Necesitan atención</h2></div><span className="summary-count">{attentionItems.length}</span></div>
+        {attentionItems.length === 0
+          ? <div className="summary-empty"><strong>Todo al día</strong><span>No hay incidencias operativas en las áreas disponibles para tu perfil.</span></div>
+          : <ul className="summary-item-list">{attentionItems.map(item => <li key={item.id}><ItemLink href={item.href} className="summary-item-link"><span className={`summary-item-mark ${item.kind === 'overdue_payments' ? 'is-urgent' : ''}`} aria-hidden="true"/><span className="summary-item-copy"><strong>{item.title}</strong><small>{item.summary}</small></span><span className="summary-item-meta">{date(item.ageAt)}<b>{attentionStatus(item.kind)}</b></span><span className="summary-row-arrow" aria-hidden="true">›</span></ItemLink></li>)}</ul>}
+      </section>}
+
+      {canSeePending && <section className="summary-panel panel" aria-labelledby="summary-pending-title">
+        <div className="summary-section-heading"><div><div className="eyebrow">BANDEJAS</div><h2 id="summary-pending-title">Pendientes</h2></div><span className="summary-count">{pendingItems.length + (permissions.communications && data.unread > 0 ? 1 : 0)}</span></div>
+        <ul className="summary-item-list">
+          {permissions.communications && <li><ItemLink href="#communications" className="summary-item-link"><span className="summary-item-mark" aria-hidden="true"/><span className="summary-item-copy"><strong>{data.unread ? `${data.unread} ${data.unread === 1 ? 'mensaje sin leer' : 'mensajes sin leer'}` : 'Bandeja de mensajes'}</strong><small>{data.unread ? 'Hay conversaciones que esperan respuesta' : 'No hay mensajes sin leer'}</small></span><span className="summary-item-meta"><b>{data.unread ? 'Responder' : 'Ver bandeja'}</b></span><span className="summary-row-arrow" aria-hidden="true">›</span></ItemLink></li>}
+          {pendingItems.map(item => <li key={item.id}><ItemLink href={item.href} className="summary-item-link"><span className="summary-item-mark" aria-hidden="true"/><span className="summary-item-copy"><strong>{item.title}</strong><small>{item.summary}</small></span><span className="summary-item-meta">{date(item.ageAt)}<b>{item.kind === 'pending_transfers' ? 'Validar' : item.kind === 'overdue_checkin' ? 'Seguimiento' : 'Revisar'}</b></span><span className="summary-row-arrow" aria-hidden="true">›</span></ItemLink></li>)}
+        </ul>
+        {pendingItems.length === 0 && (!permissions.communications || data.unread === 0) && <div className="summary-empty"><strong>No tienes trabajo pendiente en tus bandejas</strong><span>Se mostrarán aquí los mensajes y revisiones disponibles para tu perfil.</span></div>}
+      </section>}
+    </div>
+
+    {(permissions.staff && data.team || permissions.billing && data.economics) && <div className="summary-support-grid">
+      {permissions.staff && data.team && <section className="summary-panel summary-compact-panel panel" aria-labelledby="summary-team-title"><div className="summary-section-heading"><div><div className="eyebrow">EQUIPO</div><h2 id="summary-team-title">Pulso operativo</h2></div><a className="summary-text-link" href="#staff">Ver equipo</a></div><dl className="summary-compact-stats"><div><dd>{data.team.workingNow}</dd><dt>Trabajando ahora</dt></div><div><dd>{data.team.activeAbsences}</dd><dt>Ausencias activas</dt></div><div><dd>{data.team.substitutions}</dd><dt>Coberturas activas</dt></div></dl></section>}
+      {permissions.billing && data.economics && <section className="summary-panel summary-compact-panel panel" aria-labelledby="summary-economics-title"><div className="summary-section-heading"><div><div className="eyebrow">ECONOMÍA · ACCESO AUTORIZADO</div><h2 id="summary-economics-title">Pendiente de gestión</h2></div><a className="summary-text-link" href="#economics">Abrir economía</a></div><dl className="summary-compact-stats summary-finance-stats"><div><dd>{money(Number(data.economics.pendingCents))}</dd><dt>Pendiente de cobro</dt></div><div><dd>{data.economics.overdueCount}</dd><dt>Cargos vencidos</dt></div>{data.permissions.cash && <div><dd>{data.economics.cashSession ? data.economics.cashSession.status === 'open' ? 'Abierta' : 'Cerrada' : 'Sin abrir'}</dd><dt>Caja de hoy</dt></div>}</dl></section>}
+    </div>}
   </main>;
 }
