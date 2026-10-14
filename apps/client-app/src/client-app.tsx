@@ -18,6 +18,10 @@ type MemberTrainingSummary =
   | { status: 'linked'; summaryStatus: 'unavailable' }
   | { status: 'linked'; summaryStatus: 'available'; summary: { trainingStatus: 'active'; asOf: string; currentProgram?: { name: string }; recentActivity?: { lastTrainingAt: string | null; sessionsLast30Days: number } } };
 type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; eligible?: boolean; eligibilityReason?: string | null; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
+type MemberSessionSelection = { session: ClientSession; mode: 'reserve' | 'waitlist'; assignmentId?: string };
+type MemberBookingResult = { selection: MemberSessionSelection; result: 'confirmed' | 'waitlist' | 'failed'; reason?: string };
+type MemberBookingService = { id: string; name: string };
+type MemberCancellation = { kind: 'booking' | 'waitlist'; booking: Booking; summary?: string };
 type Booking = { id: string; status: string; sessionId: string; startsAt: string; durationMinutes: number; serviceName: string; areaName: string; sessionStatus: string; isIndividual: boolean };
 type FormAssignment = { id: string; status: string; required: boolean; dueAt: string | null; name: string; category: string; version: number };
 type FormField = { id: string; label: string; type: string; required: boolean; options?: string[] };
@@ -43,7 +47,17 @@ export function isHubPreviewEnabled(buildFlag: unknown, search: string): boolean
   return requested.length === 1 && requested[0] === '1';
 }
 
-const labels: Record<string, string> = { member_pilot_action_not_enabled: 'Las reservas desde la app todavía no están activadas para tu cuenta.', session_full: 'La sesión está completa', service_archived: 'El servicio ya no está disponible', area_archived: 'El área ya no está disponible', no_active_entitlement: 'No hay un derecho activo para este servicio', no_entitlement: 'No hay un derecho activo para este servicio', entitlement_required: 'Elige un plan o bono para reservar', entitlement_unavailable: 'No hay un derecho disponible para esta sesión', entitlement_not_started: 'Tu plan aún no ha comenzado', entitlement_expired: 'Tu plan ha caducado', entitlement_paused: 'Tu plan está en pausa', entitlement_cancelled: 'Tu plan ya no está activo', entitlement_exhausted: 'Has utilizado todas las sesiones de este bono', insufficient_balance: 'No tienes saldo suficiente', weekly_limit_reached: 'Has alcanzado tu límite semanal', monthly_limit_reached: 'Has alcanzado tu límite mensual', service_not_allowed: 'Este servicio no está incluido en tu plan', client_inactive: 'Tu cuenta no está activa', session_started: 'Esta sesión ya ha comenzado', debt_restriction: 'Hay un saldo pendiente que impide reservar', booking_conflict: 'Ya tienes otra actividad a esa hora', duplicate_booking: 'Ya tienes una reserva o estás en espera', required_document_missing: 'Tienes un documento pendiente', session_cancelled: 'Esta sesión ya no está disponible', internal_error: 'Ahora no podemos consultar tu espacio.', database_unavailable: 'Ahora no podemos conectar con el centro.', authentication_required: 'Inicia sesión para continuar.' };
+const labels: Record<string, string> = {
+  member_pilot_action_not_enabled: 'Las reservas desde la app todavía no están activadas para tu cuenta.',
+  session_full: 'La sesión está completa', space_available: 'La sesión ya tiene plazas disponibles', service_archived: 'El servicio ya no está disponible', area_archived: 'El área ya no está disponible',
+  no_active_entitlement: 'Necesitas una cuota activa para reservar este servicio', no_entitlement: 'No hay un derecho activo para este servicio', entitlement_required: 'Elige un plan o bono para reservar', entitlement_unavailable: 'No hay un derecho disponible para esta sesión',
+  entitlement_not_started: 'Tu plan aún no ha comenzado', entitlement_expired: 'Tu plan ha caducado', entitlement_paused: 'Tu plan está en pausa', entitlement_cancelled: 'Tu plan ya no está activo', entitlement_exhausted: 'Has utilizado todas las sesiones de este bono', insufficient_balance: 'No tienes saldo suficiente',
+  entitlement_selection_required: 'Elige el plan o bono que quieres usar', entitlement_selection_invalid: 'Ese plan o bono ya no está disponible para esta sesión', service_not_allowed: 'Este servicio no está incluido en tu plan',
+  weekly_limit_reached: 'Has alcanzado tu límite semanal', monthly_limit_reached: 'Has alcanzado tu límite mensual', client_inactive: 'Tu cuenta no está activa', session_started: 'Esta sesión ya ha comenzado', session_cancelled: 'Esta sesión ya no está disponible',
+  debt_restriction: 'Hay un saldo pendiente que impide reservar', booking_conflict: 'Ya tienes otra actividad a esa hora', duplicate_booking: 'Ya tienes una reserva o estás en espera', client_already_added: 'Ya tienes una reserva o estás en espera para esta sesión',
+  required_document_missing: 'Tienes un documento pendiente', reservation_not_active: 'Esta reserva ya no está activa', waitlist_not_active: 'Esta entrada de espera ya no está activa', idempotency_conflict: 'La solicitud cambió mientras se procesaba. Actualiza la agenda e inténtalo de nuevo.',
+  internal_error: 'Ahora no podemos consultar tu espacio.', database_unavailable: 'Ahora no podemos conectar con el centro.', authentication_required: 'Inicia sesión para continuar.',
+};
 const rightLabel = (rightType: string) => rightType === 'sessions_quota' ? 'Sesiones' : rightType === 'service_access' ? 'Acceso a servicio' : rightType === 'quota' ? 'Cuota' : 'Derecho';
 const keyFor = (operation: string) => {
   const storageKey = `2j:${operation}:idempotency`;
@@ -60,6 +74,29 @@ const weekRange = (selected = dateKey(new Date())) => {
   const [year, month, day] = selected.split('-').map(Number); const date = new Date(Date.UTC(year!, month! - 1, day!, 12));
   const weekday = (date.getUTCDay() + 6) % 7; const from = shiftDateKey(selected, -weekday);
   return { from, to: shiftDateKey(from, 6) };
+};
+const monthRange = (selected = dateKey(new Date())) => {
+  const [year, month] = selected.split('-').map(Number);
+  const from = `${year}-${String(month).padStart(2, '0')}-01`;
+  const lastDay = new Date(Date.UTC(year!, month!, 0)).getUTCDate();
+  return { from, to: `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}` };
+};
+const shiftMonthKey = (value: string, months: number) => {
+  const [year, month] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year!, month! - 1 + months, 1, 12));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
+};
+const monthGridDays = (selected = dateKey(new Date())) => {
+  const { from, to } = monthRange(selected);
+  const firstWeekday = (new Date(`${from}T12:00:00Z`).getUTCDay() + 6) % 7;
+  const count = Number(to.slice(-2));
+  const today = dateKey(new Date());
+  return Array.from({ length: Math.ceil((firstWeekday + count) / 7) * 7 }, (_, index) => {
+    const day = index - firstWeekday + 1;
+    if (day < 1 || day > count) return null;
+    const key = `${from.slice(0, 8)}${String(day).padStart(2, '0')}`;
+    return { date: key, day, today: key === today };
+  });
 };
 const dateLabel = (value: string) => new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(value));
 const timeLabel = (value: string) => new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
@@ -85,7 +122,7 @@ const makeHubPreview = (now = new Date()) => {
   const startsAt = previewDateTime(new Date(`${bookingDay}T12:00:00Z`), 18);
   const tomorrow = addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 1);
   const ids = {
-    client: '10000000-0000-4000-8000-000000000001', service: '20000000-0000-4000-8000-000000000001',
+    client: '10000000-0000-4000-8000-000000000001', service: '20000000-0000-4000-8000-000000000001', strength: '20000000-0000-4000-8000-000000000002', pilates: '20000000-0000-4000-8000-000000000003',
     session: '30000000-0000-4000-8000-000000000001', reservation: '40000000-0000-4000-8000-000000000001',
     plan: '50000000-0000-4000-8000-000000000001', form: '60000000-0000-4000-8000-000000000001',
     notification: '70000000-0000-4000-8000-000000000001',
@@ -97,10 +134,17 @@ const makeHubPreview = (now = new Date()) => {
   };
   return {
     profile: { id: ids.client, firstName: 'Juan', lastName: 'Demo', email: 'juan.demo@example.test', phone: '+34 600 000 001', status: 'active' } satisfies ClientProfile,
+    services: [{ id: ids.service, name: 'Funcional' }, { id: ids.strength, name: 'Fuerza' }, { id: ids.pilates, name: 'Pilates' }] satisfies MemberBookingService[],
     membership: [{ id: ids.plan, planName: 'Plan 2J', kind: 'monthly', status: 'active', startsOn: dateKey(now), endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', serviceId: ids.service, serviceName: 'Funcional', serviceStatus: 'active', quantity: 12, balance: 8 }], modules: [{ module: 'training', accessLevel: 'read' }] }] satisfies Assignment[],
     reservations: [{ id: ids.reservation, status: 'reserved', sessionId: ids.session, startsAt, durationMinutes: 45, serviceName: 'Funcional', areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] satisfies Booking[],
     waitlist: [] as Booking[],
-    sessions: [session, { ...session, id: '30000000-0000-4000-8000-000000000002', startsAt: previewDateTime(new Date(`${tomorrow}T12:00:00Z`), 19), serviceName: 'Fuerza', areaName: 'El Búnker', myReservationStatus: null }],
+    sessions: [
+      session,
+      { ...session, id: '30000000-0000-4000-8000-000000000002', serviceId: ids.strength, startsAt: previewDateTime(new Date(`${tomorrow}T12:00:00Z`), 19), serviceName: 'Fuerza', areaName: 'El Búnker', myReservationStatus: null },
+      { ...session, id: '30000000-0000-4000-8000-000000000003', startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 2)}T12:00:00Z`), 18), occupiedCount: 11, myReservationStatus: null },
+      { ...session, id: '30000000-0000-4000-8000-000000000004', serviceId: ids.strength, startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 3)}T12:00:00Z`), 19), serviceName: 'Fuerza', areaName: 'El Búnker', capacity: 8, occupiedCount: 8, waitlistCount: 3, myReservationStatus: null, canJoinWaitlist: true },
+      { ...session, id: '30000000-0000-4000-8000-000000000005', serviceId: ids.pilates, startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 4)}T12:00:00Z`), 10), serviceName: 'Pilates', areaName: 'Sala Estudio', capacity: 10, occupiedCount: 10, waitlistCount: 2, myReservationStatus: null, myWaitlistStatus: 'waiting' },
+    ],
     forms: [{ id: ids.form, name: 'Ficha de bienvenida', status: 'assigned', required: true, dueAt: null, category: 'onboarding', version: 1 }] satisfies FormAssignment[],
     consents: [{ consentId: '80000000-0000-4000-8000-000000000001', versionId: '80000000-0000-4000-8000-000000000002', title: 'Normas del centro', body: 'Contenido ficticio de vista previa.', version: 1, required: true, accepted: false }] satisfies Consent[],
     notifications: [{ id: ids.notification, type: 'center_notice', title: 'Nuevo horario del sábado', body: 'Consulta en el centro las novedades de esta semana.', deeplink: null, createdAt: now.toISOString(), readAt: null }] satisfies NotificationItem[],
@@ -140,6 +184,14 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   const preview = React.useMemo(() => previewMode ? makeHubPreview() : null, [previewMode]);
   const [view, setView] = React.useState<View>('home');
   const [selectedDate, setSelectedDate] = React.useState(() => preview?.sessions[0] ? dateKey(new Date(preview.sessions[0].startsAt)) : dateKey(new Date()));
+  const [selectedServiceId, setSelectedServiceId] = React.useState('');
+  const [bookingServices, setBookingServices] = React.useState<MemberBookingService[]>(() => preview?.services ?? []);
+  const [selectedSessions, setSelectedSessions] = React.useState<MemberSessionSelection[]>([]);
+  const [bookingStage, setBookingStage] = React.useState<'browse' | 'confirm' | 'results'>('browse');
+  const [bookingResults, setBookingResults] = React.useState<MemberBookingResult[]>([]);
+  const [scheduleLoading, setScheduleLoading] = React.useState(!previewMode);
+  const [scheduleError, setScheduleError] = React.useState(false);
+  const [scheduleVersion, setScheduleVersion] = React.useState(0);
   const [profile, setProfile] = React.useState<ClientProfile | null>(() => preview?.profile ?? null);
   const [preferences, setPreferences] = React.useState<MemberPreferences>(() => ({ ...defaultPreferences, appearance: readAppearanceHint(previewMode) }));
   const [preferenceSaving, setPreferenceSaving] = React.useState(false);
@@ -176,6 +228,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   const [busy, setBusy] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState('');
   const [selectedSession, setSelectedSession] = React.useState<ClientSession | null>(null);
+  const [cancellationPending, setCancellationPending] = React.useState<MemberCancellation | null>(null);
   const [selectedForm, setSelectedForm] = React.useState<FormDetail | null>(null);
   const [selectedConsent, setSelectedConsent] = React.useState<Consent | null>(null);
   const [formAnswers, setFormAnswers] = React.useState<Record<string, unknown>>({});
@@ -189,18 +242,16 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     if (previewMode && preview) {
       setPreferences(defaultPreferences);
       setProfile(preview.profile); setMembership(preview.membership); setReservations(preview.reservations); setWaitlist(preview.waitlist); setBookingEnabled(false);setStoreProducts(preview.store);setPurchases(preview.purchases);setStoreFailed(false);
-      setSessions(preview.sessions); setForms(preview.forms); setConsents(preview.consents); setNotifications(preview.notifications);
+      setSessions(preview.sessions); setBookingServices(preview.services); setForms(preview.forms); setConsents(preview.consents); setNotifications(preview.notifications);
       setNewsItems(preview.news); setFeaturedNews(preview.news[0] ?? null); setNewsError(false); setSelectedNews(null);
       setUnreadNotifications(preview.notifications.filter(item => !item.readAt).length); setError(''); setLoading(false); return;
     }
     setLoading(true); setError('');
     try {
-      const { from, to } = weekRange(selectedDate);
-      const [me, plans, mine, agenda, documents, consentItems, bookingAccess, preferencesResult, newsResult, storeResult, purchaseResult] = await Promise.all([
+      const [me, plans, mine, documents, consentItems, bookingAccess, preferencesResult, newsResult, storeResult, purchaseResult] = await Promise.all([
         api<{ profile: ClientProfile }>('/api/me'),
         api<{ assignments: Assignment[] }>('/api/me/membership'),
         api<{ reservations: Booking[]; waitlist: Booking[] }>('/api/me/bookings'),
-        api<{ sessions: ClientSession[] }>(`/api/me/sessions?from=${from}&to=${to}`),
         api<FormAssignment[]>('/api/client-portal/form-assignments'),
         api<Consent[]>('/api/client-portal/consents'),
         api<{ enabled: boolean }>('/api/me/booking-access'),
@@ -209,7 +260,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
         api<{items:MemberStoreProduct[]}>('/api/me/store/catalog').then(value=>({value,failed:false})).catch(()=>({value:{items:[]},failed:true})),
         api<{items:MemberPurchase[]}>('/api/me/store/purchases').then(value=>({value,failed:false})).catch(()=>({value:{items:[]},failed:true})),
       ]);
-      setProfile(me.profile); setMembership(plans.assignments); setReservations(mine.reservations); setWaitlist(mine.waitlist); setSessions(agenda.sessions); setForms(documents); setConsents(consentItems); setBookingEnabled(bookingAccess.enabled);
+      setProfile(me.profile); setMembership(plans.assignments); setReservations(mine.reservations); setWaitlist(mine.waitlist); setForms(documents); setConsents(consentItems); setBookingEnabled(bookingAccess.enabled);
       const loadedPreferences = preferencesResult.value.preferences ?? defaultPreferences;
       setPreferences(loadedPreferences);
       if (!preferencesResult.failed) { try { window.localStorage.setItem(appearanceStorageKey, loadedPreferences.appearance); } catch { /* appearance remains available for this session */ } }
@@ -218,7 +269,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
       try { const unread = await api<{count:number}>('/api/me/notifications/unread-count'); setUnreadNotifications(unread.count); } catch { setUnreadNotifications(0); }
     } catch (cause) { const message = cause instanceof Error ? cause.message : ''; setError(message === 'client_authentication_required' ? message : labels[message] ?? 'No se han podido cargar tus datos.'); }
     finally { setLoading(false); }
-  }, [preview, previewMode, selectedDate]);
+  }, [preview, previewMode]);
   const login = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setLoginError(''); setBusy('login');
     try { await api('/api/pilot/member/login', { method: 'POST', body: JSON.stringify({ code: pilotCode }) }); setPilotCode(''); await refresh(); }
@@ -229,7 +280,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     setBusy('logout');
     try { await api('/api/pilot/member/logout', { method: 'POST', body: '{}' }); }
     catch { setMessage('No se pudo cerrar la sesión; vuelve a intentarlo.'); return setBusy(null); }
-    setProfile(null); setMembership([]); setReservations([]); setWaitlist([]); setSessions([]); setForms([]); setConsents([]); setNotifications([]); setNewsItems([]); setFeaturedNews(null); setNewsError(false); setSelectedNews(null); setMessage(''); setError('client_authentication_required'); setLoading(false); setView('home'); setBusy(null);
+    setProfile(null); setMembership([]); setReservations([]); setWaitlist([]); setSessions([]); setBookingServices([]); setForms([]); setConsents([]); setNotifications([]); setNewsItems([]); setFeaturedNews(null); setNewsError(false); setSelectedNews(null); setMessage(''); setError('client_authentication_required'); setLoading(false); setView('home'); setBusy(null);
   };
   const savePreferences = async (patch: Partial<MemberPreferences>) => {
     const next = { ...preferences, ...patch };
@@ -246,6 +297,20 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   const retryPreferenceSave = () => { if (lastPreferencePatch.current) void savePreferences(lastPreferencePatch.current); };
   React.useEffect(() => { void refresh(); }, [refresh]);
   React.useEffect(() => {
+    if (previewMode && preview) { setSessions(preview.sessions); setBookingServices(preview.services); setScheduleLoading(false); setScheduleError(false); return; }
+    let current = true;
+    const { from, to } = monthRange(selectedDate);
+    setScheduleLoading(true); setScheduleError(false);
+    void api<{ sessions: ClientSession[] }>(`/api/me/sessions?from=${from}&to=${to}`)
+      .then(async result => {
+        const catalog = await api<{ services: MemberBookingService[] }>('/api/me/booking-services');
+        if (current) { setSessions(result.sessions); setBookingServices(catalog.services?.length ? catalog.services : Array.from(new Map(result.sessions.map(session => [session.serviceId, { id: session.serviceId, name: session.serviceName }])).values())); }
+      })
+      .catch(() => { if (current) setScheduleError(true); })
+      .finally(() => { if (current) setScheduleLoading(false); });
+    return () => { current = false; };
+  }, [preview, previewMode, selectedDate.slice(0, 7), scheduleVersion]);
+  React.useEffect(() => {
     if (view !== 'bunker' || previewMode || !profile) return;
     let current = true;
     setTrainingSummaryLoading(true); setTrainingSummaryFailed(false); setTrainingSummary(null);
@@ -256,11 +321,11 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     return () => { current = false; };
   }, [view, previewMode, profile?.id, trainingSummaryRetry]);
   React.useEffect(() => {
-    if (!selectedSession && !selectedForm && !selectedConsent) return;
+    if (!selectedSession && !selectedForm && !selectedConsent && !cancellationPending) return;
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    dialog?.querySelector<HTMLButtonElement>('.sheet-close')?.focus();
+    (dialog?.querySelector<HTMLButtonElement>('.sheet-close') ?? dialog?.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); setSelectedSession(null); setSelectedForm(null); setSelectedConsent(null); return; }
+      if (event.key === 'Escape') { event.preventDefault(); setSelectedSession(null); setSelectedForm(null); setSelectedConsent(null); setCancellationPending(null); return; }
       if (event.key !== 'Tab' || !dialog) return;
       const controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled),textarea:not(:disabled),a[href]')];
       const first = controls[0]; const last = controls.at(-1);
@@ -269,7 +334,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     };
     document.addEventListener('keydown', onKeyDown);
     return () => { document.removeEventListener('keydown', onKeyDown); if (dialogOpener.current?.isConnected) dialogOpener.current.focus(); };
-  }, [selectedSession?.id, selectedForm?.id, selectedConsent?.versionId]);
+  }, [selectedSession?.id, selectedForm?.id, selectedConsent?.versionId, cancellationPending?.booking.id]);
 
   const openSession = async (session: ClientSession) => {
     dialogOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -307,38 +372,74 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     catch { setDialogError('No se ha podido guardar la aceptación. Puedes volver a intentarlo.'); }
     finally { setBusy(null); }
   };
-  const reserve = async (session: ClientSession, joinWaitlist = false) => {
-    if (previewMode) { setMessage('La reserva está desactivada en la vista previa.'); return; }
-    if (!bookingEnabled) { setMessage('Las reservas desde la app todavía no están activadas para tu cuenta.'); return; }
-    const id = `${joinWaitlist ? 'waitlist' : 'reserve'}:${session.id}:${selectedAssignment || 'automatic'}`; setBusy(id); setMessage('');
-    const operation = keyFor(id);
+  const addSelectedSession = (mode: 'reserve' | 'waitlist') => {
+    if (!selectedSession || (mode === 'reserve' && !selectedSession.eligible) || (mode === 'waitlist' && !selectedSession.canJoinWaitlist)) return;
+    setSelectedSessions(current => current.some(item => item.session.id === selectedSession.id) ? current : [...current, { session: selectedSession, mode, ...(mode === 'reserve' && selectedAssignment ? { assignmentId: selectedAssignment } : {}) }]);
+    setSelectedSession(null); setMessage(''); setBookingStage('browse');
+  };
+  const removeSelectedSession = (sessionId: string) => setSelectedSessions(current => current.filter(item => item.session.id !== sessionId));
+  const refreshMemberBookings = async () => {
+    if (previewMode) return;
     try {
-      await api(joinWaitlist ? `/api/me/sessions/${session.id}/waitlist` : `/api/me/sessions/${session.id}/reservations`, { method: 'POST', headers: { 'idempotency-key': operation.key }, body: JSON.stringify(selectedAssignment ? { entitlementAssignmentId: selectedAssignment } : {}) });
-      operation.clear(); setMessage(joinWaitlist ? 'Ya estás en la lista de espera.' : 'Tu plaza está reservada.'); await refresh();
-    } catch (cause) { if (cause instanceof Error && cause.message === 'member_pilot_action_not_enabled') setBookingEnabled(false); setMessage(cause instanceof Error ? labels[cause.message] ?? 'No se ha podido completar la reserva. Puedes volver a intentarlo.' : 'No se ha podido completar la reserva. Puedes volver a intentarlo.'); }
-    finally { setBusy(null); }
+      const mine = await api<{ reservations: Booking[]; waitlist: Booking[] }>('/api/me/bookings');
+      setReservations(mine.reservations); setWaitlist(mine.waitlist); setScheduleVersion(value => value + 1);
+    } catch { setMessage('El cambio se ha procesado, pero no se pudo actualizar tu agenda. Vuelve a consultar.'); }
+  };
+  const submitSelectedBookings = async () => {
+    if (previewMode) { setMessage('Vista previa: la selección es local y no se envía al centro.'); return; }
+    if (!bookingEnabled || selectedSessions.length === 0) return;
+    setBusy('member-bookings'); setMessage('');
+    const priorFailures = new Map(bookingResults.filter(item => item.result === 'failed').map(item => [item.selection.session.id, item]));
+    const pending = selectedSessions.filter(item => bookingStage !== 'results' || priorFailures.has(item.session.id));
+    const results: MemberBookingResult[] = bookingStage === 'results' ? bookingResults.filter(item => item.result !== 'failed') : [];
+    for (const selection of pending) {
+      const { session, mode } = selection;
+      const operationName = `${mode === 'waitlist' ? 'waitlist' : 'reserve'}:${session.id}:${selection.assignmentId ?? 'automatic'}`;
+      const operation = keyFor(operationName);
+      try {
+        await api(mode === 'waitlist' ? `/api/me/sessions/${session.id}/waitlist` : `/api/me/sessions/${session.id}/reservations`, {
+          method: 'POST', headers: { 'idempotency-key': operation.key },
+          body: JSON.stringify(selection.assignmentId ? { entitlementAssignmentId: selection.assignmentId } : {}),
+        });
+        operation.clear();
+        results.push({ selection, result: mode === 'waitlist' ? 'waitlist' : 'confirmed' });
+      } catch (cause) {
+        const code = cause instanceof Error ? cause.message : 'internal_error';
+        if (code === 'member_pilot_action_not_enabled') setBookingEnabled(false);
+        results.push({ selection, result: 'failed', reason: labels[code] ?? 'No se ha podido completar esta operación. Puedes volver a intentarlo.' });
+      }
+    }
+    setBookingResults(results); setBookingStage('results'); setBusy(null);
+    if (results.some(item => item.result !== 'failed')) await refreshMemberBookings();
   };
   const cancelBooking = async (booking: Booking) => {
     if (previewMode) { setMessage('La cancelación está desactivada en la vista previa.'); return; }
     if (!bookingEnabled) { setMessage('Las reservas desde la app todavía no están activadas para tu cuenta.'); return; }
     try {
       const preview = await api<{ canCancel: boolean; cancellation: { summary: string } }>(`/api/me/bookings/${booking.id}/cancellation-preview`);
-      if (!preview.canCancel) { setMessage('Esta reserva ya no se puede cancelar.'); await refresh(); return; }
-      if (!window.confirm(`¿Quieres cancelar esta reserva? ${preview.cancellation.summary}`)) return;
+      if (!preview.canCancel) { setMessage('Esta reserva ya no se puede cancelar.'); await refreshMemberBookings(); return; }
+      dialogOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setCancellationPending({ kind: 'booking', booking, summary: preview.cancellation.summary });
     } catch (cause) { setMessage(cause instanceof Error ? 'No se ha podido consultar la política de cancelación.' : 'No se ha podido consultar la política de cancelación.'); return; }
-    const key = keyFor(`cancel:${booking.id}`); setBusy(booking.id); setMessage('');
-    try { await api(`/api/me/bookings/${booking.id}/cancel`, { method: 'PATCH', headers: { 'idempotency-key': key.key }, body: '{}' }); key.clear(); setMessage('La reserva se ha cancelado.'); await refresh(); }
-    catch (cause) { if (cause instanceof Error && cause.message === 'member_pilot_action_not_enabled') setBookingEnabled(false); setMessage(cause instanceof Error ? labels[cause.message] ?? 'No se ha podido cancelar. Inténtalo de nuevo.' : 'No se ha podido cancelar. Inténtalo de nuevo.'); }
-    finally { setBusy(null); }
   };
   const leaveWaitlist = async (entry: Booking) => {
     if (previewMode) { setMessage('La lista de espera está desactivada en la vista previa.'); return; }
     if (!bookingEnabled) { setMessage('Las reservas desde la app todavía no están activadas para tu cuenta.'); return; }
-    if (!window.confirm('¿Quieres salir de la lista de espera?')) return;
-    const key = keyFor(`leave-waitlist:${entry.id}`); setBusy(entry.id); setMessage('');
-    try { await api(`/api/me/waitlist/${entry.id}/cancel`, { method: 'PATCH', headers: { 'idempotency-key': key.key }, body: '{}' }); key.clear(); setMessage('Has salido de la lista de espera.'); await refresh(); }
-    catch (cause) { if (cause instanceof Error && cause.message === 'member_pilot_action_not_enabled') setBookingEnabled(false); setMessage(cause instanceof Error ? labels[cause.message] ?? 'No se ha podido actualizar la lista.' : 'No se ha podido actualizar la lista.'); }
-    finally { setBusy(null); }
+    dialogOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCancellationPending({ kind: 'waitlist', booking: entry });
+  };
+  const confirmCancellation = async () => {
+    if (!cancellationPending) return;
+    const pending = cancellationPending; setBusy(pending.booking.id); setMessage('');
+    const operation = keyFor(`${pending.kind === 'booking' ? 'cancel' : 'leave-waitlist'}:${pending.booking.id}`);
+    try {
+      await api(pending.kind === 'booking' ? `/api/me/bookings/${pending.booking.id}/cancel` : `/api/me/waitlist/${pending.booking.id}/cancel`, { method: 'PATCH', headers: { 'idempotency-key': operation.key }, body: '{}' });
+      operation.clear(); setCancellationPending(null); setMessage(pending.kind === 'booking' ? 'La reserva se ha cancelado.' : 'Has salido de la lista de espera.'); await refreshMemberBookings();
+    } catch (cause) {
+      if (cause instanceof Error && cause.message === 'member_pilot_action_not_enabled') setBookingEnabled(false);
+      setMessage(cause instanceof Error ? labels[cause.message] ?? 'No se ha podido completar el cambio. Inténtalo de nuevo.' : 'No se ha podido completar el cambio. Inténtalo de nuevo.');
+      setCancellationPending(null);
+    } finally { setBusy(null); }
   };
   const openNotifications = async () => { setView('notifications'); if (previewMode) { setNotificationCursor(null); return; } try { const result=await api<{items:NotificationItem[];nextBefore:string|null;nextBeforeId:string|null}>('/api/me/notifications'); setNotifications(result.items);setNotificationCursor(result.nextBefore&&result.nextBeforeId?{before:result.nextBefore,beforeId:result.nextBeforeId}:null); } catch { setMessage('No se han podido cargar tus notificaciones.'); } };
   const openNews = (item:CenterNews|null=null) => { setSelectedNews(item); setMessage(''); setView('news'); };
@@ -374,8 +475,11 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   const pendingForms = forms.filter(form => ['assigned','review_required','rejected'].includes(form.status));
   const completedForms = forms.filter(form => ['submitted','approved','expired'].includes(form.status));
   const nextBooking = selectNextConfirmedBooking(reservations);
-  const sessionsForSelectedDay = sessions.filter(session => dateKey(new Date(session.startsAt)) === selectedDate);
-  const groupedSessions = Array.from(sessionsForSelectedDay.reduce((groups, session) => groups.set(session.areaName, [...(groups.get(session.areaName) ?? []), session]), new Map<string, ClientSession[]>()));
+  const serviceOptions = bookingServices;
+  const serviceSessions = sessions.filter(session => !selectedServiceId || session.serviceId === selectedServiceId);
+  const sessionsForSelectedDay = serviceSessions.filter(session => dateKey(new Date(session.startsAt)) === selectedDate);
+  const daysWithSessions = new Set(serviceSessions.map(session => dateKey(new Date(session.startsAt))));
+  const monthName = new Intl.DateTimeFormat('es-ES', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(new Date(`${monthRange(selectedDate).from}T12:00:00Z`));
   const alternatives = selectedSession?.availableAlternatives ?? [];
   const copyDiagnostics = async () => {
     const dimensions = typeof window === 'undefined' ? 'unknown' : `${window.innerWidth}x${window.innerHeight}`;
@@ -402,7 +506,26 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
           <section className="home-book-cta" aria-labelledby="home-book-title"><div><p className="eyebrow">TU PRÓXIMA EXPERIENCIA</p><h2 id="home-book-title">Reservar clase</h2><p>Selecciona actividad, día y hora.</p></div><button className="button primary" onClick={() => setView('book')}>Ver horarios y reservar <span aria-hidden="true">→</span></button></section>
           <section className="home-next-booking" aria-labelledby="next-booking-title"><div className="home-block-heading"><span className="card-icon" aria-hidden="true"><NavIcon name="calendar"/></span><div><p className="eyebrow">TU AGENDA</p><h2 id="next-booking-title">Próxima reserva</h2></div></div>{nextBooking ? <><div className="next-booking-content"><p className="next-booking-service">{nextBooking.serviceName}{nextBooking.isIndividual ? <span className="individual-tag">Cita individual</span> : null}</p><p>{dateLabel(nextBooking.startsAt)} · {timeLabel(nextBooking.startsAt)}–{timeLabel(new Date(Date.parse(nextBooking.startsAt) + nextBooking.durationMinutes * 60_000).toISOString())}</p><p>{nextBooking.areaName}</p><span className="confirmed-pill">Confirmada</span></div><button className="text-button" onClick={() => setView('bookings')}>Mis reservas <span aria-hidden="true">→</span></button></> : <><p className="muted">No tienes ninguna reserva próxima.</p><button className="text-button" onClick={() => setView('bookings')}>Ver mis reservas <span aria-hidden="true">→</span></button></>}</section>
         </>}
-        {view === 'book' && <><div className="page-intro"><p className="eyebrow">TU SEMANA · ATLANTIC/CANARY</p><h1>Reservar</h1><p>Elige una sesión de las actividades disponibles en tu centro.</p></div>{!bookingEnabled && !previewMode && <p className="inline-message page-message" role="status">Las reservas desde la app todavía no están activadas para tu cuenta.</p>}<button className="text-button contextual-link" onClick={() => setView('bookings')}>Mis reservas y lista de espera <span aria-hidden="true">→</span></button><div className="week-navigation"><button className="quiet-button" aria-label="Semana anterior" onClick={() => setSelectedDate(value => shiftDateKey(value, -7))}>‹</button><span>{dateLabel(`${weekRange(selectedDate).from}T12:00:00Z`)} – {dateLabel(`${weekRange(selectedDate).to}T12:00:00Z`)}</span><button className="quiet-button" aria-label="Semana siguiente" onClick={() => setSelectedDate(value => shiftDateKey(value, 7))}>›</button></div><div className="week-strip" aria-label="Elige un día">{weekRangeDays(selectedDate).map(day => <button type="button" key={day.date} aria-pressed={selectedDate === day.date} className={`day-chip${day.today ? ' today' : ''}${selectedDate === day.date ? ' selected' : ''}`} onClick={() => setSelectedDate(day.date)}><small>{day.label}</small><strong>{day.number}</strong></button>)}</div>{groupedSessions.length ? groupedSessions.map(([areaName, areaSessions]) => <section className="area-session-group" key={areaName}><div className="section-heading compact"><div><p className="eyebrow">TU CENTRO</p><h2>{areaName}</h2></div><span className="session-count">{areaSessions.length} {areaSessions.length === 1 ? 'sesión' : 'sesiones'}</span></div><div className="session-list">{areaSessions.map(session => <SessionCard key={session.id} session={session} onSelect={() => void openSession(session)}/>)}</div></section>) : <section className="empty-card"><span className="empty-mark">✳</span><h2>No hay sesiones este día</h2><p>Elige otra fecha o vuelve a consultar pronto.</p></section>}</>}
+        {view === 'book' && <>
+          <div className="page-intro"><p className="eyebrow">TU AGENDA · ATLANTIC/CANARY</p><h1>{bookingStage === 'confirm' ? 'Confirmar reservas' : bookingStage === 'results' ? 'Resultado de tus reservas' : 'Reservar'}</h1><p>{bookingStage === 'browse' ? 'Elige una actividad y selecciona cada sesión que quieras reservar.' : bookingStage === 'confirm' ? 'Revisa las sesiones que has elegido. Cada una se procesa por separado.' : 'Cada resultado refleja el estado confirmado por el centro.'}</p></div>
+          {bookingStage === 'browse' && <>
+            <button className="text-button contextual-link" onClick={() => setView('bookings')}>Mis reservas y lista de espera <span aria-hidden="true">→</span></button>
+            {!selectedServiceId ? <section className="member-service-picker" aria-labelledby="service-picker-title"><h2 id="service-picker-title">¿Qué quieres reservar?</h2><p>Actividades con sesiones publicadas para este mes.</p>{scheduleLoading ? <div className="loading-card" role="status"><span className="spinner"/> Buscando actividades…</div> : scheduleError ? <section className="empty-card" role="alert"><h3>No se ha podido cargar la agenda.</h3><button className="text-button" onClick={() => setScheduleVersion(value => value + 1)}>Reintentar</button></section> : serviceOptions.length ? <div className="member-service-grid">{serviceOptions.map(service => <button type="button" className="member-service-choice" key={service.id} onClick={() => { setSelectedServiceId(service.id); const first = sessions.find(session => session.serviceId === service.id); if (first) setSelectedDate(dateKey(new Date(first.startsAt))); }}><span className="service-choice-mark" aria-hidden="true">✦</span><span><strong>{service.name}</strong><small>Ver calendario y horarios</small></span><span aria-hidden="true">→</span></button>)}</div> : <section className="empty-card"><h3>No hay actividades disponibles este mes.</h3><p>Prueba con otro mes o vuelve a consultar más adelante.</p></section>}</section> : <>
+              <button className="text-button contextual-link" onClick={() => { setSelectedServiceId(''); setSelectedSessions([]); setBookingResults([]); }}>← Cambiar actividad</button>
+              <section className="member-calendar" aria-label="Calendario mensual de sesiones">
+                <div className="month-navigation"><button className="quiet-button" aria-label="Mes anterior" onClick={() => { const next = shiftMonthKey(selectedDate, -1); setSelectedDate(next); }}>‹</button><h2>{monthName}</h2><button className="quiet-button" aria-label="Mes siguiente" onClick={() => { const next = shiftMonthKey(selectedDate, 1); setSelectedDate(next); }}>›</button><button className="quiet-button today-button" onClick={() => setSelectedDate(dateKey(new Date()))}>Hoy</button></div>
+                <div className="month-weekdays" aria-hidden="true">{['L','M','X','J','V','S','D'].map((label,index)=><span key={`${label}-${index}`}>{label}</span>)}</div>
+                <div className="month-grid" role="group" aria-label={`Días de ${monthName}`}>{monthGridDays(selectedDate).map((day,index)=>day ? <button key={day.date} type="button" aria-label={`${day.day}${daysWithSessions.has(day.date) ? ', hay sesiones' : ''}`} aria-pressed={selectedDate===day.date} aria-current={day.today?'date':undefined} className={`month-day${day.today?' today':''}${selectedDate===day.date?' selected':''}${daysWithSessions.has(day.date)?' has-sessions':''}`} onClick={()=>setSelectedDate(day.date)}><span>{day.day}</span>{daysWithSessions.has(day.date)&&<i aria-hidden="true"/>}</button> : <span key={`empty-${index}`} aria-hidden="true" className="month-day-empty"/>)}</div>
+              </section>
+              <section className="member-day-sessions" aria-live="polite"><div className="section-heading compact"><div><p className="eyebrow">{serviceOptions.find(item=>item.id===selectedServiceId)?.name}</p><h2>{dateLabel(`${selectedDate}T12:00:00Z`)}</h2></div><span className="session-count">{sessionsForSelectedDay.length} {sessionsForSelectedDay.length===1?'sesión':'sesiones'}</span></div>
+                {scheduleLoading ? <div className="loading-card" role="status"><span className="spinner"/> Actualizando horarios…</div> : scheduleError ? <section className="empty-card" role="alert"><h3>No se han podido cargar los horarios.</h3><button className="text-button" onClick={() => setScheduleVersion(value => value + 1)}>Reintentar</button></section> : sessionsForSelectedDay.length ? <div className="session-list">{sessionsForSelectedDay.map(session=><SessionCard key={session.id} session={session} selected={selectedSessions.some(item=>item.session.id===session.id)} onSelect={()=>void openSession(session)}/>)}</div> : <section className="empty-card"><h3>No hay sesiones este día.</h3><p>Elige otro día marcado en el calendario.</p></section>}
+              </section>
+              {selectedSessions.length>0&&<section className="member-selection-tray" aria-label="Sesiones seleccionadas"><div><strong>Has seleccionado {selectedSessions.length} {selectedSessions.length===1?'clase':'clases'}</strong><p>Solo se reservarán las sesiones que has elegido.</p></div><ul>{selectedSessions.map(item=><li key={item.session.id}><span>{dateLabel(item.session.startsAt)} · {item.session.serviceName} · {timeLabel(item.session.startsAt)}{item.mode==='waitlist'?' · Lista de espera':''}</span><button className="text-button" type="button" aria-label={`Quitar ${item.session.serviceName} ${timeLabel(item.session.startsAt)}`} onClick={()=>removeSelectedSession(item.session.id)}>Quitar</button></li>)}</ul><button className="button primary full" onClick={()=>{setBookingStage('confirm');setBookingResults([]);}}>Revisar selección</button></section>}
+            </>}
+          </>}
+          {bookingStage === 'confirm' && <section className="member-confirmation" aria-labelledby="confirm-bookings-title"><h2 id="confirm-bookings-title">Estas son tus sesiones</h2><ul>{selectedSessions.map(item=><li key={item.session.id}><strong>{item.session.serviceName}</strong><span>{dateLabel(item.session.startsAt)} · {timeLabel(item.session.startsAt)}–{timeLabel(new Date(Date.parse(item.session.startsAt)+item.session.durationMinutes*60_000).toISOString())}</span><small>{item.session.areaName}{item.mode==='waitlist'?' · Solicitud de lista de espera':' · Solicitud de reserva'}</small></li>)}</ul>{!bookingEnabled&&!previewMode&&<p className="eligibility-note">Las reservas desde la app todavía no están activadas para tu cuenta.</p>}{previewMode&&<p className="preview-action-note">Vista previa: puedes revisar la selección, pero no se envía ni crea reservas.</p>}<div className="member-confirm-actions"><button className="button secondary" onClick={()=>setBookingStage('browse')}>Volver</button><button className="button primary" disabled={busy==='member-bookings'||(!bookingEnabled&&!previewMode)||previewMode||selectedSessions.length===0} onClick={()=>void submitSelectedBookings()}>{busy==='member-bookings'?'Procesando…':'Confirmar reservas'}</button></div></section>}
+          {bookingStage === 'results' && <section className="member-booking-results" aria-live="polite"><ul>{bookingResults.map(item=><li className={`booking-result ${item.result}`} key={item.selection.session.id}><span aria-hidden="true">{item.result==='confirmed'?'✓':item.result==='waitlist'?'◷':'!'}</span><div><strong>{item.selection.session.serviceName} · {dateLabel(item.selection.session.startsAt)} · {timeLabel(item.selection.session.startsAt)}</strong><small>{item.result==='confirmed'?'Reserva confirmada':item.result==='waitlist'?'En lista de espera':item.reason}</small></div></li>)}</ul>{bookingResults.some(item=>item.result==='failed')&&<button className="button secondary full" disabled={busy==='member-bookings'} onClick={()=>void submitSelectedBookings()}>Reintentar las que no se completaron</button>}<button className="button primary full" onClick={()=>{setSelectedSessions([]);setBookingResults([]);setBookingStage('browse');setScheduleVersion(value=>value+1);}}>Elegir más clases</button><button className="text-button" onClick={()=>setView('home')}>Volver a Inicio</button></section>}
+        </>}
         {view === 'news' && (selectedNews ? <><button className="text-button contextual-link" onClick={()=>setSelectedNews(null)}>← Volver a noticias</button><article className="center-news-detail"><p className="eyebrow">2J FITNESS CENTER</p>{selectedNews.publishedAt&&<small>{dateLabel(selectedNews.publishedAt)}</small>}<h1>{selectedNews.title}</h1><p>{selectedNews.body}</p><button type="button" className="text-button" onClick={()=>{setSelectedNews(null);setView('home');}}>Volver a Inicio <span aria-hidden="true">→</span></button></article></> : <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Noticias</h1><p>Novedades publicadas por tu centro.</p></div><button className="text-button contextual-link" onClick={()=>setView('home')}>← Volver a Inicio</button>{newsError?<section className="empty-card" role="alert"><h2>No se han podido cargar las noticias</h2><button className="button secondary" onClick={()=>void refresh()}>Intentar de nuevo</button></section>:newsItems.length?<div className="member-news-list">{newsItems.map(item=><article className="member-news-item" key={item.id}><div>{item.featured&&<span className="member-news-featured">Destacada</span>}<h2>{item.title}</h2>{item.publishedAt&&<small>{dateLabel(item.publishedAt)}</small>}</div><p>{item.body.length>260?`${item.body.slice(0,257).trimEnd()}…`:item.body}</p><button className="text-button" onClick={()=>setSelectedNews(item)}>Leer noticia <span aria-hidden="true">→</span></button></article>)}</div>:<section className="empty-card"><h2>No hay noticias publicadas</h2><p>Cuando el centro comparta una novedad, aparecerá aquí.</p></section>}</>)}
         {view === 'bunker' && <section className="hub-destination"><div className="destination-mark"><NavIcon name="bunker"/></div><p className="eyebrow">ENTRENAMIENTO</p><h1>Búnker</h1><p>Tu espacio de rutinas, seguimiento y progreso.</p>{previewMode ? <p role="status">Vista previa: el estado de tu conexión real no está disponible aquí.</p> : trainingSummaryLoading ? <p role="status">Consultando tu espacio de entrenamiento…</p> : trainingSummaryFailed || (trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'unavailable') ? <div role="status"><p>Información de entrenamiento temporalmente no disponible.</p><button className="text-button" onClick={() => setTrainingSummaryRetry(value => value + 1)}>Intentar de nuevo</button></div> : trainingSummary?.status === 'not_linked' ? <p role="status">Búnker aún no vinculado.</p> : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'available' ? <div className="hub-training-summary" role="status"><strong>Búnker conectado</strong>{trainingSummary.summary.currentProgram && <p>Programa actual: {trainingSummary.summary.currentProgram.name}</p>}{trainingSummary.summary.recentActivity && <p>{trainingSummary.summary.recentActivity.lastTrainingAt ? `Última actividad: ${dateLabel(`${trainingSummary.summary.recentActivity.lastTrainingAt}T12:00:00.000Z`)}` : 'Todavía no hay actividad reciente.'} · {trainingSummary.summary.recentActivity.sessionsLast30Days} {trainingSummary.summary.recentActivity.sessionsLast30Days === 1 ? 'entreno' : 'entrenos'} en los últimos 30 días</p>}</div> : null}<a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a><small>Se abrirá el espacio de entrenamiento en una nueva pestaña.</small></section>}
         {view === 'store' && <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Tienda</h1><p>Consulta los productos disponibles en el centro.</p></div><div className="store-filter" role="group" aria-label="Filtrar productos por categoría"><button type="button" aria-pressed={storeCategory==='nutrition'} className={storeCategory==='nutrition'?'active':''} onClick={()=>setStoreCategory('nutrition')}>Nutrición</button><button type="button" aria-pressed={storeCategory==='merchandising'} className={storeCategory==='merchandising'?'active':''} onClick={()=>setStoreCategory('merchandising')}>Merchandising</button></div>{storeFailed&&<p className="inline-message" role="alert">No se ha podido actualizar el catálogo o el historial. <button className="text-button" onClick={()=>void refresh()}>Reintentar</button></p>}<div className="member-store-grid">{storeProducts.filter(item=>item.category===storeCategory).map(product=><article className="member-store-card" key={product.id}><span className="store-category-icon" aria-hidden="true">{product.category==='nutrition'?'✦':'◈'}</span><div><h2>{product.name}</h2>{product.description&&<p>{product.description}</p>}</div>{product.variants.map(variant=><div className="member-store-variant" key={variant.id}><span>{variant.label}</span><strong>{new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(variant.priceCents/100)}</strong><small className={`availability ${variant.availability}`}>{variant.availability==='disponible'?'Disponible':variant.availability==='pocas_unidades'?'Pocas unidades':'Agotado'}</small></div>)}</article>)}{storeProducts.filter(item=>item.category===storeCategory).length===0&&!storeFailed&&<section className="empty-card profile-empty"><h2>Aún no hay productos en esta categoría.</h2><p>Vuelve a consultar más adelante.</p></section>}</div><p className="store-notice">Consulta los productos disponibles. Las compras se gestionan directamente en el centro.</p></>}
@@ -458,7 +581,8 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     </main>
     {pilotToolsEnabled&&<footer className="pilot-footer"><span>Vista piloto · {HUB_BUILD_ID}</span><button type="button" className="text-button" onClick={() => void copyDiagnostics()}>Copiar información de diagnóstico</button></footer>}
     {!loading && !error && profile && <nav className="bottom-nav" aria-label="Navegación principal">{([['home','Inicio','home'],['bunker','Búnker','bunker'],['store','Tienda','store'],['profile','Perfil','profile'],['settings','Ajustes','settings']] as const).map(([id,label,icon]) => {const active=view===id||(view==='book'&&id==='home')||(view==='bookings'&&id==='home')||(view==='news'&&id==='home')||(view==='notifications'&&id==='profile');return <button key={id} className={active?'nav-button active':'nav-button'} aria-current={active?'page':undefined} onClick={()=>{setView(id);setMessage('');setSelectedNews(null);}}><span aria-hidden="true"><NavIcon name={icon}/></span><small>{label}</small></button>;})}</nav>}
-    {selectedSession && <div className="sheet-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedSession(null); }}><section className="session-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><button className="sheet-close" aria-label="Cerrar detalle" onClick={() => setSelectedSession(null)}>×</button><p className="eyebrow">DETALLE DE SESIÓN</p><h2 id="sheet-title">{selectedSession.serviceName}</h2><p className="sheet-subtitle">{dateLabel(selectedSession.startsAt)} · {timeLabel(selectedSession.startsAt)} · {selectedSession.areaName}</p><div className="sheet-capacity"><span>Plazas disponibles</span><strong>{Math.max(0, selectedSession.capacity - selectedSession.occupiedCount)}</strong></div>{alternatives.length > 1 && <label className="field-label">Usar derecho<select value={selectedAssignment} onChange={event => setSelectedAssignment(event.target.value)}><option value="">Elige un plan o bono</option>{alternatives.map(item => <option key={item.assignmentId} value={item.assignmentId}>{item.planName ?? 'Plan activo'}</option>)}</select></label>}{message && <p className="inline-message" role="status">{message}</p>}{selectedSession.myReservationStatus && <p className="eligibility-note">Tu plaza ya está reservada.</p>}{selectedSession.eligible && !selectedSession.myReservationStatus && <button className="button primary full" disabled={previewMode || !bookingEnabled || busy !== null || (alternatives.length > 1 && !selectedAssignment)} onClick={() => void reserve(selectedSession)}>{busy?.startsWith('reserve') ? 'Reservando…' : 'Confirmar reserva'}</button>}{selectedSession.canJoinWaitlist && <button className="button secondary full" disabled={previewMode || !bookingEnabled || busy !== null} onClick={() => void reserve(selectedSession,true)}>{busy?.startsWith('waitlist') ? 'Añadiendo…' : 'Apuntarme a la lista de espera'}</button>}{previewMode && !selectedSession.myReservationStatus && <p className="preview-action-note">En la vista previa las reservas están desactivadas.</p>}{!bookingEnabled && !previewMode && <p className="eligibility-note">Las reservas desde la app todavía no están activadas para tu cuenta.</p>}<p className="sheet-footnote">La reserva utiliza las reglas y los derechos vigentes de tu cuenta.</p></section></div>}
+    {selectedSession && <div className="sheet-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedSession(null); }}><section className="session-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><button className="sheet-close" aria-label="Cerrar detalle" onClick={() => setSelectedSession(null)}>×</button><p className="eyebrow">DETALLE DE SESIÓN</p><h2 id="sheet-title">{selectedSession.serviceName}</h2><p className="sheet-subtitle">{dateLabel(selectedSession.startsAt)} · {timeLabel(selectedSession.startsAt)} · {selectedSession.areaName}{selectedSession.professionalName?` · ${selectedSession.professionalName}`:''}</p><div className="sheet-capacity"><span>Plazas disponibles</span><strong>{Math.max(0, selectedSession.capacity - selectedSession.occupiedCount)}</strong></div>{Math.max(0,selectedSession.capacity-selectedSession.occupiedCount)===0&&<p className="eligibility-note">Sesión completa. Si el centro mantiene la espera abierta, puedes solicitar entrar en la lista; no es una plaza confirmada.</p>}{alternatives.length > 1 && <label className="field-label">Usar derecho<select value={selectedAssignment} onChange={event => setSelectedAssignment(event.target.value)}><option value="">Elige un plan o bono</option>{alternatives.map(item => <option key={item.assignmentId} value={item.assignmentId}>{item.planName ?? 'Plan activo'}</option>)}</select></label>}{message && <p className="inline-message" role="status">{message}</p>}{selectedSession.myReservationStatus && <p className="eligibility-note">Ya tienes una reserva asociada a esta sesión.</p>}{selectedSession.myWaitlistStatus==='waiting'&&<p className="eligibility-note">Ya estás en la lista de espera de esta sesión.</p>}{selectedSession.eligibilityReason&&<p className="eligibility-note">{labels[selectedSession.eligibilityReason]??'Esta sesión no está disponible para tu cuenta.'}</p>}{selectedSession.eligible && !selectedSession.myReservationStatus && !selectedSession.myWaitlistStatus && <button className="button primary full" disabled={(!previewMode&&!bookingEnabled)||busy!==null||(alternatives.length>1&&!selectedAssignment)} onClick={()=>addSelectedSession('reserve')}>Añadir reserva a la selección</button>}{selectedSession.canJoinWaitlist&&!selectedSession.myWaitlistStatus&&!selectedSession.myReservationStatus&&<button className="button secondary full" disabled={(!previewMode&&!bookingEnabled)||busy!==null} onClick={()=>addSelectedSession('waitlist')}>Solicitar lista de espera</button>}{previewMode && !selectedSession.myReservationStatus&&!selectedSession.myWaitlistStatus && <p className="preview-action-note">Vista previa: la selección se mantiene en este dispositivo y no se envía.</p>}{!bookingEnabled && !previewMode && <p className="eligibility-note">{selectedSession.eligibilityReason==='no_active_entitlement'?'Necesitas una cuota activa para reservar este servicio.':'Las reservas desde la app todavía no están activadas para tu cuenta.'}</p>}<p className="sheet-footnote">La disponibilidad final se confirma al enviar la selección. Cada sesión se procesa por separado.</p></section></div>}
+    {cancellationPending && <div className="sheet-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setCancellationPending(null);}}><section className="session-sheet cancellation-sheet" role="dialog" aria-modal="true" aria-labelledby="cancel-title"><p className="eyebrow">{cancellationPending.kind==='booking'?'GESTIONAR RESERVA':'LISTA DE ESPERA'}</p><h2 id="cancel-title">{cancellationPending.kind==='booking'?'¿Cancelar esta reserva?':'¿Salir de la lista de espera?'}</h2><p className="sheet-subtitle">{cancellationPending.booking.serviceName} · {dateLabel(cancellationPending.booking.startsAt)} · {timeLabel(cancellationPending.booking.startsAt)}</p><p>{cancellationPending.kind==='booking'?cancellationPending.summary:'Dejarás de figurar en la lista de espera de esta sesión.'}</p><div className="member-confirm-actions"><button className="button secondary" onClick={()=>setCancellationPending(null)}>Volver</button><button className="button primary" disabled={busy===cancellationPending.booking.id} onClick={()=>void confirmCancellation()}>{busy===cancellationPending.booking.id?'Actualizando…':cancellationPending.kind==='booking'?'Cancelar reserva':'Salir de la lista'}</button></div></section></div>}
     {selectedForm && <div className="sheet-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedForm(null); }}><section className="session-sheet document-sheet" role="dialog" aria-modal="true" aria-labelledby="form-title"><button className="sheet-close" aria-label="Cerrar formulario" onClick={() => setSelectedForm(null)}>×</button><p className="eyebrow">DOCUMENTACIÓN DEL CENTRO</p><h2 id="form-title">{selectedForm.name}</h2>{selectedForm.description && <p className="muted">{selectedForm.description}</p>}{dialogError && selectedForm.fields.length === 0 ? <><p className="inline-message" role="alert">{dialogError}</p><button className="button secondary full" onClick={() => void openForm(selectedForm)}>Intentar de nuevo</button></> : <form onSubmit={event => void submitForm(event)}>{selectedForm.fields.map(field => <DocumentField key={field.id} field={field} value={formAnswers[field.id]} onChange={value => setFormAnswers(current => ({ ...current, [field.id]: value }))}/>)}{dialogError && <p className="inline-message" role="alert">{dialogError}</p>}{previewMode&&<p className="preview-action-note">Vista previa: los formularios no se envían.</p>}<button className="button primary full" disabled={previewMode || busy === `form:${selectedForm.id}`}>{busy === `form:${selectedForm.id}` ? 'Enviando…' : 'Enviar documento'}</button></form>}</section></div>}
     {selectedConsent && <div className="sheet-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedConsent(null); }}><section className="session-sheet document-sheet" role="dialog" aria-modal="true" aria-labelledby="consent-title"><button className="sheet-close" aria-label="Cerrar consentimiento" onClick={() => setSelectedConsent(null)}>×</button><p className="eyebrow">CONSENTIMIENTO DEL CENTRO</p><h2 id="consent-title">{selectedConsent.title}</h2><div className="consent-copy">{selectedConsent.body}</div><form onSubmit={event => void acceptConsent(event)}><label className="consent-check"><input type="checkbox" checked={consentChecked} onChange={event => setConsentChecked(event.target.checked)}/>He leído y acepto este consentimiento.</label><label className="field-label">Nombre completo<input autoComplete="name" value={typedName} onChange={event => setTypedName(event.target.value)} required maxLength={160}/></label>{dialogError && <p className="inline-message" role="alert">{dialogError}</p>}{previewMode&&<p className="preview-action-note">Vista previa: no se guardan consentimientos.</p>}<button className="button primary full" disabled={previewMode || busy === `consent:${selectedConsent.versionId}`}>{busy === `consent:${selectedConsent.versionId}` ? 'Guardando…' : 'Confirmar aceptación'}</button></form></section></div>}
   </div>;
@@ -476,10 +600,11 @@ function NavIcon({ name }: { name: 'home' | 'calendar' | 'bunker' | 'store' | 's
   return <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" focusable="false" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function SessionCard({ session, onSelect }: { session: ClientSession; onSelect: () => void }) {
+function SessionCard({ session, selected = false, onSelect }: { session: ClientSession; selected?: boolean; onSelect: () => void }) {
   const free = Math.max(0, session.capacity - session.occupiedCount);
-  const ownStatus = session.myReservationStatus ? 'Ya estás en esta sesión' : session.myWaitlistStatus === 'waiting' ? 'Estás en lista de espera' : session.myWaitlistStatus === 'promoted' ? 'Plaza confirmada' : null;
-  return <button className="session-card" onClick={onSelect}><div className="session-time"><strong>{timeLabel(session.startsAt)}</strong><span>{dayLabel(session.startsAt)} · {dateLabel(session.startsAt).split(' ')[1]}</span></div><div className="session-info"><strong>{session.serviceName}</strong><span>{session.areaName}{session.isIndividual ? ' · Cita individual' : ''}{session.professionalName ? ` · ${session.professionalName}` : ''}</span><div className="session-meta"><span>{ownStatus ?? (free > 0 ? `${free} ${free === 1 ? 'plaza libre' : 'plazas libres'}` : 'Completa')}</span>{!ownStatus && session.waitlistCount > 0 && <span>Espera {session.waitlistCount}</span>}</div></div><span className="session-arrow" aria-hidden="true">→</span></button>;
+  const ownStatus = session.myReservationStatus ? 'Ya reservada' : session.myWaitlistStatus === 'waiting' ? 'En lista de espera' : session.myWaitlistStatus === 'promoted' ? 'Reserva confirmada' : null;
+  const availability = ownStatus ?? (free > 0 ? free <= 2 ? `Últimas plazas · ${free} ${free === 1 ? 'libre' : 'libres'}` : `${free} ${free === 1 ? 'plaza libre' : 'plazas libres'}` : session.waitlistCount > 0 ? `Completa · ${session.waitlistCount} en espera` : 'Completa');
+  return <button type="button" className={`session-card${selected?' is-selected':''}`} aria-pressed={selected} onClick={onSelect}><div className="session-time"><strong>{timeLabel(session.startsAt)}</strong><span>{timeLabel(new Date(Date.parse(session.startsAt)+session.durationMinutes*60_000).toISOString())}</span></div><div className="session-info"><strong>{session.serviceName}{session.isIndividual?' · Cita individual':''}</strong><span>{session.areaName}{session.professionalName?` · ${session.professionalName}`:''}</span><div className={`session-meta${free===0?' full':''}`}><span>{availability}</span>{session.waitlistCount>0&&!ownStatus&&<span>Lista de espera</span>}</div></div><span className="session-arrow" aria-hidden="true">{selected?'✓':'→'}</span></button>;
 }
 function BookingCard({ booking, waiting = false, compact = false, busy = false, actionDisabled = false, onCancel }: { booking: Booking; waiting?: boolean; compact?: boolean; busy?: boolean; actionDisabled?: boolean; onCancel?: () => void }) {
   const statusLabel = waiting ? booking.status === 'waiting' ? 'En lista de espera' : booking.status === 'promoted' ? 'Convertida en reserva' : booking.status === 'cancelled_by_center' ? 'Cancelada por el centro' : 'Lista de espera cancelada' : booking.status === 'reserved' ? 'Confirmada' : booking.status === 'attended' ? 'Asistió' : booking.status === 'no_show' ? 'No asistió' : booking.status === 'cancelled_by_center' ? 'Cancelada por el centro' : booking.status === 'cancelled_late' ? 'Cancelación tardía' : 'Cancelada';
@@ -498,4 +623,4 @@ function weekRangeDays(selected = dateKey(new Date())) {
   return Array.from({length:7},(_,index)=>{const key=shiftDateKey(start,index);const date=new Date(`${key}T12:00:00Z`);return {date:key,label:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',weekday:'short'}).format(date),number:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',day:'numeric'}).format(date),today:key===todayKey};});
 }
 
-export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, selectNextConfirmedBooking, HUB_TRAINING_URL };
+export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, selectNextConfirmedBooking, HUB_TRAINING_URL };

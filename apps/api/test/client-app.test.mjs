@@ -141,6 +141,12 @@ test('self-service facade derives the identity server-side and hides another cli
   const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const publicSessions = await appA.inject({ method: 'GET', url: `/api/me/sessions?from=${localDate}&to=${new Date(Date.now()+8*86_400_000).toISOString().slice(0,10)}` });
   assert.equal(publicSessions.statusCode, 200);
+  const bookingServices = await appA.inject({ method: 'GET', url: '/api/me/booking-services' });
+  assert.equal(bookingServices.statusCode, 200);
+  assert.equal(bookingServices.json().services.some(row => row.id === service.id && row.name === service.name), true);
+  assert.equal(JSON.stringify(bookingServices.json()).includes(b.firstName), false);
+  assert.deepEqual(Object.keys(bookingServices.json().services[0] ?? {}).sort(), ['id', 'name']);
+  assert.equal((await anonymous.inject({ method: 'GET', url: '/api/me/booking-services' })).statusCode, 401);
   const publicSession = publicSessions.json().sessions.find(row => row.id === session.id);
   assert.equal(publicSession.myReservationStatus, 'reserved');
   assert.equal(publicSession.professionalName === null || typeof publicSession.professionalName === 'string', true);
