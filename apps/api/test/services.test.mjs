@@ -910,17 +910,21 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   const clientId = created.json().id;
   const trainer = await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
   assert.equal(trainer.statusCode, 200, trainer.body);
-  assert.equal(trainer.json().client.email, testEmail.trim().toLowerCase());
-  assert.equal(trainer.json().sections.find((section) => section.id === 'training').access, 'available');
-  assert.equal(trainer.json().sections.find((section) => section.id === 'health').access, 'available');
+  assert.equal(Object.hasOwn(trainer.json().client, 'email'), false);
+  assert.equal(Object.hasOwn(trainer.json().client, 'phone'), false);
+  assert.equal(Object.hasOwn(trainer.json().client, 'birthDate'), false);
+  assert.equal(trainer.json().sections.some((section) => ['training', 'progress', 'health'].includes(section.id)), false);
   assert.equal(trainer.json().summary.payments.access, 'forbidden');
   assert.equal(trainer.json().summary.payments.data, null);
-  assert.equal(trainer.json().summary.training.access, 'available');
-  assert.equal(trainer.json().summary.health.access, 'available');
+  assert.equal(Object.hasOwn(trainer.json().summary, 'training'), false);
+  assert.equal(Object.hasOwn(trainer.json().summary, 'health'), false);
   assert.equal(trainer.json().summary.plans.access, 'available', 'Trainer has operational read access to entitlements');
   assert.equal(trainer.json().summary.documents.access, 'available');
   assert.deepEqual(trainer.json().summary.messages.data, { unreadCount: 0, lastMessageAt: null });
   assert.equal(trainer.json().sections.find((section) => section.id === 'payments').sourceLabel, 'Pagos');
+  const adminProfile = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
+  assert.equal(adminProfile.statusCode, 200);
+  assert.equal(adminProfile.json().client.email, testEmail.trim().toLowerCase(), 'contact fields remain available to the client manager');
   assert.equal(JSON.stringify(trainer.json()).includes('qa-admin'), false);
   const forbiddenCreate = await createClientRequest(clientsTrainerApp, { firstName: 'No', lastName: 'Write' });
   assert.equal(forbiddenCreate.statusCode, 403);
@@ -929,13 +933,20 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(accountant.json().client, undefined);
 });
 
-test('client list searches normalized name/contact, and archive retains profile history', async () => {
+test('client search minimizes contact discovery by permission and archive retains profile history', async () => {
   const created = await createClientRequest(clientsAdminApp, { firstName: '  Marta  ', lastName: `Prueba ${randomUUID()}`, email: 'marta-search@example.test' });
   assert.equal(created.statusCode, 201, created.body);
   const clientId = created.json().id;
-  const search = await clientsTrainerApp.inject({ method: 'GET', url: '/api/clients?q=MARTA-SEARCH@EXAMPLE.TEST' });
+  const search = await clientsTrainerApp.inject({ method: 'GET', url: '/api/clients?q=MARTA' });
   assert.equal(search.statusCode, 200, search.body);
   assert.equal(search.json().items.some((item) => item.id === clientId), true);
+  const privateContactSearch = await clientsTrainerApp.inject({ method: 'GET', url: '/api/clients?q=MARTA-SEARCH%40EXAMPLE.TEST' });
+  assert.equal(privateContactSearch.json().items.some((item) => item.id === clientId), false, 'Trainer searches must not reveal a match by guessing private contact data');
+  const adminContactSearch = await clientsAdminApp.inject({ method: 'GET', url: '/api/clients?q=MARTA-SEARCH%40EXAMPLE.TEST' });
+  assert.equal(adminContactSearch.json().items.some((item) => item.id === clientId), true, 'client managers retain contact lookup');
+  const listed = search.json().items.find((item) => item.id === clientId);
+  assert.equal(Object.hasOwn(listed, 'email'), false);
+  assert.equal(Object.hasOwn(listed, 'phone'), false);
   const profile = await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
   assert.equal(profile.statusCode, 200);
   assert.deepEqual(profile.json().history.map((event) => event.eventType), ['client.created']);
@@ -1955,6 +1966,15 @@ test('client plan sale atomically assigns the frozen catalog version, charge and
   assert.equal(profile.statusCode,200,profile.body);
   assert.equal(profile.json().summary.plans.data[0].planName,createdPlan.body.name);
   assert.equal(profile.json().summary.plans.data[0].derivedStatus,'active');
+  assert.equal(Number(profile.json().summary.plans.data[0].amountCents),5900);
+  const trainerProfile=await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${clientId}`});
+  assert.equal(trainerProfile.statusCode,200,trainerProfile.body);
+  assert.equal(trainerProfile.json().summary.plans.data[0].amountCents,undefined);
+  assert.equal(trainerProfile.json().summary.plans.data[0].salePriceCents,undefined);
+  assert.equal(trainerProfile.json().summary.plans.data[0].dueOn,undefined);
+  assert.equal(trainerProfile.json().summary.plans.data[0].snapshot.salePriceCents,undefined);
+  assert.equal(trainerProfile.json().summary.plans.data[0].snapshot.listPriceCents,undefined);
+  assert.equal(trainerProfile.json().summary.payments.data,null);
   assert.equal((await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${clientId}/plans`})).statusCode,200);
   const forbidden=await clientsTrainerApp.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':randomUUID()},payload});
   assert.equal(forbidden.statusCode,403);
@@ -2136,6 +2156,6 @@ test('Admin can update basic client profile including nullable date of birth wit
   const forbidden=await clientsTrainerApp.inject({method:'PATCH',url:`/api/clients/${id}`,payload});assert.equal(forbidden.statusCode,403);
   const updated=await clientsAdminApp.inject({method:'PATCH',url:`/api/clients/${id}`,payload});assert.equal(updated.statusCode,200,updated.body);assert.equal(updated.json().birthDate,'1990-04-06');assert.equal(updated.json().lastName,'Actualizado');
   const detail=await clientsAdminApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(detail.json().client.birthDate,'1990-04-06');assert.ok(detail.json().history.some(event=>event.eventType==='client.profile_updated'));
-  const trainerDetail=await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(trainerDetail.json().client.birthDate,null,'DOB remains hidden without clients.manage');
+  const trainerDetail=await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(trainerDetail.json().client.birthDate,undefined,'DOB is omitted without clients.manage');
   const cleared=await clientsAdminApp.inject({method:'PATCH',url:`/api/clients/${id}`,payload:{...payload,birthDate:null}});assert.equal(cleared.json().birthDate,null);
 });
