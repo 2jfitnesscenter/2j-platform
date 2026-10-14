@@ -30,6 +30,42 @@ export function registerClientAppRoutes(
     return { clientId, ...(actor.personId ? { personId: actor.personId } : {}) };
   }
 
+  async function canonicalMemberPerson(actor: { clientId: string; personId?: string }, reply: any) {
+    const [person] = await db`
+      SELECT p.id FROM platform_person_clients pc
+      JOIN platform_persons p ON p.id=pc.person_id AND p.status='active'
+      WHERE pc.client_id=${actor.clientId}::uuid
+        AND (${actor.personId ?? null}::uuid IS NULL OR pc.person_id=${actor.personId ?? null}::uuid)
+      LIMIT 1`;
+    if (!person) { reply.code(409).send({ error: 'member_identity_unavailable' }); return null; }
+    return String(person.id);
+  }
+
+  const defaultPreferences = { appearance: 'system' as const, language: 'es' as const };
+  app.get('/api/me/preferences', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    const personId = await canonicalMemberPerson(actor, reply); if (!personId) return;
+    const [row] = await db`SELECT appearance,language FROM platform_member_preferences WHERE person_id=${personId}::uuid`;
+    return { preferences: row ? { appearance: row.appearance, language: row.language } : defaultPreferences };
+  });
+
+  app.patch('/api/me/preferences', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    const personId = await canonicalMemberPerson(actor, reply); if (!personId) return;
+    const parsed = z.object({ appearance: z.enum(['system','light','dark']).optional(), language: z.literal('es').optional() }).strict().refine(value => Object.keys(value).length > 0).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_preferences' });
+    const [row] = await db.begin(async tx => {
+      await tx`INSERT INTO platform_member_preferences(person_id) VALUES (${personId}::uuid) ON CONFLICT(person_id) DO NOTHING`;
+      const [updated] = await tx`
+        UPDATE platform_member_preferences SET
+          appearance=COALESCE(${parsed.data.appearance ?? null},appearance),
+          language=COALESCE(${parsed.data.language ?? null},language), updated_at=now()
+        WHERE person_id=${personId}::uuid RETURNING appearance,language`;
+      return [updated];
+    });
+    return { preferences: { appearance: row?.appearance ?? defaultPreferences.appearance, language: row?.language ?? defaultPreferences.language } };
+  });
+
   app.get('/api/me/booking-access', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;
     if (!memberBookingEnabled || !actor.personId) return { enabled: false };

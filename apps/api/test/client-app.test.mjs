@@ -80,9 +80,33 @@ const appC = byClient(c.id);
 const cohortAdmin = buildServer(process.env.DATABASE_URL, { memberPilotCohortManagementEnabled: true, authorizationResolver: async () => ({ actorId: 'cohort-test-admin', role: 'admin' }) });
 const cohortTrainer = buildServer(process.env.DATABASE_URL, { memberPilotCohortManagementEnabled: true, authorizationResolver: async () => ({ actorId: 'cohort-test-trainer', role: 'trainer' }) });
 const readOnlyMember = buildServer(process.env.DATABASE_URL, { memberPilotAuthEnabled: true, memberAppOrigin: 'http://127.0.0.1:5173', clientAuthorizationResolver: async () => ({ clientId: b.id, personId: memberPersons[b.id] }) });
+const mismatchedPersonMember = buildServer(process.env.DATABASE_URL, { clientAuthorizationResolver: async () => ({ clientId: a.id, personId: memberPersons[b.id] }) });
 after(async () => {
-  await Promise.all([admin.close(), anonymous.close(), appA.close(), appB.close(), appC.close(), cohortAdmin.close(), cohortTrainer.close(), readOnlyMember.close()]);
+  await Promise.all([admin.close(), anonymous.close(), appA.close(), appB.close(), appC.close(), cohortAdmin.close(), cohortTrainer.close(), readOnlyMember.close(), mismatchedPersonMember.close()]);
   await sql.end();
+});
+
+test('Member preferences are canonical-person scoped, persisted, strict and available without an active fee', async () => {
+  const safeOrigin = { origin: 'http://127.0.0.1:5173' };
+  const defaults = await appA.inject({ method: 'GET', url: '/api/me/preferences?clientId=' + b.id + '&personId=' + memberPersons[b.id] });
+  assert.equal(defaults.statusCode, 200, defaults.body); assert.deepEqual(defaults.json(), { preferences: { appearance: 'system', language: 'es' } });
+  const appearance = await appA.inject({ method: 'PATCH', url: '/api/me/preferences', headers: safeOrigin, payload: { appearance: 'light' } });
+  assert.equal(appearance.statusCode, 200, appearance.body); assert.deepEqual(appearance.json(), { preferences: { appearance: 'light', language: 'es' } });
+  const language = await appA.inject({ method: 'PATCH', url: '/api/me/preferences', headers: safeOrigin, payload: { language: 'es' } });
+  assert.equal(language.statusCode, 200); assert.equal(language.json().preferences.language, 'es');
+  assert.deepEqual((await appB.inject({ method: 'GET', url: '/api/me/preferences' })).json(), { preferences: { appearance: 'system', language: 'es' } });
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/preferences', headers: safeOrigin, payload: { personId: memberPersons[b.id], appearance: 'dark' } })).statusCode, 400);
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/preferences', headers: safeOrigin, payload: { clientId: b.id } })).statusCode, 400);
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/preferences', headers: safeOrigin, payload: { appearance: 'sepia' } })).statusCode, 400);
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/preferences', headers: safeOrigin, payload: { language: 'en' } })).statusCode, 400);
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/preferences', headers: safeOrigin, payload: { marketing: false } })).statusCode, 400);
+  assert.deepEqual((await appB.inject({ method: 'GET', url: '/api/me/preferences' })).json(), { preferences: { appearance: 'system', language: 'es' } }, 'Member A cannot change Member B preferences');
+  assert.equal((await appC.inject({ method: 'GET', url: '/api/me/preferences' })).statusCode, 200, 'identity preferences do not require an active fee');
+  assert.equal((await anonymous.inject({ method: 'GET', url: '/api/me/preferences' })).statusCode, 401);
+  assert.equal((await anonymous.inject({ method: 'PATCH', url: '/api/me/preferences', headers: safeOrigin, payload: { appearance: 'dark' } })).statusCode, 401);
+  assert.equal((await mismatchedPersonMember.inject({ method: 'GET', url: '/api/me/preferences' })).statusCode, 409, 'a person id not bound to the authenticated client fails closed');
+  const [stored] = await sql`SELECT appearance,language FROM platform_member_preferences WHERE person_id=${memberPersons[a.id]}::uuid`;
+  assert.deepEqual(stored, { appearance: 'light', language: 'es' });
 });
 
 test('self-service facade derives the identity server-side and hides another client’s bookings', async () => {

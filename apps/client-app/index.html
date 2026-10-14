@@ -7,6 +7,17 @@
     <meta name="description" content="2J Hub: tu día, tus reservas y tu espacio de entrenamiento." />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>2J Fitness</title>
+    <script>
+      (() => {
+        try {
+          const preview = new URLSearchParams(location.search).get('preview') === '1';
+          const stored = preview ? null : localStorage.getItem('2j.member.appearance.v1');
+          const preference = ['system', 'light', 'dark'].includes(stored) ? stored : 'system';
+          const light = preference === 'light' || (preference === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+          document.documentElement.dataset['2jAppearance'] = light ? 'light' : 'dark';
+        } catch { document.documentElement.dataset['2jAppearance'] = 'dark'; }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
