@@ -264,6 +264,22 @@ test('weekly individual marker labels card and detail without returning client P
   assert.equal((await screen.findByText('CITA INDIVIDUAL · Sesión puntual')).textContent, 'CITA INDIVIDUAL · Sesión puntual');
 });
 
+test('waitlist row uses neutral waiting copy', async () => {
+  const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 1, status: 'scheduled', isIndividual: false, occupiedCount: 0, overbookCount: 1, waitlistCount: 1 };
+  globalThis.fetch = async (url) => {
+    const path = String(url);
+    if (path.includes('/api/calendar/week')) return response({ ...baseData, sessions: [session] });
+    if (path.endsWith(`/api/calendar/sessions/${session.id}/attendees`)) return response({ reservations: [], waitlist: [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', clientId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', firstName: 'Lucía', lastName: 'Martín', status: 'waiting' }] });
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  render(React.createElement(CalendarPage));
+  fireEvent.click(await screen.findByRole('button', { name: /Fuerza 2J/ }));
+  await screen.findByText('Lista de espera');
+  const waitingRow = screen.getByText('Lucía Martín').closest('li');
+  assert.ok(within(waitingRow).getByText('En espera'));
+  assert.equal(within(waitingRow).queryByText(/sin promoción automática/i), null);
+});
+
 test('reopen reservation is only offered after attendance or no-show', async () => {
   const session = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', serviceId: service.id, serviceName: service.name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${key(monday)}T18:00:00.000Z`, durationMinutes: 60, capacity: 1, status: 'scheduled', isIndividual: false, occupiedCount: 1, overbookCount: 0, waitlistCount: 0 };
   const roster = { reservations: [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', clientId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', firstName: 'Lucía', lastName: 'Martín', status: 'reserved' }], waitlist: [] };
