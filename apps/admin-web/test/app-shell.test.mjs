@@ -7,7 +7,7 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http:
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
-const { AppShell } = await import('../src/app-shell.tsx');
+const { AppShell, getProfessionalNavigation, getProfessionalPageContext } = await import('../src/app-shell.tsx');
 const { CommandCenter } = await import('../src/command-center.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
 after(() => dom.window.close());
@@ -21,16 +21,39 @@ const model = {
 };
 const capabilities = {calendar:true,clients:true,communications:true,billing:false,staff:true};
 
-test('unified shell shows only permitted areas and renders a calm empty Command Center', async () => {
-  globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : String(url).includes('/api/session/capabilities') ? response(capabilities) : response({groups:[]});
-  render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
+test('Admin sees the six professional sections and only their existing authorized routes', async () => {
+  const adminCapabilities={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true};
+  globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : String(url).includes('/api/session/capabilities') ? response(adminCapabilities) : response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByText('0 sesiones hoy');
-  assert.ok(screen.getByRole('link',{name:'Agenda'}));
-  assert.ok(screen.getByRole('link',{name:'Clientes'}));
-  assert.equal(screen.queryByRole('link',{name:'Economía'}),null);
+  const nav=within(document.querySelector('.app-navigation'));
+  for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
+  for(const label of ['Agenda','Servicios y cuotas','Economía','Tienda','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
+  assert.ok(nav.getByRole('link',{name:/Comunicación/}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
   assert.ok(screen.getByText('Todo en orden'));
   assert.equal(document.querySelector('.app-navigation .nav-count')?.textContent,'2');
+});
+
+test('Trainer sees only capability-allowed professional sections and no business routes by default',async()=>{
+  const trainerCapabilities={calendar:true,clients:true,communications:true,billing:false,staff:true,notificationSettings:false,news:false,store:false};
+  globalThis.fetch=async url=>String(url).includes('/api/session/capabilities')?response(trainerCapabilities):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  await screen.findByText('0 sesiones hoy');const nav=within(document.querySelector('.app-navigation'));
+  for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
+  assert.equal(nav.queryByRole('button',{name:'Negocio'}),null);
+  for(const label of ['Economía','Tienda','Noticias','Ajustes de avisos'])assert.equal(nav.queryByRole('link',{name:label}),null);
+  assert.ok(nav.getByRole('link',{name:'Servicios y cuotas'}));
+  assert.equal(screen.queryByText('Cobrado hoy'),null);
+});
+
+test('groups disappear when no child is allowed and partial grants expose only their matching subnavigation',()=>{
+  const none={calendar:false,clients:false,communications:false,billing:false,staff:false,notificationSettings:false,news:false,store:false};
+  assert.deepEqual(getProfessionalNavigation(none).map(item=>item.label),['Resumen']);
+  const partial={...none,clients:true,notificationSettings:true};
+  const nav=getProfessionalNavigation(partial);
+  assert.deepEqual(nav.map(item=>item.label),['Resumen','Clientes','Negocio']);
+  assert.deepEqual(nav.find(item=>item.id==='business').children.map(item=>item.label),['Ajustes de avisos']);
 });
 
 test('global search opens with Ctrl+K, groups permitted results and closes with Escape', async () => {
@@ -81,8 +104,9 @@ test('permitted Communications navigation remains visible while moving between m
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByText('0 sesiones hoy');
   const nav = document.querySelector('.app-navigation');
+  assert.ok(within(nav).getByRole('button', { name: 'Actividad' }));
   assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
-  for (const label of ['Servicios', 'Agenda', 'Clientes', 'Economía', 'Equipo']) {
+  for (const label of ['Servicios y cuotas', 'Agenda', 'Clientes', 'Economía', 'Equipo']) {
     const link = within(nav).getByRole('link', { name: new RegExp(label) });
     fireEvent.click(link);
     await waitFor(() => assert.equal(within(nav).getByRole('link', { name: new RegExp(label) }).getAttribute('aria-current'), 'page'));
@@ -91,6 +115,7 @@ test('permitted Communications navigation remains visible while moving between m
   assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
   fireEvent.click(within(nav).getByRole('link', { name: /Comunicación/ }));
   await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Comunicación/ }).getAttribute('aria-current'), 'page'));
+  assert.ok(within(nav).getByRole('button',{name:'Actividad'}).closest('.app-nav-group').classList.contains('is-active'));
 });
 
 test('News management navigation is visible only when the server grants its capability', async()=>{
@@ -106,19 +131,39 @@ test('News management navigation is visible only when the server grants its capa
   assert.equal(within(document.querySelector('.app-navigation')).queryByRole('link',{name:'Noticias'}),null);
 });
 
-test('compact sidebar preserves accessible navigation and can expand without losing the active section',async()=>{
+test('authorized hash deep links retain their current subnavigation and page context',async()=>{
+  const allowed={...capabilities,calendar:true,news:false};
+  globalThis.fetch=async url=>String(url).includes('/api/session/capabilities')?response(allowed):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
+  window.location.hash='#services?serviceId=existing';render(React.createElement(AppShell,null,React.createElement('main',null,'Página existente')));
+  await screen.findByText('Página existente');
+  const nav=within(document.querySelector('.app-navigation'));
+  assert.equal(nav.getByRole('link',{name:'Servicios y cuotas'}).getAttribute('aria-current'),'page');
+  assert.ok(nav.getByRole('button',{name:'Mi gimnasio'}).closest('.app-nav-group').classList.contains('is-active'));
+  assert.equal(getProfessionalPageContext('services').section,'Mi gimnasio');
+  assert.equal(getProfessionalPageContext('notification-settings').page,'Ajustes de avisos');
+});
+
+test('navigation introduces no Programación, Arena, or Athlete View destination',()=>{
+  const nav=getProfessionalNavigation({...capabilities,billing:true,news:true,store:true,notificationSettings:true});
+  assert.deepEqual(nav.map(item=>item.label),['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio']);
+  assert.equal(JSON.stringify(nav).match(/Programación|Arena|Athlete View|Entrenamientos/g),null);
+});
+
+test('expanded navigation is the default and compact sidebar can expand without losing the active section',async()=>{
   dom.window.localStorage.clear();
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response(capabilities):String(url).includes('/api/dashboard/command-center')?response(model):String(url).includes('/api/dashboard/preferences')?response({order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]}):response({groups:[]});
   window.location.hash='#home';
   render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   await screen.findByText('0 sesiones hoy');
-  const frame=document.querySelector('.app-frame');assert.ok(frame.classList.contains('is-compact'));
-  const comm=screen.getByRole('link',{name:'Comunicación'});assert.ok(comm);assert.equal(comm.getAttribute('title'),'Comunicación');
+  const frame=document.querySelector('.app-frame');assert.equal(frame.classList.contains('is-compact'),false);
+  fireEvent.click(screen.getByRole('button',{name:'Compactar menú'}));
+  await waitFor(()=>assert.equal(frame.classList.contains('is-compact'),true));
+  const comm=screen.getByRole('button',{name:'Actividad'});assert.ok(comm);assert.equal(comm.getAttribute('title'),'Actividad');
   fireEvent.click(screen.getByRole('button',{name:'Expandir menú'}));
   await waitFor(()=>assert.equal(frame.classList.contains('is-compact'),false));
   fireEvent.click(screen.getByRole('link',{name:'Clientes'}));
   await waitFor(()=>assert.equal(screen.getByRole('link',{name:'Clientes'}).getAttribute('aria-current'),'page'));
-  assert.ok(screen.getByRole('link',{name:'Comunicación'}));
+  assert.ok(screen.getByRole('link',{name:/Comunicación/}));
 });
 
 test('Home layout controls persist actor preferences and restore the default layout',async()=>{
