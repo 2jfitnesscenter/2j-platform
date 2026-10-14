@@ -113,6 +113,21 @@ test('navigation capabilities remain authorized and independent of Command Cente
   assert.equal(adminCaps.headers['cache-control'],'no-store');
 });
 
+test('direct business API routes stay fail-closed when a Trainer lacks business capabilities',async()=>{
+  const [trainerEconomics,trainerStore,adminEconomics,adminStore]=await Promise.all([
+    trainer.inject({method:'GET',url:'/api/economics/overview'}),
+    trainer.inject({method:'GET',url:'/api/admin/store'}),
+    admin.inject({method:'GET',url:'/api/economics/overview'}),
+    admin.inject({method:'GET',url:'/api/admin/store'}),
+  ]);
+  assert.equal(trainerEconomics.statusCode,403);
+  assert.deepEqual(trainerEconomics.json(),{error:'permission_denied'});
+  assert.equal(trainerStore.statusCode,403);
+  assert.deepEqual(trainerStore.json(),{error:'permission_denied'});
+  assert.equal(adminEconomics.statusCode,200,adminEconomics.body);
+  assert.equal(adminStore.statusCode,200,adminStore.body);
+});
+
 test('cash summary follows 2J-040 selection semantics and never fails with multiple sessions per day', async () => {
   const today = await sql`SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS day`;
   const [only] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)

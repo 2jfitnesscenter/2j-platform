@@ -8,7 +8,7 @@ import { CalendarPage } from './calendar-page.js';
 import { EconomicsPage } from './economics-page.js';
 import { StaffPage } from './staff-page.js';
 import { CommunicationsPage } from './communications-page.js';
-import { AppShell } from './app-shell.js';
+import { AppShell, getProfessionalPageContext } from './app-shell.js';
 import { CommandCenter } from './command-center.js';
 import { NotificationSettings } from './notification-settings.js';
 import { NewsPage } from './news-page.js';
@@ -21,7 +21,7 @@ function App() {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
-  React.useEffect(() => { document.title = `${route === 'home' ? 'Inicio' : route === 'clients' ? 'Clientes' : route === 'calendar' ? 'Agenda' : route === 'economics' ? 'Economía' : route === 'staff' ? 'Equipo' : route === 'communications' ? 'Comunicación' : route === 'notification-settings' ? 'Avisos' : route === 'news' ? 'Noticias' : route === 'store' ? 'Tienda' : 'Servicios'} · 2J Platform`; }, [route]);
+  React.useEffect(() => { document.title = `${getProfessionalPageContext(route).page} · 2J Platform`; }, [route]);
   const page = route === 'store' ? <StorePage/> : route === 'news' ? <NewsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }
