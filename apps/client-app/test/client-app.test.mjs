@@ -36,11 +36,13 @@ test('pilot member login uses an opaque server session and logout returns to sig
     navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
     sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '00000000-0000-4000-8000-000000000001' } },
   });
-  let loggedIn = false; const requests = [];
+  let loggedIn = false; const requests = []; let memberPreferences = { appearance: 'dark', language: 'es' };
   globalThis.fetch = async (url, init = {}) => {
     requests.push({ url: String(url), init });
     if (url === '/api/pilot/member/login') { assert.deepEqual(JSON.parse(init.body), { code: '2j-member-a-local' }); loggedIn = true; return new Response(JSON.stringify({ expiresAt: new Date(Date.now() + 3_600_000).toISOString() }), { headers: { 'content-type': 'application/json' } }); }
     if (url === '/api/pilot/member/logout') { loggedIn = false; return new Response(null, { status: 204 }); }
+    if (url === '/api/me/preferences' && init.method === 'PATCH') { memberPreferences = { ...memberPreferences, ...JSON.parse(init.body) }; return new Response(JSON.stringify({ preferences: memberPreferences }), { headers: { 'content-type': 'application/json' } }); }
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: memberPreferences }), { headers: { 'content-type': 'application/json' } });
     if (url === '/api/me' && loggedIn) return new Response(JSON.stringify({ profile: { id: 'd0700000-0000-4000-8000-000000000001', firstName: 'María', lastName: 'González', email: null, status: 'active' } }), { headers: { 'content-type': 'application/json' } });
     if (url === '/api/me' && !loggedIn) return new Response(JSON.stringify({ error: 'client_authentication_required' }), { status: 401, headers: { 'content-type': 'application/json' } });
     if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
@@ -53,7 +55,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
     if (url === '/api/me/training-summary') return new Response(JSON.stringify({ status: 'linked', summaryStatus: 'available', summary: { trainingStatus: 'active', asOf: '2026-10-13T12:00:00.000Z', currentProgram: { name: 'Fuerza base' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } } }));
     return new Response('{}');
   };
-  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const { render, cleanup, fireEvent, within, ClientApp } = await uiHarness();
   const ui = render(React.createElement(ClientApp, { pilotLoginEnabledOverride: true }));
   const code = await ui.findByLabelText('Código de acceso');
   fireEvent.change(code, { target: { value: '2j-member-a-local' } });
@@ -76,10 +78,29 @@ test('pilot member login uses an opaque server session and logout returns to sig
   fireEvent.click(ui.getByRole('button', { name: /Abrir buzón/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));
   assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
-  fireEvent.click(ui.getByRole('button', { name: 'Cerrar sesión' }));
+  fireEvent.click(within(ui.getByRole('navigation', { name: 'Navegación principal' })).getByRole('button', { name: 'Ajustes' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Apariencia' }));
+  assert.equal(ui.getByRole('radio', { name: /Oscuro/ }).checked, true, 'persisted server preference is loaded');
+  assert.equal(ui.container.querySelector('.client-app')?.classList.contains('hub-theme-light'), false);
+  fireEvent.click(ui.getByRole('radio', { name: /Claro/ }));
+  assert.ok(await ui.findByText('Preferencia guardada.'));
+  assert.equal(ui.container.querySelector('.client-app')?.classList.contains('hub-theme-light'), true);
+  assert.equal(memberPreferences.appearance, 'light');
+  assert.ok(requests.some(item => item.url === '/api/me/preferences' && item.init.method === 'PATCH' && JSON.parse(item.init.body).appearance === 'light'));
+  fireEvent.click(ui.getAllByRole('button', { name: 'Cerrar sesión' }).at(-1));
   assert.ok(await ui.findByRole('heading', { name: 'Tu espacio, a tu manera' }));
   assert.equal(requests.some(item => item.url === '/api/pilot/member/logout' && item.init.credentials === 'include'), true);
   cleanup(); dom.window.close();
+});
+
+test('preference save failure keeps the immediate appearance and offers a working retry', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, { window:{configurable:true,value:dom.window}, document:{configurable:true,value:dom.window.document}, navigator:{configurable:true,value:dom.window.navigator}, HTMLElement:{configurable:true,value:dom.window.HTMLElement}, sessionStorage:{configurable:true,value:dom.window.sessionStorage} });
+  let patchAttempts=0; let savedAppearance='dark';
+  globalThis.fetch=async (input,init={})=>{const url=String(input);if(url==='/api/me/preferences'&&init.method==='PATCH'){patchAttempts++;if(patchAttempts===1)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});savedAppearance=JSON.parse(init.body).appearance;return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));}if(url==='/api/me/preferences')return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'a',firstName:'Eva',lastName:'Piloto',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[]}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response('[]');if(url==='/api/me/booking-access')return new Response(JSON.stringify({enabled:false}));if(url==='/api/me/news')return new Response(JSON.stringify({items:[],featured:null}));if(url==='/api/me/store/catalog'||url==='/api/me/store/purchases')return new Response(JSON.stringify({items:[]}));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:0}));return new Response('{}');};
+  const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading',{name:'Hola, Eva'}));fireEvent.click(ui.getByRole('button',{name:'Ajustes'}));assert.ok(await ui.findByRole('heading',{name:'Apariencia'}));fireEvent.click(ui.getByRole('radio',{name:/Claro/}));assert.ok(await ui.findByRole('alert'));assert.ok(ui.container.querySelector('.client-app')?.classList.contains('hub-theme-light'));assert.ok(ui.getByRole('button',{name:'Reintentar'}));fireEvent.click(ui.getByRole('button',{name:'Reintentar'}));assert.ok(await ui.findByText('Preferencia guardada.'));assert.equal(savedAppearance,'light');assert.equal(patchAttempts,2);
+  cleanup();dom.window.close();
 });
 
 test('dates and times are formatted in Atlantic/Canary', () => {
@@ -359,12 +380,22 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   assert.ok(ui.getByText('Consulta los productos disponibles. Las compras se gestionan directamente en el centro.'));
   fireEvent.click(within(navigation).getByRole('button', { name: 'Ajustes' }));
   assert.ok(await ui.findByRole('heading', { name: 'Ajustes' }));
+  assert.ok(ui.getByRole('heading', { name: 'Notificaciones' }));
+  assert.ok(ui.getByText('Las opciones que afectan únicamente a tus entrenamientos se gestionan dentro de Búnker.'));
+  assert.equal(ui.getByRole('radio', { name: /Sistema/ }).checked, true);
+  fireEvent.click(ui.getByRole('radio', { name: /Claro/ }));
+  assert.ok(ui.container.querySelector('.client-app')?.classList.contains('hub-theme-light'));
+  assert.ok(ui.getByText('Vista previa: el cambio solo se aplica aquí.'));
+  fireEvent.click(ui.getByRole('radio', { name: /Oscuro/ }));
+  assert.equal(ui.container.querySelector('.client-app')?.classList.contains('hub-theme-light'), false);
+  assert.equal(dom.window.localStorage.getItem('2j.member.appearance.v1'), null, 'preview does not persist appearance hints');
   assert.ok(ui.getByRole('heading', { name: 'Herramientas del piloto' }));
   fireEvent.click(ui.getByRole('button', { name: 'Copiar información de diagnóstico' }));
   await ui.findByText('Información de diagnóstico copiada.');
   assert.match(clipboard[0], /mode=fixture-preview/);
   assert.match(clipboard[0], /viewport=\d+x\d+/);
   assert.doesNotMatch(clipboard[0], /Juan|Demo|token|cookie|secret/i);
+  assert.deepEqual(requests, [], 'preview appearance changes stay local and preview makes zero API calls');
 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Inicio' }));
   fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
