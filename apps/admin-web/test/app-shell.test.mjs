@@ -25,13 +25,14 @@ test('Admin sees the six professional sections and only their existing authorize
   const adminCapabilities={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true};
   globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : String(url).includes('/api/session/capabilities') ? response(adminCapabilities) : response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');
+  await screen.findByRole('heading',{name:'Agenda de hoy'});
   const nav=within(document.querySelector('.app-navigation'));
   for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
   for(const label of ['Agenda','Servicios y cuotas','Economía','Tienda','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
   assert.ok(nav.getByRole('link',{name:/Comunicación/}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
-  assert.ok(screen.getByText('Todo en orden'));
+  assert.ok(screen.getByText('Todo al día'));
+  assert.ok(screen.getByText('No hay sesiones programadas hoy'));
   assert.equal(document.querySelector('.app-navigation .nav-count')?.textContent,'2');
 });
 
@@ -39,7 +40,7 @@ test('Trainer sees only capability-allowed professional sections and no business
   const trainerCapabilities={calendar:true,clients:true,communications:true,billing:false,staff:true,notificationSettings:false,news:false,store:false};
   globalThis.fetch=async url=>String(url).includes('/api/session/capabilities')?response(trainerCapabilities):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');const nav=within(document.querySelector('.app-navigation'));
+  await screen.findByRole('heading',{name:'Agenda de hoy'});const nav=within(document.querySelector('.app-navigation'));
   for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
   assert.equal(nav.queryByRole('button',{name:'Negocio'}),null);
   for(const label of ['Economía','Tienda','Noticias','Ajustes de avisos'])assert.equal(nav.queryByRole('link',{name:label}),null);
@@ -65,7 +66,7 @@ test('global search opens with Ctrl+K, groups permitted results and closes with 
       : String(url).includes('/api/session/capabilities') ? response(capabilities) : response(model);
   };
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');
+  await screen.findByRole('heading',{name:'Agenda de hoy'});
   fireEvent.keyDown(window,{key:'k',ctrlKey:true});
   const input=await screen.findByRole('textbox',{name:'Buscar en 2J'});
   fireEvent.change(input,{target:{value:'María'}});
@@ -81,7 +82,7 @@ test('navigation stays available from independent capabilities when Command Cent
     ? response({calendar:true,clients:true,communications:false,billing:false,staff:false})
     : response({error:'internal_error'},500);
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
-  await screen.findByText('No se pudo abrir el Command Center');
+  await screen.findByText('No se pudo cargar el resumen');
   assert.ok(screen.getByRole('link',{name:'Agenda'}));
   assert.ok(screen.getByRole('link',{name:'Clientes'}));
   assert.equal(screen.queryByRole('link',{name:'Economía'}),null);
@@ -94,7 +95,7 @@ test('Store navigation is exposed only when the server grants store capability',
   assert.ok(await screen.findByRole('link',{name:'Tienda'}));unmount();
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,store:false}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');assert.equal(screen.queryByRole('link',{name:'Tienda'}),null);
+  await screen.findByRole('heading',{name:'Agenda de hoy'});assert.equal(screen.queryByRole('link',{name:'Tienda'}),null);
 });
 
 test('permitted Communications navigation remains visible while moving between modules', async () => {
@@ -102,7 +103,7 @@ test('permitted Communications navigation remains visible while moving between m
     ? response({calendar:true,clients:true,communications:true,billing:true,staff:true})
     : String(url).includes('/api/dashboard/command-center') ? response(model) : response({groups:[]});
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');
+  await screen.findByRole('heading',{name:'Agenda de hoy'});
   const nav = document.querySelector('.app-navigation');
   assert.ok(within(nav).getByRole('button', { name: 'Actividad' }));
   assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
@@ -121,13 +122,13 @@ test('permitted Communications navigation remains visible while moving between m
 test('News management navigation is visible only when the server grants its capability', async()=>{
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,news:true}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');
+  await screen.findByRole('heading',{name:'Agenda de hoy'});
   const nav=document.querySelector('.app-navigation');
   assert.ok(within(nav).getByRole('link',{name:'Noticias'}));
   cleanup();
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,news:false}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');
+  await screen.findByRole('heading',{name:'Agenda de hoy'});
   assert.equal(within(document.querySelector('.app-navigation')).queryByRole('link',{name:'Noticias'}),null);
 });
 
@@ -154,7 +155,7 @@ test('expanded navigation is the default and compact sidebar can expand without 
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response(capabilities):String(url).includes('/api/dashboard/command-center')?response(model):String(url).includes('/api/dashboard/preferences')?response({order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]}):response({groups:[]});
   window.location.hash='#home';
   render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');
+  await screen.findByRole('heading',{name:'Agenda de hoy'});
   const frame=document.querySelector('.app-frame');assert.equal(frame.classList.contains('is-compact'),false);
   fireEvent.click(screen.getByRole('button',{name:'Compactar menú'}));
   await waitFor(()=>assert.equal(frame.classList.contains('is-compact'),true));
@@ -166,17 +167,85 @@ test('expanded navigation is the default and compact sidebar can expand without 
   assert.ok(screen.getByRole('link',{name:/Comunicación/}));
 });
 
-test('Home layout controls persist actor preferences and restore the default layout',async()=>{
-  dom.window.localStorage.clear();const writes=[];
-  globalThis.fetch=async(url,options={})=>{
-    if(String(url).includes('/api/dashboard/preferences')&&options.method==='PUT'){const layout=JSON.parse(options.body);writes.push(layout);return response(layout);}
-    if(String(url).includes('/api/dashboard/preferences'))return response({order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]});
-    return String(url).includes('/api/session/capabilities')?response(capabilities):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
+test('Admin summary prioritizes real agenda, attention and pending work, with finance only when the API grants it',async()=>{
+  const adminSummary={...model,
+    permissions:{...model.permissions,billing:true,cash:true,transfers:true},
+    today:{...model.today,sessionCount:2,capacity:10,occupied:6,waitlistCount:1,sessions:[{id:'s-1',serviceName:'Fuerza funcional',professionalName:'Alex Rivera',startsAt:'2026-07-15T07:00:00Z',occupied:6,capacity:10,free:4,waitlistCount:1,isNow:false,state:'upcoming'}]},
+    attention:[
+      {id:'waitlist-s1',kind:'waitlist',title:'Lista de espera por resolver',summary:'1 persona · Fuerza funcional',href:'#calendar',ageAt:'2026-01-15T08:00:00Z'},
+      {id:'unassigned-s2',kind:'unassigned_session',title:'Sesión sin profesional',summary:'Fuerza funcional',href:'#calendar',ageAt:'2026-07-15T07:00:00Z'},
+      {id:'form-a1',kind:'document_pending',title:'Documento pendiente',summary:'Lucía Demo · Alta deportiva',href:'#clients?clientId=client-1&tab=documents',ageAt:'2026-01-14T10:00:00Z'},
+      {id:'pending-transfers',kind:'pending_transfers',title:'1 transferencia por validar',summary:'Revisar justificantes recibidos',href:'#economics',ageAt:null},
+      {id:'overdue-payments',kind:'overdue_payments',title:'1 cargo vencido',summary:'Revisar saldos pendientes',href:'#economics',ageAt:null},
+    ],
+    economics:{pendingCents:12500,overdueCount:1,collectedTodayCents:0,cashSession:{status:'open',openingCents:10000,expectedCents:10000,countedCents:null,differenceCents:null}},
+    team:{active:3,workingNow:1,activeAbsences:1,substitutions:0},unread:2,
   };
+  const requested=[];
+  globalThis.fetch=async(url)=>{requested.push(String(url));return String(url).includes('/api/dashboard/command-center')?response(adminSummary):String(url).includes('/api/session/capabilities')?response({...capabilities,billing:true}):response({groups:[]});};
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByText('0 sesiones hoy');fireEvent.click(screen.getByRole('button',{name:'Personalizar inicio'}));
-  const row=screen.getAllByText('Clientes').map(item=>item.closest('.home-layout-row')).find(Boolean);fireEvent.click(within(row).getByRole('button',{name:'Ocultar'}));
-  await waitFor(()=>assert.ok(writes.at(-1).hidden.includes('clients')));
-  fireEvent.click(screen.getByRole('button',{name:'Restaurar disposición por defecto'}));
-  await waitFor(()=>assert.deepEqual(writes.at(-1).hidden,[]));
+  const main=await screen.findByRole('main');
+  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Agenda de hoy','Necesitan atención','Pendientes','Pulso operativo','Pendiente de gestión']);
+  assert.equal(main.querySelector('.summary-session-free')?.textContent,'4plazas libres');
+  assert.ok(within(main).getByText('1 en espera'));
+  assert.ok(within(main).getByText('2 mensajes sin leer'));
+  assert.ok(within(main).getByText('Documento pendiente'));
+  assert.ok(within(main).getByText('1 transferencia por validar'));
+  assert.ok(within(main).getByText('Lista de espera por resolver'));
+  assert.ok(within(main).getByText('Sesión sin profesional'));
+  assert.ok(within(main).getByText('15 jul, 08:00'));
+  assert.ok(within(main).getByText('Pendiente de cobro'));
+  assert.ok(within(main).getByText('Ausencias activas'));
+  assert.equal(within(main).getAllByRole('link',{name:/Fuerza funcional/})[0].getAttribute('href'),'#calendar');
+  assert.equal(within(main).getByRole('link',{name:/Lucía Demo/}).getAttribute('href'),'#clients?clientId=client-1&tab=documents');
+  assert.equal(within(main).getByRole('link',{name:/mensajes sin leer/}).getAttribute('href'),'#communications');
+  assert.equal(within(main).queryByText('Training'),null);
+  assert.equal(within(main).queryByText('Salud'),null);
+  assert.equal(within(main).queryByText('Clientes activos'),null);
+  assert.equal(within(main).queryByRole('button',{name:'Personalizar inicio'}),null);
+  assert.equal(requested.some(url=>url.includes('/api/dashboard/preferences')),false);
+});
+
+test('Trainer summary uses operational data and never renders finance without its server grant',async()=>{
+  const trainerSummary={...model,permissions:{...model.permissions,billing:false,cash:false},economics:null,unread:0};
+  globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(trainerSummary):String(url).includes('/api/session/capabilities')?response(capabilities):response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  const main=await screen.findByRole('main');
+  assert.ok(within(main).getByRole('heading',{name:'Agenda de hoy'}));
+  assert.ok(within(main).getByRole('heading',{name:'Necesitan atención'}));
+  assert.ok(within(main).getByRole('heading',{name:'Pendientes'}));
+  assert.ok(within(main).getByRole('heading',{name:'Pulso operativo'}));
+  assert.equal(within(main).queryByText(/Economía|Pendiente de cobro|Cargos vencidos|Caja de hoy/),null);
+  assert.ok(within(main).getByText('No hay mensajes sin leer'));
+});
+
+test('limited professional sees only server-permitted summary blocks without finance or team placeholders',async()=>{
+  const limited={...model,permissions:{calendar:true,clients:false,communications:false,documents:false,sensitiveReview:false,followup:false,billing:false,cash:false,transfers:false,staff:false,absences:false,timeclock:false},clients:null,team:null,economics:null,attention:[],unread:0,quickActions:[]};
+  globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(limited):String(url).includes('/api/session/capabilities')?response({calendar:true,clients:false,communications:false,billing:false,staff:false}):response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  const main=await screen.findByRole('main');
+  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Agenda de hoy','Necesitan atención']);
+  assert.equal(within(main).queryByText('No tienes trabajo pendiente en tus bandejas'),null);
+  assert.equal(within(main).queryByText('Clientes activos'),null);
+  assert.equal(within(main).queryByText(/Caja|cobro|Economía/),null);
+});
+
+test('dashboard refuses unsafe server-provided deep links and keeps supported local links actionable',async()=>{
+  const data={...model,attention:[{id:'safe',kind:'waitlist',title:'Lista de espera por resolver',summary:'1 persona · Funcional',href:'#calendar',ageAt:null},{id:'unsafe',kind:'unassigned_session',title:'Sesión sin profesional',summary:'Fuerza',href:'https://example.invalid',ageAt:null}]};
+  globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(data):String(url).includes('/api/session/capabilities')?response(capabilities):response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  const main=await screen.findByRole('main');
+  assert.equal(within(main).getByRole('link',{name:/Lista de espera por resolver/}).getAttribute('href'),'#calendar');
+  assert.equal(within(main).queryByRole('link',{name:/Sesión sin profesional/}),null);
+  assert.ok(within(main).getByText('Sesión sin profesional'));
+});
+
+test('loading and error states are distinct and error can be retried accessibly',async()=>{
+  let resolveDashboard;
+  globalThis.fetch=(url)=>String(url).includes('/api/dashboard/command-center')?new Promise(resolve=>{resolveDashboard=resolve;}):String(url).includes('/api/session/capabilities')?response(capabilities):response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  assert.ok(screen.getByRole('status'));
+  resolveDashboard(response({error:'internal_error'},500));
+  assert.ok(await screen.findByRole('alert'));
+  assert.ok(screen.getByRole('button',{name:'Reintentar'}));
 });
