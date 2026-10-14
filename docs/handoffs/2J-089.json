@@ -1,0 +1,52 @@
+{
+  "taskId": "2J-089",
+  "repository": "2jfitnesscenter/2j-platform",
+  "baseSha": "b919624f381a5a7c29ca072e40cd942d0ff169f8",
+  "branch": "agent/codex/2J-089-platform-bunker-contract",
+  "status": "draft_prs_ci_passed_review_pending",
+  "pullRequest": { "number": 36, "url": "https://github.com/2jfitnesscenter/2j-platform/pull/36", "draft": true, "implementationHeadSha": "f4facbd7ab68e673459117e818e0bdf58ac36d60" },
+  "mergeAllowed": false,
+  "crossRepositoryTask": true,
+  "otherRepository": {
+    "repository": "2jfitnesscenter/2jfitnessapp",
+    "observedBaseSha": "d941f3afd8c2bf660f179640465506eb50d8cee4",
+    "branch": "agent/codex/2J-089-bunker-summary-contract",
+    "pullRequest": { "number": 28, "url": "https://github.com/2jfitnesscenter/2jfitnessapp/pull/28", "draft": true, "implementationHeadSha": "e92c42281237a471f5b2814b9c73fe2a625d38a6" }
+  },
+  "contract": {
+    "version": 1,
+    "trainingEndpoint": "POST /api/platform/v1/training-summary",
+    "browserChoosesTrainingId": false,
+    "linkOwner": "Platform",
+    "trainingDataOwner": "Training",
+    "serviceAuth": "2J-SERVICE-AUTH-V1",
+    "summaryFields": ["trainingStatus", "asOf", "currentProgram.name", "recentActivity.lastTrainingAt", "recentActivity.sessionsLast30Days"],
+    "memberStates": ["not_linked", "linked_available", "linked_unavailable"],
+    "sso": "not_implemented",
+    "entitlementMatrix": "not_decided"
+  },
+  "credentialsCommitted": false,
+  "tests": {
+    "platform": { "total": 285, "passed": 285, "failed": 0, "postgresApi": 176, "typecheckPackages": 9, "buildPackages": 9, "auditHighOrAbove": "pass" },
+    "training": {
+      "apiTotal": 722,
+      "apiPassed": 675,
+      "apiSkipped": 47,
+      "apiFailed": 0,
+      "focusedProof": "23/23",
+      "frontend": "1808/1808 (single worker)",
+      "frontendBuild": "pass",
+      "generatedChecks": "pass",
+      "localeCheck": "pass",
+      "audit": {
+        "api": { "moderate": 1, "high": 1, "critical": 1 },
+        "frontend": { "low": 1, "moderate": 6, "high": 10, "critical": 4 }
+      }
+    }
+  },
+  "localCrossProcessSmoke": "not_run; covered by both signed protocol and member integration tests",
+  "independentReview": "pending",
+  "qa": "pending",
+  "implementationHeadSha": "f4facbd7ab68e673459117e818e0bdf58ac36d60",
+  "finalPrHeadIncludesDocumentationFollowup": true
+}

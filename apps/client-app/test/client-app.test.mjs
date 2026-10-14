@@ -50,6 +50,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]));
     if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
     if (url === '/api/me/notifications') return new Response(JSON.stringify({ items: [] }));
+    if (url === '/api/me/training-summary') return new Response(JSON.stringify({ status: 'linked', summaryStatus: 'available', summary: { trainingStatus: 'active', asOf: '2026-10-13T12:00:00.000Z', currentProgram: { name: 'Fuerza base' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } } }));
     return new Response('{}');
   };
   const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
@@ -67,6 +68,11 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(ui.getByText('Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.'));
   assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));
   assert.ok(ui.getByText('No tienes documentos pendientes.'));
+  fireEvent.click(ui.getByRole('button', { name: 'Búnker', exact: true }));
+  assert.ok(await ui.findByText('Búnker conectado'));
+  assert.ok(ui.getByText('Programa actual: Fuerza base'));
+  assert.ok(ui.getByText(/4 entrenos en los últimos 30 días/));
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
   fireEvent.click(ui.getByRole('button', { name: /Abrir buzón/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));
   assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');

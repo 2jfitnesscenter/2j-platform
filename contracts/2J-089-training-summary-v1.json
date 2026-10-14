@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "trainingUserId": "opaque-training-user-v1",
+  "trainingStatus": "active",
+  "asOf": "2026-10-13T12:00:00.000Z",
+  "currentProgram": {
+    "id": "program-opaque-v1",
+    "name": "Fuerza base"
+  },
+  "recentActivity": {
+    "lastTrainingAt": "2026-10-12",
+    "sessionsLast30Days": 4
+  }
+}

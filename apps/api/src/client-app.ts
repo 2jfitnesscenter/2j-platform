@@ -4,6 +4,7 @@ import type { createDatabase } from './db.js';
 import type { ClientAuthorizationContext } from './communications.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { materializeCalendarTemplates } from './calendar-materializer.js';
+import type { TrainingAdapter } from './training-integration.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -16,6 +17,7 @@ export function registerClientAppRoutes(
   resolveClient: (request: FastifyRequest) => Promise<ClientAuthorizationContext | null>,
   resolveEligibility: BookingEligibilityResolver,
   memberBookingEnabled = false,
+  trainingAdapter?: TrainingAdapter,
 ) {
   async function client(request: FastifyRequest, reply: any) {
     reply.header('Cache-Control', 'no-store');
@@ -40,6 +42,27 @@ export function registerClientAppRoutes(
     const [profile] = await db`SELECT id,first_name AS "firstName",last_name AS "lastName",email,phone,status FROM clients WHERE id=${actor.clientId} AND status='active'`;
     if (!profile) return reply.code(401).send({ error: 'client_authentication_required' });
     return { profile };
+  });
+
+  app.get('/api/me/training-summary', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    if (!actor.personId) return { status: 'not_linked' as const };
+    const [link] = await db`SELECT l.training_user_id AS "trainingUserId"
+      FROM training_account_links l JOIN platform_persons p ON p.id=l.person_id
+      WHERE l.person_id=${actor.personId}::uuid AND l.status='active' AND p.status='active'`;
+    if (!link) return { status: 'not_linked' as const };
+    const result = await trainingAdapter?.getSummary(String(link.trainingUserId)) ?? { status: 'disabled' as const };
+    if (result.status !== 'available' || !result.summary) return { status: 'linked' as const, summaryStatus: 'unavailable' as const };
+    const { trainingStatus, asOf, currentProgram, recentActivity } = result.summary;
+    return {
+      status: 'linked' as const,
+      summaryStatus: 'available' as const,
+      summary: {
+        trainingStatus, asOf,
+        ...(currentProgram ? { currentProgram: { name: currentProgram.name } } : {}),
+        ...(recentActivity ? { recentActivity } : {}),
+      },
+    };
   });
 
   app.get('/api/me/membership', async (request, reply) => {
