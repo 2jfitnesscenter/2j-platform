@@ -1,5 +1,6 @@
 ﻿param(
   [switch]$Stop,
+  [switch]$OwnerReview,
   [string]$Service,
   [string]$ConfigPath,
   [int]$Port
@@ -7,12 +8,13 @@
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$pilotHome = Join-Path $env:LOCALAPPDATA '2J\platform-local-pilot'
+$pilotHome = if ($OwnerReview) { Join-Path $env:LOCALAPPDATA '2J\owner-visual-review' } else { Join-Path $env:LOCALAPPDATA '2J\platform-local-pilot' }
 $runtimePath = Join-Path $pilotHome 'runtime.json'
 $configFile = Join-Path $pilotHome 'config.json'
-$containerName = '2j-platform-084-pilot'
-$volumeName = '2j-platform-084-pilot-data'
-$databasePort = 55440
+$pilotLabel = if ($OwnerReview) { 'owner-visual-review' } else { '084' }
+$containerName = if ($OwnerReview) { '2j-platform-owner-visual-review' } else { '2j-platform-084-pilot' }
+$volumeName = if ($OwnerReview) { '2j-platform-owner-visual-review-data' } else { '2j-platform-084-pilot-data' }
+$databasePort = if ($OwnerReview) { 55441 } else { 55440 }
 $databaseUrl = "postgres://2j_local:2j_local_dev_only@127.0.0.1:$databasePort/2j_demo"
 
 function Read-JsonFile([string]$Path) {
@@ -70,7 +72,7 @@ function Ensure-LocalDatabase {
   if ($containerNames -contains $containerName) { $existing = (& docker inspect $containerName | ConvertFrom-Json) }
   if ($existing) {
     $labels = $existing[0].Config.Labels
-    if ($labels.'com.2j.local-pilot' -ne '084') { throw "Ya existe un contenedor llamado $containerName que no pertenece a este piloto; no se modificó." }
+    if ($labels.'com.2j.local-pilot' -ne $pilotLabel) { throw "Ya existe un contenedor llamado $containerName que no pertenece a este piloto; no se modificó." }
     $imageEnv = @($existing[0].Config.Env)
     if (($imageEnv -notcontains 'POSTGRES_DB=2j_demo') -or ($imageEnv -notcontains 'POSTGRES_USER=2j_local') -or ($imageEnv -notcontains 'POSTGRES_PASSWORD=2j_local_dev_only')) {
       throw "El contenedor $containerName no coincide con la configuración sintética esperada; no se modificó."
@@ -85,7 +87,7 @@ function Ensure-LocalDatabase {
     if (-not (Test-TcpPort $databasePort)) { throw "El puerto local $databasePort está ocupado. No se tocará el proceso que lo usa; libera el puerto y vuelve a ejecutar pnpm pilot." }
     $volumeExists = (& docker volume ls --format '{{.Name}}') -contains $volumeName
     if (-not $volumeExists) { Invoke-Checked 'docker' @('volume','create',$volumeName) $repoRoot | Out-Null }
-    Invoke-Checked 'docker' @('run','--detach','--name',$containerName,'--label','com.2j.local-pilot=084','--env','POSTGRES_DB=2j_demo','--env','POSTGRES_USER=2j_local','--env','POSTGRES_PASSWORD=2j_local_dev_only','--publish',"127.0.0.1:${databasePort}:5432",'--volume',"${volumeName}:/var/lib/postgresql/data",'postgres:17-alpine') $repoRoot | Out-Null
+    Invoke-Checked 'docker' @('run','--detach','--name',$containerName,'--label',("com.2j.local-pilot=$pilotLabel" ),'--env','POSTGRES_DB=2j_demo','--env','POSTGRES_USER=2j_local','--env','POSTGRES_PASSWORD=2j_local_dev_only','--publish',"127.0.0.1:${databasePort}:5432",'--volume',"${volumeName}:/var/lib/postgresql/data",'postgres:17-alpine') $repoRoot | Out-Null
   }
 
   $ready = $false
@@ -128,7 +130,7 @@ if ($Service) {
   if ($Service -eq 'api-trainer') {
     Remove-Item Env:PILOT_MEMBER_AUTH_ENABLED,Env:PILOT_MEMBER_BOOKING_ENABLED,Env:PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED,Env:MEMBER_APP_ORIGIN -ErrorAction SilentlyContinue
     Remove-Item Env:TRAINING_SERVICE_BASE_URL,Env:TRAINING_SERVICE_KEY_ID,Env:TRAINING_SERVICE_SECRET -ErrorAction SilentlyContinue
-    $env:DATABASE_URL = $config.databaseUrl; $env:LOCAL_DEMO_ROLE = 'trainer'; $env:CORS_ORIGIN = $config.staffUrl
+    $env:DATABASE_URL = $config.databaseUrl; $env:LOCAL_DEMO_ROLE = 'trainer'; $env:CORS_ORIGIN = if ($config.trainerUrl) { $config.trainerUrl } else { $config.staffUrl }
     pnpm --filter @2j/api dev
   } elseif ($Service -eq 'api-admin') {
     Remove-Item Env:PILOT_MEMBER_AUTH_ENABLED,Env:PILOT_MEMBER_BOOKING_ENABLED,Env:MEMBER_APP_ORIGIN -ErrorAction SilentlyContinue
@@ -149,6 +151,9 @@ if ($Service) {
     pnpm --filter @2j/staff-app exec vite --host 127.0.0.1 --port $Port --strictPort
   } elseif ($Service -eq 'admin') {
     $env:VITE_API_URL = $config.adminApiUrl
+    pnpm --filter @2j/admin-web exec vite --host 127.0.0.1 --port $Port --strictPort
+  } elseif ($Service -eq 'trainer-review') {
+    $env:VITE_API_URL = $config.trainerApiUrl
     pnpm --filter @2j/admin-web exec vite --host 127.0.0.1 --port $Port --strictPort
   } elseif ($Service -eq 'member') {
     Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
@@ -204,6 +209,10 @@ $config = [ordered]@{
   adminApiUrl = "http://127.0.0.1:$adminApiPort"
   memberApiUrl = "http://127.0.0.1:$memberApiPort"
 }
+if ($OwnerReview) {
+  $config.trainerUrl = "http://127.0.0.1:$staffPort"
+  $config.staffUrl = $config.trainerUrl
+}
 $config | ConvertTo-Json | Set-Content -LiteralPath $configFile -Encoding utf8
 $env:NODE_ENV = 'development'; $env:DATABASE_URL = $databaseUrl
 Invoke-Checked 'pnpm' @('--filter','@2j/api','db:migrate') $repoRoot
@@ -211,7 +220,7 @@ Invoke-Checked 'pnpm' @('seed:demo') $repoRoot
 
 $processes = @()
 try {
-  foreach ($serviceSpec in @(
+  $serviceSpecs = @(
     @{ name = 'api-trainer'; port = $trainerApiPort },
     @{ name = 'api-admin'; port = $adminApiPort },
     @{ name = 'api-member'; port = $memberApiPort },
@@ -219,14 +228,26 @@ try {
     @{ name = 'staff'; port = $staffPort },
     @{ name = 'admin'; port = $adminPort },
     @{ name = 'member'; port = $memberPort }
-  )) {
+  )
+  if ($OwnerReview) {
+    $serviceSpecs = @(
+      @{ name = 'api-trainer'; port = $trainerApiPort },
+      @{ name = 'api-admin'; port = $adminApiPort },
+      @{ name = 'api-member'; port = $memberApiPort },
+      @{ name = 'notification-worker'; port = 0 },
+      @{ name = 'trainer-review'; port = $staffPort },
+      @{ name = 'admin'; port = $adminPort },
+      @{ name = 'member'; port = $memberPort }
+    )
+  }
+  foreach ($serviceSpec in $serviceSpecs) {
     $processes += Start-Service $serviceSpec.name $serviceSpec.port
     @{ processes = $processes; urls = $config; database = "127.0.0.1:$databasePort/2j_demo"; startedAt = (Get-Date).ToString('o') } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $runtimePath -Encoding utf8
   }
   Wait-Http "$($config.trainerApiUrl)/health" 'API Trainer'
   Wait-Http "$($config.adminApiUrl)/health" 'API Admin'
   Wait-Http "$($config.memberApiUrl)/health" 'API Miembro'
-  Wait-Http $config.staffUrl 'Vista Trainer'
+  if ($OwnerReview) { Wait-Http $config.trainerUrl 'Vista Trainer' } else { Wait-Http $config.staffUrl 'Vista Staff' }
   Wait-Http $config.adminUrl 'Vista Admin'
   Wait-Http $config.memberUrl 'Inicio de sesión de miembro'
 } catch {
@@ -238,10 +259,10 @@ Write-Host ''
 Write-Host 'Piloto local 2J listo. Todas las direcciones están limitadas a 127.0.0.1.' -ForegroundColor Green
 Write-Host "  Miembro:                   $($config.memberUrl)"
 Write-Host "  Vista previa sintética:    $($config.memberUrl)/?preview=1"
-Write-Host "  Trainer:                   $($config.staffUrl)"
+if ($OwnerReview) { Write-Host "  Trainer · shell profesional con permisos de Trainer: $($config.trainerUrl)" } else { Write-Host "  Trainer:                   $($config.staffUrl)" }
 Write-Host "  Admin:                     $($config.adminUrl)"
 Write-Host "  API Trainer:               $($config.trainerApiUrl)/health"
 Write-Host "  API Admin:                 $($config.adminApiUrl)/health"
 Write-Host "  PostgreSQL sintético:      127.0.0.1:$databasePort/2j_demo"
 Write-Host "  Logs:                      $pilotHome\logs"
-Write-Host 'Para detener los siete procesos: pnpm pilot:stop (la base y sus datos sintéticos se conservan).'
+if ($OwnerReview) { Write-Host 'Para detener las siete aplicaciones/APIs de revisión: pnpm owner:review:stop (la base y sus datos sintéticos se conservan).' } else { Write-Host 'Para detener los siete procesos: pnpm pilot:stop (la base y sus datos sintéticos se conservan).' }

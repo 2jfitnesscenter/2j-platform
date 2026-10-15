@@ -10,6 +10,14 @@ Start Docker Desktop and run this from the repository root:
 pnpm pilot
 ```
 
+For the owner's first-wave visual review, use the isolated variant:
+
+```powershell
+pnpm owner:review
+```
+
+It starts the Admin app and a second copy of the professional shell using the server-side Trainer demo role, plus the existing local preview services. It uses its own loopback PostgreSQL container, port `55441` and named volume so an older pilot database with a migration checksum mismatch is preserved untouched. Stop only the review app/API processes with `pnpm owner:review:stop`; the synthetic review database is retained for the next run. The owner review checklist is [here](docs/research/OWNER_VISUAL_REVIEW_FIRST_WAVE.md).
+
 On first run, the launcher installs the locked workspace dependencies automatically. It prepares a dedicated local PostgreSQL container/database (`2j-platform-084-pilot`, database `2j_demo`, port `55440`), applies migrations, and safely adds synthetic demo records. It starts the real-session Member pilot plus the Trainer and Admin workspaces, each with a dedicated API process, and the in-app notification worker. Open the printed Member URL to sign in with one of the local-only member codes below; the fixture preview remains available by adding `?preview=1`. `pnpm pilot:stop` stops only the seven processes created by the launcher. The synthetic database is retained between launches, and the seed is idempotent.
 
 All web and API processes bind to `127.0.0.1`. Trainer and Admin use distinct API processes and process-local development roles. Member uses its own API process and a database-backed session cookie. The three surfaces share only the isolated synthetic database. If a preferred web/API port is occupied, the launcher selects and prints a free loopback port; it never kills an unrelated process. PostgreSQL uses its own port and named volume and fails clearly if that port is occupied. The earlier `2j-platform-079b-pilot` database remains untouched.
