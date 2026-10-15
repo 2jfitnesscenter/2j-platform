@@ -47,7 +47,13 @@ export function CommandCenter() {
   const pendingItems = data.attention.filter(item => pendingKinds.has(item.kind));
   const canSeeAttention = permissions.calendar || permissions.billing || permissions.staff;
   const canSeePending = permissions.communications || permissions.transfers || (permissions.documents && permissions.clients) || (permissions.followup && permissions.clients);
-  const sessions = data.today.sessions ?? [];
+  const allSessions = data.today.sessions ?? [];
+  const now = Date.now();
+  const currentSessions = allSessions.filter(session => session.isNow);
+  const upcomingSessions = allSessions.filter(session => !session.isNow && Date.parse(session.startsAt) >= now);
+  const endedSessions = allSessions.filter(session => !session.isNow && Date.parse(session.startsAt) < now).sort((a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt));
+  const sessions = [...currentSessions, ...upcomingSessions, ...endedSessions].slice(0, 5);
+  const moreSessions = Math.max(0, allSessions.length - sessions.length);
 
   return <main className="command-center" id="home">
     <header className="summary-heading">
@@ -67,16 +73,16 @@ export function CommandCenter() {
       </dl>
       {sessions.length === 0
         ? <div className="summary-empty"><strong>No hay sesiones programadas hoy</strong><span>Consulta la agenda para ver otros días o preparar la próxima sesión.</span><a href="#calendar">Ir a la agenda <span aria-hidden="true">↗</span></a></div>
-        : <ul className="summary-session-list" aria-label="Sesiones de hoy">{sessions.map(session => <li key={session.id}>
+        : <ul className="summary-session-list" aria-label="Próximas sesiones de hoy">{sessions.map(session => <li key={session.id}>
           <ItemLink href="#calendar" className={`summary-session-row ${session.isNow ? 'is-current' : ''}`}>
             <time dateTime={session.startsAt}>{dateTime(session.startsAt)}</time>
-            <span className="summary-session-main"><strong>{session.serviceName}</strong><small>{session.professionalName ?? 'Profesional sin asignar'} · {session.state === 'in_progress' ? 'En curso' : session.state === 'finished' ? 'Finalizada' : 'Próxima'}</small></span>
-            <span className="summary-session-capacity"><strong>{session.occupied}/{session.capacity}</strong><small>reservas</small></span>
-            <span className="summary-session-free"><strong>{session.free}</strong><small>{session.free === 1 ? 'plaza libre' : 'plazas libres'}</small></span>
-            <span className={`summary-session-waitlist ${session.waitlistCount ? 'has-waitlist' : ''}`}>{session.waitlistCount ? `${session.waitlistCount} en espera` : 'Sin espera'}</span>
+            <span className="summary-session-main"><strong>{session.serviceName}</strong><small>{session.professionalName ?? 'Profesional sin asignar'}{session.state === 'in_progress' ? ' · En curso' : session.state === 'finished' ? ' · Finalizada' : ''}</small></span>
+            <span className="summary-session-capacity"><strong>{session.occupied}/{session.capacity}</strong></span>
+            {session.waitlistCount > 0 && <span className="summary-session-waitlist has-waitlist">{session.waitlistCount} en espera</span>}
             <span className="summary-row-arrow" aria-hidden="true">↗</span>
           </ItemLink>
         </li>)}</ul>}
+      {moreSessions > 0 && <p className="summary-more-sessions">+{moreSessions} {moreSessions === 1 ? 'sesión' : 'sesiones'} hoy · <a href="#calendar">Ver todas en la agenda</a></p>}
     </section>}
 
     <div className="summary-work-grid">

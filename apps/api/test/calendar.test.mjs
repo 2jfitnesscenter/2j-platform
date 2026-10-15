@@ -86,6 +86,23 @@ test('professional calendar omits client birth-date data and permits nullable bi
   assert.equal(noBirthDate.json().birthDate,null);
 });
 
+test('calendar includes only the requesting professional own opaque id for the Mis sesiones filter',async()=>{
+  const actorId=`calendar-linked-${randomUUID()}`;
+  const [professional]=await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,status,base_role,created_by,auth_actor_id) VALUES ('Demo','Trainer',${`Linked ${randomUUID()}`},'active','trainer','calendar-self-filter',${actorId}) RETURNING id`;
+  const linked=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId,role:'trainer'})});
+  try {
+    const week=await linked.inject({method:'GET',url:'/api/calendar/week?weekStart=2026-10-12'});
+    assert.equal(week.statusCode,200,week.body);
+    assert.equal(week.json().currentProfessionalId,professional.id);
+    assert.equal(JSON.stringify(week.json()).includes(actorId),false,'the actor identifier is not returned to the browser');
+    const unlinked=await trainer.inject({method:'GET',url:'/api/calendar/week?weekStart=2026-10-12'});
+    assert.equal(unlinked.json().currentProfessionalId,null);
+  } finally {
+    await linked.close();
+    await sql`UPDATE staff_professionals SET status='archived',updated_at=now() WHERE id=${professional.id}`;
+  }
+});
+
 test('staff can reserve and cancel a client; client 360 reads the same reservation through client_id', async () => {
   const session = await createSession(); const client = await createClient('Reservation');
   const created = await reserve(session.id, client.id);

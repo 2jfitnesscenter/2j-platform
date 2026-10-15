@@ -80,7 +80,7 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
       VALUES (${sessionId}::uuid,${mainService.service_id},${mainService.area_id},'manual',
         (date_trunc('day',now() AT TIME ZONE 'Atlantic/Canary') AT TIME ZONE 'Atlantic/Canary') + interval '17 hours',60,8,'scheduled','2j-demo-seed','d0700000-0000-4000-8000-000000000101')
-      ON CONFLICT(id) DO NOTHING`;
+      ON CONFLICT(id) DO UPDATE SET starts_at=excluded.starts_at`;
     await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,status,created_by)
       VALUES ('d0700000-0000-4000-8000-000000000301'::uuid,${sessionId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,'demo-entitlement-1','reserved','2j-demo-seed'),
              ('d0700000-0000-4000-8000-000000000302'::uuid,${sessionId}::uuid,'d0700000-0000-4000-8000-000000000002'::uuid,'demo-entitlement-2','reserved','2j-demo-seed'),
@@ -95,7 +95,7 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
       VALUES (${secondSessionId}::uuid,${secondService.service_id},${secondService.area_id},'manual',
         ((now() AT TIME ZONE 'Atlantic/Canary')::date + interval '18 hours 30 minutes') AT TIME ZONE 'Atlantic/Canary',60,6,'scheduled','2j-demo-seed',${demoProfessionalId}::uuid)
-      ON CONFLICT(id) DO NOTHING`;
+      ON CONFLICT(id) DO UPDATE SET starts_at=excluded.starts_at`;
     await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,status,created_by)
       VALUES ('d0700000-0000-4000-8000-000000000304'::uuid,${secondSessionId}::uuid,'d0700000-0000-4000-8000-000000000005'::uuid,'demo-entitlement-5','reserved','2j-demo-seed'),
              ('d0700000-0000-4000-8000-000000000305'::uuid,${secondSessionId}::uuid,'d0700000-0000-4000-8000-000000000006'::uuid,'demo-entitlement-6','reserved','2j-demo-seed')
@@ -105,7 +105,7 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
       VALUES (${fullSessionId}::uuid,${mainService.service_id},${mainService.area_id},'manual',
         ((now() AT TIME ZONE 'Atlantic/Canary')::date + interval '20 hours 15 minutes') AT TIME ZONE 'Atlantic/Canary',45,2,'scheduled','2j-demo-seed',${demoProfessionalId}::uuid)
-      ON CONFLICT(id) DO NOTHING`;
+      ON CONFLICT(id) DO UPDATE SET starts_at=excluded.starts_at`;
     await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,status,created_by)
       VALUES ('d0700000-0000-4000-8000-000000000306'::uuid,${fullSessionId}::uuid,'d0700000-0000-4000-8000-000000000007'::uuid,'demo-entitlement-7','reserved','2j-demo-seed'),
              ('d0700000-0000-4000-8000-000000000307'::uuid,${fullSessionId}::uuid,'d0700000-0000-4000-8000-000000000008'::uuid,'demo-entitlement-8','reserved','2j-demo-seed')
@@ -124,7 +124,7 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
       const id=`d0700000-0000-4000-8000-${String(510+index).padStart(12,'0')}`;
       await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
         VALUES (${id}::uuid,${service.id},${service.area_id},'manual',((now() AT TIME ZONE 'Atlantic/Canary')::date + ${startsAt}::time) AT TIME ZONE 'Atlantic/Canary',45,8,'scheduled','2j-demo-seed',${staffIds[index%staffIds.length]}::uuid)
-        ON CONFLICT(id) DO NOTHING`;
+        ON CONFLICT(id) DO UPDATE SET starts_at=excluded.starts_at`;
     }
 
     await tx`INSERT INTO store_products(id,center_key,category,name,description,active,created_by,updated_by)

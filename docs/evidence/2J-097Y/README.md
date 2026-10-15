@@ -2,6 +2,6 @@
 
 Owner-review screenshots have not been captured in this worktree. The local owner-review browser processes were already running from the main checkout, and this session has no reliable browser-control endpoint for switching them to this branch. No screenshots are presented as live evidence.
 
-Before visual acceptance, run `pnpm owner:review` from this branch and inspect Member, Trainer and Admin at 1440×900, 768×1024 and 390×844, in light and dark themes. Record actual screenshots, routes, browser and base/head SHA, synthetic data, overflow measurements, and any failed states here. Juanjo's visual acceptance remains pending.
+Juanjo manually reviewed the latest Agenda iteration and approved its current visual direction to continue technical review. This is not merge approval. No screenshots or automated browser review are claimed in this evidence record; the owner-review browser session was not controlled from this worktree. Preserve the approved Day/Week agenda, real parallel session cards, separated overflow disclosure, absence of the rejected `+1` pill, and the modal fix. Any future visual evidence must be captured from the actual UI and recorded with viewport, route, browser, base/head SHA, synthetic data and observed overflow; do not present fabricated captures.
 
 Owner's subjective design decision remains pending until Juanjo reviews the product.

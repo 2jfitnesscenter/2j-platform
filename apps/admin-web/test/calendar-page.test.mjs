@@ -7,8 +7,8 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http:
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
-const { CalendarPage, groupSessionsByOverlap, serviceColorIndex } = await import('../src/calendar-page.tsx');
-afterEach(() => { cleanup(); globalThis.fetch = undefined; });
+const { CalendarPage, filterCalendarSessions, groupSessionsByOverlap, serviceColorIndex } = await import('../src/calendar-page.tsx');
+afterEach(() => { cleanup(); globalThis.fetch = undefined; delete window.matchMedia; });
 after(() => dom.window.close());
 
 const area = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'La Sala' };
@@ -31,14 +31,92 @@ test('calendar collision groups overlap side by side and gives each service a st
   assert.ok(serviceColorIndex(service.id) >= 0 && serviceColorIndex(service.id) < 5);
 });
 
-test('overlapping session lane remains keyboard scrollable with readable minimum card widths', async () => {
-  const sessions = ['Pilates', 'Fuerza', 'Acondicionamiento'].map((name, index) => ({ id: `overlap-${index}`, serviceId: `service-${index}`, serviceName: name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${baseData.weekStart}T17:00:00.000Z`, durationMinutes: 60, capacity: 12, status: 'scheduled', isIndividual: false, occupiedCount: 0, overbookCount: 0, waitlistCount: 0 }));
-  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({ ...baseData, sessions }) : response({});
+test('calendar filters apply current ownership, upcoming, full, waitlist, and cancelled states',()=>{
+  const items=[
+    {id:'mine',status:'scheduled',startsAt:'2030-01-01T12:00:00Z',professionalId:'staff-1',capacity:2,occupiedCount:2,waitlistCount:1},
+    {id:'other',status:'scheduled',startsAt:'2030-01-01T12:00:00Z',professionalId:'staff-2',capacity:8,occupiedCount:1,waitlistCount:0},
+    {id:'cancelled',status:'cancelled',startsAt:'2030-01-01T12:00:00Z',professionalId:'staff-1',capacity:8,occupiedCount:0,waitlistCount:0},
+  ];
+  assert.deepEqual(filterCalendarSessions(items,'mine','staff-1').map(item=>item.id),['mine']);
+  assert.deepEqual(filterCalendarSessions(items,'all',null).map(item=>item.id),['mine','other','cancelled'],'Todas includes cancelled sessions');
+  assert.deepEqual(filterCalendarSessions(items,'upcoming',null,Date.parse('2029-12-31T00:00:00Z')).map(item=>item.id),['mine','other']);
+  assert.deepEqual(filterCalendarSessions(items,'full',null).map(item=>item.id),['mine']);
+  assert.deepEqual(filterCalendarSessions(items,'waitlist',null).map(item=>item.id),['mine']);
+  assert.deepEqual(filterCalendarSessions(items,'cancelled',null).map(item=>item.id),['cancelled']);
+});
+
+test('calendar day and week counts match filtered sessions and cancelled cards remain distinct', async () => {
+  const startsAt = `${baseData.weekStart}T12:00:00.000Z`;
+  const sessions = [
+    {id:'scheduled-one',serviceId:service.id,serviceName:'Fuerza 2J',areaId:area.id,areaName:area.name,templateId:null,source:'manual',startsAt,durationMinutes:60,capacity:8,status:'scheduled',isIndividual:false,occupiedCount:1,overbookCount:0,waitlistCount:0,professionalId:'staff-1'},
+    {id:'cancelled-one',serviceId:service.id,serviceName:'Pilates cancelado',areaId:area.id,areaName:area.name,templateId:null,source:'manual',startsAt,durationMinutes:60,capacity:8,status:'cancelled',isIndividual:false,occupiedCount:0,overbookCount:0,waitlistCount:0},
+    {id:'cancelled-two',serviceId:service.id,serviceName:'Sesión cancelada',areaId:area.id,areaName:area.name,templateId:null,source:'manual',startsAt,durationMinutes:60,capacity:8,status:'cancelled',isIndividual:false,occupiedCount:0,overbookCount:0,waitlistCount:0},
+  ];
+  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({...baseData,sessions,currentProfessionalId:'staff-1'}) : response({reservations:[],waitlist:[]});
   render(React.createElement(CalendarPage));
-  const lane = await screen.findByLabelText('3 sesiones simultáneas; desplaza horizontalmente para verlas todas');
-  assert.equal(lane.getAttribute('tabindex'), '0');
-  assert.match(lane.getAttribute('style'), /132px/);
-  assert.equal(within(lane).getAllByRole('button').length, 3);
+  const mondayTab = await screen.findByRole('tab',{name:/Lun/});
+  assert.equal(mondayTab.querySelector('small').textContent,'3','week-strip count includes all sessions in Todas');
+  fireEvent.click(mondayTab);
+  fireEvent.change(screen.getByLabelText('Filtrar sesiones'),{target:{value:'all'}});
+  const column = document.querySelector('.day-column');
+  assert.equal(column.querySelector('header small').textContent,'3');
+  assert.equal(column.querySelectorAll('.session-card').length + column.querySelectorAll('.calendar-overflow-list button').length,3,'all three sessions are represented, including the separate overlap disclosure');
+  assert.equal(column.querySelectorAll('.session-card.cancelled').length,2,'cancelled cards retain their existing cancellation styling');
+  fireEvent.change(screen.getByLabelText('Filtrar sesiones'),{target:{value:'cancelled'}});
+  assert.equal(column.querySelector('header small').textContent,'2','day count follows Canceladas filter');
+  assert.equal(column.querySelectorAll('.session-card').length,2);
+  assert.equal(column.querySelectorAll('.session-card.cancelled').length,2);
+  fireEvent.change(screen.getByLabelText('Filtrar sesiones'),{target:{value:'mine'}});
+  assert.equal(column.querySelector('header small').textContent,'1','other filters continue excluding cancelled sessions');
+  assert.equal(column.querySelectorAll('.session-card').length,1);
+});
+
+test('day and week views show simultaneous sessions as parallel cards and open their existing detail',async()=>{
+  window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+  const startsAt=`${baseData.weekStart}T17:00:00.000Z`;
+  const sessions=[
+    {id:'mine-session',serviceId:service.id,serviceName:'Fuerza 2J',areaId:area.id,areaName:area.name,templateId:null,source:'manual',startsAt,durationMinutes:60,capacity:8,status:'scheduled',isIndividual:false,occupiedCount:3,overbookCount:0,waitlistCount:0,professionalId:'staff-1',professionalName:'Alex Rivera'},
+    {id:'other-session',serviceId:'service-2',serviceName:'Pilates',areaId:area.id,areaName:area.name,templateId:null,source:'manual',startsAt,durationMinutes:60,capacity:8,status:'scheduled',isIndividual:false,occupiedCount:5,overbookCount:0,waitlistCount:0,professionalId:'staff-2',professionalName:'Nora Vega'},
+  ];
+  globalThis.fetch=async(url)=>String(url).includes('/api/calendar/week')?response({...baseData,sessions,currentProfessionalId:'staff-1'}):String(url).includes('/attendees')?response({reservations:[],waitlist:[]}):response({});
+  render(React.createElement(CalendarPage));
+  await screen.findByRole('button',{name:/Fuerza 2J/});
+  fireEvent.click(screen.getByRole('tab',{name:/Lun/}));
+  fireEvent.click(screen.getByRole('button',{name:'Día'}));
+  assert.equal(document.querySelectorAll('.week-grid.day-view .session-card').length,2,'a wide day view displays two readable lanes');
+  fireEvent.click(screen.getByRole('button',{name:'Semana'}));
+  assert.equal(document.querySelectorAll('.week-grid.week-view .session-card').length,2,'the weekly grid shows both simultaneous sessions as separate cards');
+  assert.equal(screen.queryByText(/\+\d+ sesión/),null,'there is no overlap pill attached to a session card');
+  fireEvent.click(await screen.findByRole('button',{name:/Pilates/}));
+  const dialog = await screen.findByRole('dialog',{name:'Pilates'});
+  assert.equal(dialog.querySelector('.calendar-overflow'),null,'the session detail contains no overlap controls');
+  fireEvent.click(screen.getByRole('button',{name:'Cerrar detalle'}));
+  fireEvent.change(screen.getByLabelText('Filtrar sesiones'),{target:{value:'mine'}});
+  assert.equal(document.querySelectorAll('.session-card').length,1);
+});
+
+test('overlap fallback is separated from event cards, closes before detail, and has no modal overlay', async () => {
+  const sessions = ['Pilates', 'Fuerza', 'Acondicionamiento'].map((name, index) => ({ id: `overlap-${index}`, serviceId: `service-${index}`, serviceName: name, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt: `${baseData.weekStart}T17:00:00.000Z`, durationMinutes: 60, capacity: 12, status: 'scheduled', isIndividual: false, occupiedCount: 0, overbookCount: 0, waitlistCount: 0 }));
+  globalThis.fetch = async url => String(url).includes('/api/calendar/week') ? response({ ...baseData, sessions }) : String(url).includes('/attendees') ? response({reservations:[],waitlist:[]}) : response({});
+  render(React.createElement(CalendarPage));
+  const lane = await screen.findByLabelText('3 sesiones simultáneas');
+  assert.equal(lane.getAttribute('tabindex'), null);
+  assert.doesNotMatch(lane.getAttribute('style')??'',/132px/);
+  assert.equal(lane.querySelectorAll('.session-card').length, 2);
+  const overflow = document.querySelector('.calendar-overflow');
+  assert.ok(overflow);
+  assert.equal(within(overflow).getByText('Ver 1 sesión simultánea adicional').textContent,'Ver 1 sesión simultánea adicional');
+  fireEvent.click(within(overflow).getByText('Ver 1 sesión simultánea adicional'));
+  assert.equal(within(overflow).getByRole('group',{name:'Más sesiones simultáneas'}).querySelectorAll('button').length,1);
+  fireEvent.click(within(overflow).getByRole('button',{name:/Acondicionamiento/}));
+  const dialog = await screen.findByRole('dialog',{name:'Acondicionamiento'});
+  assert.equal(overflow.open,false,'opening a session closes the separate overflow list');
+  assert.equal(dialog.querySelector('.calendar-overflow'),null,'calendar grouping controls are not rendered inside the session detail');
+  fireEvent.click(screen.getByRole('button',{name:'Cerrar detalle'}));
+  fireEvent.click(screen.getByRole('tab',{name:/Lun/}));
+  fireEvent.click(screen.getByRole('button',{name:'Día'}));
+  assert.equal(document.querySelectorAll('.week-grid.day-view .session-card').length,3,'the wider day view displays all three simultaneous sessions as independent cards');
+  assert.equal(document.querySelector('.calendar-overflow'),null,'the day view needs no fallback when all sessions fit');
 });
 
 test('professional calendar shows Canary-local operational metrics without birthday or client PII data', async () => {
@@ -259,7 +337,7 @@ test('weekly individual marker labels card and detail without returning client P
   };
   render(React.createElement(CalendarPage));
   const card = await screen.findByRole('button', { name: /cita individual/i });
-  assert.equal(within(card).getByText('Cita individual').textContent, 'Cita individual');
+  assert.equal(within(card).queryByText('Cita individual'),null,'individual labeling stays accessible without expanding the compact visual card');
   fireEvent.click(card);
   assert.equal((await screen.findByText('CITA INDIVIDUAL · Sesión puntual')).textContent, 'CITA INDIVIDUAL · Sesión puntual');
 });

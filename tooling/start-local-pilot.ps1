@@ -8,13 +8,13 @@
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$pilotHome = if ($OwnerReview) { Join-Path $env:LOCALAPPDATA '2J\owner-visual-review' } else { Join-Path $env:LOCALAPPDATA '2J\platform-local-pilot' }
+$pilotHome = if ($OwnerReview) { Join-Path $env:LOCALAPPDATA '2J\owner-visual-review-097y' } else { Join-Path $env:LOCALAPPDATA '2J\platform-local-pilot' }
 $runtimePath = Join-Path $pilotHome 'runtime.json'
 $configFile = Join-Path $pilotHome 'config.json'
 $pilotLabel = if ($OwnerReview) { 'owner-visual-review' } else { '084' }
-$containerName = if ($OwnerReview) { '2j-platform-owner-visual-review' } else { '2j-platform-084-pilot' }
-$volumeName = if ($OwnerReview) { '2j-platform-owner-visual-review-data' } else { '2j-platform-084-pilot-data' }
-$databasePort = if ($OwnerReview) { 55441 } else { 55440 }
+$containerName = if ($OwnerReview) { '2j-platform-owner-visual-review-097y' } else { '2j-platform-084-pilot' }
+$volumeName = if ($OwnerReview) { '2j-platform-owner-visual-review-097y-data' } else { '2j-platform-084-pilot-data' }
+$databasePort = if ($OwnerReview) { 55442 } else { 55440 }
 $databaseUrl = "postgres://2j_local:2j_local_dev_only@127.0.0.1:$databasePort/2j_demo"
 
 function Read-JsonFile([string]$Path) {
