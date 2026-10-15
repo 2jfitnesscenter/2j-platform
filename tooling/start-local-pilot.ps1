@@ -257,10 +257,27 @@ try {
 
 Write-Host ''
 Write-Host 'Piloto local 2J listo. Todas las direcciones están limitadas a 127.0.0.1.' -ForegroundColor Green
-Write-Host "  Miembro:                   $($config.memberUrl)"
+Write-Host '  MEMBER · misma app, navegar con las pestañas inferiores:' -ForegroundColor Cyan
+Write-Host "    Inicio / Reservar / Próxima reserva / Tienda / Perfil / Búnker / Ajustes: $($config.memberUrl)"
+Write-Host '    Miembro sintético: María González · código local: 2j-member-a-local'
 Write-Host "  Vista previa sintética:    $($config.memberUrl)/?preview=1"
-if ($OwnerReview) { Write-Host "  Trainer · shell profesional con permisos de Trainer: $($config.trainerUrl)" } else { Write-Host "  Trainer:                   $($config.staffUrl)" }
-Write-Host "  Admin:                     $($config.adminUrl)"
+if ($OwnerReview) {
+  Write-Host '  TRAINER · abrir una sección desde el menú:' -ForegroundColor Cyan
+  Write-Host "    Resumen: $($config.trainerUrl)/#home"
+  Write-Host "    Clientes: $($config.trainerUrl)/#clients"
+  Write-Host "    Agenda: $($config.trainerUrl)/#calendar"
+  Write-Host "    Espacios y servicios: $($config.trainerUrl)/#services"
+  Write-Host '  ADMIN · abrir una sección desde el menú:' -ForegroundColor Cyan
+  Write-Host "    Resumen: $($config.adminUrl)/#home"
+  Write-Host "    Clientes: $($config.adminUrl)/#clients"
+  Write-Host "    Cliente 360 · María González: $($config.adminUrl)/#clients?clientId=d0700000-0000-4000-8000-000000000001"
+  Write-Host "    Agenda: $($config.adminUrl)/#calendar"
+  Write-Host "    Tienda: $($config.adminUrl)/#store"
+  Write-Host "    Espacios y servicios: $($config.adminUrl)/#services"
+} else {
+  Write-Host "  Trainer:                   $($config.staffUrl)"
+  Write-Host "  Admin:                     $($config.adminUrl)"
+}
 Write-Host "  API Trainer:               $($config.trainerApiUrl)/health"
 Write-Host "  API Admin:                 $($config.adminApiUrl)/health"
 Write-Host "  PostgreSQL sintético:      127.0.0.1:$databasePort/2j_demo"

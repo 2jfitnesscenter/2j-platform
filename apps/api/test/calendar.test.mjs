@@ -438,7 +438,7 @@ test('single occurrence edits require an authorized, reasoned availability overr
   assert.equal(audit.find((item) => item.action === 'session.availability_override').details.reason, 'Cobertura extraordinaria');
 });
 
-test('2J-080 end-to-end: service, entitlement, rolling sessions, self booking, one-date edit, cancellation and replay safety', async () => {
+test('connected Member booking appears in the professional roster and attendance change is reflected back to Member', async () => {
   const service = await createService();
   const client = await createClient('2J-080 pilot member');
   const today = canaryDate();
@@ -472,6 +472,14 @@ test('2J-080 end-to-end: service, entitlement, rolling sessions, self booking, o
     assert.equal(details.statusCode, 200, details.body); assert.equal(details.json().session.eligible, true);
     const reservation = await member.inject({ method: 'POST', url: `/api/me/sessions/${first.id}/reservations`, headers: { origin: 'http://127.0.0.1:5173', 'idempotency-key': randomUUID() }, payload: {} });
     assert.equal(reservation.statusCode, 201, reservation.body);
+    const roster = await trainerEligible.inject({ method: 'GET', url: `/api/calendar/sessions/${first.id}/attendees` });
+    assert.equal(roster.statusCode, 200, roster.body);
+    assert.ok(roster.json().reservations.some((item) => item.id === reservation.json().id && item.clientId === client.id));
+    const attendance = await trainerEligible.inject({ method: 'PATCH', url: `/api/calendar/reservations/${reservation.json().id}/attendance`, payload: { status: 'attended' } });
+    assert.equal(attendance.statusCode, 200, attendance.body);
+    const memberBookings = await member.inject({ method: 'GET', url: '/api/me/bookings' });
+    assert.equal(memberBookings.statusCode, 200, memberBookings.body);
+    assert.equal(memberBookings.json().reservations.find((item) => item.id === reservation.json().id).status, 'attended');
     const consumed = await sql`SELECT quantity FROM client_entitlement_ledger WHERE external_reference LIKE ${`calendar_reservation:${reservation.json().id}%`}`;
     assert.equal(consumed.reduce((total, row) => total + Number(row.quantity), 0), -1);
     const moved = new Date(first.startsAt); moved.setTime(moved.getTime()+30*60_000);
@@ -493,6 +501,31 @@ test('2J-080 end-to-end: service, entitlement, rolling sessions, self booking, o
     assert.equal(finalBooking.statusCode, 201, finalBooking.body);
     assert.equal((await sql`SELECT count(*)::int AS total FROM calendar_audit_events WHERE session_id=${first.id} AND action='session.occurrence_overridden'`).at(0).total, 1);
   } finally { await member.close(); }
+});
+
+test('simultaneous sessions across professionals and areas are valid; a concurrent same-professional overlap is rejected', async () => {
+  const areas = await admin.inject({ method: 'GET', url: '/api/areas' });
+  assert.equal(areas.statusCode, 200);
+  const secondArea = areas.json().find((item) => item.id !== area.id);
+  assert.ok(secondArea, 'synthetic test database provides a second area');
+  const otherServiceResult = await admin.inject({ method: 'POST', url: '/api/services', payload: { name: `Parallel service ${randomUUID()}`, areaId: secondArea.id, status: 'active' } });
+  assert.equal(otherServiceResult.statusCode, 201, otherServiceResult.body);
+  const professionals = [randomUUID(), randomUUID()].map(id => id);
+  for (const [index, id] of professionals.entries()) await sql`INSERT INTO staff_professionals(id,first_name,last_name,display_name,status,base_role,created_by) VALUES (${id}::uuid,${`Parallel${index}`},'Test',${`Parallel ${index}`},'active','trainer','calendar-test')`;
+  const start = new Date(); start.setUTCDate(start.getUTCDate()+4); start.setUTCHours(12,0,0,0);
+  const startsAt = start.toISOString();
+  const weekday=Number((await sql`SELECT extract(dow FROM ${startsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::int AS value`).at(0).value);
+  for(const id of professionals) await sql`INSERT INTO staff_schedule_slots(professional_id,weekday,starts_at,ends_at,valid_from,created_by) VALUES (${id}::uuid,${weekday},'00:00','23:59',(now() AT TIME ZONE 'Atlantic/Canary')::date,'calendar-test')`;
+  const payload = (professionalId, selectedService) => ({ serviceId:selectedService.id, areaId:selectedService.areaId, professionalId, startsAt, durationMinutes:60, capacity:4 });
+  const firstService = await createService();
+  const first = await trainerEligible.inject({ method:'POST', url:'/api/calendar/sessions', payload:payload(professionals[0], firstService) });
+  const parallel = await trainerEligible.inject({ method:'POST', url:'/api/calendar/sessions', payload:payload(professionals[1], otherServiceResult.json()) });
+  assert.equal(first.statusCode,201,first.body); assert.equal(parallel.statusCode,201,parallel.body);
+  const collision = await trainerEligible.inject({ method:'POST', url:'/api/calendar/sessions', payload:payload(professionals[0], otherServiceResult.json()) });
+  assert.equal(collision.statusCode,409,collision.body); assert.equal(collision.json().error,'professional_session_conflict');
+  const concurrentStarts = [new Date(start.getTime()+2*60*60_000).toISOString(),new Date(start.getTime()+2*60*60_000).toISOString()];
+  const concurrent = await Promise.all(concurrentStarts.map((at,index)=>trainerEligible.inject({ method:'POST',url:'/api/calendar/sessions',payload:{...payload(professionals[0],index===0?firstService:otherServiceResult.json()),startsAt:at} })));
+  assert.deepEqual(concurrent.map(result=>result.statusCode).sort(),[201,409]);
 });
 
 test('session cancellation preserves cancelled-by-center history and blocks later attendance changes', async () => {

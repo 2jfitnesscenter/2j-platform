@@ -81,6 +81,9 @@ export function registerCalendarRoutes(
   }
   async function checkProfessional(tx: SqlTransaction, professionalId: string | undefined, startsAt: string, durationMinutes: number, override: boolean, overrideReason: string | undefined, context: AuthorizationContext, excludeSessionId?: string) {
     if (!professionalId) return { error: null as string | null, warnings: [] as string[] };
+    // Serialize the conflict check for this professional: row-level SHARE locks do not
+    // conflict with another session writer, so concurrent creates could otherwise race.
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${'2j:calendar-professional:' + professionalId},0))`;
     const [staff] = await tx`SELECT id,status,display_name AS "displayName" FROM staff_professionals WHERE id=${professionalId} FOR SHARE`;
     if (!staff || staff.status !== 'active') return { error: 'professional_unavailable', warnings: [] as string[] };
     const endsAt = new Date(new Date(startsAt).getTime() + durationMinutes * 60_000).toISOString();

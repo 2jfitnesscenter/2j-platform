@@ -20,7 +20,16 @@ button { color: inherit; }
 .sidebar-toggle:hover { background:var(--2j-color-sidebar-active); }
 .nav-glyph { width:24px; flex:0 0 24px; display:grid; place-items:center; font-size:20px; line-height:1; }
 .nav-glyph svg { width:20px; height:20px; }
-.store-page { width:min(100%,1180px); margin:0 auto; display:grid; gap:16px; padding:4px 0 32px; }
+.store-page { width:min(100%,1180px); margin:0 auto; display:flex; flex-direction:column; gap:16px; padding:4px 0 32px; }
+.store-page .store-inventory { order:1; }
+.store-page .store-admin-grid { order:2; }
+.store-page>section.panel:not(.store-inventory) { order:3; }
+.store-workflow { padding:0; overflow:hidden; }
+.store-workflow summary { min-height:54px; display:flex; align-items:center; padding:0 16px; color:var(--2j-color-text-primary); font-size:14px; font-weight:var(--2j-type-weight-semibold); cursor:pointer; }
+.store-workflow[open] { padding:16px; }
+.store-workflow[open] summary { min-height:40px; margin:-8px 0 12px; padding:0; }
+.store-workflow .store-form { padding:0 16px 16px; }
+.store-workflow[open] .store-form { padding:0; }
 .store-page .page-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .store-page .page-header h1 { margin:4px 0 8px; font-size:clamp(27px,4vw,38px); letter-spacing:-.04em; }
 .store-page .page-header p:not(.eyebrow) { color:var(--2j-color-text-secondary); margin:0; }
@@ -100,7 +109,7 @@ button { color: inherit; }
 .app-page { min-width:0; }
 .app-page>.shell { display:contents; }
 .app-page .sidebar { display:none; }
-.app-page .main { width:100%; max-width:1700px; min-height:calc(100vh - 64px); margin:0 auto; padding:0 clamp(18px,3.2vw,48px) 36px; }
+.app-page .main { width:100%; max-width:1700px; min-height:calc(100vh - 64px); margin:0 auto; padding:0 clamp(28px,4.2vw,64px) 36px; }
 .app-page .topbar { display:none; }
 .app-page .staff-shell { display:contents; }
 .search-backdrop { position:fixed; inset:0; z-index:50; display:grid; place-items:start center; padding:12vh 16px 20px; background:color-mix(in srgb,var(--2j-color-text-primary) 50%,transparent); }
@@ -625,7 +634,10 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .week-controls .icon-button { border: 1px solid var(--2j-color-border); background: var(--2j-color-surface); font-size: 25px; }
 .today-button { min-height: 44px; }
 .week-strip { display: none; }
-.week-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-height: 360px; }
+.week-grid { display: grid; grid-template-columns: 42px repeat(7, minmax(0, 1fr)); min-height: 360px; overflow-x:auto; }
+.calendar-time-axis { display:grid; grid-template-rows:62px repeat(32,30px); border-right:1px solid var(--2j-color-border); }
+.calendar-time-axis::before { content:""; grid-row:1; border-bottom:1px solid var(--2j-color-border); background:var(--2j-color-surface-subtle); }
+.calendar-time-axis span { grid-row:span 2; padding:3px 4px 0 0; color:var(--2j-color-text-secondary); font-size:10px; text-align:right; }
 .day-column { min-width: 0; border-right: 1px solid var(--2j-color-border); }
 .day-column:last-child { border-right: 0; }
 .day-column > header { height: 62px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border-bottom: 1px solid var(--2j-color-border); background: var(--2j-color-surface-subtle); }
@@ -633,10 +645,10 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .day-column > header span { color: var(--2j-color-text-secondary); font-size: 11px; text-transform: uppercase; }
 .day-column > header strong { font-size: 14px; }
 .day-column > header small { color: var(--2j-color-text-secondary); font-size: 11px; }
-.day-sessions { display: grid; align-content: start; gap: 8px; padding: 8px; }
+.day-sessions { position:relative; display:grid; grid-template-rows:repeat(32,30px); gap:0; padding:0 3px; background:repeating-linear-gradient(to bottom,transparent 0,transparent 59px,var(--2j-color-border) 60px); }
 .overlap-group { min-width:0; max-width:100%; display:grid; align-items:stretch; gap:5px; overflow-x:auto; scrollbar-width:thin; }
 .overlap-group:focus-visible { outline:2px solid var(--2j-color-focus); outline-offset:2px; }
-.session-card { width: 100%; min-width: 0; display: grid; gap: 5px; padding: 10px; border: 1px solid var(--2j-color-border); border-left: 3px solid var(--2j-color-brand-strong); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); text-align: left; cursor: pointer; }
+.session-card { width: 100%; min-width: 0; min-height:42px; align-self:stretch; display: grid; align-content:start; gap: 3px; overflow:hidden; padding: 5px 6px; border: 1px solid var(--2j-color-border); border-left: 3px solid var(--2j-color-brand-strong); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); text-align: left; cursor: pointer; }
 .session-card[data-service-color="1"] { border-left-color:var(--2j-color-success); }
 .session-card[data-service-color="2"] { border-left-color:var(--2j-color-warning); }
 .session-card[data-service-color="3"] { border-left-color:var(--2j-color-info); }
@@ -807,7 +819,18 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .attendee-list small { font-size: 12px; }
 @media (max-width: 1120px) {
   .template-week-grid { grid-template-columns:repeat(4,minmax(135px,1fr)); }
-  .week-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .week-strip { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; padding:10px; border-bottom:1px solid var(--2j-color-border); }
+  .week-strip button { min-width:0; min-height:60px; display:grid; justify-items:center; align-content:center; gap:2px; padding:3px; border:1px solid transparent; border-radius:var(--2j-radius-sm); background:transparent; cursor:pointer; }
+  .week-strip button.selected { border-color:var(--2j-color-brand-strong); background:var(--2j-color-surface-subtle); }
+  .week-strip button span,.week-strip button small { color:var(--2j-color-text-secondary); font-size:10px; }
+  .week-strip button strong { font-size:14px; }
+  .week-grid { display:block; min-height:250px; overflow:visible; }
+  .calendar-time-axis { display:none; }
+  .day-column { display:none; border:0; }
+  .day-column.day-selected { display:block; }
+  .day-column > header { display:none; }
+  .overlap-group { grid-row:auto !important; }
+  .day-sessions { display:grid; grid-template-rows:none; align-content:start; gap:8px; padding:8px; background:none; }
   .day-column { border-bottom: 1px solid var(--2j-color-border); }
   .day-column:nth-child(2n) { border-right: 0; }
   .day-column > header { padding: 0 14px; }
@@ -824,12 +847,7 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
   .week-controls { gap: 3px; }
   .week-controls .icon-button { width: 44px; height: 44px; }
   .today-button { min-height: 44px; padding: 0 10px; }
-  .week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; padding: 10px; border-bottom: 1px solid var(--2j-color-border); }
-  .week-strip button { min-width: 0; min-height: 60px; display: grid; justify-items: center; align-content: center; gap: 2px; padding: 3px; border: 1px solid transparent; border-radius: var(--2j-radius-sm); background: transparent; cursor: pointer; }
-  .week-strip button.selected { border-color: var(--2j-color-brand-strong); background: var(--2j-color-surface-subtle); }
-  .week-strip button span { color: var(--2j-color-text-secondary); font-size: 10px; }
-  .week-strip button strong { font-size: 14px; }
-  .week-strip button small { color: var(--2j-color-text-secondary); font-size: 9px; }
+  .week-strip { grid-template-columns: repeat(7, minmax(0, 1fr)); }
   .week-grid { display: block; min-height: 250px; }
   .day-column { display: none; border: 0; }
   .day-column.day-selected { display: block; }
