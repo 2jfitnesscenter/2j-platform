@@ -38,6 +38,7 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
       { capacity: 6, reservations: 2, waiting: 0 },
       { capacity: 2, reservations: 2, waiting: 0 },
     ]);
+    await sql`UPDATE calendar_sessions SET starts_at=now()-interval '3 days' WHERE id='d0700000-0000-4000-8000-000000000510'::uuid`;
     const demoFollowup = await sql`SELECT a.client_id AS "clientId",f.category,a.status,a.required,(a.due_at<now()) AS overdue,r.answers IS NOT NULL AS responded
       FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id
       LEFT JOIN client_form_responses r ON r.assignment_id=a.id
@@ -54,6 +55,8 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
     await seedDemoData(sql);
     [demo] = await sql`SELECT auth_actor_id FROM staff_professionals WHERE id=${demoId}::uuid`;
     assert.equal(demo.auth_actor_id, 'local-demo:trainer', 'an existing synthetic database is repaired by the additive seed');
+    const [reviewSession] = await sql`SELECT (starts_at AT TIME ZONE 'Atlantic/Canary')::date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS is_today FROM calendar_sessions WHERE id='d0700000-0000-4000-8000-000000000510'::uuid`;
+    assert.equal(reviewSession.is_today,true,'re-running the owner-review seed moves only the fixed synthetic visible session back to today');
 
     trainer = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'local-demo:trainer', role: 'trainer' }) });
     unlinked = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'production-style-unlinked-actor', role: 'trainer' }) });

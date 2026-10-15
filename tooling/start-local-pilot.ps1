@@ -8,13 +8,13 @@
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$pilotHome = if ($OwnerReview) { Join-Path $env:LOCALAPPDATA '2J\owner-visual-review' } else { Join-Path $env:LOCALAPPDATA '2J\platform-local-pilot' }
+$pilotHome = if ($OwnerReview) { Join-Path $env:LOCALAPPDATA '2J\owner-visual-review-097y' } else { Join-Path $env:LOCALAPPDATA '2J\platform-local-pilot' }
 $runtimePath = Join-Path $pilotHome 'runtime.json'
 $configFile = Join-Path $pilotHome 'config.json'
 $pilotLabel = if ($OwnerReview) { 'owner-visual-review' } else { '084' }
-$containerName = if ($OwnerReview) { '2j-platform-owner-visual-review' } else { '2j-platform-084-pilot' }
-$volumeName = if ($OwnerReview) { '2j-platform-owner-visual-review-data' } else { '2j-platform-084-pilot-data' }
-$databasePort = if ($OwnerReview) { 55441 } else { 55440 }
+$containerName = if ($OwnerReview) { '2j-platform-owner-visual-review-097y' } else { '2j-platform-084-pilot' }
+$volumeName = if ($OwnerReview) { '2j-platform-owner-visual-review-097y-data' } else { '2j-platform-084-pilot-data' }
+$databasePort = if ($OwnerReview) { 55442 } else { 55440 }
 $databaseUrl = "postgres://2j_local:2j_local_dev_only@127.0.0.1:$databasePort/2j_demo"
 
 function Read-JsonFile([string]$Path) {
@@ -257,10 +257,27 @@ try {
 
 Write-Host ''
 Write-Host 'Piloto local 2J listo. Todas las direcciones están limitadas a 127.0.0.1.' -ForegroundColor Green
-Write-Host "  Miembro:                   $($config.memberUrl)"
+Write-Host '  MEMBER · misma app, navegar con las pestañas inferiores:' -ForegroundColor Cyan
+Write-Host "    Inicio / Reservar / Próxima reserva / Tienda / Perfil / Búnker / Ajustes: $($config.memberUrl)"
+Write-Host '    Miembro sintético: María González · código local: 2j-member-a-local'
 Write-Host "  Vista previa sintética:    $($config.memberUrl)/?preview=1"
-if ($OwnerReview) { Write-Host "  Trainer · shell profesional con permisos de Trainer: $($config.trainerUrl)" } else { Write-Host "  Trainer:                   $($config.staffUrl)" }
-Write-Host "  Admin:                     $($config.adminUrl)"
+if ($OwnerReview) {
+  Write-Host '  TRAINER · abrir una sección desde el menú:' -ForegroundColor Cyan
+  Write-Host "    Resumen: $($config.trainerUrl)/#home"
+  Write-Host "    Clientes: $($config.trainerUrl)/#clients"
+  Write-Host "    Agenda: $($config.trainerUrl)/#calendar"
+  Write-Host "    Espacios y servicios: $($config.trainerUrl)/#services"
+  Write-Host '  ADMIN · abrir una sección desde el menú:' -ForegroundColor Cyan
+  Write-Host "    Resumen: $($config.adminUrl)/#home"
+  Write-Host "    Clientes: $($config.adminUrl)/#clients"
+  Write-Host "    Cliente 360 · María González: $($config.adminUrl)/#clients?clientId=d0700000-0000-4000-8000-000000000001"
+  Write-Host "    Agenda: $($config.adminUrl)/#calendar"
+  Write-Host "    Tienda: $($config.adminUrl)/#store"
+  Write-Host "    Espacios y servicios: $($config.adminUrl)/#services"
+} else {
+  Write-Host "  Trainer:                   $($config.staffUrl)"
+  Write-Host "  Admin:                     $($config.adminUrl)"
+}
 Write-Host "  API Trainer:               $($config.trainerApiUrl)/health"
 Write-Host "  API Admin:                 $($config.adminApiUrl)/health"
 Write-Host "  PostgreSQL sintético:      127.0.0.1:$databasePort/2j_demo"

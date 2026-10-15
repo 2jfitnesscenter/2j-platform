@@ -130,9 +130,10 @@ test('Client 360 pauses an entitlement with reason and idempotency key, then ref
 });
 
 test('Reception can open a base-price sale while Trainer remains read-only', async () => {
-  const plan = { id:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',name:'Plan Sala',kind:'recurring',basePriceCents:3200,services:[{name:'La Sala'}],rights:[{rightType:'service_access',serviceName:'La Sala'}] };
+  const plan = { id:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',name:'Plan Sala',kind:'recurring',renewalCadence:'monthly',basePriceCents:3200,services:[{name:'La Sala'}],rights:[{rightType:'service_access',serviceName:'La Sala'}] };
+  const pack = { id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',name:'Bono 10 sesiones',kind:'session_pack',periodDays:90,basePriceCents:7000,services:[{name:'Fuerza'}],rights:[{rightType:'sessions_quota',serviceName:'Fuerza',quantity:10}] };
   const receptionProfile={...profile,capabilities:{manage:false,readEntitlements:true,assignPlans:true,manageCatalogPrice:false,collectPayments:false,pauseEntitlements:true,cancelEntitlements:true,renewEntitlements:true,adjustEntitlements:false},summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
-  globalThis.fetch=async(url)=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse([client],{capabilities:{manage:false,assignPlans:true}}));if(path.endsWith(`/api/clients/${client.id}`))return response(receptionProfile);if(path.endsWith('/api/plans/assignable'))return response([plan]);throw new Error(`Unexpected request ${path}`);};
+  globalThis.fetch=async(url)=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse([client],{capabilities:{manage:false,assignPlans:true}}));if(path.endsWith(`/api/clients/${client.id}`))return response(receptionProfile);if(path.endsWith('/api/plans/assignable'))return response([plan,pack]);throw new Error(`Unexpected request ${path}`);};
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
@@ -142,6 +143,11 @@ test('Reception can open a base-price sale while Trainer remains read-only', asy
   const price=within(dialog).getByLabelText('Precio de venta (€)');
   assert.equal(price.readOnly,true);
   assert.equal(price.value,'32.00');
+  assert.ok(within(dialog).getByText('Plan recurrente · mensual'));
+  assert.ok(within(dialog).getByText('Servicios · La Sala'));
+  fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:pack.id}});
+  assert.ok(within(dialog).getByText('Bono de sesiones · vigencia configurada: 90 días'));
+  assert.ok(within(dialog).getByText('10 sesiones · Fuerza'));
   assert.equal(within(dialog).queryByLabelText('Cobrar ahora el importe completo'),null,'the payment action is hidden without billing permission');
   cleanup();
 

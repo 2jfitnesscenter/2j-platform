@@ -62,13 +62,25 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
       await tx`UPDATE staff_professionals SET auth_actor_id=${trainerActorId},updated_at=now() WHERE id=${demoProfessionalId}::uuid AND auth_actor_id IS NULL`;
     }
 
+    const parallelProfessionals = [
+      { id:'d0700000-0000-4000-8000-000000000102', first:'Nora', last:'Vega' },
+      { id:'d0700000-0000-4000-8000-000000000103', first:'Leo', last:'Suárez' },
+      { id:'d0700000-0000-4000-8000-000000000104', first:'Irene', last:'Díaz' },
+    ];
+    for (const person of parallelProfessionals) {
+      await tx`INSERT INTO staff_professionals(id,first_name,last_name,display_name,status,base_role,created_by)
+        VALUES (${person.id}::uuid,${person.first},${person.last},${`${person.first} ${person.last}`},'active','trainer','2j-demo-seed') ON CONFLICT(id) DO NOTHING`;
+      const [record] = await tx`SELECT display_name FROM staff_professionals WHERE id=${person.id}::uuid`;
+      if (record?.display_name !== `${person.first} ${person.last}`) throw new Error(`Synthetic demo professional ${person.id} is occupied by another record.`);
+    }
+
     const mainService = services[0];
     await seedMemberPilot(tx, mainService.service_id);
     const sessionId = 'd0700000-0000-4000-8000-000000000201';
     await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
       VALUES (${sessionId}::uuid,${mainService.service_id},${mainService.area_id},'manual',
         (date_trunc('day',now() AT TIME ZONE 'Atlantic/Canary') AT TIME ZONE 'Atlantic/Canary') + interval '17 hours',60,8,'scheduled','2j-demo-seed','d0700000-0000-4000-8000-000000000101')
-      ON CONFLICT(id) DO NOTHING`;
+      ON CONFLICT(id) DO UPDATE SET starts_at=excluded.starts_at`;
     await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,status,created_by)
       VALUES ('d0700000-0000-4000-8000-000000000301'::uuid,${sessionId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,'demo-entitlement-1','reserved','2j-demo-seed'),
              ('d0700000-0000-4000-8000-000000000302'::uuid,${sessionId}::uuid,'d0700000-0000-4000-8000-000000000002'::uuid,'demo-entitlement-2','reserved','2j-demo-seed'),
@@ -83,7 +95,7 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
       VALUES (${secondSessionId}::uuid,${secondService.service_id},${secondService.area_id},'manual',
         ((now() AT TIME ZONE 'Atlantic/Canary')::date + interval '18 hours 30 minutes') AT TIME ZONE 'Atlantic/Canary',60,6,'scheduled','2j-demo-seed',${demoProfessionalId}::uuid)
-      ON CONFLICT(id) DO NOTHING`;
+      ON CONFLICT(id) DO UPDATE SET starts_at=excluded.starts_at`;
     await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,status,created_by)
       VALUES ('d0700000-0000-4000-8000-000000000304'::uuid,${secondSessionId}::uuid,'d0700000-0000-4000-8000-000000000005'::uuid,'demo-entitlement-5','reserved','2j-demo-seed'),
              ('d0700000-0000-4000-8000-000000000305'::uuid,${secondSessionId}::uuid,'d0700000-0000-4000-8000-000000000006'::uuid,'demo-entitlement-6','reserved','2j-demo-seed')
@@ -93,11 +105,38 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
       VALUES (${fullSessionId}::uuid,${mainService.service_id},${mainService.area_id},'manual',
         ((now() AT TIME ZONE 'Atlantic/Canary')::date + interval '20 hours 15 minutes') AT TIME ZONE 'Atlantic/Canary',45,2,'scheduled','2j-demo-seed',${demoProfessionalId}::uuid)
-      ON CONFLICT(id) DO NOTHING`;
+      ON CONFLICT(id) DO UPDATE SET starts_at=excluded.starts_at`;
     await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,status,created_by)
       VALUES ('d0700000-0000-4000-8000-000000000306'::uuid,${fullSessionId}::uuid,'d0700000-0000-4000-8000-000000000007'::uuid,'demo-entitlement-7','reserved','2j-demo-seed'),
              ('d0700000-0000-4000-8000-000000000307'::uuid,${fullSessionId}::uuid,'d0700000-0000-4000-8000-000000000008'::uuid,'demo-entitlement-8','reserved','2j-demo-seed')
       ON CONFLICT(id) DO NOTHING`;
+
+    const pilotServices = await tx`SELECT s.id,s.area_id FROM services s JOIN areas a ON a.id=s.area_id WHERE s.id IN (
+      'd0700000-0000-4000-8000-000000000801'::uuid,'d0700000-0000-4000-8000-000000000802'::uuid,
+      'd0700000-0000-4000-8000-000000000803'::uuid,'d0700000-0000-4000-8000-000000000804'::uuid
+    ) AND s.status='active' AND a.status='active' ORDER BY s.id`;
+    if (pilotServices.length < 3) throw new Error('The owner-review pilot requires at least three active demo services in separate configured areas.');
+    const staffIds = [demoProfessionalId,...parallelProfessionals.map(person=>person.id)];
+    for (let index=0;index<16;index++) {
+      const service=pilotServices[index%pilotServices.length]!;
+      const hour=8+Math.floor(index/2);
+      const startsAt=`${String(hour).padStart(2,'0')}:00`;
+      const id=`d0700000-0000-4000-8000-${String(510+index).padStart(12,'0')}`;
+      await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
+        VALUES (${id}::uuid,${service.id},${service.area_id},'manual',((now() AT TIME ZONE 'Atlantic/Canary')::date + ${startsAt}::time) AT TIME ZONE 'Atlantic/Canary',45,8,'scheduled','2j-demo-seed',${staffIds[index%staffIds.length]}::uuid)
+        ON CONFLICT(id) DO UPDATE SET starts_at=excluded.starts_at`;
+    }
+
+    await tx`INSERT INTO store_products(id,center_key,category,name,description,active,created_by,updated_by)
+      VALUES ('d0700000-0000-4000-8000-000000001001'::uuid,'2j','nutrition','Proteína 2J','Formato 900 g · chocolate',true,'2j-demo-seed','2j-demo-seed'),
+             ('d0700000-0000-4000-8000-000000001002'::uuid,'2j','merchandising','Camiseta 2J','Colección del centro',true,'2j-demo-seed','2j-demo-seed') ON CONFLICT(id) DO NOTHING`;
+    await tx`INSERT INTO store_product_variants(id,product_id,sku,label,size,flavor,price_cents,active,stock_tracked,created_by,updated_by)
+      VALUES ('d0700000-0000-4000-8000-000000001101'::uuid,'d0700000-0000-4000-8000-000000001001'::uuid,'DEMO-PROT-900','Chocolate · 900 g','900 g','Chocolate',3290,true,true,'2j-demo-seed','2j-demo-seed'),
+             ('d0700000-0000-4000-8000-000000001102'::uuid,'d0700000-0000-4000-8000-000000001002'::uuid,'DEMO-TEE-M','Talla M','M',NULL,1800,true,true,'2j-demo-seed','2j-demo-seed') ON CONFLICT(id) DO NOTHING`;
+    await tx`INSERT INTO store_inventory_movements(variant_id,quantity_delta,movement_type,reason,actor_id)
+      SELECT id, CASE WHEN id='d0700000-0000-4000-8000-000000001101'::uuid THEN 12 ELSE 5 END,'opening','Stock inicial sintético para owner review','2j-demo-seed'
+      FROM store_product_variants WHERE id IN ('d0700000-0000-4000-8000-000000001101'::uuid,'d0700000-0000-4000-8000-000000001102'::uuid)
+      AND NOT EXISTS(SELECT 1 FROM store_inventory_movements WHERE variant_id=store_product_variants.id AND movement_type='opening')`;
 
     await tx`INSERT INTO economic_charges(id,client_id,concept,amount_cents,due_on,state,created_by,idempotency_key,request_hash)
       VALUES ('d0700000-0000-4000-8000-000000000501'::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,'Cuota mensual · demo',4900,

@@ -186,7 +186,8 @@ test('Admin summary prioritizes real agenda, attention and pending work, with fi
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   const main=await screen.findByRole('main');
   assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Agenda de hoy','Necesitan atención','Pendientes','Pulso operativo','Pendiente de gestión']);
-  assert.equal(main.querySelector('.summary-session-free')?.textContent,'4plazas libres');
+  assert.equal(main.querySelector('.summary-session-capacity')?.textContent,'6/10');
+  assert.equal(main.querySelector('.summary-session-free'),null);
   assert.ok(within(main).getByText('1 en espera'));
   assert.ok(within(main).getByText('2 mensajes sin leer'));
   assert.ok(within(main).getByText('Documento pendiente'));
@@ -238,6 +239,20 @@ test('dashboard refuses unsafe server-provided deep links and keeps supported lo
   assert.equal(within(main).getByRole('link',{name:/Lista de espera por resolver/}).getAttribute('href'),'#calendar');
   assert.equal(within(main).queryByRole('link',{name:/Sesión sin profesional/}),null);
   assert.ok(within(main).getByText('Sesión sin profesional'));
+});
+
+test('today summary shows the current and next five sessions without duplicate free-seat or empty-waitlist rows',async()=>{
+  const sessions=Array.from({length:7},(_,index)=>({id:`today-${index}`,serviceName:`Servicio ${index+1}`,professionalName:`Profesional ${index+1}`,startsAt:new Date(Date.now()+(index+1)*60*60_000).toISOString(),occupied:index,capacity:8,free:8-index,waitlistCount:index===0?2:0,isNow:false,state:'upcoming'}));
+  const data={...model,today:{...model.today,sessionCount:7,occupied:21,capacity:56,waitlistCount:2,sessions}};
+  globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(data):String(url).includes('/api/session/capabilities')?response(capabilities):response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  const list=await screen.findByRole('list',{name:'Próximas sesiones de hoy'});
+  assert.equal(within(list).getAllByRole('link').length,5);
+  assert.ok(within(list).getByText('2 en espera'));
+  assert.equal(within(list).queryByText('Sin espera'),null);
+  assert.equal(within(list).queryByText('7', {selector:'.summary-session-free'}),null);
+  assert.match(document.querySelector('.summary-more-sessions').textContent,/^\+2 sesiones hoy/);
+  assert.ok(screen.getByRole('link',{name:'Ver todas en la agenda'}));
 });
 
 test('loading and error states are distinct and error can be retried accessibly',async()=>{
