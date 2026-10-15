@@ -27,6 +27,29 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
     assert.equal(demo.display_name, 'Alex Rivera');
     assert.equal(demo.auth_actor_id, 'local-demo:trainer');
 
+    const daySessions = await sql`SELECT s.id,s.capacity,count(DISTINCT r.id)::int AS reservations,count(DISTINCT w.id)::int AS waiting
+      FROM calendar_sessions s LEFT JOIN calendar_reservations r ON r.session_id=s.id AND r.status='reserved'
+      LEFT JOIN calendar_waitlist_entries w ON w.session_id=s.id AND w.status='waiting'
+      WHERE s.id IN ('d0700000-0000-4000-8000-000000000201','d0700000-0000-4000-8000-000000000202','d0700000-0000-4000-8000-000000000203')
+      GROUP BY s.id,s.capacity ORDER BY s.id`;
+    assert.equal(daySessions.length, 3, 'the synthetic active day has multiple sessions across services');
+    assert.deepEqual(daySessions.map(({ capacity, reservations, waiting }) => ({ capacity, reservations, waiting })), [
+      { capacity: 8, reservations: 3, waiting: 1 },
+      { capacity: 6, reservations: 2, waiting: 0 },
+      { capacity: 2, reservations: 2, waiting: 0 },
+    ]);
+    const demoFollowup = await sql`SELECT a.client_id AS "clientId",f.category,a.status,a.required,(a.due_at<now()) AS overdue,r.answers IS NOT NULL AS responded
+      FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id
+      LEFT JOIN client_form_responses r ON r.assignment_id=a.id
+      WHERE a.id IN ('d0700000-0000-4000-8000-000000000903','d0700000-0000-4000-8000-000000000905') ORDER BY a.id`;
+    assert.equal(demoFollowup.length, 2, 'synthetic form assignments cover pending follow-up and review');
+    assert.deepEqual(demoFollowup.map(({ clientId, category, status, required, overdue, responded }) => ({ clientId, category, status, required, overdue, responded })), [
+      { clientId: 'd0700000-0000-4000-8000-000000000001', category: 'check_in', status: 'assigned', required: true, overdue: true, responded: false },
+      { clientId: 'd0700000-0000-4000-8000-000000000008', category: 'check_in', status: 'review_required', required: true, overdue: false, responded: true },
+    ]);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM communication_conversations WHERE client_id='d0700000-0000-4000-8000-000000000001'::uuid`)[0].count, 1, 'the primary review profile has a synthetic message thread');
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id='d0700000-0000-4000-8000-000000000001'::uuid AND state='pending'`)[0].count, 1, 'the primary review profile has a pending synthetic charge');
+
     await sql`UPDATE staff_professionals SET auth_actor_id=NULL WHERE id=${demoId}::uuid`;
     await seedDemoData(sql);
     [demo] = await sql`SELECT auth_actor_id FROM staff_professionals WHERE id=${demoId}::uuid`;

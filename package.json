@@ -11,6 +11,8 @@
     "seed:demo": "pnpm --filter @2j/api seed:demo",
     "pilot": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tooling/start-local-pilot.ps1",
     "pilot:stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tooling/start-local-pilot.ps1 -Stop",
+    "owner:review": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tooling/start-local-pilot.ps1 -OwnerReview",
+    "owner:review:stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tooling/start-local-pilot.ps1 -OwnerReview -Stop",
     "test": "pnpm --filter @2j/design-tokens test && pnpm --filter @2j/domain test && pnpm --filter @2j/permissions test && pnpm --filter @2j/auth test && pnpm --filter @2j/audit test && pnpm --filter @2j/api test && pnpm --filter @2j/admin-web test && pnpm --filter @2j/client-app test && pnpm --filter @2j/staff-app test"
   },
   "devDependencies": {

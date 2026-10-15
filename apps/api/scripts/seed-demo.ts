@@ -78,17 +78,56 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
       VALUES ('d0700000-0000-4000-8000-000000000401'::uuid,${sessionId}::uuid,'d0700000-0000-4000-8000-000000000004'::uuid,'demo-entitlement-4','waiting','2j-demo-seed')
       ON CONFLICT(id) DO NOTHING`;
 
+    const secondService = services[1] ?? mainService;
+    const secondSessionId = 'd0700000-0000-4000-8000-000000000202';
+    await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
+      VALUES (${secondSessionId}::uuid,${secondService.service_id},${secondService.area_id},'manual',
+        ((now() AT TIME ZONE 'Atlantic/Canary')::date + interval '18 hours 30 minutes') AT TIME ZONE 'Atlantic/Canary',60,6,'scheduled','2j-demo-seed',${demoProfessionalId}::uuid)
+      ON CONFLICT(id) DO NOTHING`;
+    await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,status,created_by)
+      VALUES ('d0700000-0000-4000-8000-000000000304'::uuid,${secondSessionId}::uuid,'d0700000-0000-4000-8000-000000000005'::uuid,'demo-entitlement-5','reserved','2j-demo-seed'),
+             ('d0700000-0000-4000-8000-000000000305'::uuid,${secondSessionId}::uuid,'d0700000-0000-4000-8000-000000000006'::uuid,'demo-entitlement-6','reserved','2j-demo-seed')
+      ON CONFLICT(id) DO NOTHING`;
+
+    const fullSessionId = 'd0700000-0000-4000-8000-000000000203';
+    await tx`INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by,professional_id)
+      VALUES (${fullSessionId}::uuid,${mainService.service_id},${mainService.area_id},'manual',
+        ((now() AT TIME ZONE 'Atlantic/Canary')::date + interval '20 hours 15 minutes') AT TIME ZONE 'Atlantic/Canary',45,2,'scheduled','2j-demo-seed',${demoProfessionalId}::uuid)
+      ON CONFLICT(id) DO NOTHING`;
+    await tx`INSERT INTO calendar_reservations(id,session_id,client_id,entitlement_reference,status,created_by)
+      VALUES ('d0700000-0000-4000-8000-000000000306'::uuid,${fullSessionId}::uuid,'d0700000-0000-4000-8000-000000000007'::uuid,'demo-entitlement-7','reserved','2j-demo-seed'),
+             ('d0700000-0000-4000-8000-000000000307'::uuid,${fullSessionId}::uuid,'d0700000-0000-4000-8000-000000000008'::uuid,'demo-entitlement-8','reserved','2j-demo-seed')
+      ON CONFLICT(id) DO NOTHING`;
+
     await tx`INSERT INTO economic_charges(id,client_id,concept,amount_cents,due_on,state,created_by,idempotency_key,request_hash)
-      VALUES ('d0700000-0000-4000-8000-000000000501'::uuid,'d0700000-0000-4000-8000-000000000005'::uuid,'Cuota mensual · demo',4900,
+      VALUES ('d0700000-0000-4000-8000-000000000501'::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,'Cuota mensual · demo',4900,
         (now() AT TIME ZONE 'Atlantic/Canary')::date - 3,'pending','2j-demo-seed',
         'd0700000-0000-4000-8000-000000000601'::uuid,repeat('7',64))
       ON CONFLICT(id) DO NOTHING`;
 
     await tx`INSERT INTO communication_conversations(id,center_key,client_id,status,last_message_at)
-      VALUES ('d0700000-0000-4000-8000-000000000701'::uuid,'2j','d0700000-0000-4000-8000-000000000006'::uuid,'active',now())
+      VALUES ('d0700000-0000-4000-8000-000000000701'::uuid,'2j','d0700000-0000-4000-8000-000000000001'::uuid,'active',now())
       ON CONFLICT(id) DO NOTHING`;
     await tx`INSERT INTO communication_messages(id,conversation_id,sender_kind,sender_actor_id,body,idempotency_key)
       VALUES ('d0700000-0000-4000-8000-000000000702'::uuid,'d0700000-0000-4000-8000-000000000701'::uuid,'client','demo-client','¡Hola! ¿Podemos confirmar mi próxima sesión?','d0700000-0000-4000-8000-000000000703'::uuid)
+      ON CONFLICT(id) DO NOTHING`;
+
+    const checkInFormId = 'd0700000-0000-4000-8000-000000000901';
+    const checkInVersionId = 'd0700000-0000-4000-8000-000000000902';
+    await tx`INSERT INTO client_forms(id,name,category,sensitivity,status,active_version_id,created_by)
+      VALUES (${checkInFormId}::uuid,'Seguimiento semanal · demo','check_in','operational','active',${checkInVersionId}::uuid,'2j-demo-seed')
+      ON CONFLICT(id) DO NOTHING`;
+    await tx`INSERT INTO client_form_versions(id,form_id,version,description,fields,status,created_by)
+      VALUES (${checkInVersionId}::uuid,${checkInFormId}::uuid,1,'Formulario sintético para revisar el flujo de seguimiento.',
+        '[{"key":"energy","label":"¿Cómo ha ido tu semana?","type":"short_text","required":true},{"key":"sessions","label":"Sesiones realizadas","type":"number","required":true}]'::jsonb,
+        'active','2j-demo-seed') ON CONFLICT(id) DO NOTHING`;
+    await tx`INSERT INTO client_form_assignments(id,client_id,form_version_id,required,due_at,status,idempotency_key,assigned_by)
+      VALUES ('d0700000-0000-4000-8000-000000000903'::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,${checkInVersionId}::uuid,true,now()-interval '3 days','assigned','d0700000-0000-4000-8000-000000000904'::uuid,'2j-demo-seed'),
+             ('d0700000-0000-4000-8000-000000000905'::uuid,'d0700000-0000-4000-8000-000000000008'::uuid,${checkInVersionId}::uuid,true,now()+interval '3 days','review_required','d0700000-0000-4000-8000-000000000906'::uuid,'2j-demo-seed')
+      ON CONFLICT(id) DO NOTHING`;
+    await tx`INSERT INTO client_form_responses(id,assignment_id,client_id,form_version_id,answers,idempotency_key,request_hash)
+      VALUES ('d0700000-0000-4000-8000-000000000907'::uuid,'d0700000-0000-4000-8000-000000000905'::uuid,'d0700000-0000-4000-8000-000000000008'::uuid,${checkInVersionId}::uuid,
+        '{"energy":"Buena, he mantenido el ritmo","sessions":2}'::jsonb,'d0700000-0000-4000-8000-000000000908'::uuid,${sha256('2j-owner-review-checkin-response')})
       ON CONFLICT(id) DO NOTHING`;
   });
 }
