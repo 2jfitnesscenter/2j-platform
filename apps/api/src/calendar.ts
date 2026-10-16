@@ -288,7 +288,8 @@ export function registerCalendarRoutes(
         if(eligibility&&!eligibility.eligible)reasons.push(...(eligibility.blockingReasons??[eligibility.reason]));
         if(debt)reasons.push('debt_restriction');
         if(missing.length)reasons.push('required_document_missing');
-        const full=(eligibility?.capacity?.available??0)<=0;
+        // Capacity is only known when the resolver got far enough to read it; an early denial (session already started, client inactive...) must not be reported as a full session.
+        const full=eligibility?.capacity?(eligibility.capacity.available<=0):false;
         if(full)reasons.push('session_full');
         const entitlementReady=Boolean(eligibility?.eligible);
         return {allowed:reasons.length===0,decision:reasons.length?'blocked':full?'waitlist_only':'allowed',blockingReasons:[...new Set(reasons)],selectedEntitlement:entitlement,availableAlternatives:eligibility?.availableAlternatives??[],capacity:eligibility?.capacity??null,waitlistAllowed:full&&entitlementReady,overridePossible:{debt:debt&&can(context,'billing.debt.override'),documents:missing.length>0&&can(context,'documents.requirement.override'),capacity:full&&can(context,'scheduling.override_capacity')},requiredDocuments:missing.map((item:any)=>({requirementId:item.requirementId,requirementType:item.requirementType,label:item.label}))};
