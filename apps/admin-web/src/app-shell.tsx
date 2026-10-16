@@ -27,7 +27,7 @@ const routes={
   communications:{id:'communications',label:'Comunicación',href:'#communications',permission:'communications',icon:icons.MessageSquare},
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},
-  services:{id:'services',label:'Espacios y servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
+  services:{id:'services',label:'Servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},

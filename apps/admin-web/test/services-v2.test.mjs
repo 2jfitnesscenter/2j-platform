@@ -56,7 +56,7 @@ test('selecting a service opens its detail; the area filter and search narrow th
   assert.equal(within(screen.getByRole('list', { name: 'Servicios' })).getAllByRole('button').length, 2);
 });
 
-test('plans are business-language cards: Frecuencia, Vigencia, Servicios and price in integer cents, never internal vocabulary', async () => {
+test('plans are business-language cards: Cuota actual, Vigencia, Servicios and price in integer cents, never internal vocabulary', async () => {
   serve({ plans: [plan(), plan({ id: 'plan-2', name: 'Bono 10', kind: 'session_pack', status: 'active', basePriceCents: '5900', rights: [{ ...right, id: 'r2', rightType: 'sessions_quota', quantity: 10, period: null }] })] });
   mount(admin);
   fireEvent.click((await screen.findAllByRole('button', { name: /Servicio 1/ }))[0]);
@@ -64,7 +64,7 @@ test('plans are business-language cards: Frecuencia, Vigencia, Servicios and pri
   const cards = await screen.findByRole('list', { name: 'Planes del servicio' });
   const first = within(cards).getByRole('article', { name: '3 días' });
   assert.ok(within(first).getByText(/50,00/), '"5000" (string cents from the API) renders as 50,00 €');
-  assert.ok(within(first).getByText('Frecuencia'));
+  assert.ok(within(first).getByText('Cuota actual'));
   assert.ok(within(first).getByText('Vigencia'));
   assert.ok(within(first).getByText('Servicios'));
   assert.ok(within(first).getByText('Borrador'));
@@ -73,7 +73,7 @@ test('plans are business-language cards: Frecuencia, Vigencia, Servicios and pri
   fireEvent.click(within(first).getByRole('button', { name: 'Detalles' }));
   assert.doesNotMatch(document.body.textContent, /derecho|entitlement|ledger|grant|snapshot/i);
   assert.ok(screen.getByTestId('plan-legacy-note'), 'legacy plans never read as the final model');
-  assert.match(screen.getByTestId('plan-legacy-note').textContent, /nuevo modelo de cuotas/);
+  assert.match(screen.getByTestId('plan-legacy-note').textContent, /modelo anterior de cuotas/);
 });
 
 test('legacy weekly access is shown as stored, with no derived monthly session count', async () => {
@@ -101,14 +101,14 @@ test('a draft plan can be activated once; primary action only on drafts', async 
   await waitFor(() => assert.ok(posts.some((path) => /plans\/plan-1\/activate$/.test(path))));
 });
 
-test('Trainer without commercial permission sees services and spaces but no plans tab and no create actions', async () => {
+test('Trainer without commercial permission sees services and areas but no plans tab and no create actions', async () => {
   serve();
   mount(trainer);
   await screen.findByRole('list', { name: 'Servicios' });
   assert.ok(screen.queryByRole('button', { name: 'Planes' }) === null);
   assert.ok(screen.queryByRole('button', { name: 'Nuevo servicio' }) === null);
-  fireEvent.click(screen.getByRole('button', { name: 'Espacios' }));
-  assert.ok(screen.queryByRole('button', { name: 'Nuevo espacio' }) === null);
+  fireEvent.click(screen.getByRole('button', { name: 'Áreas' }));
+  assert.ok(screen.queryByRole('button', { name: 'Nueva área' }) === null);
   assert.ok(screen.queryByText('Sin planes vinculados') === null, 'commercial hints stay hidden');
 });
 

@@ -99,3 +99,11 @@
 .ui-modal legend { padding: 0 var(--2j-space-2); font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-semibold); }
 .ui-modal .field-note, .ui-modal .field-error, .ui-modal small { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
 .ui-modal .field-error { color: var(--2j-color-danger-ink); }
+
+/* Plan form: five blocks (datos, servicios, frecuencia / sesiones, accesos, vigencia) + natural-language summary */
+.ui-modal .plan-block > legend { font-size: var(--2j-type-size-xs); font-weight: var(--2j-type-weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; color: var(--2j-color-text-secondary); }
+.ui-modal .plan-notice { display: grid; gap: var(--2j-space-1); padding: var(--2j-space-3) var(--2j-space-4); border-radius: var(--2j-radius-md); background: var(--2j-color-warning-soft); color: var(--2j-color-warning-ink); font-size: var(--2j-type-size-sm); }
+.ui-modal .plan-notice strong { font-weight: var(--2j-type-weight-semibold); }
+.ui-modal .plan-legacy-readout { display: grid; gap: var(--2j-space-2); }
+.ui-modal .plan-legacy-readout ul { margin: 0; padding-left: var(--2j-space-5); font-size: var(--2j-type-size-sm); }
+.ui-modal .plan-readout { margin: 0; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-medium); }
