@@ -282,7 +282,7 @@ test('H/I: the catalogue shows ONE card per product with its sizes or formats; i
   assert.deepEqual(cards.map((card) => card.getAttribute('aria-label')), ['Camiseta 2J', 'Proteína Whey'], 'no card per variant');
   const wheyCard = within(screen.getByRole('list', { name: 'Productos' })).getByRole('article', { name: 'Proteína Whey' });
   assert.match(wheyCard.querySelector('.product-options').textContent, /Formatos\s*500 g · 1 kg/); assert.match(wheyCard.querySelector('.product-options').textContent, /Sabores\s*Chocolate · Vainilla/);
-  assert.match(wheyCard.textContent, /desde\s*19,90\s*€/);
+  assert.match(wheyCard.textContent, /Desde\s*19,90\s*€/);
   fireEvent.click(screen.getByRole('tab', { name: 'Inventario' }));
   const groups = [...document.querySelectorAll('tbody.store-group')];
   assert.equal(groups.length, 2);

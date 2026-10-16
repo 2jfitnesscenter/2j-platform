@@ -19,7 +19,7 @@
 .product-card { height: 100%; display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
 .product-card.is-inactive .product-media, .product-card.is-inactive h3 { opacity: 0.6; }
 /* Elegant fallback until real product images exist (2J-098D): category icon + initials, never an empty box. */
-.product-media { aspect-ratio: 16 / 10; display: grid; place-content: center; justify-items: center; gap: var(--2j-space-1); background: var(--2j-color-surface-subtle); color: var(--2j-color-text-secondary); border-bottom: 1px solid var(--2j-color-border); }
+.product-media { aspect-ratio: 4 / 3; max-height: 16rem; display: grid; place-content: center; justify-items: center; gap: var(--2j-space-1); background: var(--2j-color-surface-subtle); color: var(--2j-color-text-secondary); border-bottom: 1px solid var(--2j-color-border); }
 .product-media span { font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-bold); letter-spacing: 0.04em; }
 .product-body { display: grid; align-content: start; gap: var(--2j-space-2); padding: var(--2j-space-4); min-width: 0; }
 .product-chips { display: flex; align-items: center; flex-wrap: wrap; gap: var(--2j-space-2); min-height: 1.5rem; }
@@ -133,3 +133,47 @@
 .vb-exists { display: block; color: var(--2j-color-warning-ink); font-size: var(--2j-type-size-xs); }
 .vb-problems { margin: 0; padding: var(--2j-space-2) var(--2j-space-3) var(--2j-space-2) var(--2j-space-6); border-radius: var(--2j-radius-sm); background: var(--2j-color-danger-soft); color: var(--2j-color-danger-ink); font-size: var(--2j-type-size-xs); }
 @media (max-width: 479.98px) { .vb-grid { grid-template-columns: minmax(0, 1fr); } .vb-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); } .vb-table, .vb-table tbody, .vb-table tr, .vb-table td { display: block; } .vb-table tr { padding: var(--2j-space-2) 0; border-bottom: 1px solid var(--2j-color-border); } .vb-table td { border: 0; padding: var(--2j-space-1) 0; } .vb-table td[data-label]:not([data-label="Variante"])::before { content: attr(data-label); display: block; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); } }
+
+/* Product photos: primary image on the card, gallery in the detail, manager with thumbnails */
+button.product-media { position: relative; width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--2j-color-border); font: inherit; cursor: pointer; overflow: hidden; }
+button.product-media:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: -2px; }
+button.product-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.product-media .product-media-count { position: absolute; right: var(--2j-space-2); bottom: var(--2j-space-2); padding: 2px var(--2j-space-2); border-radius: var(--2j-radius-pill); background: rgb(22 24 26 / 62%); color: #fff; font-size: var(--2j-type-size-xs); font-weight: var(--2j-type-weight-medium); letter-spacing: 0; }
+.store-group-thumb { width: 2rem; height: 2rem; margin-right: var(--2j-space-2); border-radius: var(--2j-radius-sm); object-fit: cover; vertical-align: middle; }
+.store-sale-product { display: flex; align-items: center; gap: var(--2j-space-3); padding: var(--2j-space-2) var(--2j-space-3); border-radius: var(--2j-radius-md); background: var(--2j-color-surface-subtle); }
+.store-sale-product img { width: 3.5rem; height: 3.5rem; border-radius: var(--2j-radius-sm); object-fit: cover; flex: none; }
+.store-sale-product span { display: grid; gap: 1px; min-width: 0; }
+.store-sale-product small { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.gallery { display: grid; gap: var(--2j-space-3); }
+.gallery-main { aspect-ratio: 4 / 3; border-radius: var(--2j-radius-lg); overflow: hidden; background: var(--2j-color-surface-subtle); }
+.gallery-main img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gallery-thumbs { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(4rem, 1fr)); gap: var(--2j-space-2); }
+.gallery-thumbs button { width: 100%; aspect-ratio: 1; padding: 0; border: 2px solid transparent; border-radius: var(--2j-radius-md); overflow: hidden; background: none; cursor: pointer; }
+.gallery-thumbs button.is-current { border-color: var(--2j-color-brand); }
+.gallery-thumbs button:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.gallery-thumbs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.store-detail-fallback { display: grid; place-content: center; justify-items: center; gap: var(--2j-space-1); aspect-ratio: 4 / 3; border-radius: var(--2j-radius-lg); background: var(--2j-color-surface-subtle); color: var(--2j-color-text-secondary); font-weight: var(--2j-type-weight-bold); letter-spacing: 0.04em; }
+.store-detail-price { display: grid; gap: var(--2j-space-1); margin: 0; }
+.store-detail-price strong { font-size: var(--2j-type-size-lg); font-variant-numeric: tabular-nums; }
+.store-detail-variants { margin: 0; padding: 0; list-style: none; display: grid; }
+.store-detail-variants li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: var(--2j-space-3); align-items: center; padding: var(--2j-space-2) 0; border-top: 1px solid var(--2j-color-border); font-size: var(--2j-type-size-sm); }
+.store-detail-variants li span:nth-child(2), .store-detail-variants li span:nth-child(3) { font-variant-numeric: tabular-nums; color: var(--2j-color-text-secondary); }
+@media (max-width: 479.98px) { .store-detail-variants li { grid-template-columns: minmax(0, 1fr) auto; } }
+.photo-manager, .photo-drop-wrap { display: grid; gap: var(--2j-space-3); }
+.photo-help { margin: 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.photo-grid { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: var(--2j-space-3); }
+.photo-tile { display: grid; gap: var(--2j-space-2); padding: var(--2j-space-2); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); min-width: 0; }
+.photo-thumb { position: relative; aspect-ratio: 4 / 3; border-radius: var(--2j-radius-sm); overflow: hidden; background: var(--2j-color-surface-subtle); display: grid; place-items: center; color: var(--2j-color-text-secondary); }
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-badge { position: absolute; left: var(--2j-space-1); top: var(--2j-space-1); padding: 1px var(--2j-space-2); border-radius: var(--2j-radius-pill); background: var(--2j-color-brand); color: var(--2j-color-text-on-brand); font-size: var(--2j-type-size-xs); font-weight: var(--2j-type-weight-semibold); }
+.photo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.photo-actions { display: flex; flex-wrap: wrap; gap: var(--2j-space-1); }
+.photo-drop { display: grid; justify-items: center; gap: var(--2j-space-2); padding: var(--2j-space-5); border: 2px dashed var(--2j-color-border-strong); border-radius: var(--2j-radius-lg); text-align: center; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.photo-drop.is-over { border-color: var(--2j-color-brand); background: var(--2j-color-brand-soft); }
+.photo-drop.is-full { opacity: 0.7; }
+.photo-room, .photo-progress, .photo-notice, .photo-empty { margin: 0; font-size: var(--2j-type-size-xs); color: var(--2j-color-text-secondary); }
+.photo-notice { color: var(--2j-color-success-ink); }
+.photo-errors { margin: 0; padding: var(--2j-space-2) var(--2j-space-3) var(--2j-space-2) var(--2j-space-6); border-radius: var(--2j-radius-sm); background: var(--2j-color-danger-soft); color: var(--2j-color-danger-ink); font-size: var(--2j-type-size-xs); }
+.photo-pending { margin: 0; padding: var(--2j-space-4); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); display: grid; gap: var(--2j-space-3); min-width: 0; }
+.photo-pending > legend { padding: 0 var(--2j-space-2); font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-semibold); }
+@media (max-width: 479.98px) { .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

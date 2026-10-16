@@ -5,3 +5,5 @@ dist/
 .env.*
 !.env.example
 work/
+
+.local-object-storage/

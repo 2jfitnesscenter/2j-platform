@@ -49,7 +49,7 @@ test('product card is visual with a fallback instead of an image, no invented st
   assert.equal(shirt.querySelector('.product-media span').textContent,'C2','initials fallback');
   assert.ok(shirt.querySelector('img')===null,'no image is faked: media backend is not implemented');
   assert.ok(within(shirt).getByText('Agotado'));
-  assert.ok(within(shirt).getByText(/desde\s*18,00\s*€/));
+  assert.ok(within(shirt).getByText(/Desde\s*18,00\s*€/));
   assert.ok(within(within(grid).getByRole('article',{name:'Proteína'})).queryByText('Agotado')===null);
   assert.ok(within(within(grid).getByRole('article',{name:'Proteína'})).getAllByText('4 uds.').length>=1);
   assert.ok(within(grid).getByText('Inactivo'));

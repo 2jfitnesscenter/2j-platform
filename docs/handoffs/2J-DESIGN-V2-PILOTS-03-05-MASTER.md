@@ -2,7 +2,7 @@
 
 Permite a otro agente continuar sin releer la conversación. Cubre Agenda (03), Servicios + Planes (04) y Tienda (05). Los pilotos 01 (shell + Resumen) y 02 (Clientes + Cliente 360) ya están **mergeados y aprobados** (`main` @ `7392c47`).
 
-**Regla de todos los pilotos:** funcionalidad existente + Design V2. Sin datos ni acciones inventadas, sin tocar RBAC, base de datos ni migraciones. **Ningún PR está mergeado ni autoaprobado; los tres siguen en Draft.** Único cambio de backend de toda la pila: la corrección de `GET /api/calendar/sessions/:id/booking-eligibility` en #50 (ver PILOT-03); sin cambios de contrato.
+**Regla de todos los pilotos:** funcionalidad existente + Design V2. Sin datos ni acciones inventadas, sin tocar RBAC, base de datos ni migraciones. **Ningún PR está mergeado ni autoaprobado; los tres siguen en Draft.** Cambios de backend de toda la pila: la corrección de `GET /api/calendar/sessions/:id/booking-eligibility` en #50 (ver PILOT-03) y, en #52, las **fotos de producto** (migración `0033_store_product_media`, `ObjectStorage`, endpoints multipart y `@fastify/multipart`; ver PILOT-05).
 
 ## 1. Estado de cada piloto
 
@@ -18,7 +18,7 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | PR | #50 (Draft, base `main`) |
 | STATUS | Draft, técnicamente listo; pendiente del propietario |
 | VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
-| TESTS | admin-web 237 (suite de la pila completa) · ui 13 · tokens 5 · client-app 14 · staff-app 7 · API calendario (35 en BD limpia), todos PASS |
+| TESTS | admin-web 254 · API 207 (suite de la pila completa) · ui 13 · tokens 5 · client-app 14 · staff-app 7 · API calendario (35 en BD limpia), todos PASS |
 | BUILD / CI | PASS / PASS (push y pull_request) |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#calendar` · Trainer `http://127.0.0.1:5175/#calendar` |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-03.md` |
@@ -60,14 +60,15 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | PR | #52 (Draft, base `agent/claude/2J-DESIGN-V2-PILOT-04`) |
 | STATUS | Draft, técnicamente listo; pendiente del propietario |
 | VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
-| TESTS / BUILD / CI | admin-web 237 PASS / PASS / PASS |
+| TESTS / BUILD / CI | admin-web 254 · API 207 PASS / PASS / PASS |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#store` (Trainer no tiene Tienda por capacidad) |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-05.md` |
 
 - **BUGS_FOUND / FIXED (tras la prueba del propietario y la revisión final):** la venta era confusa (botón «Añadir línea» sin pedido visible ni motivo del botón gris) → «Añadir al pedido», sección **Pedido** con líneas estructuradas (producto · variante · cantidad · subtotal · Quitar) y total, validación de variante/unidades/stock (contando lo ya añadido) y motivos de «Confirmar venta» deshabilitado. Al abrir una venta nueva ya no se arrastra el cliente ni el pedido de una venta cancelada. «Member» → «Cliente»; «Tarjeta (registro interno)»; «Sin control de unidades» en vez de 0. Edición de producto/variante con `window.prompt` y anulación con `window.confirm` siguen siendo preexistentes.
 - **Variantes en lote (posterior):** alta de producto con tallas XS–4XL o formatos × sabores en un formulario, venta progresiva Producto → Talla/Formato → Sabor, inventario agrupado. Sin cambios de esquema/API (formato en `size`, label derivado). Ver el handoff de Tienda.
+- **Fotos de producto (posterior):** 2J-098D mínimo implementado a nivel de producto (hasta 6, la primera es la principal, multipart, almacenamiento local detrás de `ObjectStorage`). `PRODUCT_MEDIA_BACKEND=IMPLEMENTED`. Sin optimización de imágenes ni CDN ni fotos por variante.
 - **KNOWN_GAPS:** sin búsqueda/filtros de catálogo (no existían); sin umbral de «pocas unidades» (el dato no existe); Member Tienda sin tocar.
-- **DEFERRED_TO_2J098:** `PRODUCT_MEDIA_BACKEND=NOT_IMPLEMENTED` (imágenes y subida, 2J-098D). La tarjeta usa un fallback intencional (icono de categoría + iniciales); la zona `.product-media` es donde irá la imagen.
+- **DEFERRED_TO_2J098:** `PRODUCT_MEDIA_BACKEND=IMPLEMENTED` a nivel de producto (ver arriba). Pendiente de 098D completo: optimización/miniaturas, proveedor S3 y lectura autenticada de imágenes en producción.
 
 ## 2. Matriz de estado
 

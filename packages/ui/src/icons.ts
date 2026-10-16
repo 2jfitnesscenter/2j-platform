@@ -24,6 +24,8 @@ export {
   FileText,
   FileWarning,
   History,
+  Image,
+  ImagePlus,
   Hourglass,
   Inbox,
   LayoutDashboard,
