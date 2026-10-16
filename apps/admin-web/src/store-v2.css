@@ -76,3 +76,11 @@
 .store-sale-lines > div { display: flex; align-items: center; justify-content: space-between; gap: var(--2j-space-3); flex-wrap: wrap; }
 .store-sale-lines > div > span { flex: 1 1 10rem; }
 .store-sale-total { text-align: right; font-size: var(--2j-type-size-md); font-variant-numeric: tabular-nums; }
+
+/* ---------- Sale dialog: explicit order ---------- */
+.store-add-line { display: grid; gap: var(--2j-space-2); justify-items: start; }
+.store-order { display: grid; gap: var(--2j-space-2); padding: var(--2j-space-3) var(--2j-space-4); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); }
+.store-order h3 { margin: 0; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-semibold); }
+.store-order-empty { margin: 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.store-order .store-sale-lines { padding: 0; background: none; }
+.store-sale-help { margin: 0; padding: var(--2j-space-3) var(--2j-space-4) var(--2j-space-3) var(--2j-space-6); border-radius: var(--2j-radius-md); background: var(--2j-color-warning-soft); color: var(--2j-color-warning-ink); font-size: var(--2j-type-size-sm); line-height: 1.5; }

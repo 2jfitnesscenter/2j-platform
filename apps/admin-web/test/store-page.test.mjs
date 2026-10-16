@@ -34,7 +34,7 @@ test('POS retries keep the same idempotency key and a completed sale starts with
   serve({onRequest:(target,init)=>{if(target.endsWith('/api/admin/store/sales')){keys.push(new Headers(init.headers).get('idempotency-key'));saleCalls++;return saleCalls===1?json({error:'internal_error'},500):json({id:`s${saleCalls}`},201);}return null;}});
   render(React.createElement(StorePage));await screen.findByRole('heading',{name:'Proteína'});
   fireEvent.click(screen.getByRole('tab',{name:'Ventas'}));
-  const start=async()=>{fireEvent.click(screen.getAllByRole('button',{name:'Nueva venta en el centro'})[0]);const dialog=await screen.findByRole('dialog');fireEvent.change(within(dialog).getByLabelText('Buscar Member'),{target:{value:'Eva'}});fireEvent.click(await within(dialog).findByRole('option',{name:'Eva Demo'}));fireEvent.change(within(dialog).getByLabelText('Variante'),{target:{value:'v1'}});fireEvent.click(within(dialog).getByRole('button',{name:'Añadir línea'}));return dialog;};
+  const start=async()=>{fireEvent.click(screen.getAllByRole('button',{name:'Nueva venta en el centro'})[0]);const dialog=await screen.findByRole('dialog');fireEvent.change(within(dialog).getByLabelText('Buscar Member'),{target:{value:'Eva'}});fireEvent.click(await within(dialog).findByRole('option',{name:'Eva Demo'}));fireEvent.change(within(dialog).getByLabelText('Variante'),{target:{value:'v1'}});fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));return dialog;};
   let dialog=await start();fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar venta'}));await within(dialog).findByRole('alert');
   fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar venta'}));await waitFor(()=>assert.equal(saleCalls,2));assert.equal(keys[0],keys[1],'a retried identical sale reuses its key');
   await waitFor(()=>assert.ok(screen.queryByRole('dialog')===null),{timeout:2000});
@@ -137,4 +137,67 @@ test('the dialog traps focus, closes with Escape and returns focus to its opener
   fireEvent.keyDown(document,{key:'Escape'});
   await waitFor(()=>assert.ok(screen.queryByRole('dialog')===null));
   assert.ok(document.activeElement===opener);
+});
+
+const openSale=async()=>{await open();fireEvent.click(screen.getByRole('tab',{name:'Ventas'}));fireEvent.click(screen.getAllByRole('button',{name:'Nueva venta en el centro'})[0]);return screen.findByRole('dialog',{name:'Nueva venta en el centro'});};
+const pickClient=async(dialog)=>{fireEvent.change(within(dialog).getByLabelText('Buscar Member'),{target:{value:'Eva'}});fireEvent.click(await within(dialog).findByRole('option',{name:'Eva Demo'}));};
+
+test('new sale: an explicit empty Pedido and a visible reason why Confirmar venta is disabled',async()=>{
+  const dialog=await openSale();
+  const order=within(dialog).getByRole('heading',{name:'Pedido'}).closest('section');
+  assert.ok(within(order).getByText('Aún no has añadido productos.'));
+  const confirm=within(dialog).getByRole('button',{name:'Confirmar venta'});
+  assert.equal(confirm.disabled,true);
+  assert.ok(within(dialog).getByText('Elige un cliente de la lista para registrar la venta.'));
+  assert.ok(within(dialog).getByText('Añade al menos un producto al pedido.'));
+  assert.equal(confirm.getAttribute('aria-describedby'),'store-sale-help');
+  assert.ok(document.getElementById('store-sale-help'),'the description target exists');
+});
+
+test('client + variant + units but nothing in the order: the dialog says to press Añadir al pedido, and doing so enables the sale',async()=>{
+  const dialog=await openSale();await pickClient(dialog);
+  fireEvent.change(within(dialog).getByLabelText('Variante'),{target:{value:'v1'}});
+  const confirm=within(dialog).getByRole('button',{name:'Confirmar venta'});
+  assert.equal(confirm.disabled,true);
+  assert.match(within(dialog).getByText(/has elegido Proteína · Chocolate pero aún no está en el pedido/).textContent,/Pulsa «Añadir al pedido»/);
+  assert.ok(within(dialog).queryByText('Elige un cliente de la lista para registrar la venta.')===null,'the client is selected');
+  fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));
+  const order=within(dialog).getByRole('heading',{name:'Pedido'}).closest('section');
+  assert.ok(within(order).getByText(/Proteína · Chocolate × 1/));
+  assert.ok(within(order).getAllByText(/25,00\s*€/).length>=1);
+  assert.ok(within(order).queryByText('Aún no has añadido productos.')===null);
+  assert.equal(confirm.disabled,false,'client + at least one line enables the sale');
+  assert.ok(within(dialog).queryByText(/Añade al menos un producto/)===null);
+});
+
+test('adding to the order validates variant, units and stock before Confirmar venta',async()=>{
+  const dialog=await openSale();
+  fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));
+  assert.equal((await within(dialog).findByText('Elige un producto y su variante antes de añadirlo al pedido.')).getAttribute('class'),'ui-form-error');
+  fireEvent.change(within(dialog).getByLabelText('Variante'),{target:{value:'v1'}});
+  assert.ok(within(dialog).queryByText('Elige un producto y su variante antes de añadirlo al pedido.')===null,'changing the variant clears the stale error');
+  fireEvent.change(within(dialog).getByLabelText('Unidades'),{target:{value:'0'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));
+  assert.ok(await within(dialog).findByText('Las unidades deben ser un número entero de 1 o más.'));
+  fireEvent.change(within(dialog).getByLabelText('Unidades'),{target:{value:'5'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));
+  assert.ok(await within(dialog).findByText('Solo quedan 4 uds. de Proteína · Chocolate.'));
+  assert.ok(within(dialog).getByText('Aún no has añadido productos.'),'nothing was added');
+  fireEvent.change(within(dialog).getByLabelText('Unidades'),{target:{value:'3'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));
+  assert.ok(within(dialog).getByText(/Proteína · Chocolate × 3/));
+  fireEvent.change(within(dialog).getByLabelText('Variante'),{target:{value:'v1'}});
+  fireEvent.change(within(dialog).getByLabelText('Unidades'),{target:{value:'2'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));
+  assert.ok(await within(dialog).findByText('Solo quedan 4 uds. de Proteína · Chocolate y ya has añadido 3 al pedido.'),'stock counts what is already in the order');
+});
+
+test('untracked variants are not stock-limited',async()=>{
+  const untracked={...protein,variants:[{...protein.variants[0],stockTracked:false,stock:0}]};
+  await open({products:[untracked],movements:[],sales:[]});
+  fireEvent.click(screen.getByRole('tab',{name:'Ventas'}));fireEvent.click(screen.getAllByRole('button',{name:'Nueva venta en el centro'})[0]);
+  const dialog=await screen.findByRole('dialog',{name:'Nueva venta en el centro'});
+  fireEvent.change(within(dialog).getByLabelText('Variante'),{target:{value:'v1'}});fireEvent.change(within(dialog).getByLabelText('Unidades'),{target:{value:'50'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));
+  assert.ok(within(dialog).getByText(/Proteína · Chocolate × 50/));
 });
