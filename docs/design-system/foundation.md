@@ -1,5 +1,7 @@
 # 2J design system foundation
 
+> **Nota (2J-DESIGN-V2):** este documento es el contrato de tokens y de estados de componente de la fase 2J-005 y **sigue vigente**. La dirección visual, el Design System V2 (con los cambios propuestos sobre este contrato), los patrones, el inventario de componentes, los blueprints de pantalla y la deuda visual viven en [`docs/design/`](../design/2J-DESIGN-DIRECTION-V2.md). Los cambios de V2 son **propuestas pendientes de aceptación visual del propietario**; hasta entonces, `tokens.json` y el contenido normativo de este documento no cambian.
+
 ## Brand and visual language
 
 The accent pair (`#73b52e`, `#578923`) is sampled from the existing 2J client app, preserving brand continuity. Neutral surfaces and status colors are semantic and tested for readable contrast. Product research remains the authority for any brand or UX decision; these tokens establish implementation names and accessible starting values, not a new product direction.
