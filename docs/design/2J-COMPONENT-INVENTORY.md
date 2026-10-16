@@ -27,7 +27,7 @@ Consecuencia: el «sistema» actual es el CSS y la convención; V2 propone **com
 | Uso en `admin-web` | 842 usos de `var(--2j-*)` y **1 solo hex** | **KEEP** (modelo a seguir) |
 | Uso en `staff-app` | 131 usos de `var(--2j-*)`, 0 hex | **KEEP** |
 | Uso en `client-app` | 257 usos de `var(--2j-*)` **y 271 literales hex (95 distintos)** | **REFINE** (migrar a tokens) |
-| Tema Member `.hub-theme` | Sobrescribe `brand` por `#10B981` y trae paleta oscura propia (107 apariciones) | **REPLACE** por tokens (tras decidir el verde de marca) |
+| Tema Member `.hub-theme` | Sobrescribe `brand` por `#10B981` y trae paleta oscura propia (107 apariciones) | **REPLACE** por tokens (verde único `#73b52e`, DD-01 aprobado) |
 
 ## 3. Inventario por familia
 
@@ -40,7 +40,7 @@ Consecuencia: el «sistema» actual es el CSS y la convención; V2 propone **com
 | Glifos de navegación `⌂ ▦ ◉ ♙ ✉ € ◇ ▣` | `app-shell.tsx` (`navGlyph`) | Caracteres Unicode como iconos; 1 SVG suelto | **REPLACE** | `Icon` (Lucide vendorizado, 20 px, trazo 1,75) |
 | Búsqueda global (`.global-search-dialog`, `Ctrl/⌘K`) | `app-shell.tsx` | Funciona; es un diálogo propio | **REFINE** → `CommandPalette` sobre `Modal` | `SearchBar` + resultados agrupados |
 | `.bottom-nav`, `.nav-button` (5 destinos) | `client-app` | Coincide con la navegación Member aprobada | **KEEP/REFINE** | Altura 64 + safe-area, indicador verde, tokens |
-| Barra inferior / pestañas de `staff-app` | `staff-app` | App móvil de profesional separada (Agenda, Clientes, Mensajes, Equipo, Fichaje, Más), ya basada en tokens | **KEEP** (ver Decisión DD-08) | Adoptar patrones V2 |
+| Barra inferior / pestañas de `staff-app` | `staff-app` | App móvil de profesional separada (Agenda, Clientes, Mensajes, Equipo, Fichaje, Más), ya basada en tokens | **KEEP** (DD-08 aprobado: `staff-app` se mantiene como experiencia móvil profesional) | Adoptar patrones V2 |
 
 ### 3.2 Botones
 

@@ -2,7 +2,7 @@
 
 Wireframes **textuales y estructurales** de las pantallas clave. No son diseño pixel-perfect: fijan **jerarquía, acción primaria, qué se oculta y qué se abre en modal/drawer/página**. Componentes en [`2J-UI-PATTERNS.md`](2J-UI-PATTERNS.md); tokens y reglas en [`2J-DESIGN-SYSTEM-V2.md`](2J-DESIGN-SYSTEM-V2.md); dirección en [`2J-DESIGN-DIRECTION-V2.md`](2J-DESIGN-DIRECTION-V2.md).
 
-**Estado:** propuesta; no se ha tocado ninguna pantalla. **Ningún blueprint cambia reglas de negocio ni contratos de API.** Las referencias a capacidades de 2J-098 (periodos, políticas, imágenes) se activan «cuando 098X esté implementado»; mientras tanto la pantalla muestra el dato legacy sin pestañas ni textos de 098.
+**Estado:** dirección general aprobada por el propietario el 2026-10-16 (decisiones DD-01…DD-08 `APPROVED BY PRODUCT OWNER`; estados de PP-01…PP-11 en el anexo). Sigue pendiente la revisión visual final antes de aplicar nada; no se ha tocado ninguna pantalla. **Ningún blueprint cambia reglas de negocio ni contratos de API.** Las referencias a capacidades de 2J-098 (periodos, políticas, imágenes) se activan «cuando 098X esté implementado»; mientras tanto la pantalla muestra el dato legacy sin pestañas ni textos de 098.
 
 **Leyenda:** `P` acción primaria · `S` secundaria · `T` terciaria · `▓` relleno de aforo/saldo · `⚠` atención. Los datos y nombres son ficticios.
 
@@ -44,7 +44,7 @@ Wireframes **textuales y estructurales** de las pantallas clave. No son diseño 
 ```
 Buenos días, Alex          jueves 16 oct · Actualizado hace 2 min ↻            [+ Nueva sesión]
 
-┌ Clientes activos ┐ ┌ Reservas hoy ┐ ┌ Ocupación hoy ┐ ┌ Pendiente de cobro ┐
+┌ Con plan activo  ┐ ┌ Reservas hoy ┐ ┌ Ocupación hoy ┐ ┌ Pendiente de cobro ┐
 │ 124              │ │ 38           │ │ 71 %          │ │ 1.240 €            │
 │ 3 nuevos         │ │ 4 en espera  │ │ 6 de 9 ses.   │ │ 5 vencidos ⚠       │
 └──────────────────┘ └──────────────┘ └───────────────┘ └────────────────────┘
@@ -69,7 +69,7 @@ Buenos días, Alex          jueves 16 oct · Actualizado hace 2 min ↻         
 - **Oculto:** agenda completa, listas completas, detalle económico, participantes.
 - **Se abre en:** sesión → `DetailDrawer`; cliente → página del Cliente 360; pago → ficha de pago del cliente.
 - **Vacío:** «Todo al día. Nada requiere tu atención.»; sin sesiones: «Hoy no hay sesiones» + [Nueva sesión] (si permiso).
-- **Trainer:** `MetricStrip` sin «Pendiente de cobro» salvo permiso; **Próximas sesiones** ya refleja sus sesiones (el servidor decide el alcance; «Mis sesiones» es filtro de UX).
+- **Trainer:** `MetricStrip` sin «Pendiente de cobro» salvo permiso; **Próximas sesiones** ya refleja sus sesiones (el servidor decide el alcance; «Mis sesiones» es el filtro/experiencia **por defecto** del Trainer, no frontera de autorización; con `scope=all` puede cambiar a «Todas». *PP-07*).
 - **Móvil:** orden **Atención → Próximas (3) → Métricas 2×2 → Actividad (3, colapsable)**; acciones en cada fila a 44 px.
 - **Hoy → Target:** hoy el Resumen tiene **cinco paneles** —«Agenda de hoy» (protagonista, con estadísticas y hasta 5 sesiones), «Necesitan atención», «Pendientes», «Pulso operativo» y «Pendiente de gestión»— con dos *eyebrows* («CENTRO DE OPERACIONES», «HOY · ATLANTIC/CANARY») y botón «Actualizar». Target: la atención sube al protagonismo (junto a Próximas sesiones), las cifras pasan a una `MetricStrip` de 4 indicadores accionables, «Pendientes»/«Pulso operativo»/«Pendiente de gestión» se integran en atención y métricas, y desaparece el segundo *eyebrow*.
 
@@ -97,10 +97,10 @@ Buenos días, Alex          jueves 16 oct · Actualizado hace 2 min ↻         
 - **Simultáneas:** **hasta 4 tarjetas reales en paralelo**; el resto en una **lista secundaria separada** debajo de la franja («Ver 2 sesiones simultáneas adicionales»); **sin pastilla `+1 sesión`** sobre la card; sin scroll horizontal interno.
 - **Resumen de rango:** una línea de texto (sesiones · ocupación · espera), no cards.
 - **Día actual** en el selector con relleno `brand-soft`; **línea «ahora»** fina en verde.
-- **Eje horario configurable** (⚙): primera y última franja visibles. *PP-03.*
+- **Eje horario configurable** (⚙): primera y última franja visibles. *PP-03 (APPROVED DIRECTION — NOT IMPLEMENTED): configuración **a nivel de centro** (p. ej. inicio 06:00, fin 22:00), sin preferencia individual por profesional en V1. Las sesiones fuera del rango tienen salida razonable: indicador «Fuera de horario (n)» que las abre.*
 - **Aviso de zona horaria** solo cuando el dispositivo difiere de Canarias.
-- **Filtros** (popover/panel): Servicio · Profesional · Estado (**Todas** incluye canceladas; **Canceladas** las aísla) · Mis sesiones (si el servidor resuelve el profesional). Contadores = colección filtrada.
-- **Oculto:** participantes, cola, notas, reglas, derechos, botones por tarjeta.
+- **Filtros** (popover/panel): Servicio · Profesional · Estado (**Todas** incluye canceladas; **Canceladas** las aísla) · Mis sesiones / Todas (el Trainer entra en «Mis sesiones»; «Todas» solo si su RBAC permite `scope=all`; *PP-07*). Contadores = colección filtrada.
+- **Oculto:** participantes, cola, notas, reglas, saldos de sesiones, botones por tarjeta.
 - **Se abre en:** clic en tarjeta → `DetailDrawer` de sesión (deep link `#calendar/session/{id}`); «Nueva sesión» → `Modal` de formulario corto con «Más opciones».
 - **Vacío:** «No hay sesiones este día» + [Nueva sesión] / [Configurar horarios] (según permiso).
 - **Móvil/tablet:** Día por defecto; `DayStrip` arriba; tarjetas a ancho completo; las simultáneas se apilan en filas; filtros en *bottom sheet*; detalle a página completa.
@@ -123,8 +123,8 @@ Buenos días, Alex          jueves 16 oct · Actualizado hace 2 min ↻         
 - **Hasta 2 tarjetas simultáneas por franja** (decisión aprobada); excedentes a la lista secundaria del día. Sin `+1` pegado ni scroll horizontal.
 - **Columna de hoy** destacada con `brand-soft`; cabecera de día con fecha y recuento de la colección filtrada.
 - **Decide por ancho de contenedor, no de viewport:** si el contenedor no permite ≥ ~120 px por columna con dos tarjetas, pasa a **Día** (con aviso «La semana completa se muestra mejor en una pantalla más ancha»).
-- *Opción:* vista de **3 días** como zoom intermedio en tablet (Trainin).
-- **Pivote por profesional** (columnas = profesionales) como alternativa de visualización cuando hay mucho paralelismo (TIMP). *Sin cambios de lógica; solo vista.*
+- Vista de **3 días**: *DEFERRED / OPTIONAL (PP-11)*. No entra en V1 solo porque Trainin la tenga; las vistas principales siguen siendo **Día** y **Semana**.
+- **Pivote por profesional** (columnas = profesionales; TIMP): *APPROVED DIRECTION — NOT IMPLEMENTED (PP-11)* como dirección futura. Sin cambios de lógica; solo vista.
 - **Móvil:** no se ofrece Semana; `DayStrip` semanal + Día.
 
 ## 4. Detalle de sesión
@@ -154,6 +154,7 @@ Plazas  6 / 10  ▓▓▓▓▓▓░░░░     En cola 2
 - **Oculto en la agenda y visible aquí:** participantes, cola, notas, historial, serie.
 - **Series:** el alcance de edición se elige en el botón (TIMP).
 - **Estados:** programada · en curso · finalizada · llena · cancelada (cabecera neutra, acciones deshabilitadas con motivo).
+- **Salida explícita (drawer → página):** el drawer **no debe convertirse en un panel estrecho** si concentra mucha operación. En la implementación habrá que **probar visualmente** reservas, lista de espera, asistencia, notas y acciones; si el drawer resulta saturado, **se permite elevar el detalle a página completa** también en desktop (misma URL `#calendar/session/{id}`).
 - **Móvil:** página completa; acción primaria fija abajo; pestañas con scroll horizontal controlado.
 
 ---
@@ -166,17 +167,17 @@ Plazas  6 / 10  ▓▓▓▓▓▓░░░░     En cola 2
 
 ```
 Clientes                                                           [+ Nuevo cliente]
-[ Requiere atención 7 ][ Todos 124 ][ Activos 98 ][ Inactivos 19 ][ Archivados 7 ]
-[🔍 Buscar por nombre, correo o teléfono]  [Plan ▾] [Estado ▾]  [Filtros (0)]  Ordenar: Atención primero ▾
+[ Todos 124 ][ Requiere atención 7 ][ Plan activo 98 ][ Sin plan 19 ][ Archivados 7 ]
+[🔍 Buscar por nombre, correo o teléfono]  [Plan ▾] [Actividad ▾]  [Filtros (0)]  Ordenar: A–Z ▾
 
-CLIENTE             ESTADO     PLAN                SESIONES      PRÓXIMA ACTIVIDAD      ATENCIÓN         ENTRENADOR
-(M) María Pérez     ● Activo   Trim. 3×/sem        7/13 ▓▓▓░     Hoy 18:00 Funcional    ⚠ Pago vencido   (A) Alex
-(L) Lucía Gil       ● Activo   Mensual 2×/sem      6/8  ▓▓▓▓░    Vie 10:00 Pilates      —                (N) Nora
-(P) Pablo Mena      ○ Inactivo Sin plan            —             —                      Sin reservas 21 d  —
+CLIENTE             PLAN                       SESIONES      ACTIVIDAD                  ATENCIÓN         ENTRENADOR
+(M) María Pérez     ● Activo · Trim. 3×/sem    7/13 ▓▓▓░     ● Activo · Hoy 18:00       ⚠ Pago vencido   (A) Alex
+(L) Lucía Gil       ● Activo · Mensual 2×/sem  6/8  ▓▓▓▓░    ● Activo · Vie 10:00       —                (N) Nora
+(P) Pablo Mena      ○ Sin plan                 —             ○ Sin actividad reciente   —                —
 ```
 
-- **Cliente:** avatar + nombre + «Cliente desde». **Estado:** `StatusChip` (derivado, con ayuda). **Plan:** nombre + vigencia. **Sesiones:** cifra + relleno (ilimitado: «Ilimitadas»). **Próxima actividad:** fecha + servicio. **Atención:** chip con **motivo visible**. **Entrenador:** solo si existe la asignación (2J-098C `assigned`).
-- **Orden por defecto:** «Atención primero» (el criterio se muestra en cada fila). *PP-01, PP-06.*
+- **Tres conceptos, tres señales (PP-04):** **Cuenta** (la identidad existe siempre: avatar + nombre + «Cliente desde»; no se oculta ni se borra por no tener plan; solo «Archivado» es un estado de cuenta explícito) · **Plan** (`StatusChip`: Activo · Vencido · Sin plan · otros estados reales) · **Actividad** (`StatusChip` separado: Activo · Sin actividad reciente; la definición de «actividad» se concreta después). **El chip de actividad nunca autoriza nada.** **Sesiones:** cifra + relleno (ilimitado: «Ilimitadas»). **Atención:** chip con **motivo visible**. **Entrenador:** solo si existe la asignación (2J-098C `assigned`).
+- **Orden por defecto: el normal (A–Z).** «Requiere atención» es una **pestaña/filtro y una opción de orden** («Atención primero»), con el motivo visible en cada fila, pero **no sustituye siempre** el orden normal: el usuario puede volver a Todos / filtros por plan / orden alfabético. *PP-06 y PP-01: APPROVED DIRECTION — NOT IMPLEMENTED; los umbrales concretos y las consultas se definen en su TASK.*
 - **Oculto:** email, teléfono, dirección, notas (PII bajo demanda; el servidor filtra según permiso).
 - **Se abre en:** clic en la fila → **página Cliente 360** (no modal); «Nuevo cliente» → `Modal` corto (nombre, apellidos, contacto) + «Más opciones».
 - **Tabla vs cards:** tabla de administración en ≥ 1024; **lista de `ClientCard` en < 768**.
@@ -187,11 +188,11 @@ CLIENTE             ESTADO     PLAN                SESIONES      PRÓXIMA ACTIVI
 
 **Objetivo:** ficha clara, poco saturada, con la atención primero y la operación real de 2J.
 **Jerarquía:** cabecera → **hechos clave** → pestañas → Resumen.
-**Acción primaria (según contexto y permiso):** `Reservar sesión` (si puede reservar) o `Asignar plan` (si no tiene). **Secundarias:** `Mensaje`, `Ver como cliente` (PP-02), **menú «Más»** (editar datos, archivar — **sin «Eliminar»**: el perfil no se borra, se archiva).
+**Acción primaria (según contexto y permiso):** `Reservar sesión` (si puede reservar) o `Asignar plan` (si no tiene). **Secundarias:** `Mensaje`, `Vista del cliente` (PP-02), **menú «Más»** (editar datos, archivar — **sin «Eliminar»**: el perfil no se borra, se archiva).
 
 ```
 ‹ Clientes › María Pérez                                     [← anterior] [siguiente →]
-(Avatar 72)  María Pérez   ● ACTIVO        Cliente desde mar 2025     [Reservar sesión]
+(Avatar 72)  María Pérez   Plan ● Activo · Actividad ● Activo   Cliente desde mar 2025     [Reservar sesión]
              Trimestral · 3 días/semana                              [Mensaje] [Más ▾]
 
 ┌ Sesiones ─────┐ ┌ Pago ─────────┐ ┌ Próxima reserva ┐ ┌ Alertas ────────┐
@@ -199,7 +200,7 @@ CLIENTE             ESTADO     PLAN                SESIONES      PRÓXIMA ACTIVI
 │ nov 1–30      │ │ vence —       │ │ Funcional       │ │ Doc. pendiente  │
 └───────────────┘ └───────────────┘ └─────────────────┘ └─────────────────┘
 
-[ Resumen ][ Datos ][ Reservas ][ Plan y derechos ][ Pagos ][ Compras ][ Documentos ][ Historial ]
+[ Resumen ][ Datos ][ Reservas ][ Plan y sesiones ][ Pagos ][ Compras ][ Documentos ][ Historial ]
 
 RESUMEN
  ⚠ Requiere atención (1)      Documento pendiente · Consentimiento        [Ver documentos]
@@ -211,15 +212,15 @@ RESUMEN
 ```
 
 - **Hechos clave (4 `MetricCard`):** Sesiones disponibles · Pago · Próxima reserva · Alertas.
-- **Pestañas:** Resumen · Datos · Reservas · Plan y derechos · Pagos · Compras · Documentos · Historial. **Mensajes** pasa a ser la acción «Mensaje» de la cabecera (abre un panel de conversación), y **Seguimiento** (check-ins) se mantiene como pestaña **condicional** solo con esa capacidad. *(«Salud/Entrenamiento» solo con capacidad e integración con Búnker; no se reconstruye Búnker.)* Máx. 9.
+- **Pestañas:** Resumen · Datos · Reservas · Plan y sesiones · Pagos · Compras · Documentos · Historial. **Mensajes** pasa a ser la acción «Mensaje» de la cabecera (abre un panel de conversación), y **Seguimiento** (check-ins) se mantiene como pestaña **condicional** solo con esa capacidad. *(«Salud/Entrenamiento» solo con capacidad e integración con Búnker; no se reconstruye Búnker.)* Máx. 9.
 - **Resumen:** atención (si hay), próxima reserva, plan actual (`PlanSummary`/`EntitlementSummary`), actividad reciente, notas internas.
 - **Datos:** secciones plegables (personales, contacto, preferencias, **historial de eventos y de cuenta**); acciones de cuenta (reenviar bienvenida, desactivar acceso) **separadas** de la identidad y en rojo cuando son destructivas.
-- **Plan y derechos:** `PlanSummary` + periodos (ver blueprint 9). **Pagos:** ver blueprint 10 (resumen arriba, historial debajo). **Compras:** lista de ventas de Tienda. **Reservas:** próximas / historial (con asistencia).
-- **Estado derivado explicado** en el chip («Activo: plan vigente o reserva próxima») con enlace «Cómo funciona». *PP-04.*
+- **Plan y sesiones:** `PlanSummary` + periodos (ver blueprint 9). **Pagos:** ver blueprint 10 (resumen arriba, historial debajo). **Compras:** lista de ventas de Tienda. **Reservas:** próximas / historial (con asistencia).
+- **Plan y actividad, separados (PP-04, APPROVED DIRECTION — NOT IMPLEMENTED):** la cabecera muestra dos chips distintos —*Plan* (Activo · Vencido · Sin plan…) y *Actividad* (Activo · Sin actividad reciente)— con ayuda («Cómo funciona») que explica cada uno. La identidad de la cuenta existe siempre; ningún chip de estado equivale a autorización ni oculta al cliente.
 - **Navegación entre clientes:** flechas anterior/siguiente (SA) respetando el filtro de la lista.
 - **Se abre en:** acciones de cobro/plan en `Modal`; documentos en `DetailDrawer`.
 - **Móvil:** cabecera compacta; hechos clave en 2×2; pestañas scrollables; acción primaria fija.
-- **Hoy → Target:** hoy la ficha ya tiene **pestañas por capacidad** (Resumen · Cuotas · Reservas · Pagos · Documentos/Formularios · Mensajes · Seguimiento · Historial), tres tarjetas de resumen (estado del perfil, **número** de reservas, próxima reserva) y un bloque de cuota activa. Target añade en la cabecera lo que más ayuda a operar —**sesiones disponibles, estado de pago y alertas**—, la atención primero, avatar y acciones rápidas por permiso, renombra «Cuotas» a «Plan y derechos» y añade «Datos» y «Compras».
+- **Hoy → Target:** hoy la ficha ya tiene **pestañas por capacidad** (Resumen · Cuotas · Reservas · Pagos · Documentos/Formularios · Mensajes · Seguimiento · Historial), tres tarjetas de resumen (estado del perfil, **número** de reservas, próxima reserva) y un bloque de cuota activa. Target añade en la cabecera lo que más ayuda a operar —**sesiones disponibles, estado de pago y alertas**—, la atención primero, avatar y acciones rápidas por permiso, renombra «Cuotas» a «Plan y sesiones» (el nombre técnico *rights/entitlements* sigue en el dominio, no en la UI) y añade «Datos» y «Compras».
 
 ## 7. Servicios
 
@@ -267,8 +268,8 @@ Negocio › Planes                                                    [+ Nuevo p
 ## 9. Perfil del plan / cuota (de un cliente)
 
 **Objetivo:** que el staff entienda *qué tiene contratado, hasta cuándo, si está pagado y cuántas sesiones quedan*.
-**Presentación:** pestaña «Plan y derechos» del Cliente 360 + `DetailDrawer` «Ver periodos».
-**Acción primaria:** `Renovar` (cuando se acerca el fin) o `Asignar plan` (sin plan). **Secundarias:** `Cambiar plan`, `Pausar`, `Ajustar sesiones` (con motivo). **Danger:** `Cancelar plan` (`ConfirmationModal` con efectos).
+**Presentación:** pestaña «Plan y sesiones» del Cliente 360 + `DetailDrawer` «Ver periodos».
+**Acción primaria:** `Renovar` (**acción iniciada por el staff** cuando se acerca el fin; no existe renovación automática) o `Asignar plan` (sin plan). **Secundarias:** `Cambiar plan`, `Pausar`, `Ajustar sesiones` (con motivo). **Danger:** `Cancelar plan` (`ConfirmationModal` con efectos).
 
 ```
 Plan                Trimestral · 3 días/semana
@@ -284,6 +285,7 @@ Ver periodos →   Octubre   (15–31 oct)  caducado   · usadas 5 / 7
                  Enero     (1–14 ene)   próximo    · 6
 ```
 
+- **Copy de fin de plan:** «Vigente hasta 14 ene» o «Finaliza el 14 ene». La palabra «Renovación» solo aparece si hay una renovación **preparada o confirmada** por el staff (p. ej. «Renovación confirmada desde el 15 ene»). La renovación la inicia el staff (2J-098); la UI nunca sugiere cobro o renovación automáticos.
 - Las sesiones **no se trasladan** entre periodos: el sobrante de un periodo pasado figura como «Caducado» (informativo).
 - **Estados de pago visibles:** `PAGADO` · `PENDIENTE · vence 20 oct` · `VENCIDO` («No puede crear nuevas reservas con este plan»).
 - **Ilimitado:** sin cifras ni barra. **Bono:** «Caduca el 9 ene»; sin pagar: «Se activa al validar el pago».
@@ -293,7 +295,7 @@ Ver periodos →   Octubre   (15–31 oct)  caducado   · usadas 5 / 7
 ## 10. Pagos
 
 **Dos contextos con el mismo lenguaje:** (a) pestaña **Pagos** del Cliente 360 (no es contabilidad completa) y (b) página **Negocio › Economía**.
-**Separación visual por estado:** `PENDIENTE` · `VENCIDO` · `PAGADO` · `PLANIFICADO` *(PP-05)*.
+**Separación visual por estado:** `PENDIENTE` · `VENCIDO` · `PAGADO`. *`PLANIFICADO` (PP-05): **FUTURE / DEFERRED — NO APROBADO para V1**; 2J-098 no genera cargos futuros automáticos y no se introduce un estado visual cuyo concepto de dominio todavía no existe.*
 
 ```
 (a) Cliente 360 › Pagos
@@ -378,21 +380,22 @@ Navegación inferior de 5: **Inicio · Búnker · Tienda · Perfil · Ajustes**.
  ┌ Tu próxima reserva ──────────────────┐
  │ HOY · 18:00                          │
  │ Funcional · Alex Rivera              │
- │ Cancelación gratis hasta las 14:00   │
+ │ Sin penalización hasta las 14:00     │
  │ [Ver detalle]        [Cancelar]      │
  └──────────────────────────────────────┘
  [        Reservar una sesión        ]    ← CTA 52 px, verde
  ┌ Tu plan ─────────────────────────────┐
  │ Trimestral · 3 días/semana           │
  │ Sesiones de noviembre  7 / 13  ▓▓▓░  │
- │ Renovación el 14 ene                 │
+ │ Vigente hasta 14 ene                 │
  └──────────────────────────────────────┘
  ┌ Búnker ──────────────────────────────┐   ← enlace a su módulo (no se rediseña aquí)
  ┌ Del centro (noticias / avisos) ──────┘
 ```
 
 - **Cards grandes**, una columna, 640 px máx. en escritorio; hero con personalidad (grafito) sin ornamento.
-- **Reglas visibles antes de reservar/cancelar:** línea «Cancelación gratis hasta…» (cuando 098A exista; hoy, el dato de política vigente).
+- **Reglas visibles antes de reservar/cancelar:** copy aprobado «Cancelación sin penalización hasta las 14:00» (o equivalente; el wireframe lo abrevia) y, **pasada la ventana, la consecuencia** («Si cancelas ahora, la sesión cuenta como usada»). *PP-10: APPROVED DIRECTION — NOT IMPLEMENTED; visible cuando 2J-098A esté implementado (hoy, el dato de política vigente).* **La UI no calcula la política: el backend entrega la política/resumen.**
+- **Fin de plan sin renovación automática:** la tarjeta de plan dice «Vigente hasta 14 ene» (o «Finaliza el 14 ene»); nunca «Renovación el …» salvo renovación preparada/confirmada por el staff.
 - **Pago pendiente:** `InfoCard` amarilla informativa («Tu cuota vence el 20 oct · Ver pago») — **nunca** bloquea la navegación.
 - **Vacío:** sin reservas → «Todavía no tienes reservas» + [Reservar una sesión]; sin plan → «Sin plan activo» + «Consulta con tu centro».
 - **Oculto:** historial, movimientos, reglas internas, términos técnicos (contrato/ledger).
@@ -412,8 +415,9 @@ Paso 4  Confirma                      resumen + reglas + [Confirmar reserva]
 ```
 
 - **Paso 3:** cada fila muestra hora, profesional y plazas («quedan 4» / «Lleno»); si no puede reservar, **dice el motivo** («Sin sesiones disponibles este mes») en lenguaje claro (el servidor decide).
-- **Paso 4:** lista las sesiones elegidas (el flujo actual admite elegir más de una antes de confirmar; V2 lo mantiene), cuota que se usará (7 → 6), **política de cancelación visible** («Gratis hasta 08:00»), y un único CTA `Confirmar reserva`.
+- **Paso 4:** lista las sesiones elegidas (el flujo actual admite elegir más de una antes de confirmar; V2 lo mantiene), cuota que se usará (7 → 6), **política de cancelación visible** («Cancelación sin penalización hasta las 08:00» y qué ocurre después de esa hora; el texto lo entrega el backend), y un único CTA `Confirmar reserva`.
 - **Éxito:** confirmación con «Añadir al calendario» y volver a Inicio; **error** con causa y salida.
+- **Antes y después de reservar:** la política de cancelación se ve en el paso de confirmación, en la pantalla de éxito y en el detalle de la reserva (*PP-10*).
 - **Lista de espera:** copy neutro («Te avisamos si se libera una plaza»).
 - **Desktop:** misma columna de 640 px.
 
@@ -446,46 +450,54 @@ Tienda                                  (🔔)
           Cliente desde mar 2025
 
 ┌ Tu plan ────────────────┐   ┌ Tus reservas ───────────┐
-│ Trimestral · 3×/sem     │   │ Próximas (2)  Historial │
-│ Nov: 7/13 · hasta 14 ene│   └─────────────────────────┘
-│ Pago ● Pagado           │   ┌ Pagos y cuotas ─────────┐
-│ [Ver mis periodos]      │   │ Pendientes (0)          │
-└─────────────────────────┘   └─────────────────────────┘
+│ Trimestral · 3 días/sem │   │ Próximas (2)  Historial │
+│ Noviembre: 7 / 13       │   └─────────────────────────┘
+│ Vigente hasta 14 ene    │   ┌ Pagos y cuotas ─────────┐
+│ Pago: Pagado            │   │ Pendientes (0)          │
+│ [Ver mis periodos]      │   └─────────────────────────┘
+└─────────────────────────┘
  Mis compras · Documentos y consentimientos · Mensajes y avisos
 ```
 
 - Secciones como **cards enlazadas** (cada una abre su pantalla/sheet); el plan reutiliza `PlanSummary` con «Ver mis periodos».
 - **Identidad ≠ cuota:** sin plan activo el Member **sigue viendo su perfil e historial**; la tarjeta de plan dice «Sin plan activo» y no oculta el resto.
 - **Ajustes** (idioma, apariencia, notificaciones, privacidad, seguridad) en su pestaña propia.
-- **Oculto:** datos técnicos de derechos, estados internos.
+- **Oculto:** datos técnicos del plan, estados internos.
 
 ---
 
 ## Anexo — Decisiones y propuestas que requieren a Juanjo
 
-### Decisiones de diseño (aceptación visual)
-| ID | Decisión |
-|---|---|
-| DD-01 | Verde de marca único: `#73b52e` (el Member usa hoy `#10B981`) |
-| DD-02 | Neutros grafito/gris neutro en lugar de neutros con tinte verde |
-| DD-03 | Radios 6 / 10 / 12 / 16 / 20 / pill (reasignación de los tokens actuales) |
-| DD-04 | Librería de iconos única (Lucide, vendorizada) y retirada de los glifos Unicode |
-| DD-05 | Auto-alojar la tipografía Inter (OFL) |
-| DD-06 | Tema por defecto del Member: claro (propuesta) frente a oscuro |
-| DD-07 | Barra lateral grafito, activo con indicador verde; Pro solo claro en V2.0 |
-| DD-08 | Móvil del profesional: mantener `staff-app` (ya móvil y basada en tokens) con patrones V2, o consolidar en el shell responsive |
+### Decisiones de diseño — `APPROVED BY PRODUCT OWNER` (2026-10-16)
 
-### Propuestas de producto (`PRODUCT PROPOSAL FOR JUANJO` — no se implementan)
-| ID | Propuesta | Por qué es de producto |
+Decididas por Juanjo el 2026-10-16. **Aprobar una decisión de diseño no significa que esté implementada**: ningún token, hoja de estilos ni componente se ha modificado todavía.
+
+| ID | Decisión | Estado |
 |---|---|---|
-| PP-01 | Definir qué señales cuentan como «requiere atención» y sus umbrales (pago vencido, plan por vencer, sin saldo, X días sin reservas, documento pendiente, no-shows repetidos) | Regla de negocio y de prioridad |
-| PP-02 | «Ver como cliente»: preview segura de solo lectura del Member desde el Cliente 360 | Requiere endpoints de lectura autorizados por staff y auditoría |
-| PP-03 | Eje horario configurable de la agenda (por usuario o por centro) | Introduce una preferencia persistente |
-| PP-04 | Estado «activo» derivado (plan vigente o reserva próxima) con pantalla «cómo funciona» | Cambia la definición de cliente activo |
-| PP-05 | Estado «Planificado» en pagos | 2J-098 no crea cargos futuros automáticos; habría que definir qué es un cargo planificado |
-| PP-06 | Orden «atención primero» y pestaña «Requiere atención» en Clientes | Depende de PP-01 |
-| PP-07 | Trainer: abrir el Resumen filtrado a «mis sesiones» | Cambia el comportamiento por defecto por rol |
-| PP-08 | Catálogo de notificaciones editable (evento / descripción / canal / activo) | Nueva capacidad de configuración |
-| PP-09 | Checklist de «puesta en marcha» para la migración desde TIMP | Flujo nuevo de onboarding del centro |
-| PP-10 | Mostrar «Cancelación gratis hasta HH:MM» en la reserva del Member (TIMP) | Depende de la política de 2J-098A |
-| PP-11 | Pivote de agenda por profesional y vista de 3 días | Nuevas vistas (solo presentación; confirmar valor) |
+| DD-01 | Un único verde de marca: `#73b52e`. En la futura implementación se retira el sistema paralelo del Member basado en `#10B981` | APPROVED BY PRODUCT OWNER — NOT IMPLEMENTED |
+| DD-02 | Neutros grafito/gris neutro: superficies claras, blanco, gris muy claro, grafito y verde 2J como acento | APPROVED BY PRODUCT OWNER — NOT IMPLEMENTED |
+| DD-03 | Escala de radios 6 / 10 / 12 / 16 / 20 / pill | APPROVED BY PRODUCT OWNER — NOT IMPLEMENTED |
+| DD-04 | Una única librería de iconos: Lucide; retirada progresiva de los glifos Unicode | APPROVED BY PRODUCT OWNER — NOT IMPLEMENTED |
+| DD-05 | Inter autoalojada | APPROVED BY PRODUCT OWNER — NOT IMPLEMENTED |
+| DD-06 | Member: tema **claro por defecto**; Sistema / Claro / Oscuro se mantienen como preferencias sobre los mismos tokens; `.hub-theme` no sigue como sistema visual independiente | APPROVED BY PRODUCT OWNER — NOT IMPLEMENTED |
+| DD-07 | Profesional: barra lateral grafito + indicador verde en el activo; Admin/Trainer V2.0 en tema claro | APPROVED BY PRODUCT OWNER — NOT IMPLEMENTED |
+| DD-08 | `staff-app` se mantiene como experiencia móvil profesional específica, con los patrones y tokens de V2. El shell web profesional sigue siendo responsive y usable en móvil/tablet para operaciones básicas, **sin** sustituir `staff-app` ni buscar paridad completa del backoffice, y **sin** diseñar una segunda navegación profesional móvil incompatible con `staff-app` | APPROVED BY PRODUCT OWNER — NOT IMPLEMENTED |
+
+### Propuestas de producto — estado tras la decisión de 2026-10-16
+
+Leyenda: **APPROVED DIRECTION — NOT IMPLEMENTED** = dirección aprobada, sin implementación ni umbrales/queries definitivos (se concretan en su TASK); **FUTURE** = bien visto, fuera de 2J-098 y de la primera aplicación del Design System; **DEFERRED** = aplazado/opcional; **NOT APPROVED (V1)**. Ninguna se implementa en esta fase. Los agentes no deben tratar una dirección aprobada como una funcionalidad existente.
+
+| ID | Propuesta | Estado | Alcance aprobado |
+|---|---|---|---|
+| PP-01 | «Requiere atención» | APPROVED DIRECTION — NOT IMPLEMENTED | Señales conceptuales: pago vencido · plan próximo a finalizar · saldo de sesiones agotado · documentación/consentimiento pendiente · sesión futura sin profesional asignado · no-shows repetidos. **Umbrales y consultas, en su TASK** |
+| PP-02 | «Vista del cliente» | APPROVED DIRECTION — NOT IMPLEMENTED | Solo lectura, segura, autorizada, **sin impersonación**, sin poder ejecutar acciones como Member. Permite al Admin/Trainer autorizado comprobar qué ve el cliente |
+| PP-03 | Eje horario configurable de la agenda | APPROVED DIRECTION — NOT IMPLEMENTED | **A nivel de centro** (p. ej. 06:00–22:00). Sin preferencia individual por profesional en V1. Salida razonable para sesiones fuera del rango |
+| PP-04 | Estado del cliente | APPROVED DIRECTION — NOT IMPLEMENTED | **No** un único Activo/Inactivo. Se separan **Cuenta** (la identidad existe siempre), **Plan** (Activo · Vencido · Sin plan · otros estados reales) y **Actividad** (Activo · Sin actividad reciente; definición de «actividad» pendiente). La actividad nunca es autorización; nunca se oculta ni borra la identidad por no tener plan |
+| PP-05 | Estado «Planificado» en pagos | NOT APPROVED (V1) — FUTURE / DEFERRED | 2J-098 no genera cargos futuros automáticos; no se introduce un estado cuyo concepto de dominio no existe. Eliminado del target V2 |
+| PP-06 | «Requiere atención» como filtro/pestaña/orden en Clientes | APPROVED DIRECTION — NOT IMPLEMENTED | Depende de PP-01. No sustituye siempre el orden normal; se puede volver a Todos / filtros por plan / orden alfabético |
+| PP-07 | Trainer entra en «Mis sesiones» | APPROVED DIRECTION — NOT IMPLEMENTED | Por defecto en Resumen/Agenda; con `scope=all` puede cambiar a «Todas». Es filtro/experiencia por defecto, **no frontera de autorización**; el RBAC del backend sigue siendo la autoridad |
+| PP-08 | Catálogo de notificaciones editable | FUTURE | Fuera de 098 y de la primera aplicación del Design System |
+| PP-09 | Checklist de puesta en marcha / migración desde TIMP | FUTURE | Se diseñará al preparar la migración real del centro |
+| PP-10 | «Cancelación sin penalización hasta las 14:00» | APPROVED DIRECTION — NOT IMPLEMENTED | Con 2J-098A implementada, el Member lo ve antes y después de reservar y, pasada la ventana, la consecuencia. **La UI no calcula la política: la entrega el backend** |
+| PP-11a | Pivote de agenda por profesional | APPROVED DIRECTION — NOT IMPLEMENTED | Dirección futura (solo vista) |
+| PP-11b | Vista de 3 días | DEFERRED / OPTIONAL | No entra en V1; las vistas principales siguen siendo Día y Semana |

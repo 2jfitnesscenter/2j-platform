@@ -60,7 +60,7 @@ Rejilla auto-ajustable de cards del mismo tipo: mín. 280 px de columna (Pro) / 
 - Cada elemento es **una línea de dos niveles** (motivo en negrita + objeto secundario) con **una sola acción**, que lleva directamente a donde se resuelve.
 - **Vacío explícito:** «Todo al día. Nada requiere tu atención.» (con icono de éxito).
 - Solo aparecen elementos para los que el usuario tiene permiso de acción.
-- Los criterios de «atención» y sus umbrales son una decisión de producto: **PP-01** (`PRODUCT PROPOSAL FOR JUANJO`, ver el anexo de [`2J-SCREEN-BLUEPRINTS.md`](2J-SCREEN-BLUEPRINTS.md)).
+- Los criterios de «atención» y sus umbrales son una decisión de producto: **PP-01** (*APPROVED DIRECTION — NOT IMPLEMENTED*: señales conceptuales aprobadas; umbrales y consultas se definen en su TASK; ver el anexo de [`2J-SCREEN-BLUEPRINTS.md`](2J-SCREEN-BLUEPRINTS.md)).
 - El mismo componente se reutiliza en el Resumen, en la lista de Clientes («Requiere atención») y en la cabecera del Cliente 360.
 
 ### 2.3 `ActivityFeed`
@@ -121,7 +121,7 @@ Una acción cuyo estado visual refleja el permiso **sin ser la autoridad**.
 - Con permiso → normal.
 - El servidor sigue rechazando (403/404); la UI maneja el rechazo con un mensaje claro y recarga de capacidades.
 - Los *empty states* con CTA aplican la misma regla (sin permiso → sin CTA).
-- Los alcances (`own`, `assigned`) se reflejan filtrando y rotulando («Mis sesiones»), recordando que **`Mis sesiones` es un filtro de UX, no seguridad**.
+- Los alcances (`own`, `assigned`) se reflejan filtrando y rotulando («Mis sesiones»), recordando que **`Mis sesiones` es el filtro/experiencia por defecto del Trainer (*PP-07*), no una frontera de autorización**; con `scope=all` puede cambiar a «Todas» y el RBAC del backend sigue siendo la autoridad.
 
 ---
 
@@ -159,7 +159,7 @@ Ver Design System §15. Patrón de lista comparativa o administrativa; en <768 p
 - **Estados:** programada (normal) · en curso (borde verde fino) · llena (relleno completo + texto «Lleno») · en cola (≥1: punto info + «+2 en cola» **dentro** de la card, no pegado como pastilla) · cancelada (neutral, tachada, no cuenta en ocupación) · sin profesional (chip `danger` pequeño).
 - **Simultáneas:** tarjetas reales en paralelo; si superan el número visible, las restantes van a una **lista secundaria separada** (decisión aprobada); **no hay pastilla `+1 sesión`** sobre la card; **no hay scroll horizontal** interno.
 - **Click:** abre el `DetailDrawer` de la sesión. Toda la card es el objetivo.
-- **No muestra:** participantes, cola completa, notas, reglas, derechos, botones.
+- **No muestra:** participantes, cola completa, notas, reglas, saldos de sesiones, botones.
 
 ### 5.2 `ClientCard` / fila de cliente
 **Cliente · Estado · Plan · Sesiones · Próxima actividad · Atención · Entrenador (si procede).**
@@ -170,7 +170,7 @@ Ver Design System §15. Patrón de lista comparativa o administrativa; en <768 p
 ```
 
 - Columnas en desktop; en móvil, card de dos líneas (nombre + chip arriba; plan · sesiones · próxima abajo; la atención como chip rojo/ámbar).
-- **Atención primero:** orden por atención por defecto en la pestaña «Requiere atención»; el chip de atención lleva el **motivo visible** (`Pago vencido`, `Sin reservas 14 días`, `Documento pendiente`) para que el criterio sea transparente (debilidad de SA).
+- **Atención primero:** orden por atención dentro de la pestaña «Requiere atención» (el orden normal A–Z se conserva y siempre se puede volver a él; *PP-06*); el chip de atención lleva el **motivo visible** (`Pago vencido`, `Sin reservas 14 días`, `Documento pendiente`) para que el criterio sea transparente (debilidad de SA).
 - El entrenador asignado aparece solo cuando existe esa relación (2J-098C `assigned`).
 - Sin email/teléfono en la fila por defecto (datos personales bajo demanda).
 
@@ -191,7 +191,7 @@ Nombre · área (chip) · duración · aforo · estado · **avisos de configurac
 
 ### 5.6 `AttentionCard`, `StatusCard`, `ActionCard`, `InfoCard`
 - `AttentionCard`: elemento de `AttentionList` en formato card (cabecera del Cliente 360).
-- `StatusCard`: estado derivado + explicación + enlace «Cómo funciona» (p. ej. ACTIVO).
+- `StatusCard`: estado derivado + explicación + enlace «Cómo funciona» (p. ej. «Plan: Activo» o «Actividad: Sin actividad reciente»; plan y actividad son chips separados, *PP-04*).
 - `ActionCard`: título + descripción + una acción (p. ej. «Completa los datos de la empresa»).
 - `InfoCard`: aviso informativo/éxito/advertencia con icono, texto y acción opcional.
 
@@ -215,17 +215,17 @@ Lista de eventos con **Evento · Descripción · Canal · Activo (switch)**.
 | Plaza liberada | Aviso de promoción desde la cola | App | ◉ |
 | Pago próximo a vencer | Aviso interno | Interno | ◉ |
 
-Cada fila con valor predeterminado marcado, descripción en lenguaje natural y agrupación por tema. No se implementa ahora (ya existen ajustes de avisos); la edición del catálogo por el centro es **PP-08**.
+Cada fila con valor predeterminado marcado, descripción en lenguaje natural y agrupación por tema. No se implementa ahora (ya existen ajustes de avisos); la edición del catálogo por el centro es **PP-08** (*FUTURE*).
 
 ### 6.4 «Vista del cliente» (preview segura) — patrón conceptual
-Desde el Cliente 360: acción **«Ver como cliente»** (menú «Más» o pestaña). Muestra al profesional **lo que ve ese Member en 2J**.
+Desde el Cliente 360: acción **«Vista del cliente»** (menú «Más» o pestaña). Muestra al profesional **lo que ve ese Member en 2J**.
 - **Solo lectura**, claramente enmarcada: franja superior «**Vista del cliente · solo lectura** — no actúas como María» con botón **Salir**.
 - **No es suplantación:** no inicia sesión como el Member, no emite credenciales ni sesión de Member; consume los mismos datos con la autoridad del profesional.
 - Controles deshabilitados (reservar, cancelar, comprar); formularios inertes.
 - Respeta el **permiso** y el **alcance** del profesional; oculta lo que el profesional no podría ver.
 - La visualización se **audita** («Vista del cliente abierta por X»).
 - Renderizada en un marco de móvil (390 px) para ver la experiencia real.
-- **PP-02 — `PRODUCT PROPOSAL FOR JUANJO`** (seguridad/arquitectura): implica endpoints de lectura de «vista Member» autorizados por staff. **No se implementa ahora.**
+- **PP-02 — `APPROVED DIRECTION — NOT IMPLEMENTED`** (seguridad/arquitectura): solo lectura, segura, autorizada y **sin impersonación**; implica endpoints de lectura de «vista Member» autorizados por staff. **No se implementa ahora.**
 
 ### 6.5 Zona horaria
 Cuando el dispositivo no está en `Atlantic/Canary`, aviso descartable: «Las horas son siempre la hora de Canarias.» Las fechas límite de pago muestran «hasta el 20 oct (23:59, hora de Canarias)».

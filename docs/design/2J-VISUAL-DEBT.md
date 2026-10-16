@@ -99,7 +99,7 @@ Severidad: **Alta** (afecta accesibilidad, identidad o cohesión global) · **Me
 | VD-F5 | **8 estados vacíos y 7 estados de error** con estilos propios | Clases CSS | Media | EmptyState |
 | VD-F6 | **Dos sistemas de barra lateral** (`.sidebar/.nav-item` y `.app-sidebar/.app-nav-item`) con alturas 48 y 44 | `styles.css` | Media | Shell |
 | VD-F7 | **4 filas de tienda** con rejillas propias | `store-*-row` | Baja | DataTable |
-| VD-F8 | **Dos UIs de profesional**: el shell `admin-web` y la app `staff-app` (móvil), con componentes y CSS independientes | `apps/*` | Media | DD-08 |
+| VD-F8 | **Dos UIs de profesional**: el shell `admin-web` y la app `staff-app` (móvil), con componentes y CSS independientes | `apps/*` | Media | DD-08 (aprobado: se mantiene `staff-app`) |
 | VD-F9 | **Sin capa de componentes**: `@2j/ui` no se importa en ninguna app; las páginas son funciones de 1–4 componentes | Búsqueda de imports | Alta | `@2j/ui` |
 
 ### G. Iconografía
@@ -140,11 +140,11 @@ Solo lo verificado en código; lo no verificado se marca *(verificar)*.
 | **Resumen** | 5 paneles; la «Agenda de hoy» domina; 2 *eyebrows*; botón «Actualizar» | `MetricStrip` accionable + **Requiere atención** + Próximas sesiones + Actividad con motivo y acción; vacío explícito |
 | **Agenda** | Tarjeta ya mínima tras #45; simultáneas reales con lista secundaria; filtro con `select`; detalle en modal; eje fijo | Conserva la dirección; añade relleno = aforo, «Lleno», profesional si aporta, 8 colores de servicio, línea «ahora», eje configurable, detalle en drawer con URL, filtro «Todas» que incluye canceladas |
 | **Detalle de sesión** | Modal sobre la agenda | `DetailDrawer` (≥1024) / página (<1024), acción primaria que cambia con el momento, pestañas Reservas · En cola · Historial, alcance de edición en el botón |
-| **Clientes (lista)** | Lista de filas con nombre y estado *(verificar columnas)* | Orden «atención primero», pestañas con contadores, columnas Estado · Plan · Sesiones · Próxima actividad · Atención · Entrenador, motivo de atención visible |
-| **Cliente 360** | Pestañas por capacidad (Resumen · Cuotas · Reservas · Pagos · Documentos · Mensajes · Seguimiento · Historial); resumen con estado, nº de reservas, próxima reserva y cuota activa | Cabecera con avatar, estado derivado, «cliente desde», plan, acción primaria por permiso y **cuatro hechos clave** (sesiones, pago, próxima reserva, alertas); «Plan y derechos» con periodos; «Datos» y «Compras»; «Ver como cliente» (PP-02) |
+| **Clientes (lista)** | Lista de filas con nombre y estado *(verificar columnas)* | Pestañas con contadores, «Requiere atención» como pestaña/orden opcional (el orden normal A–Z se conserva), columnas Plan · Sesiones · Actividad · Atención · Entrenador, motivo de atención visible |
+| **Cliente 360** | Pestañas por capacidad (Resumen · Cuotas · Reservas · Pagos · Documentos · Mensajes · Seguimiento · Historial); resumen con estado, nº de reservas, próxima reserva y cuota activa | Cabecera con avatar, plan y actividad como estados separados, «cliente desde», plan, acción primaria por permiso y **cuatro hechos clave** (sesiones, pago, próxima reserva, alertas); «Plan y sesiones» con periodos; «Datos» y «Compras»; «Vista del cliente» (PP-02) |
 | **Servicios** | «Espacios y servicios»: espacios, servicios y diálogos de alta | `ServiceCard` con avisos de configuración incompleta; edición en página con reglas en lenguaje natural y barra de guardado |
 | **Planes** | Catálogo en tabla y diálogos de alta/asignación | `PlanCard` por tipo; tabla opcional; el modelo técnico queda oculto; vista previa en lenguaje natural |
-| **Pagos** | «Pagos y caja»: cargos, nuevo cargo, registrar pago | Resumen arriba, historial debajo; estados Pendiente / Vencido / Pagado (+ Planificado si el producto lo define); consecuencia del vencimiento visible |
+| **Pagos** | «Pagos y caja»: cargos, nuevo cargo, registrar pago | Resumen arriba, historial debajo; estados Pendiente / Vencido / Pagado; consecuencia del vencimiento visible |
 | **Tienda Admin** | Acciones desplegables «＋» (producto, variante, stock, venta) y filas de producto, actividad y movimientos | Catálogo de `ProductCard` con imagen, pestañas Catálogo · Inventario · Ventas, acción primaria única, página de producto con uploader |
 | **Tienda Member** | Catálogo por categorías **sin imagen** | `ProductCard` grande con foto y *fallback* elegante; detalle con galería; sin checkout |
 | **Member Inicio** | Hero «Hola, …», próxima reserva, «Reservar clase», noticias; fondo y verde propios del tema del hub | Hero grafito sin ornamento, tira semanal, próxima reserva con política visible, CTA 52 px, tarjeta de plan (sesiones del periodo), aviso de pago informativo |
@@ -160,7 +160,7 @@ Solo lo verificado en código; lo no verificado se marca *(verificar)*.
 ## 4. Prioridad sugerida de saneamiento
 
 1. **VD-A1, A2, A3** (accesibilidad de color) — se resuelven en los tokens y el botón primario; riesgo bajo y beneficio inmediato.
-2. **VD-B1, B2, F9, G1** (un solo verde, tokens en el Member, capa de componentes, iconos) — requieren aceptación visual (DD-01/DD-04) y marcan el resto.
+2. **VD-B1, B2, F9, G1** (un solo verde, tokens en el Member, capa de componentes, iconos) — (DD-01/DD-04 aprobadas el 2026-10-16; pendiente la revisión visual final) y marcan el resto.
 3. **VD-C1, D1, E1, E2, F1–F5** (escalas y duplicados) — se absorben al introducir `@2j/ui` pantalla a pantalla.
 4. **VD-H4, H5, H6** (Clientes, Resumen, imágenes de Tienda) — son las mejoras de producto visibles de mayor impacto.
 5. **VD-I1–I3** (agenda) — junto a 2J-098B.

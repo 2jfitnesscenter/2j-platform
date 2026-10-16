@@ -2,7 +2,7 @@
 
 Fuente de verdad **visual y de UX** de 2J Platform. La leen Claude, Codex, Gemini o cualquier agente antes de construir o modificar una pantalla.
 
-**Estado:** propuesta para revisión del propietario. **Nada de lo que aquí se describe está aplicado.** La aceptación visual de Juanjo es obligatoria antes de que ningún agente empiece a aplicar el Design System V2.
+**Estado:** dirección general aprobada por el propietario el 2026-10-16; decisiones de diseño DD-01…DD-08 `APPROVED BY PRODUCT OWNER` (ver §12); queda la revisión visual final. **Nada de lo que aquí se describe está aplicado.** La aceptación visual de Juanjo es obligatoria antes de que ningún agente empiece a aplicar el Design System V2.
 
 **Alcance de esta fase:** DISCOVER · AUDIT · DEFINE. No se toca ninguna pantalla, API, regla de negocio, base de datos ni migración. No cambia ninguna regla de 2J-098; donde un patrón visual presupone una capacidad de 098 (periodos de derecho, políticas de cancelación, imágenes de Tienda), se indica con «cuando 098X esté implementado».
 
@@ -25,8 +25,11 @@ Relación con la documentación existente: [`docs/design-system/foundation.md`](
 |---|---|
 | `[OBSERVADO]` | Visto en el código o la UI actual de `2j-platform` (hechos medidos) |
 | `[REFERENCIA]` | Tomado de `2j-product-research` (comparison/PRODUCT_REFERENCE_MATRIX.md y carpetas `research/*`) |
-| `[PROPUESTA DISEÑO]` | Decisión visual propuesta; requiere aceptación visual del propietario |
+| `[PROPUESTA DISEÑO]` | Decisión visual propuesta; requiere aceptación visual del propietario (las DD-01…DD-08 ya están aprobadas) |
 | `PRODUCT PROPOSAL FOR JUANJO` | Mejora que **cambia producto**, no solo diseño. **No se implementa** sin decisión explícita |
+| `APPROVED BY PRODUCT OWNER` | Decisión de diseño (DD-xx) aprobada; **no implementada** |
+| `APPROVED DIRECTION — NOT IMPLEMENTED` | Propuesta de producto (PP-xx) aprobada como dirección; sin umbrales ni implementación definitivos (se concretan en su TASK) |
+| `FUTURE` / `DEFERRED` | Aplazada: `FUTURE` = fuera de 2J-098 y de la primera aplicación del Design System; `DEFERRED` = opcional o aplazada |
 
 La investigación comparativa se usa **como referencia, no como copia**: no se reproduce branding, iconos propietarios, textos literales ni layouts pixel-perfect de ningún producto.
 
@@ -57,7 +60,7 @@ Concepto: **blanco · gris muy claro · grafito/negro · verde 2J como acento de
 Hallazgos de la auditoría que condicionan esta identidad `[OBSERVADO]`:
 
 1. **El verde de marca ya existe como token**: `#73b52e` (brand) y `#578923` (brand-strong), muestreados de la app cliente original (`packages/design-tokens/tokens.json`). V2 **lo conserva**.
-2. **La app Member usa un segundo verde.** La clase `.hub-theme` sustituye el token por esmeralda `#10B981` y trae su propia paleta oscura (271 literales hexadecimales, 95 distintos). Hay, hoy, **dos verdes 2J**. → *DESIGN DECISION FOR JUANJO* (**DD-01**): confirmar el verde de marca (V2 propone `#73b52e`) para retirar el segundo sistema. Ver Visual Debt. El índice de decisiones de diseño (DD-01…DD-08) y de propuestas de producto (PP-01…PP-11) está en el anexo de [`2J-SCREEN-BLUEPRINTS.md`](2J-SCREEN-BLUEPRINTS.md).
+2. **La app Member usa un segundo verde.** La clase `.hub-theme` sustituye el token por esmeralda `#10B981` y trae su propia paleta oscura (271 literales hexadecimales, 95 distintos). Hay, hoy, **dos verdes 2J**. → **DD-01 (aprobado 2026-10-16):** verde único `#73b52e`; en la implementación futura se retira el segundo sistema. Ver Visual Debt. El índice de decisiones de diseño (DD-01…DD-08) y de propuestas de producto (PP-01…PP-11) está en el anexo de [`2J-SCREEN-BLUEPRINTS.md`](2J-SCREEN-BLUEPRINTS.md).
 3. **Los neutros actuales tienen tinte verde** (`#f5f7f2`, `#edf1e8`, bordes `#d6ddcf`, barra lateral `#172015`). La identidad pedida es blanco/gris/grafito + verde acento. V2 propone **neutros realmente neutros** (grafito sin tinte). Es un cambio visual global → requiere aceptación visual.
 4. **El blanco sobre verde no pasa contraste** (2,51:1 sobre `#73b52e`; 4,19:1 sobre `#578923`). Hoy el hover del botón primario usa texto blanco sobre `brand-strong`. V2 fija: **texto oscuro sobre verde de acción** y un tono `brand-ink` para texto verde sobre fondos claros.
 
@@ -70,7 +73,7 @@ Fuente: `comparison/PRODUCT_REFERENCE_MATRIX.md` (research merge `68e6481`) y la
 - Superficies claras con **esquinas redondeadas** y mucho aire; pocas piezas por pantalla.
 - **Formularios cortos** con **ayuda bajo cada campo** y campos obligatorios marcados.
 - **Reglas explicadas en lenguaje natural**: cada opción con título, descripción y valor predeterminado.
-- **Estados derivados y explicados** (el estado del cliente se entiende y tiene su pantalla «cómo funciona»).
+- **Estados derivados y explicados** (plan y actividad del cliente se muestran por separado y se explican).
 - **Avisos de configuración incompleta en la propia tarjeta** («Sin ubicación», «No hay planes vinculados»).
 - **«Acción requerida» con vacío explícito** («Nada requiere tu atención»).
 - Ficha de cliente **clara y poco saturada** (cuatro tarjetas de resumen, seis pestañas).
@@ -82,7 +85,7 @@ Fuente: `comparison/PRODUCT_REFERENCE_MATRIX.md` (research merge `68e6481`) y la
 
 ### 4.2 Strength Academy → presentación premium y atención priorizada
 **Toma:**
-- **«Atención primero»**: lista y resumen ordenados por necesidad de atención, con pestaña «Requiere atención» y contadores.
+- **«Atención primero»**: resumen y, en Clientes, pestaña/orden opcional «Requiere atención» (el orden normal se conserva) y contadores.
 - El **cliente en el centro**: avatar y nombre con tipografía de énfasis, tarjeta con último hito, actividad y próximo evento.
 - **Aterrizaje de la ficha por urgencia** (lo que requiere atención, primero).
 - **Actividad con motivo y acción** («Responder» en la propia tarjeta).
@@ -149,7 +152,7 @@ Fuente: `comparison/PRODUCT_REFERENCE_MATRIX.md` (research merge `68e6481`) y la
 - **Agenda y listas operativas (Admin/Trainer desktop):** densidad media-alta *controlada*: tarjeta de sesión **mínima** (hora, servicio, ocupación, profesional si aporta); todo lo demás al abrir.
 - **Móvil:** densidad baja siempre; acciones básicas.
 
-Regla de la tarjeta de sesión: **como máximo cuatro datos** (hora, servicio, `6 / 10`, profesional). No se muestran participantes, cola, reglas, notas ni derechos en la agenda.
+Regla de la tarjeta de sesión: **como máximo cuatro datos** (hora, servicio, `6 / 10`, profesional). No se muestran participantes, cola, reglas, notas ni saldos en la agenda.
 
 ## 8. Tono visual y de copy
 
@@ -183,7 +186,7 @@ No se asume que 2J necesite modo oscuro. Propuesta:
 - Los tokens definen **un tema oscuro como extensión** (ya existe en `tokens.json`); no hay un segundo sistema visual.
 - **Pro (Admin/Trainer): solo claro en V2.0.** El oscuro de Pro queda diferido; no se mantiene sin QA.
 - **Member:** el ajuste de apariencia ya existe (sistema/claro/oscuro). V2 lo mantiene como selector de tema **sobre los mismos tokens**, y retira el tema `.hub-theme` independiente.
-- *PRODUCT PROPOSAL FOR JUANJO:* decidir si el Member arranca en claro (propuesta) o en oscuro por defecto.
+- **DD-06 (aprobado):** el Member arranca en **claro**; Sistema / Claro / Oscuro se mantienen como preferencias sobre los mismos tokens.
 
 ## 11. Cómo se revisa un cambio visual contra esta dirección
 
@@ -199,3 +202,12 @@ Checklist para agentes y revisores:
 8. ¿Se ha comprobado a 1440 / 768 / 390 y con `prefers-reduced-motion`?
 9. ¿El permiso se refleja sin ser la autoridad?
 10. ¿Se ha pedido (y registrado) la aceptación visual del propietario?
+
+## 12. Decisiones aprobadas (2026-10-16)
+
+El propietario aprobó la dirección general y las decisiones DD-01…DD-08 (`APPROVED BY PRODUCT OWNER`). Siguen **sin implementarse**; el detalle y el estado de PP-01…PP-11 están en el anexo de [`2J-SCREEN-BLUEPRINTS.md`](2J-SCREEN-BLUEPRINTS.md).
+
+- **DD-01** verde único `#73b52e` · **DD-02** neutros grafito · **DD-03** radios 6/10/12/16/20/pill · **DD-04** Lucide · **DD-05** Inter autoalojada · **DD-06** Member claro por defecto (Sistema/Claro/Oscuro como preferencias, sin `.hub-theme` independiente) · **DD-07** barra grafito con indicador verde, Admin/Trainer claro.
+- **DD-08:** `staff-app` se mantiene como experiencia móvil profesional específica y recibe los tokens y patrones V2. El shell web profesional es responsive y usable en móvil/tablet para operaciones básicas, **sin** pretender sustituir `staff-app` ni mantener paridad completa del backoffice, y **sin** una segunda navegación móvil profesional incompatible con `staff-app`.
+- **Copy:** el Member nunca ve «Renovación el …» (la renovación la inicia el staff, 2J-098): usa «Vigente hasta …» o «Finaliza el …». En el Cliente 360 la pestaña visible es «Plan y sesiones» (el dominio sigue usando *rights/entitlements*).
+- **Estado del cliente:** se separan Cuenta, Plan y Actividad (PP-04); nunca un único Activo/Inactivo.

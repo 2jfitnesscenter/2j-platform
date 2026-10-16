@@ -2,7 +2,7 @@
 
 Tokens, componentes, estados y reglas de interacción. Parte de [`packages/design-tokens/tokens.json`](../../packages/design-tokens/tokens.json) y del contrato de estados de [`docs/design-system/foundation.md`](../design-system/foundation.md). Dirección y personalidad: [`2J-DESIGN-DIRECTION-V2.md`](2J-DESIGN-DIRECTION-V2.md).
 
-**Estado:** propuesta. Los valores marcados `[PROPUESTA]` requieren **aceptación visual del propietario** antes de aplicarse. Esta fase no modifica `tokens.json`, `tokens.css` ni ninguna hoja de estilos.
+**Estado:** las decisiones DD-01…DD-08 están `APPROVED BY PRODUCT OWNER` (2026-10-16) y se marcan `[APROBADO DD-xx]`; el resto de valores marcados `[PROPUESTA]` (escala tipográfica, controles, color de servicio, medidas, etc.) siguen pendientes de la revisión visual final. **Aprobado no significa aplicado**: nada de esto está implementado. Esta fase no modifica `tokens.json`, `tokens.css` ni ninguna hoja de estilos.
 
 ## 0. Cómo se relaciona con lo que ya existe
 
@@ -12,8 +12,8 @@ Tokens, componentes, estados y reglas de interacción. Parte de [`packages/desig
 | `foundation.md` (contratos de componentes, accesibilidad, movimiento) | **Se conserva como contrato de estados.** V2 lo refina (alturas, radios, jerarquía de botones) y añade lo que falta. |
 | `@2j/ui` (solo README: «componentes se implementan en una TASK acotada») | V2 define el contrato visual de esos componentes; **ningún componente se implementa en esta fase**. |
 | Verde de marca `#73b52e` / `#578923` | **Se conserva.** |
-| Neutros con tinte verde, barra lateral `#172015` | `[PROPUESTA]` neutralizar a grafito (ver §2). |
-| Tema `.hub-theme` del Member (esmeralda `#10B981`) | `[PROPUESTA]` retirar y migrar a tokens. Requiere confirmar el verde de marca. |
+| Neutros con tinte verde, barra lateral `#172015` | `[APROBADO DD-02, DD-07]` neutralizar a grafito (ver §2). |
+| Tema `.hub-theme` del Member (esmeralda `#10B981`) | `[APROBADO DD-01, DD-06]` retirar (en la implementación futura) y migrar a tokens; verde único `#73b52e`. |
 
 Nomenclatura: se mantienen los nombres `--2j-*` actuales. Los tokens nuevos siguen la misma convención.
 
@@ -28,7 +28,7 @@ Nomenclatura: se mantienen los nombres `--2j-*` actuales. Los tokens nuevos sigu
 
 ## 2. Color
 
-### 2.1 Neutros — de «verde apagado» a grafito `[PROPUESTA]`
+### 2.1 Neutros — de «verde apagado» a grafito `[APROBADO DD-02]`
 
 | Token | Actual (claro) | Propuesto (claro) | Uso |
 |---|---|---|---|
@@ -73,7 +73,7 @@ El borde fino de card (`#E3E6E3`, 1,26:1) es **decorativo**: ninguna informació
 - **Texto blanco nunca va sobre `brand`** (2,51:1) **ni sobre `brand-strong` en tamaño pequeño** (4,19:1). Hoy el hover del botón primario cambia a `brand-strong` con texto blanco: **incumple AA** (Visual Debt VD-A1).
 - El verde significa acción primaria, selección, éxito y marca concreta. No se usa en fondos de página, bordes decorativos ni iconos sin función.
 - Texto verde sobre claro = `brand-ink`, no `brand-strong`.
-- *DESIGN DECISION FOR JUANJO:* confirmar `#73b52e` como verde de marca único (el Member usa hoy `#10B981`).
+- **DD-01 (aprobado 2026-10-16):** `#73b52e` es el verde de marca único (el Member usa hoy `#10B981`, que se retira en la implementación futura).
 
 ### 2.3 Colores semánticos (estado) — chip y texto
 
@@ -95,11 +95,11 @@ Todo chip incluye **texto o icono además del color**.
 
 ### 2.5 Tema oscuro
 
-`[PROPUESTA]` El tema oscuro **es un override de los mismos tokens** (`[data-theme="dark"]`), no otro sistema. Se conservan los valores oscuros actuales pero neutralizados. En V2.0: Pro solo claro; Member claro/oscuro/sistema sobre tokens. Ver Direction §10.
+`[APROBADO DD-06, DD-07]` El tema oscuro **es un override de los mismos tokens** (`[data-theme="dark"]`), no otro sistema. Se conservan los valores oscuros actuales pero neutralizados. En V2.0: Pro solo claro; Member **claro por defecto**, con Sistema/Claro/Oscuro como preferencias sobre los mismos tokens (sin `.hub-theme` independiente). Ver Direction §10.
 
 ## 3. Tipografía
 
-Familia: `Inter` con pila del sistema (existente). Sin carga externa. `[PROPUESTA]` auto-alojar Inter variable (licencia OFL) para render coherente entre sistemas (hoy cae a Segoe UI/SF según el dispositivo).
+Familia: `Inter` con pila del sistema (existente). Sin carga externa. `[APROBADO DD-05]` auto-alojar Inter variable (licencia OFL) para render coherente entre sistemas (hoy cae a Segoe UI/SF según el dispositivo).
 
 **Siete tamaños** (existente: 12/14/16/18/22/28; V2: 12/14/16/18/24/32/40):
 
@@ -133,7 +133,7 @@ Escala existente `--2j-space-*`: **4 · 8 · 12 · 16 · 20 · 24 · 32 · 40 ·
 | `--2j-field-gap` | 16 entre campos · 4 label→control · 4 control→ayuda | igual |
 | `--2j-inline-gap` | 8 (12 entre grupos de acciones) | 8 |
 
-## 5. Radios `[PROPUESTA]`
+## 5. Radios `[APROBADO DD-03]`
 
 Cinco valores, mapeados por rol. Se mantienen los nombres de los tokens existentes y se **reasignan los valores** (cambio global y deliberado; los componentes que ya usan `var(--2j-radius-*)` lo heredan):
 
@@ -175,7 +175,7 @@ Avatares circulares: `border-radius: 50%` solo para imagen de persona. Hoy hay *
 Hoy: 68 alturas mínimas distintas en el Admin; controles de 36, 40, 42, 44, 46 y 48 px.
 
 ### 7.2 Iconos
-Una librería, trazo constante: `[PROPUESTA]` **Lucide** (licencia ISC), entregada como componente `Icon` de `@2j/ui` con SVG vendorizados (sin dependencia en tiempo de ejecución). Tamaños **16** (en línea), **20** (por defecto), **24** (navegación y vacíos); trazo 1,75 px; `currentColor`. Sin glifos Unicode como iconos (hoy la navegación usa `⌂ ▦ ◉ ♙ ✉ € ◇ ▣` y un único SVG).
+Una librería, trazo constante: `[APROBADO DD-04]` **Lucide** (licencia ISC), entregada como componente `Icon` de `@2j/ui` con SVG vendorizados (sin dependencia en tiempo de ejecución). Tamaños **16** (en línea), **20** (por defecto), **24** (navegación y vacíos); trazo 1,75 px; `currentColor`. Sin glifos Unicode como iconos (hoy la navegación usa `⌂ ▦ ◉ ♙ ✉ € ◇ ▣` y un único SVG).
 
 ### 7.3 Ancho de contenido
 | Token | Valor | Uso |
@@ -275,7 +275,7 @@ Una sola **base `Card`** con variantes; no se crea una card nueva por página. S
 |---|---|
 | `MetricCard` | Cifra grande + etiqueta + (tendencia opcional); enlaza a la lista filtrada |
 | `ActionCard` | Título + descripción + una acción |
-| `StatusCard` | Estado derivado con explicación («Activo: tiene un plan vigente») |
+| `StatusCard` | Plan y actividad como estados separados, con explicación («Plan activo: tiene un plan vigente») |
 | `SessionCard` | Mínima: hora · servicio · ocupación · profesional si aporta |
 | `ClientCard` | Avatar · nombre · chip de estado · plan · sesiones · atención |
 | `ProductCard` | Imagen · nombre · precio · estado de stock |
@@ -295,8 +295,8 @@ Chips **compactos** (altura 24, radio pill, 12 px, peso 500, icono 16 opcional) 
 | **success** | `success-soft`/`-ink` | ACTIVO · PAGADO · COMPLETADO · CONFIRMADO |
 | **warning** | `warning-soft`/`-ink` | PENDIENTE · DOCUMENTO PENDIENTE · POCAS UNIDADES · POR VENCER |
 | **danger** | `danger-soft`/`-ink` | VENCIDO · BLOQUEADO · SIN PROFESIONAL · AGOTADO |
-| **info** | `info-soft`/`-ink` | EN COLA · LLENO · PLANIFICADO · EN CURSO |
-| **neutral** | `neutral-soft`/`-ink` | INACTIVO · CANCELADO · ARCHIVADO · BORRADOR |
+| **info** | `info-soft`/`-ink` | EN COLA · LLENO · EN CURSO |
+| **neutral** | `neutral-soft`/`-ink` | INACTIVO (producto/servicio) · SIN PLAN · SIN ACTIVIDAD RECIENTE · CANCELADO · ARCHIVADO · BORRADOR |
 
 Criterio: el color expresa **urgencia, no valor**. `danger` = hay que actuar ya; `warning` = atención pronto; `success` = sano; `info` = información; `neutral` = sin acción. `BLOQUEADO` (por pago) es `danger`, **no** `neutral`; `CANCELADO` es `neutral` con icono y tachado opcional (distinguible de `VENCIDO`).
 
@@ -304,7 +304,7 @@ Criterio: el color expresa **urgencia, no valor**. `danger` = hay que actuar ya;
 
 Shell aprobado: **Resumen · Actividad · Clientes · Mi gimnasio · Equipo · Negocio**. Admin y Trainer comparten shell; el Trainer ve solo lo que su permiso permite (el servidor decide).
 
-| Aspecto | Especificación `[PROPUESTA]` |
+| Aspecto | Especificación (`[APROBADO DD-07]` barra grafito + indicador verde y tema claro; medidas `[PROPUESTA]`) |
 |---|---|
 | Barra lateral | Grafito (`sidebar`), **264 px** expandida (≥1280), **72 px** en carril (1024–1279 o plegada), oculta con *drawer* (<1024) |
 | Marca | «2J» + «Fitness Center»; en carril solo el sello |
@@ -316,7 +316,7 @@ Shell aprobado: **Resumen · Actividad · Clientes · Mi gimnasio · Equipo · N
 | Pie | Bloque de usuario: **avatar · nombre · rol (chip)** y menú (perfil, salir). Hueco reservado para **selector de centro** (oculto mientras haya un único centro) |
 | Búsqueda | Campo global arriba del contenido (`Ctrl/⌘K`) |
 | Foco | Anillo visible sobre fondo oscuro (contraste ≥ 3:1) |
-| Móvil/tablet vertical | Barra superior con menú + inferior de 4 destinos (Resumen · Agenda · Clientes · Más) |
+| Móvil/tablet vertical | Barra superior con menú que abre el *drawer* de navegación (mismos destinos). **No** hay una segunda navegación inferior profesional: el móvil profesional específico es `staff-app` (DD-08) |
 
 Hoy existen **dos sistemas de barra** (`.sidebar/.nav-item` y `.app-sidebar/.app-nav-item`), con alturas 48 y 44; V2 conserva el segundo.
 
@@ -367,7 +367,7 @@ Un solo componente de modal (hoy hay 11 variantes de diálogo).
 | **≥ 1280** | Barra expandida, contenido 1280, rejilla de 12 columnas, Agenda Semana | Columna 640 centrada (escritorio) |
 | **1024–1279** | Barra en **carril**, rejilla de 12 | igual |
 | **768–1023 (tablet)** | Barra en *drawer*; **Agenda Día por defecto** (Semana disponible si el contenedor lo permite); detalle de sesión **a página completa**; tablas → lista de cards; filtros en popover | Columna 640; barra inferior |
-| **< 768 (móvil Pro)** | Operaciones básicas: Resumen, Agenda Día, Clientes (lista), Detalle de sesión, Asistencia, Cliente (resumen). Barra inferior de 4 destinos. Sin edición de plantillas ni tablas anchas | **Mobile-first**: cards grandes, CTA 52 px, barra inferior de 5 |
+| **< 768 (móvil Pro)** | Operaciones básicas: Resumen, Agenda Día, Clientes (lista), Detalle de sesión, Asistencia, Cliente (resumen). Navegación por barra superior + *drawer*, sin barra inferior propia (la experiencia móvil profesional es `staff-app`, DD-08). Sin edición de plantillas ni tablas anchas; **no sustituye a `staff-app` ni busca paridad completa** con el backoffice | **Mobile-first**: cards grandes, CTA 52 px, barra inferior de 5 |
 
 Qué cambia por tamaño, no solo «se apila»: **tabla → lista de cards**, **drawer → página**, **modal → bottom sheet**, **filtros en línea → popover «Filtros (n)»**, **MetricStrip 4 columnas → 2×2**, **barra lateral → carril → drawer**, **Agenda Semana → Día**. La Agenda decide Día/Semana por **ancho del contenedor** (no por el viewport), de modo que con barra expandida no se aprieten tarjetas.
 
