@@ -11,3 +11,7 @@ export type { PageHeaderProps } from './page-header.js';
 export { cx } from './classnames.js';
 export * as icons from './icons.js';
 export type { LucideIcon } from './icons.js';
+export { Tabs } from './tabs.js';
+export type { TabItem, TabsProps } from './tabs.js';
+export { SearchField, SegmentedControl, EmptyState } from './fields.js';
+export type { EmptyStateProps, SearchFieldProps, SegmentedControlProps, SegmentedOption } from './fields.js';

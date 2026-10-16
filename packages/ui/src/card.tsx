@@ -2,7 +2,7 @@ import React from 'react';
 import { cx } from './classnames.js';
 
 export type CardProps = React.HTMLAttributes<HTMLElement> & {
-  as?: 'div' | 'section' | 'article' | 'li';
+  as?: 'div' | 'section' | 'article' | 'header' | 'li';
   padding?: 'none' | 'md' | 'lg';
 };
 
