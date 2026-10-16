@@ -21,7 +21,7 @@ Agenda profesional en Design System V2 **conservando toda la operativa existente
 - **Detalle de sesión:** es el diálogo existente (mismo foco, Escape y confirmaciones) presentado como **cajón lateral de 40 rem** en escritorio y **pantalla completa por debajo de 1024 px**. Al contener reservas, lista de espera, asistencia, edición, overrides y cancelación, no se estrechó a un cajón pequeño. **Gap:** no hay URL propia por sesión (`#calendar/session/{id}`); el detalle se abre por estado. Pasarlo a página con ruta propia es un cambio de navegación, no de presentación.
 - **Responsive:** ≥1121 Día/Semana con eje horario; ≤1120 solo Día (Semana desactivada con motivo), franja de días, lista vertical de tarjetas sin eje, sin scroll horizontal de página. No sustituye a `staff-app`.
 - **Resumen de hoy:** compacto (sesiones, plazas ocupadas/libres, en espera), solo en la semana actual.
-- Diálogos existentes (nueva sesión, plantilla, editor de horarios, confirmaciones) conservan su marcado y se **reskinean** con la misma apariencia V2 (botones, campos, radios, foco, errores). **UI debt:** migrarlos al marcado compartido `ui-modal` en una limpieza posterior.
+- Diálogos existentes (nueva sesión, plantilla, editor de horarios (rediseñado, ver abajo), confirmaciones) conservan su marcado y se **reskinean** con la misma apariencia V2 (botones, campos, radios, foco, errores). **UI debt:** migrarlos al marcado compartido `ui-modal` en una limpieza posterior.
 
 ## Funcionalidad conservada (probada)
 
@@ -52,6 +52,20 @@ typecheck, build y tests en verde. Revisado en navegador (Admin) a 1440, 1024, 7
 6. **Nueva sesión:** servicio, fecha y hora, aforo → crear; aparece en la agenda. Ábrela, **Editar esta sesión** y cambia solo esa fecha. (Modifica datos de prueba.)
 7. En el detalle: busca un cliente (2+ letras), **Reservar plaza**; marca **Asistió / No vino**; cancela la reserva (pide confirmación). Con la sesión llena aparece la opción de lista de espera.
 8. **Cancelar sesión:** pide confirmación con consecuencias; no confirmes si no quieres cancelarla.
-9. **Configurar horarios:** editor semanal en cuadrícula (sin cambios de lógica).
+9. **Configurar horarios:** ver «Configurar horarios (rediseño)» abajo: lista + formulario + vista previa de solo lectura.
 10. **Trainer** (http://127.0.0.1:5175/#calendar): no hay Nueva sesión / plantilla / Configurar horarios; el detalle no ofrece Editar ni Cancelar sesión.
 11. Responsive: a **1024** y **768** solo Día con franja de días; a **390** el detalle ocupa toda la pantalla; no hay scroll horizontal.
+
+## Configurar horarios (rediseño tras la prueba del propietario)
+
+El editor sobre cuadrícula clicable se retiró (confuso: bloques solapados, 54/50, no se distinguía 08:00 de 08:30). Ahora:
+
+- **Modelo:** lista de horarios + formulario explícito + vista previa semanal **solo lectura**. No se crea nada haciendo clic en la cuadrícula.
+- **Añadir horario** abre un panel con tres grupos: HORARIO (días L-M-X-J-V-S-D como chips, hora cada 30 min, duración 30/45/60/75/90 o personalizada), SESIÓN (servicio, profesional, plazas) y VIGENCIA (desde/hasta). Muestra «Ocupará 08:30–09:30 (60 min)».
+- **Tarjetas:** servicio, días, hora–fin y plazas, profesional, vigencia; acciones **Editar / Duplicar / Eliminar** (borrador local). **Duplicar** copia servicio, profesional, duración, plazas y vigencia; se cambian días y hora. Los horarios **existentes** van aparte (borde neutro, bloque «Existentes»; borradores en verde suave con borde discontinuo). No hay PATCH de plantillas, así que los existentes solo se **duplican** o **archivan** (grupo por días, con confirmación).
+- **Multidía:** un horario con varios días = una llamada a `POST /api/calendar/templates/batch` (`weekdays` × un bloque). Las llamadas van en orden y paran en el primer fallo; lo ya creado desaparece de la lista y se avisa. Contrato de API sin cambios.
+- **Límite 50:** se aplica **antes** de añadir (chips de día bloqueados, «Añadir horario» deshabilitado, mensaje «Has alcanzado el máximo de 50 horarios por operación.»). El contador (`n / 50`) nunca supera 50.
+- **Choques:** se avisa antes de enviar si el mismo servicio o profesional se solapa (misma regla que el API: `schedule_conflict`).
+- **Vista previa:** filas reales de 30 min (línea fuerte = hora en punto, suave = media hora, etiquetas 06:00/06:30…); cada bloque ocupa exactamente hora inicio → fin (06:30 + 60 = 06:30–07:30); solapes en carriles lado a lado; más de 3 → carril «+N» con lista; cada día es una columna recortada (Lunes no invade Martes). Tablet: lista primero y vista previa debajo. Móvil: lista como interfaz, vista previa de un día con selector L-M-X-J-V-S-D.
+- **Salida:** cerrar con borradores pide confirmación. Botón final **Crear horarios**, con resumen «Se crearán N horarios recurrentes».
+- **Tests:** `schedule-logic.test.mjs` (16: slots 08:00/08:30, 06:30+60=07:30, solapes, contención por día, límite 50, contador, duplicar, payload batch, validación, choques) y `schedule-editor.test.mjs` (20: flujo completo en pantalla, 2 batches reales con L-X-V 06:30 y M-J 07:00, fallo parcial, archivar, cierre, móvil y contrato CSS).
