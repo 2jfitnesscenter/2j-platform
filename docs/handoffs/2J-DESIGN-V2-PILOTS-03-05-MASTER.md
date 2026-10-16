@@ -22,7 +22,7 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | FUNCTIONAL_STATUS | `FUNCTIONAL_APPROVED=no` |
 | TESTS | admin-web 129 · ui 13 · tokens 5 · client-app 14 · staff-app 7, todos PASS |
 | BUILD | PASS |
-| CI | PASS (push y pull_request) |
+| CI | PASS (push y pull_request, tras el arreglo de foco `2c73969`) |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#calendar` · Trainer `http://127.0.0.1:5175/#calendar` |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-03.md` |
 
@@ -44,7 +44,7 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
 | TESTS | admin-web 137 · resto igual, PASS |
 | BUILD | PASS |
-| CI | las ejecuciones de `push` fallaban por una espera de foco en `clients-page.test.mjs` (corregida, ver §6); pendiente de repetir |
+| CI | PASS (push y pull_request) tras corregir una espera de foco en `clients-page.test.mjs` (ver §6) |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#services` · Trainer `http://127.0.0.1:5175/#services` |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-04.md` |
 
@@ -59,14 +59,14 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | TASK | `2J-DESIGN-V2-PILOT-05` |
 | BRANCH | `agent/claude/2J-DESIGN-V2-PILOT-05` |
 | BASE_SHA | `c5ae03826ea8b16f8f1633e272c965cac504f610` (rama de PILOT-04) |
-| HEAD_SHA | ver nota (el commit de código es `091a3727a0c47de662bdf2fae821ce0895de7564`; el HEAD final incluye este handoff maestro) |
+| HEAD_SHA | el de la rama (`git rev-parse agent/claude/2J-DESIGN-V2-PILOT-05`); el commit de código de la Tienda es `091a372`, el merge con 04 y este handoff maestro vienen después (`240f592`) |
 | PR | #52 (Draft, base `agent/claude/2J-DESIGN-V2-PILOT-04`) |
 | STATUS | Draft, listo para revisión del propietario |
 | FILES_CHANGED | 8 en el commit de código (`store-page.tsx`, `modal.tsx`, `store-v2.css`, `styles.css`, `main.tsx`, `store-page.test.mjs`, handoff, task) + este documento |
 | VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
 | TESTS | admin-web 144 · resto igual, PASS |
 | BUILD | PASS |
-| CI | pendiente al escribir esto |
+| CI | PASS (push y pull_request) en `240f592`; el commit posterior solo cambia este documento |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#store` (Trainer no tiene Tienda por capacidad) |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-05.md` |
 
