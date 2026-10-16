@@ -33,3 +33,20 @@ test('brand colors remain aligned with the 2J source palette', () => {
   assert.equal(tokens.brand.primary, '#73b52e');
   assert.equal(tokens.brand.strong, '#578923');
 });
+
+test('V2 layer keeps one brand green and meets its documented contrast pairs', () => {
+  const v2 = tokens.v2;
+  assert.equal(v2.color.brand, tokens.brand.primary, 'V2 must not introduce a second brand green');
+  assert.equal(v2.color.brandStrong, tokens.brand.strong);
+  for (const [foreground, background, minimum] of v2.contrastPairs) {
+    assert.ok(contrast(v2.color[foreground], v2.color[background]) >= minimum,
+      `v2.${foreground} on ${background} must reach ${minimum}:1`);
+  }
+});
+
+test('V2 radius scale is 6 / 10 / 12 / 16 / 20 / pill and is scoped to the opt-in selector', () => {
+  const px = (rem) => parseFloat(rem) * 16;
+  assert.deepEqual(['xs', 'sm', 'md', 'lg', 'xl'].map((key) => px(tokens.v2.radius[key])), [6, 10, 12, 16, 20]);
+  assert.equal(tokens.v2.radius.pill, '999px');
+  assert.equal(tokens.v2.scope, '[data-2j-design="v2"]');
+});

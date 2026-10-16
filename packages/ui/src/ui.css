@@ -1,0 +1,81 @@
+/* @2j/ui base components. Values come from @2j/design-tokens; they need a [data-2j-design="v2"] ancestor
+   (PILOT-01) until the V2 token layer moves to :root. Focus: 2 px ring with 2 px offset, never removed. */
+
+/* ---------- Button ---------- */
+.ui-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--2j-space-2);
+  min-height: var(--2j-control-md); padding: 0 var(--2j-space-4);
+  border: 1px solid transparent; border-radius: var(--2j-radius-md);
+  background: transparent; color: var(--2j-color-text-primary);
+  font: inherit; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-semibold); line-height: 1.25;
+  text-decoration: none; white-space: nowrap; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--2j-motion-fast) var(--2j-motion-easing), border-color var(--2j-motion-fast) var(--2j-motion-easing), color var(--2j-motion-fast) var(--2j-motion-easing);
+}
+.ui-button:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.ui-button--sm { min-height: var(--2j-control-sm); padding: 0 var(--2j-space-3); }
+@media (pointer: coarse) { .ui-button--sm { min-height: var(--2j-control-md); } }
+
+.ui-button--primary { background: var(--2j-color-brand); color: var(--2j-color-text-on-brand); }
+.ui-button--primary:hover { background: var(--2j-color-brand-hover); }
+.ui-button--primary:active { background: var(--2j-color-brand-hover); box-shadow: inset 0 1px 3px rgb(22 24 26 / 24%); }
+
+.ui-button--secondary { background: var(--2j-color-surface); border-color: var(--2j-color-border-strong); }
+.ui-button--secondary:hover { background: var(--2j-color-surface-subtle); }
+.ui-button--secondary:active { background: var(--2j-color-surface-subtle); border-color: var(--2j-color-text-secondary); }
+
+.ui-button--ghost:hover { background: var(--2j-color-surface-subtle); }
+.ui-button--ghost:active { background: var(--2j-color-border); }
+
+/* Disabled is never opacity alone: a flat grey surface, secondary text and a not-allowed cursor. */
+.ui-button:disabled, .ui-button[aria-disabled="true"] {
+  background: var(--2j-color-surface-subtle); border-color: var(--2j-color-border); color: var(--2j-color-text-secondary);
+  box-shadow: none; cursor: not-allowed;
+}
+.ui-button.is-loading:disabled { cursor: progress; }
+.ui-button-label { min-width: 0; }
+
+.ui-icon-button { width: var(--2j-control-md); padding: 0; flex: 0 0 auto; }
+.ui-icon-button.ui-button--sm { width: var(--2j-control-sm); }
+@media (pointer: coarse) { .ui-icon-button.ui-button--sm { width: var(--2j-control-md); } }
+
+.ui-spin { animation: ui-spin 900ms linear infinite; }
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+
+/* ---------- Card ---------- */
+.ui-card {
+  min-width: 0; background: var(--2j-color-surface); color: var(--2j-color-text-primary);
+  border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-lg); box-shadow: none;
+}
+.ui-card--pad-md { padding: var(--2j-space-5); }
+.ui-card--pad-lg { padding: var(--2j-space-6); }
+.ui-card--pad-none { padding: 0; }
+.ui-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--2j-space-3); }
+.ui-card-heading { min-width: 0; }
+.ui-card-title { margin: 0; font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-semibold); line-height: 1.45; letter-spacing: -0.01em; }
+.ui-card-description { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); line-height: 1.45; }
+.ui-card-actions { flex: 0 0 auto; display: flex; align-items: center; gap: var(--2j-space-2); }
+
+/* ---------- StatusChip ---------- */
+.ui-chip {
+  display: inline-flex; align-items: center; gap: var(--2j-space-1); height: 1.5rem; padding: 0 var(--2j-space-2) 0 6px;
+  border-radius: var(--2j-radius-pill); font-size: var(--2j-type-size-xs); font-weight: var(--2j-type-weight-medium); line-height: 1; white-space: nowrap;
+}
+.ui-chip svg { flex: 0 0 auto; }
+.ui-chip--success { background: var(--2j-color-success-soft); color: var(--2j-color-success-ink); }
+.ui-chip--warning { background: var(--2j-color-warning-soft); color: var(--2j-color-warning-ink); }
+.ui-chip--danger { background: var(--2j-color-danger-soft); color: var(--2j-color-danger-ink); }
+.ui-chip--info { background: var(--2j-color-info-soft); color: var(--2j-color-info-ink); }
+.ui-chip--neutral { background: var(--2j-color-neutral-soft); color: var(--2j-color-neutral-ink); }
+
+/* ---------- PageHeader ---------- */
+.ui-page-header { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: var(--2j-space-4); margin: 0 0 var(--2j-space-6); }
+.ui-page-header-copy { min-width: 0; flex: 1 1 18rem; }
+.ui-page-title { margin: 0; font-size: var(--2j-type-size-xl); font-weight: var(--2j-type-weight-bold); line-height: 1.34; letter-spacing: -0.015em; }
+.ui-page-description { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); line-height: 1.55; }
+.ui-page-meta { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); line-height: 1.35; }
+.ui-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--2j-space-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-button { transition: none; }
+  .ui-spin { animation: none; }
+}

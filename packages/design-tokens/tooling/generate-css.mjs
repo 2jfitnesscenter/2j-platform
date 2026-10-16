@@ -26,6 +26,14 @@ const lines = [
   ...flatten(tokens.themes.dark.color).map(([key, value]) => `  --2j-color-${key.replaceAll(/([A-Z])/g, '-$1').toLowerCase()}: ${value};`),
   '}',
   '',
+  `${tokens.v2.scope} {`,
+  '  color-scheme: light;',
+  '  font-family: var(--2j-type-font-family);',
+  ...flatten({ type: tokens.v2.typography, radius: tokens.v2.radius, elevation: tokens.v2.elevation, control: tokens.v2.control, layout: tokens.v2.layout, z: tokens.v2.z })
+    .map(([key, value]) => `  --2j-${key.replaceAll(/([A-Z])/g, '-$1').toLowerCase()}: ${value};`),
+  ...flatten(tokens.v2.color).map(([key, value]) => `  --2j-color-${key.replaceAll(/([A-Z])/g, '-$1').toLowerCase()}: ${value};`),
+  '}',
+  '',
 ].join('\n');
 const outputPath = resolve(root, 'src/tokens.css');
 if (process.argv.includes('--check')) {
