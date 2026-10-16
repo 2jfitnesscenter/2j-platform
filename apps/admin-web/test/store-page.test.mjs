@@ -136,5 +136,5 @@ test('the dialog traps focus, closes with Escape and returns focus to its opener
   assert.ok(dialog.contains(document.activeElement));
   fireEvent.keyDown(document,{key:'Escape'});
   await waitFor(()=>assert.ok(screen.queryByRole('dialog')===null));
-  assert.equal(document.activeElement,opener);
+  assert.ok(document.activeElement===opener);
 });
