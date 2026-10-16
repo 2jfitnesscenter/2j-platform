@@ -8,7 +8,7 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http:
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 dom.window.HTMLElement.prototype.scrollIntoView = () => {};
-const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 const { CalendarPage } = await import('../src/calendar-page.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; delete window.matchMedia; });
 after(() => dom.window.close());
@@ -107,6 +107,15 @@ test('the form groups HORARIO / SESIÓN / VIGENCIA and offers day chips, 30 minu
   fireEvent.change(within(form).getByLabelText('Duración personalizada (minutos)'), { target: { value: '50' } });
   assert.match(within(form).getByText(/Ocupará/).textContent, /08:30–09:20 \(50 min\)/);
   assert.ok(within(form).getByLabelText('Profesional')); assert.ok(within(form).getByLabelText('Plazas *')); assert.ok(within(form).getByLabelText('Desde *')); assert.ok(within(form).getByLabelText('Hasta (opcional)'));
+});
+
+test('ticking several days in the same instant keeps every one of them (batched updates)', async () => {
+  serve();
+  const dialog = await openEditor();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Añadir horario' }));
+  const form = formOf(dialog);
+  act(() => { for (const day of ['Lunes', 'Miércoles', 'Viernes']) within(form).getByRole('button', { name: day }).click(); });
+  assert.deepEqual(within(form).getAllByRole('button', { pressed: true }).map((node) => node.textContent), ['L', 'X', 'V']);
 });
 
 test('adding validates before it reaches the list: service, days and the 50 limit explain themselves', async () => {

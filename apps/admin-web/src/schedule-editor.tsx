@@ -84,7 +84,7 @@ export function ScheduleEditor(props: ScheduleEditorProps) {
     setDrafts(next.drafts); setSelectedKey(`draft:${draft.id}`); setPanel(null); setPanelProblems([]);
   }
   function removeDraft(id: string) { setDrafts((items) => items.filter((item) => item.id !== id)); if (selectedKey?.startsWith(`draft:${id}`)) setSelectedKey(null); }
-  function patchPanel(patch: Partial<ScheduleDraft>) { setPanel((current) => current ? { ...current, draft: { ...current.draft, ...patch } } : current); setPanelProblems([]); }
+  function patchPanel(patch: Partial<ScheduleDraft> | ((current: ScheduleDraft) => Partial<ScheduleDraft>)) { setPanel((current) => current ? { ...current, draft: { ...current.draft, ...(typeof patch === 'function' ? patch(current.draft) : patch) } } : current); setPanelProblems([]); }
 
   async function submit() {
     if (!drafts.length || conflicts.length) return;
@@ -277,7 +277,7 @@ export function ScheduleEditor(props: ScheduleEditorProps) {
 
 function ScheduleForm({ panelRef, mode, draft, services, areas, professionals, drafts, problems, onChange, onCancel, onCommit }: {
   panelRef: React.RefObject<HTMLElement>; mode: 'new' | 'edit' | 'duplicate'; draft: ScheduleDraft; services: Service[]; areas: Area[]; professionals: Professional[]; drafts: ScheduleDraft[]; problems: string[];
-  onChange: (patch: Partial<ScheduleDraft>) => void; onCancel: () => void; onCommit: () => void;
+  onChange: (patch: Partial<ScheduleDraft> | ((current: ScheduleDraft) => Partial<ScheduleDraft>)) => void; onCancel: () => void; onCommit: () => void;
 }) {
   const editingId = mode === 'edit' ? draft.id : null;
   const remaining = remainingSchedules(drafts, editingId);
@@ -296,7 +296,7 @@ function ScheduleForm({ panelRef, mode, draft, services, areas, professionals, d
         <div className="sched-days-toggle" role="group" aria-labelledby="sched-days-label">{DISPLAY_WEEKDAYS.map((weekday) => {
           const on = draft.weekdays.includes(weekday);
           const allowed = canSelectWeekday(drafts, editingId, draft.weekdays, weekday);
-          return <button key={weekday} type="button" className={`sched-day-chip${on ? ' is-on' : ''}`} aria-pressed={on} aria-label={WEEKDAY_NAME[weekday]} title={allowed ? WEEKDAY_NAME[weekday] : limitMessage()} disabled={!allowed} data-schedule-focus={weekday === 1 ? '' : undefined} onClick={() => onChange({ weekdays: sortWeekdays(on ? draft.weekdays.filter((item) => item !== weekday) : [...draft.weekdays, weekday]) })}>{WEEKDAY_LETTER[weekday]}</button>;
+          return <button key={weekday} type="button" className={`sched-day-chip${on ? ' is-on' : ''}`} aria-pressed={on} aria-label={WEEKDAY_NAME[weekday]} title={allowed ? WEEKDAY_NAME[weekday] : limitMessage()} disabled={!allowed} data-schedule-focus={weekday === 1 ? '' : undefined} onClick={() => onChange((current) => ({ weekdays: sortWeekdays(current.weekdays.includes(weekday) ? current.weekdays.filter((item) => item !== weekday) : [...current.weekdays, weekday]) }))}>{WEEKDAY_LETTER[weekday]}</button>;
         })}</div>
       </div>
       <div className="sched-grid-2">
