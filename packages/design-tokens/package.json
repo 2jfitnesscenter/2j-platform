@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     "./tokens.json": "./tokens.json",
-    "./tokens.css": "./src/tokens.css"
+    "./tokens.css": "./src/tokens.css",
+    "./fonts.css": "./fonts/fonts.css"
   },
   "scripts": {
     "typecheck": "node tooling/validate-tokens.mjs",

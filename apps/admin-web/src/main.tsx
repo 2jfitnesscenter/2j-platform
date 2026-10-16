@@ -1,7 +1,11 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import '@2j/design-tokens/tokens.css';
+import '@2j/design-tokens/fonts.css';
+import '@2j/ui/ui.css';
 import './styles.css';
+import './shell-v2.css';
+import './summary-v2.css';
 import { ServicesPage } from './services-page.js';
 import { ClientsPage } from './clients-page.js';
 import { CalendarPage } from './calendar-page.js';

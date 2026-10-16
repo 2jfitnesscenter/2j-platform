@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icon, IconButton, icons, type LucideIcon } from '@2j/ui';
 
 const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 export type CommandCenterModel = {
@@ -19,29 +20,28 @@ export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'cal
 export function ProfessionalCapabilitiesProvider({capabilities,children}:{capabilities:NavigationCapabilities|null;children:React.ReactNode}) {
   return <CommandContext.Provider value={{data:null,state:'loading',error:'',reload:()=>{},capabilities}}>{children}</CommandContext.Provider>;
 }
-type NavRoute = {id:string;label:string;href:string;permission:keyof NavigationCapabilities|null};
-type NavSection = {id:string;label:string;icon:string;route?:NavRoute;children?:NavRoute[]};
+type NavRoute = {id:string;label:string;href:string;permission:keyof NavigationCapabilities|null;icon:LucideIcon};
+type NavSection = {id:string;label:string;icon:LucideIcon;route?:NavRoute;children?:NavRoute[]};
 const routes={
-  home:{id:'home',label:'Resumen',href:'#home',permission:null},
-  communications:{id:'communications',label:'Comunicación',href:'#communications',permission:'communications'},
-  clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients'},
-  calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar'},
-  services:{id:'services',label:'Espacios y servicios',href:'#services',permission:'calendar'},
-  staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff'},
-  economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing'},
-  store:{id:'store',label:'Tienda',href:'#store',permission:'store'},
-  news:{id:'news',label:'Noticias',href:'#news',permission:'news'},
-  'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings'},
+  home:{id:'home',label:'Resumen',href:'#home',permission:null,icon:icons.LayoutDashboard},
+  communications:{id:'communications',label:'Comunicación',href:'#communications',permission:'communications',icon:icons.MessageSquare},
+  clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
+  calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},
+  services:{id:'services',label:'Espacios y servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
+  staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
+  economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
+  store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
+  news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
+  'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
-  {id:'home',label:'Resumen',icon:'home',route:routes.home},
-  {id:'activity',label:'Actividad',icon:'communications',children:[routes.communications]},
-  {id:'clients',label:'Clientes',icon:'clients',route:routes.clients},
-  {id:'gym',label:'Mi gimnasio',icon:'calendar',children:[routes.calendar,routes.services]},
-  {id:'staff',label:'Equipo',icon:'staff',route:routes.staff},
-  {id:'business',label:'Negocio',icon:'economics',children:[routes.economics,routes.store,routes.news,routes['notification-settings']]},
+  {id:'home',label:'Resumen',icon:icons.LayoutDashboard,route:routes.home},
+  {id:'activity',label:'Actividad',icon:icons.Activity,children:[routes.communications]},
+  {id:'clients',label:'Clientes',icon:icons.Users,route:routes.clients},
+  {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes.calendar,routes.services]},
+  {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
+  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.store,routes.news,routes['notification-settings']]},
 ];
-const navGlyph:Record<string,React.ReactNode>={home:'⌂',calendar:'▦',clients:'◉',staff:'♙',communications:'✉',economics:'€',services:'◇',store:'▣','notification-settings':<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>};
 const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
 function hasNavigationCapability(route:NavRoute,capabilities:NavigationCapabilities|null){return route.permission===null||capabilities?.[route.permission]===true;}
 export function getProfessionalNavigation(capabilities:NavigationCapabilities|null,activeRoute=routeId()){
@@ -59,6 +59,32 @@ export function getProfessionalPageContext(route:string){
   return {section:'Resumen',page:'Resumen'};
 }
 
+/**
+ * Responsive behaviour of the professional shell (Design System V2 section 13):
+ * >=1280 expanded sidebar (264 px; the user may fold it to the 72 px rail), 1024-1279 rail,
+ * <1024 off-canvas drawer opened from a top bar. There is no professional bottom navigation:
+ * the mobile professional experience is staff-app (DD-08).
+ */
+export type ShellMode = 'expanded' | 'rail' | 'drawer';
+const DRAWER_QUERY = '(max-width: 1023.98px)';
+const RAIL_QUERY = '(max-width: 1279.98px)';
+function readShellMode():ShellMode{
+  if(typeof window==='undefined'||typeof window.matchMedia!=='function')return 'expanded';
+  if(window.matchMedia(DRAWER_QUERY).matches)return 'drawer';
+  return window.matchMedia(RAIL_QUERY).matches?'rail':'expanded';
+}
+function useShellMode():ShellMode{
+  const [mode,setMode]=React.useState<ShellMode>(readShellMode);
+  React.useEffect(()=>{
+    if(typeof window.matchMedia!=='function')return;
+    const queries=[window.matchMedia(DRAWER_QUERY),window.matchMedia(RAIL_QUERY)];
+    const update=()=>setMode(readShellMode());
+    queries.forEach(query=>query.addEventListener('change',update));update();
+    return()=>queries.forEach(query=>query.removeEventListener('change',update));
+  },[]);
+  return mode;
+}
+
 export function AppShell({children}:{children:React.ReactNode}) {
   const [route,setRoute] = React.useState(routeId);
   const [data,setData] = React.useState<CommandCenterModel|null>(null);
@@ -69,10 +95,19 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const [searchOpen,setSearchOpen] = React.useState(false);
   const [results,setResults] = React.useState<Array<{type:string;label:string;items:Array<{id:string;label:string}>}>>([]);
   const [searchBusy,setSearchBusy] = React.useState(false);
-  const [compact,setCompact] = React.useState(()=>{try{return localStorage.getItem('2j.nav.compact.v1')==='true';}catch{return false;}});
-  const [expandedGroups,setExpandedGroups]=React.useState(()=>new Set(window.innerWidth<=1120||!compact?['activity','gym','business']:[]));
-  React.useEffect(()=>{try{localStorage.setItem('2j.nav.compact.v1',String(compact));}catch{}},[compact]);
+  const [folded,setFolded] = React.useState(()=>{try{return localStorage.getItem('2j.nav.compact.v1')==='true';}catch{return false;}});
+  const mode=useShellMode();
+  const isDrawer=mode==='drawer';
+  const isRail=mode==='rail'||(mode==='expanded'&&folded);
+  const [drawerOpen,setDrawerOpen]=React.useState(false);
+  const [expandedGroups,setExpandedGroups]=React.useState(()=>new Set(isRail?[]:['activity','gym','business']));
+  React.useEffect(()=>{try{localStorage.setItem('2j.nav.compact.v1',String(folded));}catch{}},[folded]);
+  React.useEffect(()=>{setExpandedGroups(new Set(isRail?[]:['activity','gym','business']));},[isRail]);
+  React.useEffect(()=>{if(!isDrawer)setDrawerOpen(false);},[isDrawer]);
+  React.useEffect(()=>{setDrawerOpen(false);},[route]);
   const searchRef = React.useRef<HTMLInputElement>(null);
+  const sidebarRef = React.useRef<HTMLElement>(null);
+  const menuButtonRef = React.useRef<HTMLButtonElement>(null);
   const reload = React.useCallback(async()=>{
     setState('loading');setError('');
     try { const response=await fetch(`${api}/api/dashboard/command-center`); if(!response.ok)throw new Error(response.status===401?'Inicia la vista local con un perfil demo.':'No se pudo cargar el Command Center.'); setData(await response.json() as CommandCenterModel);setState('ready'); }
@@ -81,29 +116,50 @@ export function AppShell({children}:{children:React.ReactNode}) {
   React.useEffect(()=>{ void reload();const change=()=>setRoute(routeId());window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change);},[reload]);
   React.useEffect(()=>{let current=true;void fetch(`${api}/api/session/capabilities`).then(async response=>{if(!response.ok)throw new Error();const body=await response.json() as NavigationCapabilities;if(current)setCapabilities(body);}).catch(()=>{if(current)setCapabilities(null);});return()=>{current=false;};},[]);
   React.useEffect(()=>{if(!searchOpen)return;searchRef.current?.focus();},[searchOpen]);
-  React.useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();setSearchOpen(true);}if(event.key==='Escape'){setSearchOpen(false);setQuery('');}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
+  React.useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();setSearchOpen(true);}if(event.key==='Escape'){setSearchOpen(false);setQuery('');setDrawerOpen(false);}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
   React.useEffect(()=>{if(!searchOpen||query.trim().length<2){setResults([]);return;}const controller=new AbortController();const timer=window.setTimeout(async()=>{setSearchBusy(true);try{const response=await fetch(`${api}/api/search?q=${encodeURIComponent(query.trim())}`,{signal:controller.signal});if(!response.ok)throw new Error();const body=await response.json();setResults(body.groups??[]);}catch{if(!controller.signal.aborted)setResults([]);}finally{if(!controller.signal.aborted)setSearchBusy(false);}},220);return()=>{window.clearTimeout(timer);controller.abort();};},[searchOpen,query]);
+  // Drawer a11y: focus moves inside when it opens, returns to the menu button when it closes, and Tab stays inside while open.
+  const drawerWasOpen=React.useRef(false);
+  React.useEffect(()=>{
+    if(drawerOpen){drawerWasOpen.current=true;sidebarRef.current?.querySelector<HTMLElement>('a[href],button:not([disabled])')?.focus();}
+    else if(drawerWasOpen.current){drawerWasOpen.current=false;menuButtonRef.current?.focus();}
+  },[drawerOpen]);
+  const trapTab=(event:React.KeyboardEvent<HTMLElement>)=>{
+    if(!isDrawer||!drawerOpen||event.key!=='Tab')return;
+    const focusable=Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>('a[href],button:not([disabled])')??[]);
+    const first=focusable[0],last=focusable[focusable.length-1];
+    if(!first||!last)return;
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+  };
   const permissions=capabilities;
   const navigation=getProfessionalNavigation(permissions,route);
   const pageContext=getProfessionalPageContext(route);
   const toggleGroup=(groupId:string)=>setExpandedGroups(current=>{const next=new Set(current);if(next.has(groupId))next.delete(groupId);else next.add(groupId);return next;});
-  const toggleCompact=()=>setCompact(value=>{const next=!value;if(next)setExpandedGroups(new Set());else setExpandedGroups(new Set(['activity','gym','business']));return next;});
-  return <CommandContext.Provider value={{data,state,error,reload,capabilities}}><div className={`app-frame ${compact?'is-compact':''}`}>
-    <aside className="app-sidebar" aria-label="Navegación principal">
-      <div className="app-sidebar-brand"><a className="brand" href="#home" aria-label="2J Platform, Resumen"><span className="brand-mark">2J</span><span className="brand-copy">FITNESS CENTER<small>OPERACIONES</small></span></a><button className="sidebar-toggle" type="button" onClick={toggleCompact} aria-label={compact?'Expandir menú':'Compactar menú'} title={compact?'Expandir menú':'Compactar menú'}>{compact?'»':'«'}</button></div>
+  const sidebarHidden=isDrawer&&!drawerOpen;
+  const sidebarProps=isDrawer?{role:'dialog' as const,'aria-modal':drawerOpen||undefined,'aria-label':'Navegación principal'}:{'aria-label':'Navegación principal'};
+  return <CommandContext.Provider value={{data,state,error,reload,capabilities}}><div className={`app-frame ${isRail?'is-rail':''} ${isDrawer?'is-drawer':''} ${drawerOpen?'drawer-open':''}`}>
+    {isDrawer&&drawerOpen&&<div className="app-scrim" data-2j-design="v2" role="presentation" onClick={()=>setDrawerOpen(false)}/>}
+    <aside id="app-sidebar" ref={sidebarRef} className="app-sidebar" data-2j-design="v2" {...sidebarProps} aria-hidden={sidebarHidden||undefined} onKeyDown={trapTab}>
+      <div className="app-sidebar-brand"><a className="app-brand" href="#home" aria-label="2J Platform, Resumen"><span className="app-brand-mark">2J</span><span className="app-brand-copy">FITNESS CENTER<small>OPERACIONES</small></span></a>
+        {isDrawer?<IconButton className="app-sidebar-close" icon={icons.X} label="Cerrar navegación" onClick={()=>setDrawerOpen(false)}/>:mode==='expanded'?<IconButton className="app-sidebar-toggle" size="sm" icon={folded?icons.PanelLeftOpen:icons.PanelLeftClose} label={folded?'Expandir menú':'Compactar menú'} onClick={()=>setFolded(value=>!value)}/>:null}</div>
       <nav className="app-navigation" aria-label="Secciones">
         {navigation.map(section=>{
           const isOpen=expandedGroups.has(section.id);
-          if(section.route){const item=section.route;return <a key={section.id} className={`app-nav-item app-nav-top ${route===item.id?'active':''}`} href={item.href} aria-label={section.label} title={compact?section.label:undefined} aria-current={route===item.id?'page':undefined}><span className="nav-glyph" aria-hidden="true">{navGlyph[section.icon]}</span><span className="nav-item-label">{section.label}</span></a>;}
+          if(section.route){const item=section.route;return <a key={section.id} className={`app-nav-item app-nav-top ${route===item.id?'active':''}`} href={item.href} aria-label={section.label} title={isRail?section.label:undefined} aria-current={route===item.id?'page':undefined}><Icon icon={section.icon} size={20} className="app-nav-icon"/><span className="nav-item-label">{section.label}</span></a>;}
           return <div className={`app-nav-group ${section.active?'is-active':''} ${isOpen?'is-open':''}`} key={section.id}>
-            <button className="app-nav-item app-nav-top app-nav-group-trigger" type="button" aria-expanded={isOpen} aria-controls={`nav-subnav-${section.id}`} aria-label={section.label} title={compact?section.label:undefined} onClick={()=>toggleGroup(section.id)}><span className="nav-glyph" aria-hidden="true">{navGlyph[section.icon]}</span><span className="nav-item-label">{section.label}</span><span className="nav-chevron" aria-hidden="true">⌄</span></button>
-            {isOpen&&<div className="app-subnav" id={`nav-subnav-${section.id}`} role="group" aria-label={`${section.label} subsecciones`}>{section.children!.map(item=><a key={item.id} className={`app-nav-item app-subnav-item ${route===item.id?'active':''}`} href={item.href} aria-current={route===item.id?'page':undefined} title={compact?item.label:undefined}><span className="nav-glyph" aria-hidden="true">{navGlyph[item.id]}</span><span className="nav-item-label">{item.label}</span>{item.id==='communications'&&data?.unread? <span className="nav-count">{data.unread>99?'99+':data.unread}</span>:null}</a>)}</div>}
+            <button className="app-nav-item app-nav-top app-nav-group-trigger" type="button" aria-expanded={isOpen} aria-controls={`nav-subnav-${section.id}`} aria-label={section.label} title={isRail?section.label:undefined} onClick={()=>toggleGroup(section.id)}><Icon icon={section.icon} size={20} className="app-nav-icon"/><span className="nav-item-label">{section.label}</span><Icon icon={icons.ChevronDown} size={16} className="nav-chevron"/></button>
+            {isOpen&&<div className="app-subnav" id={`nav-subnav-${section.id}`} role="group" aria-label={`${section.label} subsecciones`}>{section.children!.map(item=><a key={item.id} className={`app-nav-item app-subnav-item ${route===item.id?'active':''}`} href={item.href} aria-current={route===item.id?'page':undefined} title={isRail?item.label:undefined}><Icon icon={item.icon} size={16} className="app-nav-icon"/><span className="nav-item-label">{item.label}</span>{item.id==='communications'&&data?.unread? <span className="nav-count">{data.unread>99?'99+':data.unread}</span>:null}</a>)}</div>}
           </div>;
         })}
       </nav>
-      <div className="app-sidebar-foot" title="Datos protegidos por permisos"><span className="status-dot"/><span>Datos protegidos por permisos</span></div>
+      <div className="app-sidebar-foot" title="Datos protegidos por permisos"><Icon icon={icons.ShieldCheck} size={16}/><span>Datos protegidos por permisos</span></div>
     </aside>
-    <div className="app-content"><header className="app-topbar"><div className="app-location" aria-label="Ubicación actual"><span>{pageContext.section}</span><span className="app-location-divider" aria-hidden="true">/</span><strong>{pageContext.page}</strong></div><button className="global-search-trigger" onClick={()=>setSearchOpen(true)} aria-label="Buscar en 2J"><span aria-hidden="true">⌕</span><span>Buscar clientes, equipo o servicios</span><kbd>Ctrl K</kbd></button><span className="local-pill"><span className="status-dot"/> Entorno local</span></header>
+    <div className="app-content"><header className="app-topbar" data-2j-design="v2">
+      {isDrawer&&<IconButton ref={menuButtonRef} className="app-menu-button" icon={icons.Menu} label="Abrir navegación" aria-expanded={drawerOpen} aria-controls="app-sidebar" onClick={()=>setDrawerOpen(true)}/>}
+      <div className="app-location" aria-label="Ubicación actual">{pageContext.section!==pageContext.page&&<><span>{pageContext.section}</span><span className="app-location-divider" aria-hidden="true">/</span></>}<strong>{pageContext.page}</strong></div>
+      <button className="global-search-trigger" type="button" onClick={()=>setSearchOpen(true)} aria-label="Buscar en 2J"><Icon icon={icons.Search} size={20}/><span>Buscar clientes, equipo o servicios</span><kbd>Ctrl K</kbd></button>
+      <span className="local-pill"><span className="status-dot"/> Entorno local</span></header>
       <div className="app-page">{children}</div>
     </div>
     {searchOpen&&<div className="search-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setSearchOpen(false);}}><section className="global-search-dialog" role="dialog" aria-modal="true" aria-label="Búsqueda global"><label htmlFor="global-search-input">Buscar en 2J</label><input ref={searchRef} id="global-search-input" value={query} onChange={event=>setQuery(event.target.value)} placeholder="Nombre de cliente, profesional o servicio"/><div className="global-search-results" aria-live="polite">{searchBusy?<p role="status">Buscando…</p>:query.trim().length<2?<p>Escribe al menos dos caracteres.</p>:results.length===0?<p>No hay resultados accesibles.</p>:results.filter(group=>group.items.length>0).map(group=><section key={group.type}><h2>{group.label}</h2>{group.items.map(item=><a key={item.id} href={group.type==='clients'?`#clients?clientId=${item.id}`:group.type==='team'?'#staff':'#services'} onClick={()=>setSearchOpen(false)}>{item.label}</a>)}</section>)}</div><button className="button secondary" onClick={()=>setSearchOpen(false)}>Cerrar · Esc</button></section></div>}

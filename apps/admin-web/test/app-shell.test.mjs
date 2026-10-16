@@ -25,13 +25,13 @@ test('Admin sees the six professional sections and only their existing authorize
   const adminCapabilities={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true};
   globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : String(url).includes('/api/session/capabilities') ? response(adminCapabilities) : response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
-  await screen.findByRole('heading',{name:'Agenda de hoy'});
+  await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav=within(document.querySelector('.app-navigation'));
   for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
   for(const label of ['Agenda','Espacios y servicios','Economía','Tienda','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
   assert.ok(nav.getByRole('link',{name:/Comunicación/}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
-  assert.ok(screen.getByText('Todo al día'));
+  assert.ok(screen.getByText('2 mensajes sin leer'));
   assert.ok(screen.getByText('No hay sesiones programadas hoy'));
   assert.equal(document.querySelector('.app-navigation .nav-count')?.textContent,'2');
 });
@@ -40,7 +40,7 @@ test('Trainer sees only capability-allowed professional sections and no business
   const trainerCapabilities={calendar:true,clients:true,communications:true,billing:false,staff:true,notificationSettings:false,news:false,store:false};
   globalThis.fetch=async url=>String(url).includes('/api/session/capabilities')?response(trainerCapabilities):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByRole('heading',{name:'Agenda de hoy'});const nav=within(document.querySelector('.app-navigation'));
+  await screen.findByRole('heading',{name:'Próximas sesiones'});const nav=within(document.querySelector('.app-navigation'));
   for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
   assert.equal(nav.queryByRole('button',{name:'Negocio'}),null);
   for(const label of ['Economía','Tienda','Noticias','Ajustes de avisos'])assert.equal(nav.queryByRole('link',{name:label}),null);
@@ -66,7 +66,7 @@ test('global search opens with Ctrl+K, groups permitted results and closes with 
       : String(url).includes('/api/session/capabilities') ? response(capabilities) : response(model);
   };
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
-  await screen.findByRole('heading',{name:'Agenda de hoy'});
+  await screen.findByRole('heading',{name:'Próximas sesiones'});
   fireEvent.keyDown(window,{key:'k',ctrlKey:true});
   const input=await screen.findByRole('textbox',{name:'Buscar en 2J'});
   fireEvent.change(input,{target:{value:'María'}});
@@ -95,7 +95,7 @@ test('Store navigation is exposed only when the server grants store capability',
   assert.ok(await screen.findByRole('link',{name:'Tienda'}));unmount();
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,store:false}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByRole('heading',{name:'Agenda de hoy'});assert.equal(screen.queryByRole('link',{name:'Tienda'}),null);
+  await screen.findByRole('heading',{name:'Próximas sesiones'});assert.equal(screen.queryByRole('link',{name:'Tienda'}),null);
 });
 
 test('permitted Communications navigation remains visible while moving between modules', async () => {
@@ -103,7 +103,7 @@ test('permitted Communications navigation remains visible while moving between m
     ? response({calendar:true,clients:true,communications:true,billing:true,staff:true})
     : String(url).includes('/api/dashboard/command-center') ? response(model) : response({groups:[]});
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
-  await screen.findByRole('heading',{name:'Agenda de hoy'});
+  await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav = document.querySelector('.app-navigation');
   assert.ok(within(nav).getByRole('button', { name: 'Actividad' }));
   assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
@@ -122,13 +122,13 @@ test('permitted Communications navigation remains visible while moving between m
 test('News management navigation is visible only when the server grants its capability', async()=>{
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,news:true}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByRole('heading',{name:'Agenda de hoy'});
+  await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav=document.querySelector('.app-navigation');
   assert.ok(within(nav).getByRole('link',{name:'Noticias'}));
   cleanup();
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response({...capabilities,news:false}):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByRole('heading',{name:'Agenda de hoy'});
+  await screen.findByRole('heading',{name:'Próximas sesiones'});
   assert.equal(within(document.querySelector('.app-navigation')).queryByRole('link',{name:'Noticias'}),null);
 });
 
@@ -155,13 +155,13 @@ test('expanded navigation is the default and compact sidebar can expand without 
   globalThis.fetch=async(url)=>String(url).includes('/api/session/capabilities')?response(capabilities):String(url).includes('/api/dashboard/command-center')?response(model):String(url).includes('/api/dashboard/preferences')?response({order:['agenda','attention','clients','communication','economics','team','shortcuts'],hidden:[]}):response({groups:[]});
   window.location.hash='#home';
   render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
-  await screen.findByRole('heading',{name:'Agenda de hoy'});
-  const frame=document.querySelector('.app-frame');assert.equal(frame.classList.contains('is-compact'),false);
+  await screen.findByRole('heading',{name:'Próximas sesiones'});
+  const frame=document.querySelector('.app-frame');assert.equal(frame.classList.contains('is-rail'),false);
   fireEvent.click(screen.getByRole('button',{name:'Compactar menú'}));
-  await waitFor(()=>assert.equal(frame.classList.contains('is-compact'),true));
+  await waitFor(()=>assert.equal(frame.classList.contains('is-rail'),true));
   const comm=screen.getByRole('button',{name:'Actividad'});assert.ok(comm);assert.equal(comm.getAttribute('title'),'Actividad');
   fireEvent.click(screen.getByRole('button',{name:'Expandir menú'}));
-  await waitFor(()=>assert.equal(frame.classList.contains('is-compact'),false));
+  await waitFor(()=>assert.equal(frame.classList.contains('is-rail'),false));
   fireEvent.click(screen.getByRole('link',{name:'Clientes'}));
   await waitFor(()=>assert.equal(screen.getByRole('link',{name:'Clientes'}).getAttribute('aria-current'),'page'));
   assert.ok(screen.getByRole('link',{name:/Comunicación/}));
@@ -185,7 +185,7 @@ test('Admin summary prioritizes real agenda, attention and pending work, with fi
   globalThis.fetch=async(url)=>{requested.push(String(url));return String(url).includes('/api/dashboard/command-center')?response(adminSummary):String(url).includes('/api/session/capabilities')?response({...capabilities,billing:true}):response({groups:[]});};
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   const main=await screen.findByRole('main');
-  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Agenda de hoy','Necesitan atención','Pendientes','Pulso operativo','Pendiente de gestión']);
+  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Requiere atención','Próximas sesiones','Equipo ahora']);
   assert.equal(main.querySelector('.summary-session-capacity')?.textContent,'6/10');
   assert.equal(main.querySelector('.summary-session-free'),null);
   assert.ok(within(main).getByText('1 en espera'));
@@ -202,7 +202,7 @@ test('Admin summary prioritizes real agenda, attention and pending work, with fi
   assert.equal(within(main).getByRole('link',{name:/mensajes sin leer/}).getAttribute('href'),'#communications');
   assert.equal(within(main).queryByText('Training'),null);
   assert.equal(within(main).queryByText('Salud'),null);
-  assert.equal(within(main).queryByText('Clientes activos'),null);
+  assert.ok(within(main).getByText('Clientes activos'));
   assert.equal(within(main).queryByRole('button',{name:'Personalizar inicio'}),null);
   assert.equal(requested.some(url=>url.includes('/api/dashboard/preferences')),false);
 });
@@ -212,12 +212,11 @@ test('Trainer summary uses operational data and never renders finance without it
   globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(trainerSummary):String(url).includes('/api/session/capabilities')?response(capabilities):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   const main=await screen.findByRole('main');
-  assert.ok(within(main).getByRole('heading',{name:'Agenda de hoy'}));
-  assert.ok(within(main).getByRole('heading',{name:'Necesitan atención'}));
-  assert.ok(within(main).getByRole('heading',{name:'Pendientes'}));
-  assert.ok(within(main).getByRole('heading',{name:'Pulso operativo'}));
+  assert.ok(within(main).getByRole('heading',{name:'Próximas sesiones'}));
+  assert.ok(within(main).getByRole('heading',{name:'Requiere atención'}));
+  assert.ok(within(main).getByRole('heading',{name:'Equipo ahora'}));
   assert.equal(within(main).queryByText(/Economía|Pendiente de cobro|Cargos vencidos|Caja de hoy/),null);
-  assert.ok(within(main).getByText('No hay mensajes sin leer'));
+  assert.ok(within(main).getByText('Nada requiere tu atención.'));
 });
 
 test('limited professional sees only server-permitted summary blocks without finance or team placeholders',async()=>{
@@ -225,7 +224,7 @@ test('limited professional sees only server-permitted summary blocks without fin
   globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(limited):String(url).includes('/api/session/capabilities')?response({calendar:true,clients:false,communications:false,billing:false,staff:false}):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   const main=await screen.findByRole('main');
-  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Agenda de hoy','Necesitan atención']);
+  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Requiere atención','Próximas sesiones']);
   assert.equal(within(main).queryByText('No tienes trabajo pendiente en tus bandejas'),null);
   assert.equal(within(main).queryByText('Clientes activos'),null);
   assert.equal(within(main).queryByText(/Caja|cobro|Economía/),null);
