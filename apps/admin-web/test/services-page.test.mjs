@@ -39,7 +39,7 @@ function renderServices(capabilities = adminCapabilities) {
 
 async function openPlanDialog() {
   await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
   fireEvent.click(screen.getAllByRole('button', { name: /nuevo plan/i })[0]);
   return screen.findByRole('dialog', { name: 'Nuevo plan' });
 }
@@ -48,7 +48,7 @@ test('renders the catalog with understandable product terms and noninteractive f
   initialFetch();
   renderServices();
   await screen.findByRole('heading', { name: service.name });
-  assert.ok(screen.getByRole('button', { name: service.name }));
+  assert.ok(screen.getByRole('button', { name: new RegExp(service.name) }));
   assert.equal(document.querySelectorAll('.sidebar, .topbar').length, 0);
   assert.equal(screen.queryByText('session_pack'), null);
 });
@@ -60,7 +60,7 @@ test('Trainer receives operational spaces and services without commercial config
   await screen.findByRole('heading', { name: service.name });
   assert.ok(screen.getByRole('button', { name: 'Servicios' }));
   assert.ok(screen.getByRole('button', { name: 'Espacios' }));
-  assert.equal(screen.queryByRole('button', { name: 'Cuotas y planes' }), null);
+  assert.equal(screen.queryByRole('button', { name: 'Planes' }), null);
   assert.equal(screen.queryByRole('button', { name: /nuevo servicio/i }), null);
   fireEvent.click(screen.getByRole('button', { name: 'Espacios' }));
   assert.ok(await screen.findByRole('heading', { name: 'Espacios' }));
@@ -109,7 +109,7 @@ test('draft plan can be activated from the catalog and the action disappears aft
   };
   renderServices();
   await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
   fireEvent.click((await screen.findAllByRole('button', { name: 'Activar plan' }))[0]);
   await screen.findByText('Plan activado y disponible para asignarlo a clientes.');
   assert.equal(activationCount, 1);
@@ -135,11 +135,10 @@ test('service navigation filters a scannable plan table while details retain rig
   };
   renderServices();
   await screen.findByRole('heading',{name:'Fuerza'});
-  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
   assert.ok(screen.getAllByRole('button',{name:/Funcional/}).length>=1);
-  await screen.findByRole('columnheader',{name:'Sesiones / límite'});
-  const table=screen.getAllByRole('table').find(item=>item.classList.contains('plan-catalog-table'));
-  assert.ok(within(table).getByRole('columnheader',{name:'Sesiones / límite'}));
+  const table=await screen.findByRole('list',{name:'Planes del servicio'});
+  assert.ok(within(table).getAllByText('Frecuencia',{selector:'dt'}).length>0);
   assert.equal(within(table).getAllByText('Fuerza 3 días').length,1);
   assert.equal(within(table).getAllByText('3 accesos / semana').length,2);
   assert.equal(within(table).getAllByText('Recurrente · mensual').length,2);
@@ -160,7 +159,7 @@ test('service navigation filters a scannable plan table while details retain rig
   fireEvent.click(screen.getAllByRole('button',{name:/Funcional/})[0]);
   assert.ok(await screen.findByRole('heading',{name:'Funcional'}));
   await waitFor(()=>{
-    const currentTable=document.querySelector('.plan-catalog-table');
+    const currentTable=document.querySelector('.plan-cards');
     assert.ok(currentTable.textContent.includes('Funcional mensual'));
     assert.equal(currentTable.textContent.includes('Fuerza 3 días'),false);
   });
@@ -169,7 +168,7 @@ test('service navigation filters a scannable plan table while details retain rig
 test('draft activation errors remain visible and the plan stays available for correction', async () => {
   globalThis.window.confirm=()=>true;
   globalThis.fetch=async url=>String(url).endsWith('/api/areas')?response([area]):String(url).endsWith('/api/services')?response([service]):String(url).endsWith(`/api/services/${service.id}/plans`)?response([plan]):String(url).endsWith(`/api/plans/${plan.id}/activate`)?response({error:'service_not_active',message:'El servicio incluido está en borrador.'},409):Promise.reject(new Error(`Unexpected ${url}`));
-  renderServices();await screen.findByRole('heading',{name:service.name});fireEvent.click(screen.getByRole('button',{name:'Cuotas y planes'}));fireEvent.click((await screen.findAllByRole('button',{name:'Activar plan'}))[0]);assert.ok(await screen.findByText('El servicio incluido está en borrador.'));assert.ok(screen.getAllByRole('button',{name:'Activar plan'}).length>=1);
+  renderServices();await screen.findByRole('heading',{name:service.name});fireEvent.click(screen.getByRole('button',{name:'Planes'}));fireEvent.click((await screen.findAllByRole('button',{name:'Activar plan'}))[0]);assert.ok(await screen.findByText('El servicio incluido está en borrador.'));assert.ok(screen.getAllByRole('button',{name:'Activar plan'}).length>=1);
 });
 
 test('service and plan dialogs focus their first field, close on Escape and restore focus to the opener', async () => {
@@ -183,7 +182,7 @@ test('service and plan dialogs focus their first field, close on Escape and rest
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => assert.equal(document.activeElement, serviceOpener));
 
-  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
   const planOpener = (await screen.findAllByRole('button', { name: /nuevo plan/i }))[0];
   fireEvent.click(planOpener);
   const planDialog = await screen.findByRole('dialog', { name: 'Nuevo plan' });
@@ -202,7 +201,7 @@ test('a selected draft service is visible and clearly labeled in the new plan di
   };
   renderServices();
   await screen.findByRole('heading', { name: draftService.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
   fireEvent.click((await screen.findAllByRole('button', { name: /nuevo plan/i }))[0]);
   const dialog = await screen.findByRole('dialog', { name: 'Nuevo plan' });
   assert.equal(within(dialog).getByRole('checkbox', { name: /Borrador/ }).checked, true);
@@ -236,9 +235,9 @@ test('created plan refreshes the visible plan detail and service plan count with
     await new Promise((resolve) => setTimeout(resolve, 50));
   });
   await waitFor(() => assert.equal(screen.queryByRole('dialog'), null), { timeout: 2500 });
-  assert.ok(await screen.findByText(plan.name, { selector: '.plan-catalog-row strong' }));
+  assert.ok(await screen.findByText(plan.name, { selector: '.plan-card h3' }));
   assert.ok(screen.getAllByRole('button', { name: /Entrenamiento funcional/ }).length >= 1);
-  const table = document.querySelector('.plan-catalog-table');
+  const table = document.querySelector('.plan-cards');
   fireEvent.click(within(table).getByRole('button', { name: 'Detalles' }));
   assert.ok(await within(table).findByText('Acceso al servicio'));
   assert.ok(serviceReads >= 2, 'service list should refresh after the save');
@@ -251,11 +250,11 @@ test('an access right without a target is described neutrally in multi-service p
   initialFetch({ plans: [unscopedPlan] });
   renderServices();
   await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
-  await screen.findByText(unscopedPlan.name, { selector: '.plan-catalog-row strong' });
+  fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
+  await screen.findByText(unscopedPlan.name, { selector: '.plan-card h3' });
   fireEvent.click(screen.getAllByRole('button', { name: 'Detalles' })[0]);
   await screen.findByRole('region', { name: `Detalles de ${unscopedPlan.name}` });
-  const table = document.querySelector('.plan-catalog-table');
+  const table = document.querySelector('.plan-cards');
   assert.ok(within(table).getByText(service.name, { selector: '.service-chip' }));
   assert.ok(within(table).getByText(second.name, { selector: '.service-chip' }));
   assert.ok(within(table).getByText('Destino sin especificar'));
@@ -267,7 +266,7 @@ test('service access requires an included service target before plan creation', 
   initialFetch({ onPlanCreate: (_url, options) => { submitted = JSON.parse(options.body); return response(plan, 201); } });
   renderServices();
   await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
   const dialog = await openPlanDialog();
   fireEvent.change(within(dialog).getByLabelText('Nombre del plan'), { target: { value: plan.name } });
   fireEvent.change(within(dialog).getByLabelText('Tipo de producto'), { target: { value: 'recurring' } });
@@ -311,7 +310,7 @@ test('creating a plan without the currently selected service selects a service t
   });
   await waitFor(() => assert.equal(screen.queryByRole('dialog'), null));
   assert.ok(await screen.findByRole('heading', { name: second.name }));
-  assert.ok(await screen.findByText(secondPlan.name, { selector: '.plan-catalog-row strong' }));
+  assert.ok(await screen.findByText(secondPlan.name, { selector: '.plan-card h3' }));
 });
 
 test('failed save is announced inside the open dialog and leaves the user input intact', async () => {
@@ -341,7 +340,7 @@ test('plan loading, fetch failure and valid empty response have distinct states 
   };
   renderServices();
   await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Cuotas y planes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
   assert.ok(await screen.findByRole('alert'));
   assert.equal(screen.queryByText('Aún no hay planes'), null);
   fail = false;
