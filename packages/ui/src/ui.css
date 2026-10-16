@@ -23,6 +23,13 @@
 .ui-button--secondary:hover { background: var(--2j-color-surface-subtle); }
 .ui-button--secondary:active { background: var(--2j-color-surface-subtle); border-color: var(--2j-color-text-secondary); }
 
+.ui-button--danger { background: var(--2j-color-surface); border-color: var(--2j-color-danger); color: var(--2j-color-danger-ink); }
+.ui-button--danger:hover { background: var(--2j-color-danger-soft); }
+.ui-button--danger:active { background: var(--2j-color-danger-soft); box-shadow: inset 0 1px 3px rgb(22 24 26 / 16%); }
+/* Filled danger only for the final button of a confirmation dialog. */
+.ui-button--danger-solid { background: var(--2j-color-danger); color: #fff; }
+.ui-button--danger-solid:hover { background: var(--2j-color-danger-ink); }
+.ui-button--danger-solid:active { background: var(--2j-color-danger-ink); box-shadow: inset 0 1px 3px rgb(22 24 26 / 24%); }
 .ui-button--ghost:hover { background: var(--2j-color-surface-subtle); }
 .ui-button--ghost:active { background: var(--2j-color-border); }
 
@@ -74,6 +81,82 @@
 .ui-page-description { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); line-height: 1.55; }
 .ui-page-meta { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); line-height: 1.35; }
 .ui-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--2j-space-2); }
+
+/* ---------- Tabs ---------- */
+.ui-tabs { display: flex; gap: var(--2j-space-1); overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--2j-color-border); scrollbar-width: thin; }
+.ui-tab {
+  flex: 0 0 auto; min-height: var(--2j-control-md); padding: 0 var(--2j-space-3); margin-bottom: -1px;
+  border: 0; border-bottom: 2px solid transparent; border-radius: var(--2j-radius-sm) var(--2j-radius-sm) 0 0; background: transparent;
+  color: var(--2j-color-text-secondary); font: inherit; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-medium); white-space: nowrap; cursor: pointer;
+}
+.ui-tab:hover { color: var(--2j-color-text-primary); background: var(--2j-color-surface-subtle); }
+.ui-tab.is-selected { border-bottom-color: var(--2j-color-brand); color: var(--2j-color-text-primary); font-weight: var(--2j-type-weight-semibold); }
+.ui-tab:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: -2px; }
+
+/* ---------- Search field ---------- */
+.ui-search { position: relative; min-width: 0; display: flex; align-items: center; }
+.ui-search-icon { position: absolute; left: var(--2j-space-3); color: var(--2j-color-text-secondary); pointer-events: none; }
+.ui-search-input {
+  width: 100%; min-height: var(--2j-control-md); padding: 0 var(--2j-space-10) 0 calc(var(--2j-space-3) + 1.75rem);
+  border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface);
+  color: var(--2j-color-text-primary); font: inherit; font-size: var(--2j-type-size-sm);
+}
+.ui-search-input::placeholder { color: var(--2j-color-text-secondary); opacity: 1; }
+.ui-search-input:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.ui-search-clear { position: absolute; right: var(--2j-space-1); }
+
+/* ---------- Segmented control ---------- */
+.ui-segmented { display: inline-flex; padding: var(--2j-space-1); gap: var(--2j-space-1); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); background: var(--2j-color-surface-subtle); }
+.ui-segment { min-height: calc(var(--2j-control-md) - 12px); padding: 0 var(--2j-space-4); border: 0; border-radius: var(--2j-radius-sm); background: transparent; color: var(--2j-color-text-secondary); font: inherit; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-medium); cursor: pointer; }
+.ui-segment:hover { color: var(--2j-color-text-primary); }
+.ui-segment.is-selected { background: var(--2j-color-surface); color: var(--2j-color-text-primary); font-weight: var(--2j-type-weight-semibold); box-shadow: 0 0 0 1px var(--2j-color-border); }
+.ui-segment:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+@media (pointer: coarse) { .ui-segment { min-height: calc(var(--2j-control-md) - 4px); } }
+
+/* ---------- Empty / error state ---------- */
+.ui-empty { display: grid; justify-items: center; gap: var(--2j-space-2); padding: var(--2j-space-10) var(--2j-space-5); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); line-height: 1.5; text-align: center; }
+.ui-empty-icon { width: 3rem; height: 3rem; display: grid; place-items: center; margin-bottom: var(--2j-space-1); border-radius: var(--2j-radius-pill); background: var(--2j-color-surface-subtle); color: var(--2j-color-text-secondary); }
+.ui-empty.is-danger .ui-empty-icon { background: var(--2j-color-danger-soft); color: var(--2j-color-danger-ink); }
+.ui-empty-title { color: var(--2j-color-text-primary); font-size: var(--2j-type-size-md); font-weight: var(--2j-type-weight-semibold); }
+.ui-empty-text { max-width: 34rem; }
+.ui-empty-action { margin-top: var(--2j-space-2); }
+
+/* ---------- Modal (visual shell; behaviour such as focus trap stays with the caller) ---------- */
+.ui-modal-backdrop { position: fixed; inset: 0; z-index: var(--2j-z-modal); display: grid; place-items: center; padding: var(--2j-space-4); background: rgb(22 24 26 / 40%); overflow-y: auto; }
+.ui-modal {
+  position: relative; width: min(100%, 36rem); max-height: calc(100vh - var(--2j-space-8)); overflow-y: auto; padding: var(--2j-space-6);
+  border-radius: var(--2j-radius-xl); background: var(--2j-color-surface); color: var(--2j-color-text-primary); box-shadow: var(--2j-elevation-high);
+}
+.ui-modal--wide { width: min(100%, 44rem); }
+.ui-modal-close { position: absolute; top: var(--2j-space-3); right: var(--2j-space-3); }
+.ui-modal-title { margin: 0 var(--2j-space-10) var(--2j-space-1) 0; font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-semibold); line-height: 1.45; letter-spacing: -0.01em; }
+.ui-modal-lead { margin: 0 0 var(--2j-space-4); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); line-height: 1.5; }
+.ui-modal form { display: grid; gap: var(--2j-space-4); }
+.ui-modal label { display: grid; gap: var(--2j-space-1); font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-medium); }
+.ui-modal label:has(> input[type="checkbox"]) { display: flex; align-items: center; gap: var(--2j-space-2); min-height: var(--2j-control-md); }
+.ui-modal input:not([type="checkbox"]), .ui-modal select, .ui-modal textarea {
+  width: 100%; min-height: var(--2j-control-md); padding: 0 var(--2j-space-3);
+  border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface);
+  color: var(--2j-color-text-primary); font: inherit; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-regular);
+}
+.ui-modal textarea { padding: var(--2j-space-2) var(--2j-space-3); resize: vertical; }
+.ui-modal input[type="checkbox"] { width: 1.25rem; height: 1.25rem; accent-color: var(--2j-color-brand-strong); }
+.ui-modal input:focus-visible, .ui-modal select:focus-visible, .ui-modal textarea:focus-visible, .ui-modal input[type="checkbox"]:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.ui-modal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--2j-space-4); }
+.ui-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--2j-space-2); margin-top: var(--2j-space-2); }
+.ui-modal-note { margin: 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); line-height: 1.5; }
+.ui-form-error { padding: var(--2j-space-3); border-radius: var(--2j-radius-md); background: var(--2j-color-danger-soft); color: var(--2j-color-danger-ink); font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-medium); }
+@media (max-width: 767.98px) {
+  .ui-modal-backdrop { align-items: end; padding: 0; }
+  .ui-modal, .ui-modal--wide { width: 100%; max-height: 92vh; padding: var(--2j-space-5) var(--2j-space-4); border-radius: var(--2j-radius-xl) var(--2j-radius-xl) 0 0; }
+  .ui-modal-grid { grid-template-columns: minmax(0, 1fr); }
+  .ui-modal-actions > .ui-button { flex: 1 1 auto; }
+}
+
+/* ---------- Text link (tertiary action in running text) ---------- */
+.ui-link { color: var(--2j-color-brand-ink); font-weight: var(--2j-type-weight-semibold); text-decoration: none; }
+.ui-link:hover { text-decoration: underline; }
+.ui-link:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; border-radius: var(--2j-radius-xs); }
 
 @media (prefers-reduced-motion: reduce) {
   .ui-button { transition: none; }

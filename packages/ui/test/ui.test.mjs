@@ -7,8 +7,8 @@ import { Search } from 'lucide-react';
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://127.0.0.1:5174/' });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
-const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
-const { Button, IconButton, Card, CardHeader, StatusChip, PageHeader, Icon } = await import('../src/index.ts');
+const { cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
+const { Button, IconButton, Card, CardHeader, StatusChip, PageHeader, Icon, Tabs, SearchField, SegmentedControl, EmptyState } = await import('../src/index.ts');
 afterEach(cleanup);
 after(() => dom.window.close());
 const h = React.createElement;
@@ -84,4 +84,64 @@ test('PageHeader renders one h1 with optional description, meta and actions', ()
   assert.ok(screen.getByText('jueves 16 de octubre'));
   assert.ok(screen.getByText('Actualizado 10:42'));
   assert.ok(screen.getByRole('button', { name: 'Actualizar' }));
+});
+
+test('Button danger variants: outlined by default, filled only when asked', () => {
+  render(h('div', null, h(Button, { variant: 'danger' }, 'Archivar'), h(Button, { variant: 'danger-solid' }, 'Confirmar')));
+  assert.match(screen.getByRole('button', { name: 'Archivar' }).className, /ui-button--danger(s|$)/);
+  assert.match(screen.getByRole('button', { name: 'Confirmar' }).className, /ui-button--danger-solid/);
+});
+
+test('Tabs expose tablist semantics, roving tabindex and Arrow/Home/End navigation', () => {
+  let value = 'a';
+  const items = [{ id: 'a', label: 'Uno' }, { id: 'b', label: 'Dos' }, { id: 'c', label: 'Tres' }];
+  const view = () => h(Tabs, { label: 'Secciones', items, value, onChange: (id) => { value = id; }, panelId: 'panel', idPrefix: 't' });
+  const { rerender } = render(view());
+  assert.ok(screen.getByRole('tablist', { name: 'Secciones' }));
+  const [one, two, three] = screen.getAllByRole('tab');
+  assert.deepEqual([one.tabIndex, two.tabIndex, three.tabIndex], [0, -1, -1]);
+  assert.equal(one.getAttribute('aria-controls'), 'panel');
+  assert.equal(two.id, 't-b');
+  one.focus();
+  fireEvent.keyDown(one, { key: 'ArrowRight' }); rerender(view());
+  assert.equal(value, 'b'); assert.equal(document.activeElement, two);
+  fireEvent.keyDown(two, { key: 'End' }); rerender(view());
+  assert.equal(value, 'c');
+  fireEvent.keyDown(three, { key: 'ArrowRight' }); rerender(view());
+  assert.equal(value, 'a', 'wraps around');
+});
+
+test('SearchField is labelled, controlled, and clears with a named button', () => {
+  let text = 'ana';
+  const view = () => h(SearchField, { label: 'Buscar cliente', placeholder: 'Buscar por nombre', value: text, onChange: (next) => { text = next; } });
+  const { rerender } = render(view());
+  const input = screen.getByLabelText('Buscar cliente');
+  assert.equal(input.value, 'ana');
+  fireEvent.click(screen.getByRole('button', { name: 'Limpiar búsqueda' }));
+  assert.equal(text, '');
+  rerender(view());
+  assert.equal(screen.queryByRole('button', { name: 'Limpiar búsqueda' }), null);
+});
+
+test('SegmentedControl is a labelled group whose buttons expose aria-pressed', () => {
+  let value = 'active';
+  const options = [{ value: 'active', label: 'Activos' }, { value: 'archived', label: 'Archivados' }];
+  const view = () => h(SegmentedControl, { label: 'Estado', options, value, onChange: (next) => { value = next; } });
+  const { rerender } = render(view());
+  assert.equal(screen.getByRole('button', { name: 'Activos' }).getAttribute('aria-pressed'), 'true');
+  fireEvent.click(screen.getByRole('button', { name: 'Archivados' }));
+  rerender(view());
+  assert.equal(screen.getByRole('button', { name: 'Archivados' }).getAttribute('aria-pressed'), 'true');
+  assert.equal(screen.getByRole('button', { name: 'Activos' }).getAttribute('aria-pressed'), 'false');
+});
+
+test('EmptyState says what is missing, forwards role for errors and renders only the action it is given', () => {
+  render(h(EmptyState, { role: 'alert', tone: 'danger', icon: Search, title: 'No se pudo cargar', action: h(Button, null, 'Reintentar') }, 'Inténtalo de nuevo'));
+  const alert = screen.getByRole('alert');
+  assert.match(alert.className, /is-danger/);
+  assert.ok(within(alert).getByText('No se pudo cargar'));
+  assert.ok(within(alert).getByRole('button', { name: 'Reintentar' }));
+  cleanup();
+  render(h(EmptyState, { title: 'Aún no hay clientes' }));
+  assert.equal(screen.queryByRole('button'), null);
 });

@@ -32,16 +32,16 @@ test('shows minimized clients, searches the server, and opens only backed Client
     throw new Error(`Unexpected request ${url}`);
   };
   render(React.createElement(ClientsPage));
-  await screen.findByRole('button', { name: /Marta Santos/ });
+  await screen.findByRole('link', { name: /Marta Santos/ });
   fireEvent.change(screen.getByLabelText('Buscar cliente'), { target: { value: 'marta' } });
   await waitFor(() => assert.ok(requests.some((url) => url.includes('q=marta'))), { timeout: 1500 });
-  fireEvent.click(screen.getByRole('button', { name: /Marta Santos/ }));
+  fireEvent.click(screen.getByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
-  for (const label of ['Resumen', 'Reservas', 'Cuotas', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']) assert.ok(screen.getByRole('tab', { name: new RegExp(label) }));
+  for (const label of ['Resumen', 'Reservas', 'Plan y sesiones', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']) assert.ok(screen.getByRole('tab', { name: new RegExp(label) }));
   assert.equal(screen.queryByRole('tab', { name: /Pagos|Salud|Nutrición|Progreso|Entrenamiento|Competición|Objetivos/ }), null);
   assert.equal(screen.queryByText('marta@example.test'), null);
   assert.equal(screen.queryByText('+34 600 000 000'), null);
-  assert.equal(screen.getByRole('button', { name: /Marta Santos.*Activo.*abrir ficha/i }).getAttribute('aria-pressed'), 'true');
+  assert.equal(screen.queryByLabelText('Buscar cliente'), null, 'the opened client replaces the list');
   assert.equal(screen.getByRole('heading', { name: 'Contexto del cliente' }).textContent, 'Contexto del cliente');
 });
 
@@ -50,9 +50,9 @@ test('Admin can open the existing finance section while unsupported Training and
   const adminProfile = { ...profile, sections: adminSections, summary: { ...summary, payments: { access: 'available', dataState: 'ready', data: { balanceCents: 2400, overdueCount: 1, charges: [], movements: [] } } } };
   globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(adminProfile);
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button', { name: /Marta Santos/ }));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
-  const financeTab = screen.getByRole('tab', { name: 'Cuotas y pagos' });
+  const financeTab = screen.getByRole('tab', { name: 'Pagos' });
   fireEvent.click(financeTab);
   assert.ok(screen.getByText('Saldo pendiente'));
   assert.ok(screen.getByText(/24,00/));
@@ -87,7 +87,7 @@ test('Admin client edit saves optional birth date through the protected profile 
   let saved;
   const profileWithDob={...profile,client:{...client,birthDate:'1990-04-06'}};
   globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`)&&options.method==='PATCH'){saved=JSON.parse(options.body);return response({...profileWithDob.client,...saved});}if(path.endsWith(`/api/clients/${client.id}`))return response(profileWithDob);throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
-  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('button',{name:'Editar datos'}));const dialog=await screen.findByRole('dialog',{name:'Editar datos del cliente'});assert.equal(within(dialog).getAllByLabelText('Fecha de nacimiento (opcional)').length,1);assert.equal(within(dialog).getByLabelText('Fecha de nacimiento (opcional)').value,'1990-04-06');fireEvent.change(within(dialog).getByLabelText('Nombre'),{target:{value:'Marta'}});fireEvent.click(within(dialog).getByRole('button',{name:'Guardar cambios'}));await waitFor(()=>assert.ok(saved));assert.equal(saved.birthDate,'1990-04-06');
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('button',{name:'Editar datos'}));const dialog=await screen.findByRole('dialog',{name:'Editar datos del cliente'});assert.equal(within(dialog).getAllByLabelText('Fecha de nacimiento (opcional)').length,1);assert.equal(within(dialog).getByLabelText('Fecha de nacimiento (opcional)').value,'1990-04-06');fireEvent.change(within(dialog).getByLabelText('Nombre'),{target:{value:'Marta'}});fireEvent.click(within(dialog).getByRole('button',{name:'Guardar cambios'}));await waitFor(()=>assert.ok(saved));assert.equal(saved.birthDate,'1990-04-06');
 });
 
 test('Admin client creation submits the selected birth date exactly', async () => {
@@ -125,7 +125,7 @@ test('Client 360 pauses an entitlement with reason and idempotency key, then ref
   const taskProfile={...profile,capabilities:{manage:true,readEntitlements:true,pauseEntitlements:true,cancelEntitlements:true,adjustEntitlements:true,renewEntitlements:true,assignPlans:true,collectPayments:true},summary:{...summary,plans:{access:'available',dataState:'ready',data:[assignment]}}};
   let posted;
   globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`))return response(taskProfile);if(path.endsWith(`/api/clients/${client.id}/plans/${assignment.id}/pause`)&&options.method==='POST'){posted={body:JSON.parse(options.body),key:options.headers['idempotency-key']};return response({status:'paused'},201);}throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
-  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:'Cuotas'}));assert.ok(screen.getByRole('heading',{name:'Activas'}));assert.ok(screen.getByText('Entrenamiento: Limitado'));fireEvent.click(await screen.findByRole('button',{name:'Pausar'}));
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:'Plan y sesiones'}));assert.ok(screen.getByRole('heading',{name:'Activas'}));assert.ok(screen.getByText('Entrenamiento: Limitado'));fireEvent.click(await screen.findByRole('button',{name:'Pausar'}));
   const dialog=await screen.findByRole('dialog',{name:'Pausar cuota'});fireEvent.change(within(dialog).getByLabelText('Motivo obligatorio'),{target:{value:'Pausa solicitada por cliente'}});fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar pausa'}));await screen.findByText('Cuota pausada.');assert.equal(posted.body.reason,'Pausa solicitada por cliente');assert.match(posted.key,/^[0-9a-f-]{36}$/i);
 });
 
@@ -135,7 +135,7 @@ test('Reception can open a base-price sale while Trainer remains read-only', asy
   const receptionProfile={...profile,capabilities:{manage:false,readEntitlements:true,assignPlans:true,manageCatalogPrice:false,collectPayments:false,pauseEntitlements:true,cancelEntitlements:true,renewEntitlements:true,adjustEntitlements:false},summary:{...summary,plans:{access:'available',dataState:'ready',data:[]}}};
   globalThis.fetch=async(url)=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse([client],{capabilities:{manage:false,assignPlans:true}}));if(path.endsWith(`/api/clients/${client.id}`))return response(receptionProfile);if(path.endsWith('/api/plans/assignable'))return response([plan,pack]);throw new Error(`Unexpected request ${path}`);};
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
+  fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
   fireEvent.click(screen.getAllByRole('button',{name:'Añadir cuota'})[0]);
   const dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
@@ -149,12 +149,12 @@ test('Reception can open a base-price sale while Trainer remains read-only', asy
   assert.ok(within(dialog).getByText('Bono de sesiones · vigencia configurada: 90 días'));
   assert.ok(within(dialog).getByText('10 sesiones · Fuerza'));
   assert.equal(within(dialog).queryByLabelText('Cobrar ahora el importe completo'),null,'the payment action is hidden without billing permission');
-  cleanup();
+  cleanup();window.location.hash='#clients';
 
   const trainerProfile={...receptionProfile,capabilities:{manage:false,readEntitlements:true,assignPlans:false,manageCatalogPrice:false,collectPayments:false,pauseEntitlements:false,cancelEntitlements:false,renewEntitlements:false,adjustEntitlements:false}};
   globalThis.fetch=async(url)=>String(url).includes('/api/clients?')?response(listResponse([client],{capabilities:{manage:false,assignPlans:false}})):String(url).endsWith(`/api/clients/${client.id}`)?response(trainerProfile):Promise.reject(new Error(`Unexpected request ${url}`));
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
+  fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
   assert.equal(screen.queryByRole('button',{name:'Añadir cuota'}),null);
 });
@@ -175,14 +175,14 @@ test('client list exposes distinct loading, error and empty states with retry', 
 test('Documents shows real forms and consent, authorized PAR-Q review and assisted acceptance',async()=>{
   let reviewPayload,consentPayload;
   globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`))return response(profile);if(path.endsWith(`/api/clients/${client.id}/forms`))return response([{id:'assignment-1',formId:'form-1',name:'PAR-Q',category:'par_q',status:'review_required',version:1,assignedAt:client.createdAt,dueAt:null,answers:{question:'yes'},canReview:true,sensitiveReadable:true,reviews:[]}]);if(path.endsWith(`/api/clients/${client.id}/consents`))return response([{consentId:'consent-1',versionId:'version-1',name:'Actividad física',version:2,title:'Consentimiento',body:'Texto vigente',accepted:false,canAcceptAssisted:true}]);if(path.endsWith('/forms/form-1/review')){reviewPayload=JSON.parse(options.body);return response({status:'approved'});}if(path.endsWith('/consents/version-1/accept-assisted')){consentPayload=JSON.parse(options.body);return response({acceptedAt:client.createdAt});}throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
-  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:/Documentos/}));
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:/Documentos/}));
   await screen.findByText('PAR-Q');assert.ok(screen.getByText('Ver respuestas'));fireEvent.change(screen.getByLabelText('Nota de revisión'),{target:{value:'Revisión administrativa'}});fireEvent.click(screen.getByRole('button',{name:'Aprobar revisión'}));await waitFor(()=>assert.equal(reviewPayload.decision,'approved'));
   fireEvent.click(screen.getByRole('button',{name:'Registrar consentimiento asistido'}));fireEvent.click(screen.getByLabelText(/Confirmo que el cliente/));fireEvent.click(screen.getByRole('button',{name:'Registrar aceptación'}));await waitFor(()=>assert.equal(consentPayload.accepted,true));assert.equal(consentPayload.typedName,'Marta Santos');
 });
 
 test('Follow-up displays assigned check-ins and actual status',async()=>{
   globalThis.fetch=async(url)=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`))return response(profile);if(path.endsWith(`/api/clients/${client.id}/followup`))return response([{id:'checkin-1',name:'Check-in semanal',status:'assigned',version:3,assignedAt:client.createdAt,dueAt:'2026-10-03T10:00:00Z',answers:null,submittedAt:null}]);throw new Error(`Unexpected ${path}`);};
-  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:/Seguimiento/}));await screen.findByText('Check-in semanal');assert.ok(screen.getByText(/Vencido/));
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('tab',{name:/Seguimiento/}));await screen.findByText('Check-in semanal');assert.ok(screen.getByText(/Vencido/));
 });
 
 test('create dialog focuses its first field, traps keyboard focus, and restores its opener', async () => {
@@ -229,7 +229,7 @@ test('Guardar y añadir cuota creates the client, assigns the active plan and re
   assert.match(assignmentKey,/^[0-9a-f-]{36}$/i);
   assert.ok(requests.some(item=>item.path.endsWith('/api/clients')&&item.method==='POST'));
   await screen.findByText('Fuerza 3 días');
-  await waitFor(()=>assert.equal(screen.getByRole('tab',{name:'Cuotas'}).getAttribute('aria-selected'),'true'));
+  await waitFor(()=>assert.equal(screen.getByRole('tab',{name:'Plan y sesiones'}).getAttribute('aria-selected'),'true'));
 });
 
 test('plan sale retries reuse one key after a lost response, while success and cancel start fresh operations',async()=>{
@@ -249,7 +249,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
     throw new Error(`Unexpected ${options.method??'GET'} ${path}`);
   };
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
+  fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
   fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
   let dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
@@ -264,7 +264,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
   assert.equal(saleRequests[0].key,saleRequests[1].key,'a retry after a lost response must reuse the operation key');
   assert.equal(saleRequests[0].payload,saleRequests[1].payload);
 
-  await screen.findByRole('tab',{name:'Cuotas'});
+  await screen.findByRole('tab',{name:'Plan y sesiones'});
   fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
@@ -274,7 +274,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
   await screen.findByText('Cuota asignada; el cargo queda pendiente.');
   assert.notEqual(saleRequests[2].key,saleRequests[1].key,'the next sale after success must have a fresh key');
 
-  await screen.findByRole('tab',{name:'Cuotas'});
+  await screen.findByRole('tab',{name:'Plan y sesiones'});
   fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   fireEvent.click(within(dialog).getByRole('button',{name:'Cancelar'}));
@@ -305,7 +305,7 @@ test('changing a failed sale payload rotates its idempotency key',async()=>{
     throw new Error(`Unexpected ${options.method??'GET'} ${path}`);
   };
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button',{name:/Marta Santos/}));
+  fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
   fireEvent.click(screen.getAllByRole('button',{name:'Añadir cuota'})[0]);
   const dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
@@ -325,13 +325,13 @@ test('search waits for typing to pause before querying and keeps current results
   const requests = [];
   globalThis.fetch = async (url) => { requests.push(String(url)); return response(listResponse()); };
   render(React.createElement(ClientsPage));
-  await screen.findByRole('button', { name: /Marta Santos/ });
+  await screen.findByRole('link', { name: /Marta Santos/ });
   fireEvent.change(screen.getByLabelText('Buscar cliente'), { target: { value: 'm' } });
   fireEvent.change(screen.getByLabelText('Buscar cliente'), { target: { value: 'ma' } });
   fireEvent.change(screen.getByLabelText('Buscar cliente'), { target: { value: 'mar' } });
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(requests.filter((url) => url.includes('q=')).length, 0);
-  assert.ok(screen.getByRole('button', { name: /Marta Santos/ }));
+  assert.ok(screen.getByRole('link', { name: /Marta Santos/ }));
   await waitFor(() => assert.equal(requests.filter((url) => url.includes('q=')).length, 1), { timeout: 1200 });
   assert.ok(requests.at(-1).includes('q=mar'));
 });
@@ -348,12 +348,12 @@ test('loads more than 100 clients using the server cursor without local filterin
     throw new Error(`Unexpected request ${url}`);
   };
   render(React.createElement(ClientsPage));
-  await screen.findByRole('button', { name: /Cliente 0/ });
+  await screen.findByRole('link', { name: /Cliente 0/ });
   assert.ok(screen.getByText(/Hay más resultados disponibles/));
   fireEvent.click(screen.getByRole('button', { name: 'Cargar más clientes' }));
-  await screen.findByRole('button', { name: /Cliente 50/ });
+  await screen.findByRole('link', { name: /Cliente 50/ });
   fireEvent.click(screen.getByRole('button', { name: 'Cargar más clientes' }));
-  await screen.findByRole('button', { name: /Cliente 101/ });
+  await screen.findByRole('link', { name: /Cliente 101/ });
   assert.equal(screen.getAllByRole('listitem').length, 101);
   assert.deepEqual(cursors, [null, 'page-two', 'page-three']);
 });
@@ -368,23 +368,39 @@ test('deep link opens the opaque client id without putting personal data in the 
   assert.equal(window.location.hash.includes(client.phone), false);
 });
 
-test('selecting a client scrolls and focuses its detail on tablet layouts', async () => {
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 });
-  let scrolled = false;
-  HTMLElement.prototype.scrollIntoView = function scrollIntoView() { scrolled = true; };
+test('opening a client is a page: focus lands on its name and Back keeps the list, search and filter', async () => {
+  const requests = [];
+  globalThis.fetch = async (url) => { requests.push(String(url)); return String(url).includes('/api/clients?') ? response(listResponse()) : response(profile); };
+  render(React.createElement(ClientsPage));
+  fireEvent.change(await screen.findByLabelText('Buscar cliente'), { target: { value: 'marta' } });
+  await waitFor(() => assert.ok(requests.some((url) => url.includes('q=marta'))), { timeout: 1500 });
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  const heading = await screen.findByRole('heading', { level: 1, name: 'Marta Santos' });
+  await waitFor(() => assert.equal(document.activeElement, heading));
+  assert.equal(screen.queryByLabelText('Buscar cliente'), null, 'the list is replaced by the 360 page, not squeezed beside it');
+  fireEvent.click(screen.getByRole('button', { name: 'Todos los clientes' }));
+  await waitFor(() => assert.equal(window.location.hash, '#clients'));
+  assert.equal(screen.getByLabelText('Buscar cliente').value, 'marta');
+  assert.ok(screen.getByRole('link', { name: /Marta Santos/ }));
+});
+
+test('tabs are part of the URL so a reload returns to the same section', async () => {
   globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button', { name: /Marta Santos/ }));
-  const heading = await screen.findByRole('heading', { name: 'Marta Santos' });
-  await waitFor(() => assert.equal(scrolled, true));
-  assert.equal(document.activeElement, heading);
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  fireEvent.click(screen.getByRole('tab', { name: 'Historial' }));
+  assert.equal(window.location.hash, `#clients?clientId=${client.id}&tab=history`);
+  cleanup();
+  render(React.createElement(ClientsPage));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  assert.equal(screen.getByRole('tab', { name: 'Historial' }).getAttribute('aria-selected'), 'true');
 });
 
 test('profile tabs support keyboard navigation and hide unauthorized financial sections', async () => {
   globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button', { name: /Marta Santos/ }));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
   const selected = screen.getByRole('tab', { name: 'Resumen' });
   selected.focus();
@@ -409,7 +425,7 @@ test('archive requires confirmation, prevents duplicate submits, reports success
     throw new Error(`Unexpected request ${path}`);
   };
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button', { name: /Marta Santos/ }));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
   fireEvent.click(screen.getByRole('button', { name: 'Archivar' }));
   const dialog = await screen.findByRole('alertdialog', { name: '¿Archivar este cliente?' });
@@ -430,7 +446,7 @@ test('profile detail errors can be retried', async () => {
     return attempts === 1 ? response({ error: 'internal_error' }, 500) : response(profile);
   };
   render(React.createElement(ClientsPage));
-  fireEvent.click(await screen.findByRole('button', { name: /Marta Santos/ }));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('button', { name: 'Reintentar ficha' });
   fireEvent.click(screen.getByRole('button', { name: 'Reintentar ficha' }));
   await screen.findByRole('heading', { name: 'Marta Santos' });

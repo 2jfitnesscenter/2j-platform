@@ -4,7 +4,7 @@ import { LoaderCircle } from 'lucide-react';
 import { Icon } from './icon.js';
 import { cx } from './classnames.js';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-solid';
 export type ButtonSize = 'md' | 'sm';
 
 type BaseProps = {
@@ -44,7 +44,7 @@ export type IconButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>
   icon: LucideIcon;
   /** Required accessible name; also shown as the native tooltip. */
   label: string;
-  variant?: Exclude<ButtonVariant, 'primary'>;
+  variant?: Exclude<ButtonVariant, 'primary' | 'danger-solid'>;
   size?: ButtonSize;
 };
 
