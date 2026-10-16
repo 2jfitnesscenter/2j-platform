@@ -134,7 +134,7 @@ export function ScheduleEditor(props: ScheduleEditorProps) {
     <div className="sched-lead">
       <div>
         <h3 id="sched-list-title">Horarios recurrentes</h3>
-        <p>Define cada horario con su servicio, días, hora y duración. La vista previa de la derecha solo sirve para comprobarlo; no se edita haciendo clic en ella.</p>
+        <p>Define cada horario con su servicio, días, hora y duración. La vista previa semanal solo sirve para comprobarlo; no se crea nada haciendo clic en ella.</p>
       </div>
       <div className="sched-counter" aria-live="polite">
         <strong data-testid="schedule-counter">{counterLabel(drafts)}</strong>
