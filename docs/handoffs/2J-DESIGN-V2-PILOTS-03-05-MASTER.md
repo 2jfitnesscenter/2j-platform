@@ -2,7 +2,7 @@
 
 Permite a otro agente continuar sin releer la conversación. Cubre Agenda (03), Servicios + Planes (04) y Tienda (05). Los pilotos 01 (shell + Resumen) y 02 (Clientes + Cliente 360) ya están **mergeados y aprobados** (`main` @ `7392c47`).
 
-**Regla de todos los pilotos:** funcionalidad existente + Design V2. Sin datos ni acciones inventadas, sin tocar backend, RBAC, API, base de datos ni migraciones. **Ningún PR está mergeado ni autoaprobado.**
+**Regla de todos los pilotos:** funcionalidad existente + Design V2. Sin datos ni acciones inventadas, sin tocar RBAC, base de datos ni migraciones. **Ningún PR está mergeado ni autoaprobado; los tres siguen en Draft.** Único cambio de backend de toda la pila: la corrección de `GET /api/calendar/sessions/:id/booking-eligibility` en #50 (ver PILOT-03); sin cambios de contrato.
 
 ## 1. Estado de cada piloto
 
@@ -14,66 +14,59 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | TASK | `2J-DESIGN-V2-PILOT-03` (`tasks/2J-DESIGN-V2-PILOT-03.md`) |
 | BRANCH | `agent/claude/2J-DESIGN-V2-PILOT-03` |
 | BASE_SHA | `7392c4709c66cc131d3d3857c1a177e86f31e137` (`origin/main`, incluye PILOT-02) |
-| HEAD_SHA | `2c739696355c969c2b5a28266bd18d8281f9b43c` (incluye el endurecimiento de tests de foco; el commit de la Agenda es `bd09b80`) |
+| HEAD_SHA | `0bf260048f459a4669a1b334e5a02aec1cf87e4a` |
 | PR | #50 (Draft, base `main`) |
-| STATUS | Draft, listo para revisión del propietario |
-| FILES_CHANGED | 12 (`calendar-page.tsx`, `agenda-v2.css`, `styles.css`, `main.tsx`, `calendar-v2.test.mjs`, tokens de servicio, `@2j/ui` `SegmentedControl` `disabled`/`title` + `ChevronLeft`, handoff, task) |
-| VISUAL_STATUS | `VISUAL_APPROVED=no` |
-| FUNCTIONAL_STATUS | `FUNCTIONAL_APPROVED=no` |
-| TESTS | admin-web 129 · ui 13 · tokens 5 · client-app 14 · staff-app 7, todos PASS |
-| BUILD | PASS |
-| CI | PASS (push y pull_request, tras el arreglo de foco `2c73969`) |
+| STATUS | Draft, técnicamente listo; pendiente del propietario |
+| VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
+| TESTS | admin-web 214 (suite de la pila completa) · ui 13 · tokens 5 · client-app 14 · staff-app 7 · API calendario (35 en BD limpia), todos PASS |
+| BUILD / CI | PASS / PASS (push y pull_request) |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#calendar` · Trainer `http://127.0.0.1:5175/#calendar` |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-03.md` |
 
-- **BUGS_FOUND:** ninguno funcional. 
-- **BUGS_FIXED:** —
-- **KNOWN_GAPS:** sin URL propia por sesión (`#calendar/session/{id}`; el detalle es un cajón de 40 rem en escritorio y pantalla completa <1024, abierto por estado); eje horario fijo 06:00–22:00; colores de servicio 5 (no 8); diálogos existentes reskineados con su marcado antiguo.
-- **DEFERRED_TO_2J098:** nada propio. (PP-03 eje configurable y PP-11 pivote/3 días son propuestas de producto aprobadas como dirección, no de 098.)
+- **BUGS_FOUND / FIXED (tras la prueba del propietario):**
+  1. *Crear sesión* fallaba con «No se pudo completar la operación»: el API respondía 400 `validation_error` (`availabilityReason` vacío) y la UI no lo mapeaba. Ahora la excepción de disponibilidad es bajo demanda (409 `professional_availability_confirmation_required` → bloque con motivo obligatorio de ≥3 caracteres) y los errores usan códigos reales.
+  2. *Capacidad contradictoria* («0 ocupadas / 8 disponibles» y «sesión completa»): bug **preexistente de backend** en `calendar.ts` (vista previa de elegibilidad): con denegación temprana por `session_started` la capacidad era `null` y se contaba como completa. Corregido en origen (solo se considera completa si la capacidad se leyó) con tests de regresión en API y UI.
+  3. *Configurar horarios* rediseñado: lista + formulario + vista previa de solo lectura (sin creación por clic en cuadrícula), multidía vía `POST /api/calendar/templates/batch`, límite 50 aplicado antes de añadir, solapes lado a lado, columnas recortadas. 36 tests nuevos.
+- **KNOWN_GAPS:** sin URL propia por sesión; eje horario fijo 06:00–22:00 (se amplía solo si una plantilla cae fuera); 5 colores de servicio (no 8); el resto de diálogos de Agenda conservan su marcado antiguo reskineado; las plantillas existentes no se editan (no hay PATCH): solo duplicar o archivar.
+- **DEFERRED_TO_2J098:** nada propio.
 
 ### PILOT-04 — Servicios + Planes
 | | |
 |---|---|
 | TASK | `2J-DESIGN-V2-PILOT-04` |
 | BRANCH | `agent/claude/2J-DESIGN-V2-PILOT-04` |
-| BASE_SHA | `2c739696355c969c2b5a28266bd18d8281f9b43c` (rama de PILOT-03) |
-| HEAD_SHA | `c5ae03826ea8b16f8f1633e272c965cac504f610` (merge de 03 sobre el commit de Servicios `0194f7f`) |
+| BASE_SHA | `0bf260048f459a4669a1b334e5a02aec1cf87e4a` (rama de PILOT-03) |
+| HEAD_SHA | `b7015f1dfd437a07d3aad486ccc8266af118294e` |
 | PR | #51 (Draft, base `agent/claude/2J-DESIGN-V2-PILOT-03`) |
-| STATUS | Draft, listo para revisión del propietario |
-| FILES_CHANGED | 9 (`services-page.tsx`, `services-v2.css`, `styles.css`, `main.tsx`, `services-page.test.mjs`, `services-v2.test.mjs`, icons, handoff, task) |
+| STATUS | Draft, técnicamente listo; pendiente del propietario |
 | VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
-| TESTS | admin-web 137 · resto igual, PASS |
-| BUILD | PASS |
-| CI | PASS (push y pull_request) tras corregir una espera de foco en `clients-page.test.mjs` (ver §6) |
+| TESTS / BUILD / CI | PASS / PASS / PASS |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#services` · Trainer `http://127.0.0.1:5175/#services` |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-04.md` |
 
+- **Lenguaje final 2J (corrección posterior a la prueba):** «Espacios» → **Áreas** (ubicación) y la sección se llama **Servicios** (Servicio ≠ Área; solo copy, `area`/`areaId` intactos). El formulario de plan se reorganizó en Datos · Servicios · Frecuencia/Sesiones · Accesos · Vigencia + resumen en lenguaje natural, sin vocabulario de derechos/cuotas.
+- **Bono de sesiones:** se guarda de verdad (un `service_access` generado por servicio + un `sessions_quota` compartido, vigencia opcional). **Plan recurrente nuevo:** formulario final visible (frecuencia 1–5 días/semana y Sin límite, «Mensual natural») pero **bloqueado** hasta 2J-098E; no se guarda ni como borrador (guardarlo sin la frecuencia, o como cuota semanal, falsearía la semántica). **Planes legacy:** se ven en lenguaje humano con la nota «Este plan usa el modelo anterior de cuotas.»; «Crear nueva versión» conserva sus cuotas en solo lectura.
 - **BUGS_FOUND:** `Activar plan` usa `window.confirm` nativo (preexistente).
-- **BUGS_FIXED:** —
-- **KNOWN_GAPS:** el formulario de servicio solo tiene nombre, área y estado (no existe duración/aforo/ajustes avanzados en el modelo, por tanto no hay «Más opciones»); el formulario de plan conserva su estructura (ya con fieldsets); vista «Planes» solo con permiso comercial.
-- **DEFERRED_TO_2J098:** vigencia automática, periodos mensuales, bolsas de sesiones, saldos, expiración y renovación iniciada por el staff. Los planes legacy se muestran **tal cual** («3 accesos / semana», sin derivar 13 sesiones) con una nota neutra de modelo legacy (`data-testid="plan-legacy-note"`, retirar con 2J-098E).
+- **KNOWN_GAPS:** el formulario de servicio solo tiene nombre, área y estado (el modelo no tiene más campos); vista «Planes» solo con permiso comercial.
+- **DEFERRED_TO_2J098:** vigencia automática, periodos mensuales, bolsas de sesiones (frecuencia → sesiones del periodo, p. ej. 21 laborables × 3/5 → 13), saldos, expiración y renovación iniciada por el staff. Nada de esto se calcula en el frontend. Retirar la nota legacy (`data-testid="plan-legacy-note"`) y el bloqueo del plan recurrente con 2J-098E.
 
 ### PILOT-05 — Tienda
 | | |
 |---|---|
 | TASK | `2J-DESIGN-V2-PILOT-05` |
 | BRANCH | `agent/claude/2J-DESIGN-V2-PILOT-05` |
-| BASE_SHA | `c5ae03826ea8b16f8f1633e272c965cac504f610` (rama de PILOT-04) |
-| HEAD_SHA | el de la rama (`git rev-parse agent/claude/2J-DESIGN-V2-PILOT-05`); el commit de código de la Tienda es `091a372`, el merge con 04 y este handoff maestro vienen después (`240f592`) |
+| BASE_SHA | `b7015f1dfd437a07d3aad486ccc8266af118294e` (rama de PILOT-04) |
+| HEAD_SHA | `a89c3f81d16822eadcb2ed21cf730640741cac30` es el último commit de **código**; después solo cambia documentación (este documento y el handoff de Tienda). Ver `git rev-parse agent/claude/2J-DESIGN-V2-PILOT-05` |
 | PR | #52 (Draft, base `agent/claude/2J-DESIGN-V2-PILOT-04`) |
-| STATUS | Draft, listo para revisión del propietario |
-| FILES_CHANGED | 8 en el commit de código (`store-page.tsx`, `modal.tsx`, `store-v2.css`, `styles.css`, `main.tsx`, `store-page.test.mjs`, handoff, task) + este documento |
+| STATUS | Draft, técnicamente listo; pendiente del propietario |
 | VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
-| TESTS | admin-web 144 · resto igual, PASS |
-| BUILD | PASS |
-| CI | PASS (push y pull_request) en `240f592`; el commit posterior solo cambia este documento |
+| TESTS / BUILD / CI | admin-web 214 PASS / PASS / PASS |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#store` (Trainer no tiene Tienda por capacidad) |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-05.md` |
 
-- **BUGS_FOUND:** edición de producto/variante con `window.prompt` y anulación con `window.confirm` (preexistentes).
-- **BUGS_FIXED:** —
+- **BUGS_FOUND / FIXED (tras la prueba del propietario y la revisión final):** la venta era confusa (botón «Añadir línea» sin pedido visible ni motivo del botón gris) → «Añadir al pedido», sección **Pedido** con líneas estructuradas (producto · variante · cantidad · subtotal · Quitar) y total, validación de variante/unidades/stock (contando lo ya añadido) y motivos de «Confirmar venta» deshabilitado. Al abrir una venta nueva ya no se arrastra el cliente ni el pedido de una venta cancelada. «Member» → «Cliente»; «Tarjeta (registro interno)»; «Sin control de unidades» en vez de 0. Edición de producto/variante con `window.prompt` y anulación con `window.confirm` siguen siendo preexistentes.
 - **KNOWN_GAPS:** sin búsqueda/filtros de catálogo (no existían); sin umbral de «pocas unidades» (el dato no existe); Member Tienda sin tocar.
-- **DEFERRED_TO_2J098:** `PRODUCT_MEDIA_BACKEND=NOT_IMPLEMENTED` (imágenes y subida, 2J-098D). La tarjeta usa un fallback (icono de categoría + iniciales); la zona `.product-media` es donde irá la imagen.
+- **DEFERRED_TO_2J098:** `PRODUCT_MEDIA_BACKEND=NOT_IMPLEMENTED` (imágenes y subida, 2J-098D). La tarjeta usa un fallback intencional (icono de categoría + iniciales); la zona `.product-media` es donde irá la imagen.
 
 ## 2. Matriz de estado
 
@@ -82,17 +75,17 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | Resumen | Sí (PILOT-01) | Aprobada por el propietario | Sí | Sin actividad reciente ni identidad de usuario (sin fuente en el API) | Endpoint de sesión; PP-01 |
 | Clientes | Sí (PILOT-02) | Aprobada | Sí | Lista sin plan/sesiones/próxima reserva (el API no los trae) | PP-01/PP-06; datos de lista |
 | Cliente 360 | Sí (PILOT-02) | Aprobada | Sí | Sin Datos/Compras/notas; sin «Vista del cliente» | PP-02; 2J-098E |
-| Agenda | Sí (PILOT-03) | Pendiente del propietario | No (#50) | Sin URL por sesión; eje horario fijo | PP-03 |
-| Servicios | Sí (PILOT-04) | Pendiente | No (#51) | Formulario mínimo (modelo sin más campos) | — |
-| Planes | Sí (PILOT-04), **legacy** | Pendiente | No (#51) | Modelo legacy, nota visible | **2J-098E** |
-| Tienda | Sí (PILOT-05) | Pendiente | No (#52) | Sin imágenes; prompts nativos | 2J-098D |
+| Agenda | Sí (PILOT-03), con Configurar horarios rediseñado | Pendiente del propietario | No (#50) | Sin URL por sesión; eje horario fijo | PP-03 |
+| Servicios y Áreas | Sí (PILOT-04), lenguaje final | Pendiente | No (#51) | Formulario de servicio mínimo (modelo sin más campos) | — |
+| Planes | Sí (PILOT-04): bonos operativos; recurrente nuevo **bloqueado**; existentes legacy | Pendiente | No (#51) | Recurrente nuevo no se puede crear | **2J-098E** |
+| Tienda | Sí (PILOT-05) | Pendiente | No (#52) | Sin imágenes (fallback); prompts nativos | 2J-098D |
 | Member | **No** (fase posterior, sin empezar) | — | — | `.hub-theme` y 271 hex siguen | Aprobación de todo lo anterior |
 
 ## 3. Deuda y capacidades pendientes
 
-**A. UI debt** — Diálogos de Agenda con marcado antiguo reskineado (migrar a `ui-modal`/`Modal`); `window.confirm`/`window.prompt` en Servicios y Tienda; 5 colores de servicio (propuesta de 8); formulario de plan sin reorganizar por secciones; tokens V2 aún acotados a `[data-2j-design="v2"]` (mover a `:root` al migrar Member y `staff-app`); CSS legacy restante en `styles.css` para Economía, Equipo, Noticias, Comunicación, Ajustes de avisos (sin migrar).
+**A. UI debt** — Diálogos de Agenda con marcado antiguo reskineado (migrar a `ui-modal`/`Modal`); `window.confirm`/`window.prompt` en Servicios y Tienda; 5 colores de servicio (propuesta de 8); tokens V2 aún acotados a `[data-2j-design="v2"]` (mover a `:root` al migrar Member y `staff-app`); CSS legacy restante en `styles.css` para Economía, Equipo, Noticias, Comunicación, Ajustes de avisos (sin migrar).
 
-**B. Functional bugs** — Ninguno nuevo en estos pilotos. Observación preexistente: un plan con precio base 0 € no puede venderse desde «Añadir cuota» (el importe debe ser > 0). Posible test intermitente en `clients-page.test.mjs` en CI (§6).
+**B. Functional bugs** — Los hallados en la prueba del propietario están corregidos (ver cada piloto). Observación preexistente: un plan con precio base 0 € no puede venderse desde «Añadir cuota» (el importe debe ser > 0). Posible test intermitente en `clients-page.test.mjs` en CI (§6).
 
 **C. Backend capability missing** — Imágenes de producto; identidad/rol de sesión para la barra lateral; fuente de actividad reciente; datos de plan/sesiones/próxima reserva en la lista de clientes; URL de detalle de sesión (frontend); umbral de stock bajo.
 
@@ -102,12 +95,12 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 
 ## 4. Legacy ≠ final (planes y cuotas)
 
-Nunca presentar el modelo legacy como definitivo. En Cliente 360, Planes y la venta de cuotas la UI muestra los datos almacenados y avisa («La duración definitiva del plan se aplicará con el nuevo modelo de cuotas…»). **No se calcula nada en React** (ni sesiones ni vigencia ni periodos). El catálogo asignable devuelve `basePriceCents` como texto: los precios se normalizan a céntimos enteros y se comparan como enteros (regresión de PILOT-02).
+Nunca presentar el modelo legacy como definitivo. En Cliente 360, Planes y la venta de cuotas la UI muestra los datos almacenados y avisa («Este plan usa el modelo anterior de cuotas.»). Los **planes recurrentes nuevos no se pueden crear** hasta 2J-098E (la frecuencia semanal no es un límite semanal; no se mapea a `period_quota`). **No se calcula nada en React** (ni sesiones ni vigencia ni periodos). El catálogo asignable devuelve `basePriceCents` como texto: los precios se normalizan a céntimos enteros y se comparan como enteros (regresión de PILOT-02).
 
 ## 5. Cómo continuar
 
 - Revisar con los guiones de cada handoff parcial; decidir `VISUAL_APPROVED` y `FUNCTIONAL_APPROVED` por piloto (todo sigue en `no`).
-- Mergear en orden #50 → #51 → #52. Siguiente fase propuesta: **Member V2** (migrar `.hub-theme` a tokens, DD-01/DD-06) y limpieza de UI debt; **no** empezar sin aprobación.
+- Mergear en orden #50 → #51 → #52 (los tres siguen en Draft; no se han marcado Ready). Siguiente fase propuesta: **Member V2** (migrar `.hub-theme` a tokens, DD-01/DD-06) y limpieza de UI debt; **no** empezar sin aprobación.
 - Arranque local: `pnpm owner:review` (Docker). Si una pantalla sale en blanco: `pnpm owner:review:stop` y repetir (caché de Vite en Windows).
 - Convenciones: una TASK por rama `agent/<agente>/<task-id>-<slug>`, commit con trailer de coautoría, PR Draft, sin merge automático; el check de `tokens.css` falla en checkouts Windows con CRLF (en CI no) — regenerar con `node packages/design-tokens/tooling/generate-css.mjs`.
 

@@ -50,3 +50,13 @@ Sin cambios. La Tienda solo se muestra con la capacidad `store` (el menú y las 
 4. **Inventario:** tabla por variante con stock y estado; **Registrar stock** (variante, tipo, unidades, motivo). Ve el movimiento en la lista.
 5. **Ventas:** **Nueva venta en el centro** → busca un Member (2+ letras), elige variante, **Añadir línea**, método y estado de pago, **Confirmar venta**. Aparece en la lista; **Anular y devolver stock** pide confirmación y restaura unidades.
 6. Responsive: a 768 y 390 el inventario pasa a tarjetas; sin scroll horizontal.
+
+## Revisión final (pulido de Tienda)
+
+- **Terminología:** Catálogo · Inventario · Ventas; «Buscar cliente» (antes «Member»); método «Tarjeta (registro interno)» con la nota «Solo se anota el método; el cobro no se hace desde esta pantalla.»; estados de pago «Pagado en el centro» / «Pendiente» (sin «Planificado», sin pagos online).
+- **Catálogo:** tarjeta con fallback intencional (icono de categoría + iniciales, sin imagen inventada), nombre, categoría, precio, stock y chip de estado (Activo / Agotado / Inactivo). `PRODUCT_MEDIA_BACKEND=NOT_IMPLEMENTED` (2J-098D).
+- **Inventario:** tabla en escritorio y filas apiladas en móvil (cada celda con su etiqueta); las variantes sin control de stock dicen «Sin control de unidades», nunca 0.
+- **Venta:** Cliente → Variante → Unidades → **Añadir al pedido** → **Pedido** (líneas estructuradas + total) → Estado de pago → Método → **Confirmar venta**. El botón deshabilitado explica el motivo («Elige un cliente.», «Añade al menos un producto al pedido.», «Pulsa “Añadir al pedido” para incluir la variante seleccionada (…)»). El stock se valida al añadir, contando lo ya añadido. Una venta nueva siempre empieza vacía. Idempotencia sin cambios (misma clave en reintentos y doble clic).
+- **Venta real de prueba en el piloto:** Lucía Díaz · Camiseta 2J · Talla M · 1 · Pendiente · Transferencia → 201, stock 20 → 19, visible en el historial; después se **anuló** desde la propia pantalla (stock 20 de nuevo; la venta queda como «Anulada» en el historial).
+- **Responsive verificado** a 1440, 1024, 768 y 390: sin scroll horizontal; catálogo en 2 columnas (1 en móvil), tabla apilada en móvil, modal y Pedido contenidos.
+- **Tests:** 22 en `store-page.test.mjs` (pedido vacío, añadir, quitar, dos líneas, fusión de la misma variante, regla de Confirmar venta, stock, venta exitosa que limpia el pedido, cancelar y reabrir, doble clic, inventario sin control, tarjeta, copy en español). Permiso: la navegación de Tienda solo existe con capacidad `store` (tests de `app-shell`).
