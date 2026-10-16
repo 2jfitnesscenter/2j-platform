@@ -18,7 +18,7 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | PR | #50 (Draft, base `main`) |
 | STATUS | Draft, técnicamente listo; pendiente del propietario |
 | VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
-| TESTS | admin-web 214 (suite de la pila completa) · ui 13 · tokens 5 · client-app 14 · staff-app 7 · API calendario (35 en BD limpia), todos PASS |
+| TESTS | admin-web 237 (suite de la pila completa) · ui 13 · tokens 5 · client-app 14 · staff-app 7 · API calendario (35 en BD limpia), todos PASS |
 | BUILD / CI | PASS / PASS (push y pull_request) |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#calendar` · Trainer `http://127.0.0.1:5175/#calendar` |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-03.md` |
@@ -56,15 +56,16 @@ Los tres PR están **apilados** porque ninguno estaba mergeado al empezar el sig
 | TASK | `2J-DESIGN-V2-PILOT-05` |
 | BRANCH | `agent/claude/2J-DESIGN-V2-PILOT-05` |
 | BASE_SHA | `b7015f1dfd437a07d3aad486ccc8266af118294e` (rama de PILOT-04) |
-| HEAD_SHA | `a89c3f81d16822eadcb2ed21cf730640741cac30` es el último commit de **código**; después solo cambia documentación (este documento y el handoff de Tienda). Ver `git rev-parse agent/claude/2J-DESIGN-V2-PILOT-05` |
+| HEAD_SHA | el último commit de **código** es el de «variantes en lote» (`git log --oneline -3`); después solo cambia documentación. Ver `git rev-parse agent/claude/2J-DESIGN-V2-PILOT-05` |
 | PR | #52 (Draft, base `agent/claude/2J-DESIGN-V2-PILOT-04`) |
 | STATUS | Draft, técnicamente listo; pendiente del propietario |
 | VISUAL_STATUS / FUNCTIONAL_STATUS | `no` / `no` |
-| TESTS / BUILD / CI | admin-web 214 PASS / PASS / PASS |
+| TESTS / BUILD / CI | admin-web 237 PASS / PASS / PASS |
 | PILOT_URLS | Admin `http://127.0.0.1:5174/#store` (Trainer no tiene Tienda por capacidad) |
 | Handoff / guion | `docs/handoffs/2J-DESIGN-V2-PILOT-05.md` |
 
 - **BUGS_FOUND / FIXED (tras la prueba del propietario y la revisión final):** la venta era confusa (botón «Añadir línea» sin pedido visible ni motivo del botón gris) → «Añadir al pedido», sección **Pedido** con líneas estructuradas (producto · variante · cantidad · subtotal · Quitar) y total, validación de variante/unidades/stock (contando lo ya añadido) y motivos de «Confirmar venta» deshabilitado. Al abrir una venta nueva ya no se arrastra el cliente ni el pedido de una venta cancelada. «Member» → «Cliente»; «Tarjeta (registro interno)»; «Sin control de unidades» en vez de 0. Edición de producto/variante con `window.prompt` y anulación con `window.confirm` siguen siendo preexistentes.
+- **Variantes en lote (posterior):** alta de producto con tallas XS–4XL o formatos × sabores en un formulario, venta progresiva Producto → Talla/Formato → Sabor, inventario agrupado. Sin cambios de esquema/API (formato en `size`, label derivado). Ver el handoff de Tienda.
 - **KNOWN_GAPS:** sin búsqueda/filtros de catálogo (no existían); sin umbral de «pocas unidades» (el dato no existe); Member Tienda sin tocar.
 - **DEFERRED_TO_2J098:** `PRODUCT_MEDIA_BACKEND=NOT_IMPLEMENTED` (imágenes y subida, 2J-098D). La tarjeta usa un fallback intencional (icono de categoría + iniciales); la zona `.product-media` es donde irá la imagen.
 

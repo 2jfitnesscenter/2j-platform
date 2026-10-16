@@ -346,3 +346,19 @@ test('L/22: historical sales keep showing the exact variant that was sold, untou
   fireEvent.click(screen.getByRole('tab', { name: 'Ventas' }));
   assert.match(screen.getByText(/Lucía Díaz/).closest('li').textContent, /Camiseta 2J Talla M × 1/);
 });
+
+test('variants appear in natural order: XS..4XL and 150 g < 500 g < 1 kg < 2,5 kg, not alphabetically', () => {
+  const make = (size, flavor = null) => ({ size, flavor, label: flavor ? `${size} · ${flavor}` : `Talla ${size}` });
+  assert.deepEqual(logic.sortVariants(['L', '2XL', 'XS', '4XL', 'M', 'XL', '3XL', 'S'].map((size) => make(size))).map((item) => item.size), ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+  assert.deepEqual(logic.sortVariants([make('1 kg', 'Fresa'), make('500 g', 'Vainilla'), make('2,5 kg'), make('150 g'), make('500 g', 'Chocolate'), make('60 cápsulas')]).map((item) => item.label), ['Talla 60 cápsulas', 'Talla 150 g', '500 g · Chocolate', '500 g · Vainilla', '1 kg · Fresa', 'Talla 2,5 kg']);
+  assert.deepEqual(logic.productOptions('nutrition', [make('1 kg'), make('500 g'), make('2 kg')]).sizes, ['500 g', '1 kg', '2 kg']);
+});
+
+test('the inventory and the catalogue list a product\'s variants in that natural order even when the API sends them alphabetically', async () => {
+  const alphabetical = { ...shirt, variants: ['Talla 2XL', 'Talla L', 'Talla M', 'Talla S', 'Talla XL'].map((label, index) => variant(`v${index}`, label, label.replace('Talla ', ''), null, 1)) };
+  serve({ data: { products: [alphabetical], movements: [], sales: [] } });
+  render(React.createElement(StorePage)); await screen.findByRole('heading', { name: 'Camiseta 2J' });
+  assert.match(document.querySelector('.product-options').textContent, /Tallas\s*S · M · L · XL · 2XL/);
+  fireEvent.click(screen.getByRole('tab', { name: 'Inventario' }));
+  assert.deepEqual([...document.querySelectorAll('tbody.store-group tr:not(.store-group-head) td[data-label="Variante"]')].map((cell) => cell.textContent), ['Talla S', 'Talla M', 'Talla L', 'Talla XL', 'Talla 2XL']);
+});

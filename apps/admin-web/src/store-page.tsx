@@ -2,7 +2,7 @@ import React from 'react';
 import { Button, Card, EmptyState, Icon, PageHeader, StatusChip, Tabs, icons } from '@2j/ui';
 import { Modal } from './modal.js';
 import { VariantBuilder } from './store-variant-builder.js';
-import { creatable, emptyBuilder, planVariants, plannedReady, productOptions, resolveVariant, sellStep, type BuilderState, type ExistingVariant, type PlannedVariant, type SellVariant } from './store-variants.js';
+import { creatable, emptyBuilder, sortVariants, planVariants, plannedReady, productOptions, resolveVariant, sellStep, type BuilderState, type ExistingVariant, type PlannedVariant, type SellVariant } from './store-variants.js';
 
 const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 type Variant={id:string;sku:string|null;label:string;size:string|null;flavor:string|null;priceCents:number|string;active:boolean;stockTracked:boolean;stock:number};
@@ -23,7 +23,7 @@ export function StorePage(){
   const [clientQuery,setClientQuery]=React.useState('');const [clients,setClients]=React.useState<Client[]>([]);const [clientId,setClientId]=React.useState('');const [quantity,setQuantity]=React.useState('1');const [lines,setLines]=React.useState<Array<{variantId:string;quantity:number}>>([]);const [paymentState,setPaymentState]=React.useState<'paid'|'pending'>('paid');const [paymentMethod,setPaymentMethod]=React.useState<'cash'|'card'|'transfer'|'other'>('cash');const [busy,setBusy]=React.useState(false);
   const [lineError,setLineError]=React.useState('');const [tab,setTab]=React.useState<'catalog'|'inventory'|'sales'>('catalog');const [modal,setModal]=React.useState<'product'|'variants'|'stock'|'sale'|null>(null);
   const saleIdempotency=React.useRef<{fingerprint:string;key:string}|null>(null);
-  const load=React.useCallback(async()=>{setState('loading');setError('');try{setData(await request<StoreData>('/api/admin/store'));setState('ready');}catch(cause){setError(labels[cause instanceof Error?cause.message:'']??'No se ha podido cargar la tienda.');setState('error');}},[]);
+  const load=React.useCallback(async()=>{setState('loading');setError('');try{const fresh=await request<StoreData>('/api/admin/store');setData({...fresh,products:fresh.products.map(product=>({...product,variants:sortVariants(product.variants)}))});setState('ready');}catch(cause){setError(labels[cause instanceof Error?cause.message:'']??'No se ha podido cargar la tienda.');setState('error');}},[]);
   React.useEffect(()=>{void load();},[load]);
   React.useEffect(()=>{let active=true;const timer=window.setTimeout(()=>{if(clientQuery.trim().length<2){setClients([]);return;}void request<{items:Client[]}>(`/api/clients?q=${encodeURIComponent(clientQuery.trim())}&status=active&limit=10`).then(result=>{if(active)setClients(result.items);}).catch(()=>{if(active)setClients([]);});},220);return()=>{active=false;window.clearTimeout(timer);};},[clientQuery]);
   const variants=React.useMemo(()=>data?.products.flatMap(product=>product.variants.filter(variant=>variant.active).map(variant=>({...variant,productName:product.name,productActive:product.active})))??[],[data]);

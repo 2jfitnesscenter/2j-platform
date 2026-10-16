@@ -281,8 +281,8 @@ test('inventory: variants without stock control say so instead of showing 0; tra
   const table=screen.getByRole('table');
   assert.deepEqual([...table.querySelectorAll('thead th')].map(node=>node.textContent),['Variante','Código','Precio','Stock','Estado']);
   const rows=[...table.querySelectorAll('tbody tr:not(.store-group-head)')];
-  assert.match(rows[0].textContent,/0 uds\.\s*Agotado/);
-  assert.match(rows[1].textContent,/CAM-M/);assert.match(rows[1].textContent,/Sin control de unidades/);assert.doesNotMatch(rows[1].textContent,/\b0 uds/,'untracked is never shown as zero');
+  assert.match(rows[1].textContent,/0 uds\.\s*Agotado/);
+  assert.match(rows[0].textContent,/CAM-M/);assert.match(rows[0].textContent,/Sin control de unidades/);assert.doesNotMatch(rows[0].textContent,/\b0 uds/,'untracked is never shown as zero');
   assert.ok([...table.querySelectorAll('td')].every(cell=>cell.hasAttribute('data-label')),'every cell has its label for the stacked mobile layout');
 });
 

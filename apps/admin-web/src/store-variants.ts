@@ -104,7 +104,7 @@ export function sellStep(category: StoreCategory, variants: SellVariant[], size:
   const named = withSize.filter((item) => !blank(item.flavor)).map((item) => item.flavor!);
   // A size that has flavors and also a plain version offers 'Sin sabor' (empty value) next to the flavors.
   const flavors = named.length && withSize.some((item) => blank(item.flavor)) ? ['', ...new Set(named)] : [...new Set(named)];
-  const sorted = category === 'merchandising' && sizes.every((item) => (APPAREL_SIZES as readonly string[]).includes(item)) ? sortSizes(sizes) : sizes;
+  const sorted = sortVariants(sizes.map((value) => ({ size: value, flavor: null, label: value }))).map((item) => item.size!);
   return { sizeLabel: category === 'merchandising' ? 'Talla' : 'Formato', sizes: sorted, flavors, needsFlavor: flavors.length > 0, byLabel };
 }
 
@@ -122,7 +122,23 @@ export function resolveVariant(category: StoreCategory, variants: SellVariant[],
 /** Distinct sizes/formats of a product in a sensible order, for the catalogue card. */
 export function productOptions(category: StoreCategory, variants: { size: string | null; flavor: string | null }[]) {
   const sizes = [...new Set(variants.filter((item) => !blank(item.size)).map((item) => item.size!))];
-  const ordered = category === 'merchandising' && sizes.every((item) => (APPAREL_SIZES as readonly string[]).includes(item)) ? sortSizes(sizes) : sizes;
+  const ordered = sortVariants(sizes.map((size) => ({ size, flavor: null, label: size }))).map((item) => item.size!);
   const flavors = [...new Set(variants.filter((item) => !blank(item.flavor)).map((item) => item.flavor!))];
   return { sizeTitle: category === 'merchandising' ? 'Tallas' : 'Formatos', sizes: ordered, flavors };
 }
+
+// ---------- Natural order (the API sorts variants by label, which puts "1 kg" before "500 g" and "Talla 2XL" before "Talla L") ----------
+const UNIT_FACTOR: Record<string, number> = { g: 1, kg: 1000, ml: 1, l: 1000 };
+function sizeRank(size: string | null | undefined): [number, number, string] {
+  const text = (size ?? "").trim();
+  const apparel = (APPAREL_SIZES as readonly string[]).indexOf(text);
+  if (apparel >= 0) return [0, apparel, text];
+  const match = /^(\d+(?:[.,]\d+)?)\s*(\p{L}+)?/u.exec(text);
+  if (match) return [1, Number(match[1]!.replace(",", ".")) * (UNIT_FACTOR[(match[2] ?? "").toLowerCase()] ?? 1), text];
+  return [2, 0, text];
+}
+export function compareVariants(a: { size: string | null; flavor: string | null; label: string }, b: { size: string | null; flavor: string | null; label: string }) {
+  const [ga, na, ta] = sizeRank(a.size); const [gb, nb, tb] = sizeRank(b.size);
+  return ga - gb || na - nb || ta.localeCompare(tb, "es") || (a.flavor ?? "").localeCompare(b.flavor ?? "", "es") || a.label.localeCompare(b.label, "es");
+}
+export const sortVariants = <T extends { size: string | null; flavor: string | null; label: string }>(variants: T[]) => [...variants].sort(compareVariants);
