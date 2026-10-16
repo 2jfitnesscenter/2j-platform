@@ -58,3 +58,44 @@ No se tocó RBAC ni el servidor. Admin y Trainer comparten shell; cada botón, p
 ## Verificación
 
 typecheck, build y tests de `design-tokens`, `ui`, `admin-web`, `client-app` y `staff-app` en verde; se actualizaron los tests de Clientes (enlaces en lugar de botones, copy nuevo, la ficha es una página) y se añadieron 10 de permisos, estados y copy y 5 de componentes. Revisado en navegador a 1440, 1024, 768 y 390 px con Admin y Trainer.
+
+## Revisión tras la prueba del propietario (fixes y matices)
+
+### 1. Bug: «Motivo del ajuste de precio» exigido sin cambiar el precio — corregido
+- **Causa raíz:** `GET /api/plans/assignable` devuelve `basePriceCents` como **cadena** (`"5000"`; PostgreSQL `bigint`), aunque el tipo del cliente lo declaraba `number`. El formulario mostraba bien `50.00` (la división `"5000"/100` fuerza el número), pero la comparación `euroToCents("50.00") !== plan.basePriceCents` era `5000 !== "5000"` → siempre «hay ajuste». El mismo fallo estaba en la validación al guardar. No era un problema de decimales ni de flotantes.
+- **Medido con el plan «3 dias» del piloto:** `basePriceCents="5000"` (string) · `planPrice="50.00"` · `euroToCents("50.00")=5000` (entero).
+- **Fix (solo frontend, sin cambiar API):** el catálogo asignable se normaliza al recibirlo con `toIntegerCents` y todas las comparaciones son entre **céntimos enteros**. Sin tocar el contrato, la base de datos ni el cálculo de precios. El que la API serialice un `bigint` como texto es un detalle preexistente del backend; queda anotado, no se ha cambiado.
+- **Tests de regresión** (`apps/admin-web/test/clients-pricing.test.mjs`): 5000 / "50.00" → sin campo de motivo y se guarda sin `adjustmentReason` (con base como string —forma real— y como número); 5000 / "45.00" → campo presente, obligatorio, y se envía; 49,99 → 50,00 lo quita de nuevo; sin permiso de precio, solo lectura y sin motivo. Se comprobó que el test con el valor real falla sin el fix.
+- Observación no tocada: un plan con precio base 0 € (p. ej. el *Bono piloto*) no puede venderse desde este formulario porque el importe debe ser mayor que cero (validación preexistente).
+
+### 2. Cuota «indefinida» (legacy)
+- **Confirmado:** el plan recurrente «3 dias» se asigna con `startsOn=2026-10-16` y `endsOn=null`. «Inicio / Fin (opcional)» pertenece al modelo legacy; no se calcula vigencia ni se inventa una fecha final en el frontend.
+- La venta de planes recurrentes muestra una nota neutra: *«La duración definitiva del plan se aplicará con el nuevo modelo de cuotas. Esta asignación usa actualmente el comportamiento legacy.»* Cuando 2J-098E esté implementado hay que retirar la nota (está en `clients-page.tsx`, `data-testid="legacy-duration-note"`).
+
+### 3. Las sesiones no aparecen tras asignar «3 dias» — confirmado, no es un bug de la UI
+La asignación creada devuelve exactamente un derecho:
+
+| rightType | quantity | period | quotaScope | balance |
+|---|---|---|---|---|
+| `service_access` (Fuerza funcional) | null | null | null | 0 |
+
+No existe ningún derecho `sessions_quota` ni `period_quota`: el plan legacy «3 dias» solo da **acceso** al servicio; «3 días/semana» no está modelado como derecho. La UI muestra sesiones solo si `rightType === sessions_quota` **y** `balance != null` (p. ej. el Bono piloto: `quantity=12`, `balance=12`), y por eso no hay ninguna cifra. **No se fabrica saldo ni se calcula «13 sesiones» en React**: ese cálculo (bolsa del periodo) es de 2J-098E. Tests: con `balance=null` o solo acceso no aparece «Sesiones disponibles» ni «restantes»; con un saldo real sí.
+
+### 4. Estado real de los flujos (matiz del PASS anterior)
+
+```
+PLAN_ASSIGNMENT_LEGACY_FLOW=PASS           # asignar, cobrar o dejar pendiente, pausar, reanudar, cancelar, renovar, cambiar, ajustar saldo de bonos
+2J098E_PERIOD_ENTITLEMENTS=NOT_IMPLEMENTED
+SESSION_BAG_DISPLAY=NOT_AVAILABLE          # no hay bolsa de periodo; solo saldo legacy de bonos de sesiones
+```
+
+El «PASS» de PILOT-02 se refiere a la **operativa legacy** conservada; la experiencia aprobada final de planes y sesiones **no está** y no debe darse por existente.
+
+### 5. Capacidades pendientes (todas de 2J-098E)
+- Cálculo automático de vigencia (natural-mes = periodo cerrado; contratos largos = duración contractual calculada).
+- Periodos de derecho mensuales independientes.
+- Generación de bolsas de periodo en backend (frecuencia semanal ≠ límite semanal; p. ej. nov-2026: `ROUND_HALF_UP(21 × 3 / 5) = 13`), congeladas y sin *rollover*.
+- Apunte de concesión (*ledger grant*) y saldo del periodo; consumo por fecha de la sesión y restauración al mismo periodo.
+- Expiración de periodos.
+- Renovación iniciada por el staff (sin renovación automática).
+- Retirar la nota de duración legacy y mostrar «Vigente hasta…» / «Sesiones de noviembre 7/13» cuando el backend los entregue.

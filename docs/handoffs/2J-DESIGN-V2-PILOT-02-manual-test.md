@@ -42,6 +42,10 @@ Datos útiles del piloto: **María González** y **Mateo Cruz** tienen un *Bono 
 19. En *Plan y sesiones* pulsa **Cancelar** (plan): la ventana avisa de que *la cuota dejará de estar activa desde hoy*, exige un **motivo** y su botón rojo **Confirmar cancelación** está desactivado hasta escribirlo. **No confirmes**; pulsa *Cerrar*.
 20. (Opcional, modifica datos de prueba) En **Clientes → Nuevo cliente** crea «Prueba Piloto». Se abre su ficha: **Sin plan**. Pulsa **Archivar** → ventana de confirmación *¿Archivar este cliente?* → **Archivar cliente**. Aparece el aviso verde, el chip **Archivado** y ya no hay *Añadir cuota* ni *Archivar*. En la lista, filtro **Archivados**, aparece.
 
+### Caso de venta de plan recurrente (re-test)
+
+18b. En **Lucía Díaz** (sin plan) pulsa **Añadir cuota** → elige el plan **3 dias** → el precio sale **50.00** y **no** aparece «Motivo del ajuste de precio». Verás una nota gris sobre la duración legacy. Pulsa **Asignar y dejar pendiente**: se guarda sin pedir motivo. Si cambias el precio a 45,00 el motivo aparece y es obligatorio; si lo devuelves a 50,00 desaparece. Tras asignar, el plan aparece en *Plan y sesiones* **sin cifra de sesiones** (este plan legacy solo da acceso): es lo esperado hasta 2J-098E.
+
 ## D. Admin — atención y otros estados
 
 21. Abre **Diego Suárez** → pestaña **Resumen**: tarjeta **Requiere atención** con «En lista de espera · 1». Solo aparece cuando hay una señal real.
