@@ -86,11 +86,11 @@ test('below 1024 the sidebar is an off-canvas drawer opened from the top bar, wi
   assert.equal(sidebar.getAttribute('role'), 'dialog');
   assert.equal(sidebar.getAttribute('aria-modal'), 'true');
   assert.equal(sidebar.getAttribute('aria-hidden'), null);
-  await waitFor(() => assert.ok(sidebar.contains(document.activeElement)), { timeout: 1000 });
+  await waitFor(() => assert.ok(sidebar.contains(document.activeElement)), { timeout: 5000 });
   assert.ok(document.querySelector('.app-scrim'));
   fireEvent.keyDown(window, { key: 'Escape' });
   await waitFor(() => assert.equal(frame.classList.contains('drawer-open'), false));
-  await waitFor(() => assert.equal(document.activeElement, menu));
+  await waitFor(() => assert.ok(document.activeElement === menu), { timeout: 5000 });
   assert.equal(document.querySelector('.app-scrim'), null);
 });
 

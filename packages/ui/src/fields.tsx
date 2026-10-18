@@ -25,7 +25,7 @@ export function SearchField({ label, value, onChange, placeholder, clearLabel = 
   </div>;
 }
 
-export type SegmentedOption<T extends string> = { value: T; label: React.ReactNode };
+export type SegmentedOption<T extends string> = { value: T; label: React.ReactNode; disabled?: boolean; title?: string };
 
 export type SegmentedControlProps<T extends string> = {
   label: string;
@@ -38,7 +38,7 @@ export type SegmentedControlProps<T extends string> = {
 /** 2-4 short, mutually exclusive options (e.g. Activos / Archivados). Buttons expose aria-pressed. */
 export function SegmentedControl<T extends string>({ label, options, value, onChange, className }: SegmentedControlProps<T>) {
   return <div role="group" aria-label={label} className={cx('ui-segmented', className)}>
-    {options.map((option) => <button key={option.value} type="button" aria-pressed={option.value === value} className={cx('ui-segment', option.value === value && 'is-selected')} onClick={() => onChange(option.value)}>{option.label}</button>)}
+    {options.map((option) => <button key={option.value} type="button" aria-pressed={option.value === value} disabled={option.disabled === true} {...(option.title ? { title: option.title } : {})} className={cx('ui-segment', option.value === value && 'is-selected')} onClick={() => onChange(option.value)}>{option.label}</button>)}
   </div>;
 }
 

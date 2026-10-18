@@ -110,6 +110,7 @@
 .ui-segment { min-height: calc(var(--2j-control-md) - 12px); padding: 0 var(--2j-space-4); border: 0; border-radius: var(--2j-radius-sm); background: transparent; color: var(--2j-color-text-secondary); font: inherit; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-medium); cursor: pointer; }
 .ui-segment:hover { color: var(--2j-color-text-primary); }
 .ui-segment.is-selected { background: var(--2j-color-surface); color: var(--2j-color-text-primary); font-weight: var(--2j-type-weight-semibold); box-shadow: 0 0 0 1px var(--2j-color-border); }
+.ui-segment:disabled { color: var(--2j-color-text-secondary); cursor: not-allowed; text-decoration: line-through; text-decoration-thickness: 1px; }
 .ui-segment:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
 @media (pointer: coarse) { .ui-segment { min-height: calc(var(--2j-control-md) - 4px); } }
 

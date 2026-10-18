@@ -193,62 +193,7 @@ test('recurring template automatically appears as a concrete session and no manu
   assert.ok(screen.getByText(/09:30–10:15/));
 });
 
-test('visual schedule editor creates recurring blocks from the grid and submits exact batch details', async () => {
-  let posted = null;
-  const professional={id:'staff-1',displayName:'Alex Rivera',calendarColor:null};
-  globalThis.fetch = async (url, options = {}) => {
-    const path = String(url);
-    if (path.includes('/api/calendar/week')) return response({ ...baseData, professionals:[professional] });
-    if (path.endsWith('/api/calendar/templates/batch') && options.method === 'POST') { posted = JSON.parse(options.body); return response({ templates: Array.from({ length: 3 }, (_, index) => ({ id: `template-${index}`, status: 'active' })) }, 201); }
-    throw new Error(`Unexpected request: ${options.method ?? 'GET'} ${path}`);
-  };
-  render(React.createElement(CalendarPage));
-  await screen.findByText('Esta semana aún no tiene sesiones');
-  fireEvent.click(screen.getByRole('button', { name: 'Configurar horarios' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Configurar horarios' });
-  fireEvent.click(within(dialog).getByRole('button',{name:'Miércoles, 17:00, añadir horario'}));
-  assert.equal(within(dialog).getByLabelText('Empieza franja 1').value,'17:00');
-  assert.ok(within(dialog).getByRole('button',{name:/Borrador Miércoles 17:00/}));
-  fireEvent.change(within(dialog).getByLabelText('Servicio'), { target: { value: service.id } });
-  assert.equal(within(dialog).getByRole('button',{name:/Borrador Miércoles 17:00/}).getAttribute('data-service-color'),String(serviceColorIndex(service.id)));
-  fireEvent.change(within(dialog).getByLabelText('Profesional'),{target:{value:professional.id}});
-  fireEvent.click(within(dialog).getByRole('button',{name:'Lunes, 17:00, añadir horario'}));
-  fireEvent.click(within(dialog).getByRole('button',{name:'Viernes, 17:00, añadir horario'}));
-  fireEvent.change(within(dialog).getByLabelText('Duración franja 1'),{target:{value:'60'}});
-  fireEvent.change(within(dialog).getByLabelText('Plazas franja 1'),{target:{value:'12'}});
-  fireEvent.change(within(dialog).getByLabelText('Desde'),{target:{value:'2026-10-12'}});
-  fireEvent.change(within(dialog).getByLabelText('Hasta (opcional)'),{target:{value:'2027-12-31'}});
-  assert.match(within(dialog).getByText('Se crearán 3 plantillas').textContent, /3/);
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Crear horarios' }));
-  await screen.findByText(/3 horarios creados/);
-  assert.deepEqual(posted.weekdays.sort(), [1, 3, 5]);
-  assert.deepEqual(posted.blocks, [{localStartTime:'17:00',durationMinutes:60,capacity:12}]);
-  assert.equal(posted.serviceId, service.id);
-  assert.equal(posted.areaId,area.id);
-  assert.equal(posted.professionalId,professional.id);
-  assert.equal(posted.startsOn,'2026-10-12');
-  assert.equal(posted.endsOn,'2027-12-31');
-});
-
-test('visual schedule editor shows existing templates and keeps archive available', async () => {
-  let archived=false;
-  const template={id:'template-existing',serviceId:service.id,serviceName:service.name,areaId:area.id,areaName:area.name,professionalId:'staff-1',professionalName:'Alex Rivera',weekday:1,localStartTime:'09:00',durationMinutes:60,capacity:12,startsOn:baseData.weekStart,endsOn:null};
-  globalThis.fetch=async(url,options={})=>{
-    const path=String(url);
-    if(path.includes('/api/calendar/week'))return response({...baseData,templates:[template]});
-    if(path.endsWith(`/api/calendar/templates/${template.id}/archive`)&&options.method==='PATCH'){archived=true;return response({status:'archived'});}
-    throw new Error(`Unexpected request: ${options.method??'GET'} ${path}`);
-  };
-  render(React.createElement(CalendarPage));
-  await screen.findByText('Esta semana aún no tiene sesiones');
-  fireEvent.click(screen.getByRole('button',{name:'Configurar horarios'}));
-  const dialog=await screen.findByRole('dialog',{name:'Configurar horarios'});
-  assert.ok(within(dialog).getByLabelText(/Fuerza 2J, Lunes, 09:00/));
-  fireEvent.click(within(dialog).getByRole('button',{name:'Archivar horario: Fuerza 2J Lunes 09:00'}));
-  const confirmation=await screen.findByRole('alertdialog',{name:'Archivar horario recurrente'});
-  fireEvent.click(within(confirmation).getByRole('button',{name:'Archivar horario'}));
-  await waitFor(()=>assert.equal(archived,true));
-});
+// The recurring-schedule editor (list + form + preview) is covered in schedule-editor.test.mjs and schedule-logic.test.mjs.
 
 test('recurring occurrence editor clearly limits changes to one date and submits its override', async () => {
   let patchPayload = null;
