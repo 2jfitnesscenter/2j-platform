@@ -132,6 +132,8 @@ export function AppShell({children}:{children:React.ReactNode}) {
     if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
   };
+  // The hash carries the route, so the skip link must not navigate: it only moves focus (and scroll) to the page content.
+  const skipToContent=(event:React.MouseEvent<HTMLAnchorElement>)=>{event.preventDefault();document.getElementById('main-content')?.focus();};
   const permissions=capabilities;
   const navigation=getProfessionalNavigation(permissions,route);
   const pageContext=getProfessionalPageContext(route);
@@ -139,6 +141,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const sidebarHidden=isDrawer&&!drawerOpen;
   const sidebarProps=isDrawer?{role:'dialog' as const,'aria-modal':drawerOpen||undefined,'aria-label':'Navegación principal'}:{'aria-label':'Navegación principal'};
   return <CommandContext.Provider value={{data,state,error,reload,capabilities}}><div className={`app-frame ${isRail?'is-rail':''} ${isDrawer?'is-drawer':''} ${drawerOpen?'drawer-open':''}`}>
+    <a className="skip-link" href="#main-content" onClick={skipToContent}>Saltar al contenido</a>
     {isDrawer&&drawerOpen&&<div className="app-scrim" data-2j-design="v2" role="presentation" onClick={()=>setDrawerOpen(false)}/>}
     <aside id="app-sidebar" ref={sidebarRef} className="app-sidebar" data-2j-design="v2" {...sidebarProps} aria-hidden={sidebarHidden||undefined} onKeyDown={trapTab}>
       <div className="app-sidebar-brand"><a className="app-brand" href="#home" aria-label="2J Platform, Resumen"><span className="app-brand-mark">2J</span><span className="app-brand-copy">FITNESS CENTER<small>OPERACIONES</small></span></a>
@@ -160,8 +163,8 @@ export function AppShell({children}:{children:React.ReactNode}) {
       <div className="app-location" aria-label="Ubicación actual">{pageContext.section!==pageContext.page&&<><span>{pageContext.section}</span><span className="app-location-divider" aria-hidden="true">/</span></>}<strong>{pageContext.page}</strong></div>
       <button className="global-search-trigger" type="button" onClick={()=>setSearchOpen(true)} aria-label="Buscar en 2J"><Icon icon={icons.Search} size={20}/><span>Buscar clientes, equipo o servicios</span><kbd>Ctrl K</kbd></button>
       <span className="local-pill"><span className="status-dot"/> Entorno local</span></header>
-      <div className="app-page">{children}</div>
+      <div className="app-page" id="main-content" tabIndex={-1}>{children}</div>
     </div>
-    {searchOpen&&<div className="search-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setSearchOpen(false);}}><section className="global-search-dialog" role="dialog" aria-modal="true" aria-label="Búsqueda global"><label htmlFor="global-search-input">Buscar en 2J</label><input ref={searchRef} id="global-search-input" value={query} onChange={event=>setQuery(event.target.value)} placeholder="Nombre de cliente, profesional o servicio"/><div className="global-search-results" aria-live="polite">{searchBusy?<p role="status">Buscando…</p>:query.trim().length<2?<p>Escribe al menos dos caracteres.</p>:results.length===0?<p>No hay resultados accesibles.</p>:results.filter(group=>group.items.length>0).map(group=><section key={group.type}><h2>{group.label}</h2>{group.items.map(item=><a key={item.id} href={group.type==='clients'?`#clients?clientId=${item.id}`:group.type==='team'?'#staff':'#services'} onClick={()=>setSearchOpen(false)}>{item.label}</a>)}</section>)}</div><button className="button secondary" onClick={()=>setSearchOpen(false)}>Cerrar · Esc</button></section></div>}
+    {searchOpen&&<div className="search-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setSearchOpen(false);}}><section className="global-search-dialog" role="dialog" aria-modal="true" aria-label="Búsqueda global"><label htmlFor="global-search-input">Buscar en 2J</label><input ref={searchRef} id="global-search-input" value={query} onChange={event=>setQuery(event.target.value)} placeholder="Nombre de cliente, profesional o servicio…"/><div className="global-search-results" aria-live="polite">{searchBusy?<p role="status">Buscando…</p>:query.trim().length<2?<p>Escribe al menos dos caracteres.</p>:results.length===0?<p>No hay resultados accesibles.</p>:results.filter(group=>group.items.length>0).map(group=><section key={group.type}><h2>{group.label}</h2>{group.items.map(item=><a key={item.id} href={group.type==='clients'?`#clients?clientId=${item.id}`:group.type==='team'?'#staff':'#services'} onClick={()=>setSearchOpen(false)}>{item.label}</a>)}</section>)}</div><button className="button secondary" onClick={()=>setSearchOpen(false)}>Cerrar · Esc</button></section></div>}
   </div></CommandContext.Provider>;
 }

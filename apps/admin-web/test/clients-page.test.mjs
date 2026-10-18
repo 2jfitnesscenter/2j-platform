@@ -376,7 +376,8 @@ test('opening a client is a page: focus lands on its name and Back keeps the lis
   await waitFor(() => assert.ok(requests.some((url) => url.includes('q=marta'))), { timeout: 1500 });
   fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   const heading = await screen.findByRole('heading', { level: 1, name: 'Marta Santos' });
-  await waitFor(() => assert.equal(document.activeElement, heading));
+  // Compare as a boolean: a failing assert.equal on DOM nodes makes node inspect the whole jsdom tree (minutes) on every waitFor retry.
+  await waitFor(() => assert.ok(document.activeElement === heading, 'focus lands on the client name'));
   assert.equal(screen.queryByLabelText('Buscar cliente'), null, 'the list is replaced by the 360 page, not squeezed beside it');
   fireEvent.click(screen.getByRole('button', { name: 'Todos los clientes' }));
   await waitFor(() => assert.equal(window.location.hash, '#clients'));

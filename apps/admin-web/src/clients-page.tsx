@@ -398,7 +398,7 @@ export function ClientsPage() {
       <PageHeader title="Clientes" description="Busca y abre perfiles del centro. La ficha reúne la información operativa autorizada." actions={list.capabilities.manage ? <Button variant="primary" icon={icons.Plus} onClick={openCreate}>Nuevo cliente</Button> : undefined} />
       <Card as="section" padding="none" className="clients-panel" aria-label="Listado de clientes" aria-busy={listBusy || loadingMore}>
         <div className="clients-toolbar">
-          <SearchField label="Buscar cliente" placeholder="Buscar por nombre" value={query} onChange={setQuery} />
+          <SearchField label="Buscar cliente" placeholder="Buscar por nombre…" value={query} onChange={setQuery} />
           <SegmentedControl label="Filtrar clientes por estado" value={status} onChange={setStatus} options={[{ value: 'active', label: 'Activos' }, { value: 'archived', label: 'Archivados' }]} />
         </div>
         <div className="sr-only" role="status" aria-live="polite">{listState === 'ready' ? `${list.items.length} clientes${list.hasMore ? '. Hay más resultados disponibles.' : ''}` : ''}</div>
