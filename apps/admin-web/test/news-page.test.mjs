@@ -6,7 +6,7 @@ import React from 'react';
 const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://127.0.0.1:5174'});
 Object.assign(globalThis,{window:dom.window,document:dom.window.document,HTMLElement:dom.window.HTMLElement,MutationObserver:dom.window.MutationObserver,getComputedStyle:dom.window.getComputedStyle,IS_REACT_ACT_ENVIRONMENT:true});
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
-const {cleanup,fireEvent,render,screen}=await import('@testing-library/react');
+const {cleanup,fireEvent,render,screen,within}=await import('@testing-library/react');
 const {NewsPage}=await import('../src/news-page.tsx');
 afterEach(()=>{cleanup();globalThis.fetch=undefined;});
 after(()=>dom.window.close());
@@ -14,7 +14,7 @@ after(()=>dom.window.close());
 test('Admin creates, edits, publishes, features, withdraws and inspects Center News history',async()=>{
   const items=[];const audit=[];let sequence=0;
   const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
-  globalThis.window.confirm=()=>true;
+  // Withdrawing now goes through the shared ConfirmDialog, not window.confirm.
   globalThis.fetch=async(input,init={})=>{
     const url=String(input);const method=init.method??'GET';
     if(url.endsWith('/api/admin/news')&&method==='GET')return json({items});
@@ -43,6 +43,9 @@ test('Admin creates, edits, publishes, features, withdraws and inspects Center N
   const featured=ui.container.querySelector('.center-news-item');
   assert.ok(featured.textContent.includes('Destacada'));
   fireEvent.click(withinArticle(featured,'Retirar'));
+  const confirmation=await screen.findByRole('alertdialog',{name:/Retirar/});
+  assert.ok(document.activeElement===within(confirmation).getByRole('button',{name:'Cancelar'}),'focus starts on the safe choice');
+  fireEvent.click(within(confirmation).getByRole('button',{name:'Retirar noticia'}));
   await screen.findByText('Noticia retirada.');
   const withdrawn=ui.container.querySelector('.center-news-item');
   assert.ok(withdrawn.textContent.includes('Retirada'));

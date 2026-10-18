@@ -15,3 +15,7 @@ export { Tabs } from './tabs.js';
 export type { TabItem, TabsProps } from './tabs.js';
 export { SearchField, SegmentedControl, EmptyState } from './fields.js';
 export type { EmptyStateProps, SearchFieldProps, SegmentedControlProps, SegmentedOption } from './fields.js';
+export { ConfirmDialog } from './confirm-dialog.js';
+export type { ConfirmDialogProps, ConfirmDialogReason } from './confirm-dialog.js';
+export { SaveState } from './save-state.js';
+export type { SaveStateProps, SaveStatus } from './save-state.js';
