@@ -132,3 +132,6 @@
   .app-nav-item, .nav-chevron { transition: none; }
   .app-frame.is-drawer .app-sidebar { transition: none; }
 }
+
+/* RM-00-01: the page heading is focused programmatically on module change. Pointer navigation shows no ring (not focus-visible); keyboard navigation shows the standard ring, as for .client-name. */
+.app-page h1[tabindex="-1"]:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 4px; border-radius: var(--2j-radius-xs); }
