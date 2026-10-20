@@ -933,6 +933,28 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(accountant.json().client, undefined);
 });
 
+test('client list orders A–Z by surname ignoring accents and searches name, email and phone without accents', async () => {
+  const tag = randomUUID().slice(0, 8);
+  const mk = async (firstName, lastName, extra = {}) => { const r = await createClientRequest(clientsAdminApp, { firstName, lastName, ...extra }); assert.equal(r.statusCode, 201, r.body); return r.json().id; };
+  const zeta = await mk('Ana', `Zeta${tag}`);
+  const garcia = await mk('Lucía', `García${tag}`, { email: `lucia.${tag}@example.test`, phone: '+34 600 123 456' });
+  const alvarez = await mk('Beto', `Álvarez${tag}`);
+  const ids = (await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${tag}&limit=10` })).json().items.map((item) => item.id);
+  assert.deepEqual(ids, [alvarez, garcia, zeta], 'accented surnames sort with their base letter');
+  const byName = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${encodeURIComponent(`garcia${tag}`)}` });
+  assert.deepEqual(byName.json().items.map((item) => item.id), [garcia], '"garcia" finds "García"');
+  const byEmail = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${encodeURIComponent(`lucia.${tag}`)}` });
+  assert.deepEqual(byEmail.json().items.map((item) => item.id), [garcia], 'a fragment of the email finds the client');
+  const byPhone = await clientsAdminApp.inject({ method: 'GET', url: '/api/clients?q=600123456' });
+  assert.equal(byPhone.json().items.some((item) => item.id === garcia), true, 'digits match a phone stored with spaces and prefix');
+  const trainerPhone = await clientsTrainerApp.inject({ method: 'GET', url: '/api/clients?q=600123456' });
+  assert.equal(trainerPhone.json().items.some((item) => item.id === garcia), false, 'roles without clients.manage cannot discover contact data');
+  const firstPage = (await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${tag}&limit=2` })).json();
+  assert.deepEqual(firstPage.items.map((item) => item.id), [alvarez, garcia]);
+  const secondPage = (await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${tag}&limit=2&cursor=${encodeURIComponent(firstPage.nextCursor)}` })).json();
+  assert.deepEqual(secondPage.items.map((item) => item.id), [zeta], 'the cursor continues in the same order');
+});
+
 test('client search minimizes contact discovery by permission and archive retains profile history', async () => {
   const created = await createClientRequest(clientsAdminApp, { firstName: '  Marta  ', lastName: `Prueba ${randomUUID()}`, email: 'marta-search@example.test' });
   assert.equal(created.statusCode, 201, created.body);
