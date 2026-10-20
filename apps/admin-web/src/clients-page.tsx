@@ -398,7 +398,7 @@ export function ClientsPage() {
       <PageHeader title="Clientes" description="Busca y abre perfiles del centro. La ficha reúne la información operativa autorizada." actions={list.capabilities.manage ? <Button variant="primary" icon={icons.Plus} onClick={openCreate}>Nuevo cliente</Button> : undefined} />
       <Card as="section" padding="none" className="clients-panel" aria-label="Listado de clientes" aria-busy={listBusy || loadingMore}>
         <div className="clients-toolbar">
-          <SearchField label="Buscar cliente" placeholder="Buscar por nombre…" value={query} onChange={setQuery} />
+          <SearchField label="Buscar cliente" placeholder="Nombre, email o teléfono" value={query} onChange={setQuery} />
           <SegmentedControl label="Filtrar clientes por estado" value={status} onChange={setStatus} options={[{ value: 'active', label: 'Activos' }, { value: 'archived', label: 'Archivados' }]} />
         </div>
         <div className="sr-only" role="status" aria-live="polite">{listState === 'ready' ? `${list.items.length} clientes${list.hasMore ? '. Hay más resultados disponibles.' : ''}` : ''}</div>
@@ -407,7 +407,7 @@ export function ClientsPage() {
         {listState === 'loading' && <EmptyState role="status"><span className="spinner" /> Cargando clientes…</EmptyState>}
         {listState === 'unauthorized' && <EmptyState role="alert" tone="danger" icon={icons.TriangleAlert} title="Acceso no disponible">Tu sesión no permite consultar los datos de clientes.</EmptyState>}
         {listState === 'error' && <EmptyState role="alert" tone="danger" icon={icons.TriangleAlert} title="No se pudo cargar la lista" action={<Button onClick={() => void loadClients(null, false)}>Reintentar</Button>}>{listError}</EmptyState>}
-        {(listState === 'ready' || (listState === 'error' && list.items.length > 0)) && list.items.length === 0 && <EmptyState icon={icons.Users} title={debouncedQuery ? 'Sin resultados' : status === 'active' ? 'Aún no hay clientes' : 'No hay clientes archivados'} action={!debouncedQuery && status === 'active' && list.capabilities.manage ? <Button onClick={openCreate}>Crear primer cliente</Button> : undefined}>{debouncedQuery ? 'Prueba con otro nombre o dato de contacto.' : status === 'active' && list.capabilities.manage ? 'Registra un cliente para iniciar su ficha 360.' : 'Los perfiles archivados se conservan aquí.'}</EmptyState>}
+        {(listState === 'ready' || (listState === 'error' && list.items.length > 0)) && list.items.length === 0 && <EmptyState icon={icons.Users} title={debouncedQuery ? 'Sin resultados' : status === 'active' ? 'Aún no hay clientes' : 'No hay clientes archivados'} action={!debouncedQuery && status === 'active' && list.capabilities.manage ? <Button onClick={openCreate}>Crear primer cliente</Button> : undefined}>{debouncedQuery ? 'Prueba con otro nombre, email o teléfono.' : status === 'active' && list.capabilities.manage ? 'Registra un cliente para iniciar su ficha 360.' : 'Los perfiles archivados se conservan aquí.'}</EmptyState>}
         {(listState === 'ready' || (listState === 'error' && list.items.length > 0)) && list.items.length > 0 && <>
           <ul className="client-rows" aria-label="Resultados de clientes">{list.items.map((item) => <li key={item.id}>
             <a className="client-row" href={`#clients?clientId=${item.id}`} aria-label={`${displayName(item)}, ${statusLabel[item.status]}, abrir ficha`} onClick={() => { setSelectedId(item.id); setActiveSection('summary'); setArchiveFeedback(''); }}>

@@ -96,18 +96,19 @@ export function registerClientRoutes(
     const cursor = parseCursor(query.data.cursor);
     if (cursor === false) return reply.code(400).send({ error: 'invalid_cursor' });
     const term = (query.data.q ?? '').normalize('NFKC').toLocaleLowerCase('es').trim();
+    const phoneDigits = term.replace(/\D/g, '');
     const canSearchContact = can(context, 'clients.manage');
     const status = query.data.status ?? 'active';
     const pageCursor = cursor || null;
     try {
       const rows = await database`
           SELECT id,first_name AS "firstName",last_name AS "lastName",status,created_at AS "createdAt",
-          lower(last_name) AS "cursorLastName",lower(first_name) AS "cursorFirstName"
+          unaccent(lower(last_name)) AS "cursorLastName",unaccent(lower(first_name)) AS "cursorFirstName"
         FROM clients
         WHERE status=${status}
-          AND (${term}='' OR strpos(lower(concat_ws(' ',first_name,last_name)),${term}) > 0 OR (${canSearchContact} AND strpos(lower(concat_ws(' ',email,phone)),${term}) > 0))
-          AND (${pageCursor === null} OR (lower(last_name),lower(first_name),id) > (${pageCursor?.lastName ?? ''},${pageCursor?.firstName ?? ''},${pageCursor?.id ?? '00000000-0000-0000-0000-000000000000'}::uuid))
-        ORDER BY lower(last_name),lower(first_name),id
+          AND (${term}='' OR strpos(unaccent(lower(concat_ws(' ',first_name,last_name))),unaccent(${term})) > 0 OR (${canSearchContact} AND (strpos(unaccent(lower(concat_ws(' ',email,phone))),unaccent(${term})) > 0 OR (${phoneDigits.length >= 3} AND strpos(regexp_replace(coalesce(phone,''),'[^0-9]','','g'),${phoneDigits}) > 0))))
+          AND (${pageCursor === null} OR (unaccent(lower(last_name)),unaccent(lower(first_name)),id) > (${pageCursor?.lastName ?? ''},${pageCursor?.firstName ?? ''},${pageCursor?.id ?? '00000000-0000-0000-0000-000000000000'}::uuid))
+        ORDER BY unaccent(lower(last_name)),unaccent(lower(first_name)),id
         LIMIT ${query.data.limit + 1}`;
       const hasMore = rows.length > query.data.limit;
       const items = rows.slice(0, query.data.limit).map(({ cursorLastName: _last, cursorFirstName: _first, ...row }) => row);
