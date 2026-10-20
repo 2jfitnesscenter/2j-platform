@@ -51,7 +51,7 @@ test('the client search says it covers name, email and phone, debounces once and
   render(React.createElement(ClientsPage));
   await screen.findByRole('link', { name: /Marta Santos/ });
   const field = screen.getByLabelText('Buscar cliente');
-  assert.equal(field.getAttribute('placeholder'), 'Nombre, email o teléfono');
+  assert.equal(field.getAttribute('placeholder'), 'Nombre, email o teléfono…');
   const before = requests.length;
   for (const value of ['6', '60', '600 12']) fireEvent.change(field, { target: { value } });
   await waitFor(() => assert.ok(requests.some((url) => url.includes('q=600+12'))), { timeout: 1500 });
