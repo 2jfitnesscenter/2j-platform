@@ -23,12 +23,20 @@ The package exports both light and dark palettes. It intentionally does not sele
 | Input / select | label, hint, error association, required state, keyboard operation, visible focus |
 | Card | surface, subtle, interactive; interactive cards disclose affordance and keyboard focus |
 | Modal / drawer | labelled title, focus containment/return, Escape where safe, mobile drawer adaptation |
+| Confirmation dialog (`ConfirmDialog`) | role alertdialog, labelled title and consequence description, focus starts on Cancel, Tab contained, Escape or backdrop cancels unless busy, focus returns to the opener, optional or required reason, filled danger button only here |
+| Save state (`SaveState`) | always-mounted live region; saving, saved and error each with icon and text; errors are assertive and stay until the next attempt |
 | Tabs | semantic tablist, arrow-key movement, selected state and visible focus |
 | Table / list | responsive alternative for small screens, sortable header semantics, no color-only status |
 | Badge / status | semantic text/icon plus color; contrast checked on both themes |
 | Toast | concise, non-blocking, announced without stealing focus; errors persist until understood |
 | Empty state | explains why empty and offers one relevant next action when allowed |
 | Skeleton | matches final geometry and does not impersonate actionable content |
+
+## Confirmation and save feedback
+
+Use `ConfirmDialog` instead of `window.confirm` for any action with a consequence. State the consequence in plain language (what happens, what is kept), name the action on the confirm button ("Retirar noticia", not "Aceptar"), and set `tone="danger"` only for destructive actions. Pass `reason={{ label, required, minLength }}` when the audit trail needs a motive; `onConfirm` receives the trimmed text. Keep the dialog open while the request runs (`busy`) and show a failure with `error`.
+
+Use `SaveState` next to the control that saves. Map the request to `status` (`saving`, `saved`, `error`) and pass the human sentence as `savedLabel` or `errorLabel`. First adopted in Noticias (withdraw and save feedback); other modules migrate as they are redesigned.
 
 ## Accessibility and motion
 
