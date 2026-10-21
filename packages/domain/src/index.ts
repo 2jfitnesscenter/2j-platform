@@ -43,3 +43,4 @@ export interface UnitOfWork {
 }
 
 export * from './period-entitlements.js';
+export * from './training-capabilities.js';
