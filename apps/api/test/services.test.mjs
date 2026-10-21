@@ -52,12 +52,13 @@ function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
   };
 }
 
-test('versioned Training access rights require an explicit level and the internal endpoint verifies, resolves, and consumes service requests', async () => {
+test('versioned Training access rights require effective payment without a tracked quota and the internal endpoint consumes service requests', async () => {
   const service = await createService(`Training access ${randomUUID()}`);
-  const createSubject = async (level) => {
+  const createSubject = async (level, additionalRights = []) => {
     const plan = await createPlan([service.id], { basePriceCents:4500, rights:[
       {rightType:'service_access',serviceId:service.id},
       {rightType:'training_access',trainingAccessLevel:level},
+      ...additionalRights,
     ] });
     assert.equal(plan.response.statusCode,201,plan.response.body);
     assert.equal(plan.response.json().rights.find(item=>item.rightType==='training_access').trainingAccessLevel,level);
@@ -69,14 +70,18 @@ test('versioned Training access rights require an explicit level and the interna
     assert.equal(person.statusCode,201,person.body);
     const personId=person.json().personId;
     await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${`training-${level}-${randomUUID()}`},'explicit_admin','capability-test','capability-test')`;
-    return {personId,planId:plan.response.json().id};
+    return {personId,planId:plan.response.json().id,chargeId:sale.json().chargeId};
   };
   assert.equal(planInput.safeParse(planPayload([service.id],{rights:[{rightType:'service_access',serviceId:service.id},{rightType:'training_access',trainingAccessLevel:'full'}]})).success,true);
   assert.equal(planInput.safeParse(planPayload([service.id],{rights:[{rightType:'service_access',serviceId:service.id},{rightType:'training_access'}]})).success,false);
-  const {personId,planId}=await createSubject('full');
+  const {personId,planId,chargeId}=await createSubject('full');
   const [storedRight]=await sql`SELECT id FROM plan_rights WHERE plan_id=${planId} AND right_type='training_access'`;
   await assert.rejects(sql`UPDATE plan_rights SET training_access_level='autonomous' WHERE id=${storedRight.id}`,{code:'55000'},'activated historical plan-version access remains immutable');
   const path=`/api/internal/platform/v1/persons/${personId}/training-capabilities`;
+  const unpaidFull=await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId)});
+  assert.equal(unpaidFull.statusCode,200,unpaidFull.body);
+  assert.equal(unpaidFull.json().capabilityLevel,'blocked','an active-by-date assignment without payment cannot grant full access');
+  assert.equal(unpaidFull.json().accessState,'blocked_unpaid');
   assert.equal((await anonymousApp.inject({method:'GET',url:path})).statusCode,503,'no service keys means the internal endpoint stays disabled');
   assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path})).statusCode,401,'Member/session auth is not accepted in place of service auth');
   const invalidId=randomUUID();
@@ -87,6 +92,8 @@ test('versioned Training access rights require an explicit level and the interna
   assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId,randomUUID(),{keyId:'unknown-key'})})).statusCode,401);
   const validId=randomUUID(), validHeaders=capabilityHeaders(personId,validId);
   assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:`${path}?extra=1`,headers:capabilityHeaders(personId)})).statusCode,401,'the signed path must match exactly and cannot carry a query');
+  const fullPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(fullPayment.statusCode,201,fullPayment.body);
   const valid=await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:validHeaders});
   assert.equal(valid.statusCode,200,valid.body);
   assert.equal(valid.headers['cache-control'],'no-store');
@@ -96,12 +103,30 @@ test('versioned Training access rights require an explicit level and the interna
   const raceId=randomUUID(),raceHeaders=capabilityHeaders(personId,raceId);
   const race=await Promise.all([trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders}),trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders})]);
   assert.deepEqual(race.map(item=>item.statusCode).sort(),[200,401],'concurrent replay attempts have exactly one winner');
-  const {personId:autonomousId}=await createSubject('autonomous');
-  const autonomous=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v1/persons/${autonomousId}/training-capabilities`,headers:capabilityHeaders(autonomousId)});
+  const {personId:autonomousId,chargeId:autonomousChargeId}=await createSubject('autonomous');
+  const autonomousPath=`/api/internal/platform/v1/persons/${autonomousId}/training-capabilities`;
+  const unpaidAutonomous=await trainingCapabilitiesApp.inject({method:'GET',url:autonomousPath,headers:capabilityHeaders(autonomousId)});
+  assert.equal(unpaidAutonomous.statusCode,200,unpaidAutonomous.body);
+  assert.equal(unpaidAutonomous.json().capabilityLevel,'blocked','an active-by-date assignment without payment cannot grant autonomous access');
+  assert.equal(unpaidAutonomous.json().accessState,'blocked_unpaid');
+  const autonomousPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:autonomousChargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(autonomousPayment.statusCode,201,autonomousPayment.body);
+  const autonomous=await trainingCapabilitiesApp.inject({method:'GET',url:autonomousPath,headers:capabilityHeaders(autonomousId)});
   assert.equal(autonomous.statusCode,200,autonomous.body);
   assert.equal(autonomous.json().capabilityLevel,'autonomous');
   assert.equal(autonomous.json().capabilities.aiCoach,false);
   assert.equal(autonomous.json().capabilities.professionalFollowUp,false);
+
+  const {personId:periodQuotaId,chargeId:periodQuotaChargeId}=await createSubject('full',[{rightType:'period_quota',quotaScope:'shared',quantity:8,period:'month',periodMode:'calendar',timezone:'Atlantic/Canary'}]);
+  const periodQuotaPath=`/api/internal/platform/v1/persons/${periodQuotaId}/training-capabilities`;
+  const unpaidPeriodQuota=await trainingCapabilitiesApp.inject({method:'GET',url:periodQuotaPath,headers:capabilityHeaders(periodQuotaId)});
+  assert.equal(unpaidPeriodQuota.statusCode,200,unpaidPeriodQuota.body);
+  assert.equal(unpaidPeriodQuota.json().capabilityLevel,'blocked','period_quota without effective payment cannot grant Training access');
+  const periodQuotaPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:periodQuotaChargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(periodQuotaPayment.statusCode,201,periodQuotaPayment.body);
+  const paidPeriodQuota=await trainingCapabilitiesApp.inject({method:'GET',url:periodQuotaPath,headers:capabilityHeaders(periodQuotaId)});
+  assert.equal(paidPeriodQuota.statusCode,200,paidPeriodQuota.body);
+  assert.equal(paidPeriodQuota.json().capabilityLevel,'full','settled period_quota assignment with explicit full right is operational');
 });
 
 function createClientRequest(server, payload, key = randomUUID()) {

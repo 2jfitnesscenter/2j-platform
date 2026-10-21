@@ -50,8 +50,7 @@ export function registerTrainingCapabilitiesRoute(app: FastifyInstance<any,any,a
       if (assignment.status === 'paused' || assignment.status === 'cancelled' || assignment.status === 'expired') accessState = 'ended';
       else if (assignment.status === 'scheduled') accessState = 'blocked_unpaid';
       else if (status === 'active' || status === 'provisional' || status === 'blocked_unpaid' || status === 'ended') accessState = status;
-      else if ((assignment.status === 'active' || assignment.status === 'exhausted') && assignment.startsOn <= effective.localDate && (!assignment.endsOn || assignment.endsOn >= effective.localDate)) accessState = 'active';
-      else accessState = 'ended';
+      else accessState = 'blocked_unpaid';
       for (const right of rights) memberships.push({trainingAccessLevel:right.trainingAccessLevel as 'full'|'autonomous',accessState,effectiveFrom:assignment.startsOn});
     }
     const payload = resolveTrainingCapabilities({

@@ -18,7 +18,7 @@ The machine-readable response schema is [`contracts/2J-capabilities-v1.schema.js
 
 `accessState` stays separate from `capabilityLevel`. A provisional grant retains its explicit level. Link revocation blocks operational capability without relabeling the entitlement as unpaid. `reasonCode` is diagnostic; consumers authorize from `capabilityLevel` and the booleans only. Unknown contract IDs/versions must be rejected.
 
-The resolver receives Platform's effective `active`, `provisional`, `blocked_unpaid`, or `ended` state. It does not calculate payment grace, proration, balances, rollover, or entitlement validity.
+For assignments with a 2J-098E entitlement period, the resolver uses Platform's `derivePeriodAccess` result (`active`, `provisional`, `blocked_unpaid`, or `ended`) without recalculating grace, proration, period balances, or rollover. For supported assignments without a tracked period, Platform requires an exempt charge or a fully settled net charge before exposing operational access; assignment dates alone never grant Training capabilities.
 
 ## Endpoint and service authentication
 

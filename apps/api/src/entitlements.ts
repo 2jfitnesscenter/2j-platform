@@ -67,11 +67,17 @@ function mergeModuleAccess(items: Array<{module:string;accessLevel:'limited'|'fu
 /** Shared Platform-side effective assignment read model for internal capability consumers. */
 export async function resolveEffectiveClientAssignments(db: DB, clientId: string, now = new Date()) {
   const localDate=canaryBusinessDate(now);
-  const rows=await db`SELECT a.id,a.plan_id AS "planId",a.plan_version AS "planVersion",a.starts_on::text AS "startsOn",a.ends_on::text AS "endsOn",a.snapshot,
+  const rows=await db`SELECT a.id,a.plan_id AS "planId",a.plan_version AS "planVersion",a.charge_id AS "chargeId",a.starts_on::text AS "startsOn",a.ends_on::text AS "endsOn",a.snapshot,
+    c.state AS "chargeState",c.amount_cents AS "chargeAmountCents",
+    COALESCE(payment_balance.paid_cents,0)::bigint AS "chargePaidCents",COALESCE(payment_balance.net_cents,0)::bigint AS "chargeNetCents",
     COALESCE((SELECT e.event_type FROM client_plan_assignment_events e WHERE e.assignment_id=a.id AND e.effective_on<=${localDate}::date ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1),'activated') AS "lastEvent",
     (SELECT jsonb_agg(jsonb_build_object('id',r.id,'rightType',r.right_type,'trainingAccessLevel',r.training_access_level,'serviceId',r.service_id,'quotaScope',r.quota_scope,'quantity',r.quantity,'weeklyFrequency',r.weekly_frequency,'period',r.period,'periodMode',r.period_mode,'timezone',r.timezone,'validDays',r.valid_days,'validDaysStartRule',r.valid_days_start_rule) ORDER BY r.id) FROM plan_rights r WHERE r.plan_id=a.plan_id AND r.plan_version=a.plan_version) AS rights,
     (SELECT COALESCE(jsonb_object_agg(l.right_key,l.balance),'{}'::jsonb) FROM (SELECT right_key,sum(quantity)::int balance FROM client_entitlement_ledger WHERE assignment_id=a.id GROUP BY right_key) l) AS balances
-    FROM client_plan_assignments a WHERE a.client_id=${clientId} ORDER BY a.starts_on DESC,a.created_at DESC,a.id DESC`;
+    FROM client_plan_assignments a JOIN economic_charges c ON c.id=a.charge_id
+    LEFT JOIN LATERAL(SELECT COALESCE(sum(t.amount_cents) FILTER(WHERE t.kind='payment'),0)::bigint AS paid_cents,
+      COALESCE(sum(CASE WHEN t.kind='payment' THEN t.amount_cents ELSE -t.amount_cents END),0)::bigint AS net_cents
+      FROM economic_transactions t WHERE t.charge_id=c.id) payment_balance ON true
+    WHERE a.client_id=${clientId} ORDER BY a.starts_on DESC,a.created_at DESC,a.id DESC`;
   type PeriodRow={id:string;assignmentId:string;rightId:string;startsOn:string;endsOn:string;weeklyFrequency:number;sessionsSnapshot:number;balance:number;paymentValidated:boolean;recurring:boolean};
   const periodRows=await db<PeriodRow[]>`SELECT p.id,p.assignment_id AS "assignmentId",p.right_id AS "rightId",p.period_start::text AS "startsOn",p.period_end::text AS "endsOn",p.weekly_frequency AS "weeklyFrequency",p.sessions_snapshot AS "sessionsSnapshot",
     COALESCE((SELECT sum(l.quantity)::int FROM client_entitlement_ledger l WHERE l.entitlement_period_id=p.id AND l.right_key=p.right_id::text),0)::int AS balance,
@@ -85,7 +91,17 @@ export async function resolveEffectiveClientAssignments(db: DB, clientId: string
     const rights:Array<Record<string,unknown>>=(row.rights??[]).map((right:Record<string,unknown>)=>({...right,balance:(row.balances as Record<string,number>)?.[String(right.id)]??null}));
     const tracked=rights.filter(right=>right.rightType==='sessions_quota'&&right.weeklyFrequency!=null);
     const status=['cancelled','changed'].includes(row.lastEvent)?'cancelled':['paused'].includes(row.lastEvent)?'paused':row.startsOn>localDate?'scheduled':row.endsOn&&row.endsOn<localDate?'expired':'active';
-    if(!tracked.length)return{id:row.id,startsOn:row.startsOn,endsOn:row.endsOn,status,snapshot:row.snapshot,rights,modules:[]};
+    if(!tracked.length){
+      const hasTrainingAccess=rights.some(right=>right.rightType==='training_access');
+      const chargeAccess=String(row.chargeState)==='exempt'
+        ? 'active' as const
+        : String(row.chargeState)==='pending'&&Number(row.chargeNetCents)>=Number(row.chargeAmountCents)
+          ? 'active' as const
+          : String(row.chargeState)==='void'
+            ? 'ended' as const
+            : 'blocked_unpaid' as const;
+      return{id:row.id,startsOn:row.startsOn,endsOn:row.endsOn,status,snapshot:row.snapshot,rights,modules:[],...(hasTrainingAccess?{operationalAccess:chargeAccess}:{})};
+    }
     const periods=periodsByAssignment.get(row.id)??[];
     const states=tracked.map(right=>{
       const candidates=periods.filter(period=>period.rightId===right.id);
