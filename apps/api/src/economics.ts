@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
+import { activateSettledEntitlementPeriods } from './assignment-periods.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -112,6 +113,7 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${charge.id},${charge.clientId},'payment',${total},${data.note??null},${context.actorId},${key.data},${requestHash},${hasCash?cash!.id:null})`;
         for(const split of data.splits)await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${id},${split.method},${split.amountCents})`;
         await audit(tx,context.actorId,'payment.recorded','transaction',id,charge.clientId,{amountCents:total,methods:data.splits.map(split=>split.method),cashSessionId:hasCash?cash!.id:null});
+        await activateSettledEntitlementPeriods(tx,charge.id,context.actorId);
         return{id,replay:false as const};
       });
       if('error'in result)return reply.code(result.error==='charge_not_found'?404:409).send({error:result.error});

@@ -60,6 +60,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@2j/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@2j/permissions':
         specifier: workspace:*
         version: link:../../packages/permissions

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
+import { derivePeriodAccess } from '@2j/domain';
 import type { createDatabase } from './db.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
@@ -19,19 +20,21 @@ export interface EffectiveEntitlementAssignment {
   readonly snapshot: Record<string, unknown>;
   readonly rights: readonly Record<string, unknown>[];
   readonly modules: readonly {module:string;accessLevel:'limited'|'full';capabilities:readonly string[]}[];
+  readonly operationalAccess?: 'active'|'provisional'|'blocked_unpaid'|'ended';
 }
 
 /** Canonical date/status filtering used by the API and future booking eligibility wiring. */
 export function getEffectiveEntitlements(assignments: readonly EffectiveEntitlementAssignment[], localDate: string) {
   const statusOf = (assignment:EffectiveEntitlementAssignment):EffectiveEntitlementAssignment['status'] => {
     if(assignment.status!=='active')return assignment.status;
+    if(assignment.operationalAccess==='provisional')return 'active';
     const trackedQuotas=assignment.rights.filter(right=>right.rightType==='sessions_quota'&&typeof right.balance==='number');
     return trackedQuotas.length>0&&trackedQuotas.every(right=>Number(right.balance)<=0)?'exhausted':'active';
   };
   const effective = assignments.flatMap((assignment) => {
     const status = statusOf(assignment);
     const inDateRange = assignment.startsOn <= localDate && (!assignment.endsOn || assignment.endsOn >= localDate);
-    if (status !== 'active' || !inDateRange) return [];
+    if (status !== 'active' || !inDateRange || (assignment.operationalAccess && !['active','provisional'].includes(assignment.operationalAccess))) return [];
     const snapshotModules = assignment.modules.map((entry) => ({ ...entry, capabilities: [...entry.capabilities] }));
     const missingServiceTarget = assignment.rights.some(right => right.rightType === 'service_access' && right.serviceId == null);
     const safeRights = assignment.rights.filter(right => right.rightType !== 'service_access' || right.serviceId != null);
@@ -82,12 +85,45 @@ export function registerEntitlementRoutes(app: FastifyInstance<any,any,any,any,a
     const localDate=query.data.date??todayInCanary();
     const rows=await db`SELECT a.id,a.plan_id AS "planId",a.plan_version AS "planVersion",a.starts_on::text AS "startsOn",a.ends_on::text AS "endsOn",a.snapshot,
       COALESCE((SELECT e.event_type FROM client_plan_assignment_events e WHERE e.assignment_id=a.id AND e.effective_on<=${localDate}::date ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1),'activated') AS "lastEvent",
-      (SELECT jsonb_agg(jsonb_build_object('id',r.id,'rightType',r.right_type,'serviceId',r.service_id,'quotaScope',r.quota_scope,'quantity',r.quantity,'period',r.period,'periodMode',r.period_mode,'timezone',r.timezone,'validDays',r.valid_days,'validDaysStartRule',r.valid_days_start_rule) ORDER BY r.id) FROM plan_rights r WHERE r.plan_id=a.plan_id AND r.plan_version=a.plan_version) AS rights,
+      (SELECT jsonb_agg(jsonb_build_object('id',r.id,'rightType',r.right_type,'serviceId',r.service_id,'quotaScope',r.quota_scope,'quantity',r.quantity,'weeklyFrequency',r.weekly_frequency,'period',r.period,'periodMode',r.period_mode,'timezone',r.timezone,'validDays',r.valid_days,'validDaysStartRule',r.valid_days_start_rule) ORDER BY r.id) FROM plan_rights r WHERE r.plan_id=a.plan_id AND r.plan_version=a.plan_version) AS rights,
       (SELECT COALESCE(jsonb_agg(jsonb_build_object('module',m.module,'accessLevel',m.access_level,'capabilities',COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb)) ORDER BY m.module),'[]'::jsonb) FROM plan_module_accesses m WHERE m.plan_id=a.plan_id AND m.plan_version=a.plan_version) AS modules,
       (SELECT COALESCE(jsonb_object_agg(l.right_key,l.balance),'{}'::jsonb) FROM (SELECT right_key,sum(quantity)::int balance FROM client_entitlement_ledger WHERE assignment_id=a.id GROUP BY right_key) l) AS balances
       FROM client_plan_assignments a WHERE a.client_id=${params.data.clientId} ORDER BY a.starts_on DESC,a.created_at DESC,a.id DESC`;
-    const assignments: EffectiveEntitlementAssignment[] = rows.map(row=>({id:row.id,startsOn:row.startsOn,endsOn:row.endsOn,status:['cancelled','changed'].includes(row.lastEvent)?'cancelled':row.lastEvent==='paused'?'paused':row.startsOn>localDate?'scheduled':row.endsOn&&row.endsOn<localDate?'expired':'active',snapshot:row.snapshot,rights:(row.rights??[]).map((right:Record<string,unknown>)=>({...right,balance:(row.balances as Record<string,number>)?.[String(right.id)]??null})),modules:row.modules??[]}));
-    return {clientId:params.data.clientId,...getEffectiveEntitlements(assignments,localDate)};
+    type PeriodRow={id:string;assignmentId:string;rightId:string;startsOn:string;endsOn:string;weeklyFrequency:number;sessionsSnapshot:number;balance:number;paymentValidated:boolean;recurring:boolean};
+    const periodRows=await db<PeriodRow[]>`SELECT p.id,p.assignment_id AS "assignmentId",p.right_id AS "rightId",p.period_start::text AS "startsOn",p.period_end::text AS "endsOn",p.weekly_frequency AS "weeklyFrequency",p.sessions_snapshot AS "sessionsSnapshot",
+      COALESCE((SELECT sum(l.quantity)::int FROM client_entitlement_ledger l WHERE l.entitlement_period_id=p.id AND l.right_key=p.right_id::text),0)::int AS balance,
+      EXISTS(SELECT 1 FROM assignment_entitlement_period_events e WHERE e.period_id=p.id AND e.event_type='payment_validated') AS "paymentValidated",
+      COALESCE((SELECT e.enabled FROM assignment_recurrence_events e WHERE e.assignment_id=p.assignment_id AND e.effective_on<=${localDate}::date ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1),false) AS recurring
+      FROM assignment_entitlement_periods p WHERE p.assignment_id=ANY(${rows.map(row=>row.id)}::uuid[])
+      ORDER BY p.assignment_id,p.right_id,p.period_start`;
+    const periodsByAssignment=new Map<string,PeriodRow[]>();
+    for(const period of periodRows){const list=periodsByAssignment.get(period.assignmentId)??[];list.push(period);periodsByAssignment.set(period.assignmentId,list);}
+    const localNoon=new Date(`${localDate}T12:00:00.000Z`);
+    const assignments:EffectiveEntitlementAssignment[]=rows.map(row=>{
+      const rights:Array<Record<string,unknown>>=(row.rights??[]).map((right:Record<string,unknown>)=>({...right,balance:(row.balances as Record<string,number>)?.[String(right.id)]??null}));
+      const tracked=rights.filter(right=>right.rightType==='sessions_quota'&&right.weeklyFrequency!=null);
+      if(!tracked.length)return{id:row.id,startsOn:row.startsOn,endsOn:row.endsOn,status:['cancelled','changed'].includes(row.lastEvent)?'cancelled':row.lastEvent==='paused'?'paused':row.startsOn>localDate?'scheduled':row.endsOn&&row.endsOn<localDate?'expired':'active',snapshot:row.snapshot,rights,modules:row.modules??[]};
+      const periods=periodsByAssignment.get(row.id)??[];
+      const states=tracked.map(right=>{
+        const candidates=periods.filter(period=>period.rightId===right.id);
+        const chosen=candidates.find(period=>period.startsOn<=localDate&&period.endsOn>=localDate)
+          ??candidates.filter(period=>period.startsOn>localDate).sort((a,b)=>String(a.startsOn).localeCompare(String(b.startsOn)))[0]
+          ??candidates.sort((a,b)=>String(b.startsOn).localeCompare(String(a.startsOn)))[0];
+        if(!chosen)return{state:'blocked_unpaid' as const,period:null};
+        return{state:derivePeriodAccess({startsOn:String(chosen.startsOn),endsOn:String(chosen.endsOn),now:localNoon,recurring:Boolean(chosen.recurring),paymentValidated:Boolean(chosen.paymentValidated)}),period:chosen};
+      });
+      const rank:Record<'active'|'provisional'|'ended'|'blocked_unpaid',number>={active:0,provisional:1,ended:2,blocked_unpaid:3};
+      const operationalAccess=states.map(state=>state.state).sort((a,b)=>rank[b]-rank[a])[0]??'blocked_unpaid';
+      const selectedPeriods=Object.fromEntries(states.filter(state=>state.period).map(state=>[String(state.period!.rightId),{id:state.period!.id,startsOn:state.period!.startsOn,endsOn:state.period!.endsOn,sessionsSnapshot:state.period!.sessionsSnapshot,balance:state.period!.balance}]));
+      const enrichedRights=rights.map(right=>right.rightType==='sessions_quota'&&selectedPeriods[String(right.id)]?{...right,balance:(selectedPeriods[String(right.id)] as Record<string,unknown>).balance,period:selectedPeriods[String(right.id)]}:right);
+      return{id:row.id,startsOn:row.startsOn,endsOn:row.endsOn,status:['cancelled','changed'].includes(row.lastEvent)?'cancelled':row.lastEvent==='paused'?'paused':row.startsOn>localDate?'scheduled':row.endsOn&&row.endsOn<localDate?'expired':'active',snapshot:row.snapshot,rights:enrichedRights,modules:row.modules??[],operationalAccess};
+    });
+    const effectiveResult=getEffectiveEntitlements(assignments,localDate);
+    return {clientId:params.data.clientId,...effectiveResult,assignments:effectiveResult.assignments.map((assignment)=>{
+      if(assignment.operationalAccess==='blocked_unpaid')return{...assignment,usable:false,blockingReasons:[...assignment.blockingReasons,'payment_pending']};
+      if(assignment.operationalAccess==='ended')return{...assignment,usable:false,blockingReasons:[...assignment.blockingReasons,'entitlement_expired']};
+      return assignment;
+    })};
   });
 
   app.get('/api/clients/:clientId/plans/:assignmentId/movements',async(request,reply)=>{
