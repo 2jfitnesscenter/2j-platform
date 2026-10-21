@@ -41,3 +41,5 @@ export interface DomainTransaction {
 export interface UnitOfWork {
   run<Result>(operation: (transaction: DomainTransaction) => Promise<Result>): Promise<Result>;
 }
+
+export * from './period-entitlements.js';

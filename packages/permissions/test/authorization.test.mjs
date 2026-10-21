@@ -47,6 +47,11 @@ test('2J-073 entitlement operations follow the approved Reception, Trainer, Acco
   for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel']) assert.equal(has('reception-management', permission), true, `${permission} should be granted to Reception`);
   for (const permission of ['entitlements.adjust','catalog.pricing.manage','billing.payments.manage']) assert.equal(has('reception-management', permission), false, `${permission} should remain denied to Reception`);
   assert.equal(has('trainer','entitlements.read'), true);
+  assert.equal(has('trainer','entitlements.recurrence.manage'), true);
+  assert.equal(can({ actorId:'fixture',role:'trainer',deniedPermissions:['entitlements.recurrence.manage'] },'entitlements.recurrence.manage'),false);
+  assert.equal(has('reception-management','entitlements.recurrence.manage'), false);
+  assert.equal(has('accountant','entitlements.recurrence.manage'), false);
+  assert.equal(has('admin','entitlements.recurrence.manage'), true);
   for (const permission of ['entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage','billing.payments.manage']) assert.equal(has('trainer', permission), false, `${permission} should remain denied to Trainer`);
   for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage']) assert.equal(has('accountant', permission), false, `${permission} should remain denied to Accountant`);
   for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage']) assert.equal(has('admin', permission), true, `${permission} should remain available to Admin`);

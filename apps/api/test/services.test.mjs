@@ -14,6 +14,8 @@ import postgres from 'postgres';
 import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
 import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
 import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
+import { materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
+import { canaryBusinessDate, proratedSessionsForPayment } from '@2j/domain';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
 
@@ -179,7 +181,7 @@ test('0024 upgrades representative legacy active and revoked explicit-admin link
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.assignmentRecurrenceEvents, schema.assignmentEntitlementPeriods, schema.assignmentEntitlementPeriodEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -2123,6 +2125,16 @@ test('canonical effective resolver keeps scheduled, expired and paused rights ou
   assert.ok(effective.assignments.find(item=>item.id==='a').blockingReasons.includes('service_access_target_missing'));
 });
 
+test('2J-098E keeps provisional operational access usable before its bag is activated', () => {
+  const effective=getEffectiveEntitlements([{
+    id:'provisional',status:'active',startsOn:'2026-11-01',endsOn:'2026-11-30',operationalAccess:'provisional',snapshot:{services:[{id:'service'}]},
+    rights:[{id:'quota',rightType:'sessions_quota',balance:0}],modules:[{module:'reservations',accessLevel:'limited',capabilities:['reservations.read']}],
+  }],'2026-11-05');
+  assert.equal(effective.assignments[0].usable,true);
+  assert.equal(effective.assignments[0].operationalAccess,'provisional');
+  assert.equal(effective.modules.length,1);
+});
+
 test('2J-073 concurrent identical renewal retries create one assignment and charge', async () => {
   const service=await createService(`Renovación concurrente ${randomUUID()}`);const created=await createPlan([service.id],{basePriceCents:2500});const planId=created.response.json().id;assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
   const client=(await createClientRequest(clientsAdminApp,{firstName:'Retry',lastName:`Renovación ${randomUUID()}`})).json();
@@ -2198,4 +2210,71 @@ test('Admin can update basic client profile including nullable date of birth wit
   const detail=await clientsAdminApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(detail.json().client.birthDate,'1990-04-06');assert.ok(detail.json().history.some(event=>event.eventType==='client.profile_updated'));
   const trainerDetail=await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(trainerDetail.json().client.birthDate,undefined,'DOB is omitted without clients.manage');
   const cleared=await clientsAdminApp.inject({method:'PATCH',url:`/api/clients/${id}`,payload:{...payload,birthDate:null}});assert.equal(cleared.json().birthDate,null);
+});
+
+test('2J-098E creates a paid period once, prorates its bag, restores reservations to that period, and materializes only the next period', async () => {
+  const service=await createService(`Periodos ${randomUUID()}`);
+  const otherService=await createService(`Periodos compartidos ${randomUUID()}`);
+  const created=await createPlan([service.id,otherService.id],{basePriceCents:5000,rights:[
+    {rightType:'service_access',serviceId:service.id},
+    {rightType:'service_access',serviceId:otherService.id},
+    {rightType:'sessions_quota',serviceId:service.id,quotaScope:'per_service',quantity:8,weeklyFrequency:3},
+    {rightType:'sessions_quota',serviceId:otherService.id,quotaScope:'per_service',quantity:8,weeklyFrequency:2},
+  ]});
+  assert.equal(created.response.statusCode,201,created.response.body);
+  const planId=created.response.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'Periodo',lastName:`Cliente ${randomUUID()}`})).json();
+  const today=canaryBusinessDate(new Date());
+  const startsOn=`${today.slice(0,7)}-01`;
+  const periodEnd=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10);
+  const sale=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId,startsOn,endsOn:null,dueOn:today,amountCents:5000}});
+  assert.equal(sale.statusCode,201,sale.body);
+  const rights=await sql`SELECT id,service_id AS "serviceId",weekly_frequency AS "weeklyFrequency" FROM plan_rights WHERE plan_id=${planId} AND right_type='sessions_quota' ORDER BY service_id`;
+  const right=rights.find(item=>item.serviceId===service.id);const otherRight=rights.find(item=>item.serviceId===otherService.id);
+  assert.ok(right);assert.ok(otherRight);
+  const periodKey=randomUUID();
+  const periodPayload={rightId:right.id,startsOn,endsOn:periodEnd,recurrenceEnabled:true,reason:'Configuración mensual inicial'};
+  const period=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans/${sale.json().id}/entitlement-periods`,headers:{'idempotency-key':periodKey},payload:periodPayload});
+  assert.equal(period.statusCode,201,period.body);
+  const otherPeriod=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans/${sale.json().id}/entitlement-periods`,headers:{'idempotency-key':randomUUID()},payload:{...periodPayload,rightId:otherRight.id}});
+  assert.equal(otherPeriod.statusCode,201,otherPeriod.body,'one assignment charge may cover multiple right bags within the same period window');
+  const replay=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans/${sale.json().id}/entitlement-periods`,headers:{'idempotency-key':periodKey},payload:periodPayload});
+  assert.equal(replay.statusCode,200,replay.body);assert.equal(replay.json().id,period.json().id);
+  assert.equal((await clientsReceptionApp.inject({method:'PATCH',url:`/api/clients/${client.id}/plans/${sale.json().id}/recurrence`,headers:{'idempotency-key':randomUUID()},payload:{enabled:false,effectiveOn:today,reason:'QA'} })).statusCode,403);
+  assert.equal((await clientsTrainerApp.inject({method:'PATCH',url:`/api/clients/${client.id}/plans/${sale.json().id}/recurrence`,headers:{'idempotency-key':randomUUID()},payload:{enabled:false,effectiveOn:today,reason:'Pausa de recurrencia QA'} })).statusCode,201);
+  const recurrenceResumeOn=new Date(`${today}T00:00:00.000Z`);recurrenceResumeOn.setUTCDate(recurrenceResumeOn.getUTCDate()+1);
+  const recurrenceResumeDate=recurrenceResumeOn.toISOString().slice(0,10);
+  assert.equal((await clientsTrainerApp.inject({method:'PATCH',url:`/api/clients/${client.id}/plans/${sale.json().id}/recurrence`,headers:{'idempotency-key':randomUUID()},payload:{enabled:true,effectiveOn:recurrenceResumeDate,reason:'Reactivación futura QA'} })).statusCode,201);
+  const charge=await clientsAdminApp.inject({method:'GET',url:`/api/economics/charges?clientId=${client.id}`});
+  const payment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().items[0].id,splits:[{method:'card',amountCents:5000}]}});
+  assert.equal(payment.statusCode,201,payment.body);
+  const expected=proratedSessionsForPayment(today,periodEnd,3);
+  const [activation]=await sql`SELECT effective_activation_on::text AS "effectiveOn",sessions_granted AS granted FROM assignment_entitlement_period_events WHERE period_id=${period.json().id} AND event_type='payment_validated'`;
+  assert.equal(String(activation.effectiveOn),today);assert.equal(activation.granted,expected);
+  const [otherActivation]=await sql`SELECT sessions_granted AS granted FROM assignment_entitlement_period_events WHERE period_id=${otherPeriod.json().id} AND event_type='payment_validated'`;
+  assert.equal(otherActivation.granted,proratedSessionsForPayment(today,periodEnd,2));
+  const [chargeCountBefore]=await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${client.id}`;
+  const sessionDate=new Date(`${today}T12:00:00Z`);sessionDate.setUTCDate(sessionDate.getUTCDate()+1);
+  const session=await app.inject({method:'POST',url:'/api/calendar/sessions',payload:{serviceId:service.id,areaId:service.areaId,startsAt:sessionDate.toISOString(),durationMinutes:45,capacity:3}});
+  assert.equal(session.statusCode,201,session.body);
+  const booking=await app.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/reservations`,payload:{clientId:client.id}});
+  assert.equal(booking.statusCode,201,booking.body);
+  const [consumed]=await sql`SELECT entitlement_period_id AS "periodId",quantity FROM client_entitlement_ledger WHERE external_reference=${`calendar_reservation:${booking.json().id}`}`;
+  assert.equal(consumed.periodId,period.json().id);assert.equal(consumed.quantity,-1);
+  const cancelled=await app.inject({method:'PATCH',url:`/api/calendar/reservations/${booking.json().id}/cancel`,payload:{}});
+  assert.ok([200,201].includes(cancelled.statusCode),cancelled.body);
+  const [restored]=await sql`SELECT entitlement_period_id AS "periodId",quantity FROM client_entitlement_ledger WHERE external_reference=${`calendar_reservation_restore:${booking.json().id}:${right.id}`}`;
+  assert.equal(restored.periodId,period.json().id);assert.equal(restored.quantity,1);
+  const materializeAt=new Date(`${periodEnd}T12:00:00Z`);materializeAt.setUTCDate(materializeAt.getUTCDate()+1);
+  const first=await materializeRecurringEntitlementPeriods(sql,materializeAt);
+  const second=await materializeRecurringEntitlementPeriods(sql,materializeAt);
+  assert.equal(first.created,2,`first materialization failed: ${JSON.stringify({first,second,today,periodEnd,materializeAt:materializeAt.toISOString(),recurrenceResumeDate})}`);assert.equal(second.created,0);
+  const [periodCounts]=await sql`SELECT count(*)::int AS periods,(SELECT count(*)::int FROM economic_charges WHERE client_id=${client.id}) AS charges FROM assignment_entitlement_periods WHERE assignment_id=${sale.json().id}`;
+  assert.equal(periodCounts.periods,4);assert.equal(periodCounts.charges,chargeCountBefore.count,'recurrence creates periods only, never charges');
+  const [next]=await sql`SELECT period_start::text AS starts_on,period_end::text AS ends_on FROM assignment_entitlement_periods WHERE assignment_id=${sale.json().id} AND right_id=${right.id} AND id<>${period.json().id}`;
+  const expectedNext=new Date(`${periodEnd}T00:00:00Z`);expectedNext.setUTCDate(expectedNext.getUTCDate()+1);
+  assert.equal(next.starts_on,expectedNext.toISOString().slice(0,10));
+  const [legacy]=await sql`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE assignment_id=${sale.json().id} AND entitlement_period_id IS NULL`;
+  assert.equal(legacy.count,0,'new recurring monthly rights never fall through to the legacy assignment bag');
 });

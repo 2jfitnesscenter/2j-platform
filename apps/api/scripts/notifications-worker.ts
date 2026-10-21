@@ -1,5 +1,6 @@
 import { createDatabase } from '../src/db.js';
 import { dispatchNotificationBatch, enqueueDueBookingReminders } from '../src/notifications.js';
+import { materializeRecurringEntitlementPeriods } from '../src/assignment-periods.js';
 
 const { client } = createDatabase();
 let stopping = false;
@@ -7,6 +8,7 @@ for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal, () => {
 while (!stopping) {
   try {
     await enqueueDueBookingReminders(client);
+    await materializeRecurringEntitlementPeriods(client);
     await dispatchNotificationBatch(client, 50);
   } catch (error) {
     // Intentionally log only the failure class: never event payloads or recipient data.

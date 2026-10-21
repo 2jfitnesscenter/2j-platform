@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0.0",
-  "source": "DECISIONS_2J.md; calendar and 2J-073 entitlement role grants; 2J-087 Center News management restricted to Admin",
+  "source": "DECISIONS_2J.md; calendar and 2J-073 entitlement role grants; 2J-087 Center News management restricted to Admin; 2J-098E recurrence management granted to Trainer and Admin",
   "knownPermissions": [
     "clients.read",
     "clients.manage",
@@ -63,6 +63,7 @@
     "entitlements.cancel",
     "entitlements.pause",
     "entitlements.renew",
+    "entitlements.recurrence.manage",
     "catalog.pricing.manage",
     "store.catalog.read",
     "store.catalog.manage",
@@ -102,7 +103,8 @@
       "staff.schedule.read",
       "staff.absence.read",
       "timeclock.self",
-      "entitlements.read"
+      "entitlements.read",
+      "entitlements.recurrence.manage"
     ],
     "reception-management": [
       "clients.read",
