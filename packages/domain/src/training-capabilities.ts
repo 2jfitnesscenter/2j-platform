@@ -1,17 +1,18 @@
 export const TRAINING_CAPABILITIES_CONTRACT = '2J-CAPABILITIES-V1' as const;
-export const TRAINING_CAPABILITIES_TTL_MS = 60_000;
+export const MAX_CAPABILITY_TTL_SECONDS = 60;
+export const TRAINING_CAPABILITIES_TTL_MS = MAX_CAPABILITY_TTL_SECONDS * 1_000;
 
 export type CapabilityLevel = 'full' | 'autonomous' | 'blocked';
 export type CapabilityAccessState = 'active' | 'provisional' | 'blocked_unpaid' | 'ended';
-export type MembershipKind = 'force' | 'other';
+export type TrainingAccessLevel = 'full' | 'autonomous';
 export type TrainingLinkStatus = 'active' | 'not_linked' | 'revoked';
 export type CapabilityReasonCode =
-  | 'ACTIVE_FORCE' | 'ACTIVE_OTHER_MEMBERSHIP'
-  | 'PROVISIONAL_FORCE' | 'PROVISIONAL_OTHER_MEMBERSHIP'
+  | 'ACTIVE_FULL' | 'ACTIVE_AUTONOMOUS'
+  | 'PROVISIONAL_FULL' | 'PROVISIONAL_AUTONOMOUS'
   | 'UNPAID_BLOCK' | 'NO_ACTIVE_MEMBERSHIP' | 'PERIOD_ENDED' | 'TRAINING_LINK_REVOKED' | 'TRAINING_LINK_MISSING';
 
 export interface EffectiveMembershipForCapabilities {
-  readonly kind: MembershipKind;
+  readonly trainingAccessLevel: TrainingAccessLevel;
   /** Pass through Platform's effective-entitlement result; do not recalculate 098E here. */
   readonly accessState: CapabilityAccessState;
   readonly effectiveFrom: string;
@@ -44,6 +45,7 @@ export interface ResolveTrainingCapabilitiesInput {
   readonly link: { readonly status: TrainingLinkStatus; readonly trainingUserId?: string };
   readonly memberships: readonly EffectiveMembershipForCapabilities[];
   readonly generatedAt: string;
+  readonly nextKnownAccessTransition?: string | null;
 }
 
 const blockedCapabilities = {
@@ -54,13 +56,16 @@ const blockedCapabilities = {
 /** Maps Platform's already-resolved effective membership states to the downstream V1 contract. */
 export function resolveTrainingCapabilities(input: ResolveTrainingCapabilitiesInput): TrainingCapabilityContract {
   const generatedAt = canonicalInstant(input.generatedAt);
-  const expiresAt = new Date(Date.parse(generatedAt) + TRAINING_CAPABILITIES_TTL_MS).toISOString();
+  const ttlExpiry = Date.parse(generatedAt) + TRAINING_CAPABILITIES_TTL_MS;
+  const transition = input.nextKnownAccessTransition == null ? null : Date.parse(input.nextKnownAccessTransition);
+  if (transition !== null && !Number.isFinite(transition)) throw new RangeError('nextKnownAccessTransition must be an ISO timestamp');
+  const expiresAt = new Date(transition !== null && transition > Date.parse(generatedAt) ? Math.min(ttlExpiry, transition) : ttlExpiry).toISOString();
   const link = input.link;
   const effective = input.memberships.filter(item => item.accessState === 'active' || item.accessState === 'provisional');
-  const selected = effective.find(item => item.kind === 'force' && item.accessState === 'active')
-    ?? effective.find(item => item.kind === 'force')
-    ?? effective.find(item => item.kind === 'other' && item.accessState === 'active')
-    ?? effective.find(item => item.kind === 'other');
+  const selected = effective.find(item => item.trainingAccessLevel === 'full' && item.accessState === 'active')
+    ?? effective.find(item => item.trainingAccessLevel === 'full')
+    ?? effective.find(item => item.trainingAccessLevel === 'autonomous' && item.accessState === 'active')
+    ?? effective.find(item => item.trainingAccessLevel === 'autonomous');
   const accessState = selected?.accessState ?? (input.memberships.some(item => item.accessState === 'blocked_unpaid') ? 'blocked_unpaid' : 'ended');
   if (link.status !== 'active' || typeof link.trainingUserId !== 'string' || link.trainingUserId.length === 0) {
     const revoked = link.status === 'revoked';
@@ -83,7 +88,7 @@ export function resolveTrainingCapabilities(input: ResolveTrainingCapabilitiesIn
     };
   }
 
-  const full = selected.kind === 'force';
+  const full = selected.trainingAccessLevel === 'full';
   const provisional = selected.accessState === 'provisional';
   return {
     contract: TRAINING_CAPABILITIES_CONTRACT, version: 1, personId: canonicalUuid(input.personId),
@@ -94,8 +99,8 @@ export function resolveTrainingCapabilities(input: ResolveTrainingCapabilitiesIn
       aiCoach: full, professionalFollowUp: full,
     },
     reasonCode: provisional
-      ? (full ? 'PROVISIONAL_FORCE' : 'PROVISIONAL_OTHER_MEMBERSHIP')
-      : (full ? 'ACTIVE_FORCE' : 'ACTIVE_OTHER_MEMBERSHIP'),
+      ? (full ? 'PROVISIONAL_FULL' : 'PROVISIONAL_AUTONOMOUS')
+      : (full ? 'ACTIVE_FULL' : 'ACTIVE_AUTONOMOUS'),
     effectiveFrom: selected.effectiveFrom, expiresAt, generatedAt, source: { platform: true },
   };
 }

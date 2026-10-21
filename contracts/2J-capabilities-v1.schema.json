@@ -31,7 +31,7 @@
         "aiCoach": { "type": "boolean" }, "professionalFollowUp": { "type": "boolean" }
       }
     },
-    "reasonCode": { "enum": ["ACTIVE_FORCE", "ACTIVE_OTHER_MEMBERSHIP", "PROVISIONAL_FORCE", "PROVISIONAL_OTHER_MEMBERSHIP", "UNPAID_BLOCK", "NO_ACTIVE_MEMBERSHIP", "PERIOD_ENDED", "TRAINING_LINK_REVOKED", "TRAINING_LINK_MISSING"] },
+    "reasonCode": { "enum": ["ACTIVE_FULL", "ACTIVE_AUTONOMOUS", "PROVISIONAL_FULL", "PROVISIONAL_AUTONOMOUS", "UNPAID_BLOCK", "NO_ACTIVE_MEMBERSHIP", "PERIOD_ENDED", "TRAINING_LINK_REVOKED", "TRAINING_LINK_MISSING"] },
     "effectiveFrom": { "type": ["string", "null"], "format": "date" },
     "expiresAt": { "type": "string", "format": "date-time" },
     "generatedAt": { "type": "string", "format": "date-time" },

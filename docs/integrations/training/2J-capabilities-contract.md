@@ -1,50 +1,49 @@
-# 2J-CAPABILITIES-V1 — Platform training capabilities
+# 2J-CAPABILITIES-V1 — Platform Training capabilities
 
-Status: **contract proposal implemented as a versioned schema and pure mapping helper; no endpoint or consumer integration is enabled.** This work does not change authentication, 2J-098E, Home, Búnker, Training, or 2jfitnessapp.
+Status: **Platform-side V1 contract, explicit plan right, resolver, inbound service authentication, durable replay protection, and read-only endpoint are implemented locally on `codex/platform-capabilities-contract`. No consumer is wired and no credentials, deployment, or production activation are included.**
 
-## Current source of truth
+## Source of truth
 
-Platform's canonical person is `platform_persons.id` (`personId`). A Training relationship is held in `training_account_links`; only an active row links the person to the opaque `trainingUserId`. Revocation is a credential/link lifecycle event, separate from entitlement capability revocation.
+Platform's canonical person is `platform_persons.id` (`personId`). A Training relationship is held in `training_account_links`; only an active row supplies the opaque `trainingUserId`. Platform owns plan assignments, effective period access, payment-derived state, and the capability result. The resolver consumes those Platform facts and never matches by email or phone.
 
-2J-098E represents a purchased plan in `client_plan_assignments`, its recurring windows in `assignment_entitlement_periods`, recurrence and payment validation as append-only event histories, and usage in period-scoped `client_entitlement_ledger` rows. `derivePeriodAccess` in `packages/domain/src/period-entitlements.ts` is the period authority; `getEffectiveEntitlements` and `GET /api/clients/:clientId/entitlements/effective` in `apps/api/src/entitlements.ts` are the current Platform effective-access service/API. Booking eligibility consumes the same period rules in Platform. Consumers must not recalculate them.
+2J-098E represents purchased plans in `client_plan_assignments`, recurring windows in `assignment_entitlement_periods`, recurrence and payment validation in append-only event histories, and usage in period-scoped ledger rows. `derivePeriodAccess` and `nextPeriodAccessTransition` in `packages/domain/src/period-entitlements.ts` remain the period authority. This task adds only the next known transition output and does not change 098E business behavior.
 
-2J-089 currently exposes authenticated Member `GET /api/me/training-summary`. Platform resolves the active person and link server-side, then makes an outbound signed request to Training's fixed `POST /api/platform/v1/training-summary`. The response is a read-only summary and does not carry entitlement capabilities. No inbound Platform service-auth endpoint for Home or Búnker exists.
+## Versioned access right and response
 
-## V1 wire contract
+The machine-readable response schema is [`contracts/2J-capabilities-v1.schema.json`](../../../contracts/2J-capabilities-v1.schema.json), with representative cases in [`contracts/fixtures/2J-capabilities-v1.json`](../../../contracts/fixtures/2J-capabilities-v1.json). The explicit, versioned plan right is `right_type='training_access'` with `training_access_level='full'|'autonomous'`. A plan version may contain at most one such right. It is part of the immutable plan version and is never inferred from service, area, or plan names.
 
-The machine-readable schema is [`contracts/2J-capabilities-v1.schema.json`](../../../contracts/2J-capabilities-v1.schema.json), with representative resolver fixtures in [`contracts/fixtures/2J-capabilities-v1.json`](../../../contracts/fixtures/2J-capabilities-v1.json). `packages/domain/src/training-capabilities.ts` maps already-resolved Platform membership states to exactly three levels: `full`, `autonomous`, and `blocked`.
+- `full`: active/provisional explicit full access enables autonomous training, routine creation, guided training, Premium, AI coach, and professional follow-up.
+- `autonomous`: active/provisional explicit autonomous access enables autonomous training, routine creation, guided training, and Premium; AI and professional follow-up stay disabled.
+- `blocked`: no effective Training access right, blocked/ended access, or a missing/revoked Training link disables every operational capability.
 
-- `full`: effective Force membership. Enables autonomous training, routine creation, guided training, Premium, AI coach, and professional follow-up.
-- `autonomous`: another effective membership. Enables autonomous training, routine creation, guided training, and Premium; AI and professional follow-up remain false.
-- `blocked`: no effective membership, unpaid/ended period, missing Training link, or revoked Training link. All operational capability booleans are false; identity, local account, routines, progress, and history are preserved. Login/history should remain possible where the consumer supports it.
+`accessState` stays separate from `capabilityLevel`. A provisional grant retains its explicit level. Link revocation blocks operational capability without relabeling the entitlement as unpaid. `reasonCode` is diagnostic; consumers authorize from `capabilityLevel` and the booleans only. Unknown contract IDs/versions must be rejected.
 
-`accessState` remains separate from `capabilityLevel`: active and provisional memberships retain their mapped level. Link revocation blocks the operational capabilities while preserving the underlying entitlement `accessState`; it does not mislabel an active entitlement as unpaid. The helper only accepts Platform's `active`, `provisional`, `blocked_unpaid`, or `ended` result; it does not know the day-10/day-11 cutoff, payment state, proration, or balances. A late validated payment maps back to the corresponding level when Platform reports active access.
+The resolver receives Platform's effective `active`, `provisional`, `blocked_unpaid`, or `ended` state. It does not calculate payment grace, proration, balances, rollover, or entitlement validity.
 
-The V1 `reasonCode` is diagnostic, not authorization logic. Contract ID/version are independent of plan version. Compatible V1 changes may add optional fields only through a compatible schema update; changing meanings or required fields needs `2J-CAPABILITIES-V2`, and unknown contract IDs/versions must be rejected.
+## Endpoint and service authentication
 
-## Unresolved source classification
+Platform exposes the read-only endpoint:
 
-The current `services` catalog has a mutable display `name` and area, but no stable product/service code or capability class. Consequently, Platform cannot safely distinguish “Fuerza” from any other membership by reading the current catalog without guessing from editable text. The pure helper receives a `kind: force | other` only after a trusted Platform-side classifier has resolved it. Before an endpoint is implemented, Platform needs a stable catalog classification for Force (or an explicit centrally managed mapping). No classification field or data migration is added in this task.
+`GET /api/internal/platform/v1/persons/{personId}/training-capabilities`
 
-## Endpoint and authentication boundary
+It resolves the Platform person, active client facet, current immutable plan rights, effective access, and Training link on the server. It accepts no client ID or caller-supplied membership/capability state and returns `Cache-Control: no-store`. A Member cookie or session is not accepted as service authentication.
 
-The current `2J-SERVICE-AUTH-V1` is implemented as an outbound Platform signer: HMAC-SHA256, base64url signature, headers `x-2j-key-id`, `x-2j-timestamp`, `x-2j-request-id`, `x-2j-signature`, and canonical UTF-8 fields including exact method/path and lowercase SHA-256 body digest. The receiver protocol for proof exchange is in Training. The inspected Platform code has no inbound signature verifier, caller identity/allowlist, clock-skew policy, or atomic replay store for a capability request. The existing `requestId` used by link workflows is not, by itself, proof of replay protection for inbound service calls.
+Inbound authentication uses the existing `2J-SERVICE-AUTH-V1` format: HMAC-SHA256 over canonical UTF-8 fields, base64url signature, and `x-2j-key-id`, `x-2j-timestamp`, `x-2j-request-id`, and `x-2j-signature` headers. The exact method/path and lowercase SHA-256 digest of the empty GET body are signed. Signature comparison is constant-time. The accepted timestamp window is ±30 seconds.
 
-Proposed future route, subject to the inbound service-auth contract: `GET /api/internal/platform/v1/persons/{personId}/training-capabilities`. It must resolve person, active link, client facet, effective assignment/period/payment state, and Force classification entirely server-side; authorize a named service caller; be read-only; and return `Cache-Control: no-store`. It must not accept a clientId, capability level, payment state, or membership classification from the caller.
+Each authenticated request ID is consumed atomically in PostgreSQL and retained for 120 seconds, longer than the accepted clock-skew window. Expired rows are deleted during a subsequent authenticated request. Concurrent replays have one winner. The key ID maps to a named `home` or `bunker` caller. Server-only configuration is `PLATFORM_INTERNAL_SERVICE_KEYS`, a JSON object whose entries contain `caller` and a canonical base64url `secret` of at least 32 bytes. Removing a key ID revokes it; old and new key IDs may coexist during rotation. No real key or secret is stored in this repository.
 
-## Freshness and outage behavior
+## Freshness and consumer outage behavior
 
-There is no existing downstream capability-cache TTL policy. V1 proposes a **60-second maximum response age** as a technical starting point: it limits stale grants after unpaid blocking/revocation without requiring every consumer action to round-trip synchronously. This is a proposal, not an approved offline entitlement window. On Platform unavailability, a consumer may use only a previously verified response still inside that 60-second TTL; otherwise operational capabilities fail closed. A Platform outage must never promote access. Preserve local login/history independently where possible. Do not interpret `expiresAt` as permission to extend a response after it expires.
+The maximum capability TTL is **60 seconds**. Platform sets `expiresAt` to the earlier of `generatedAt + 60 seconds` and any next known assignment, entitlement-period, or access-state transition. Known boundaries use `Atlantic/Canary`; consumers never compute a period boundary themselves.
 
-For the eventual inbound verifier, the minimum proposal is exact method/path/body binding, authenticated key ID, constant-time HMAC comparison, strict UTC timestamp parsing with a bounded clock-skew window, and atomic request-ID replay rejection retained longer than that window. Key rotation/revocation and named caller identity must be server configuration; no credentials belong in this contract or repository. The current 2J-089 outgoing adapter already uses exact-origin allowlisting, HTTPS outside loopback tests, redirect denial, a bounded timeout, and strict response validation; it does not provide the missing inbound controls for Platform.
+A consumer may use a previously authenticated response only through `expiresAt`. After it expires, operational capabilities fail closed. An outage can never promote `autonomous` to `full` or `blocked` to an operational level. Preserving local login/history is future consumer work and is not implemented here.
 
-## Revocation semantics
+Home and Búnker must not calculate membership validity, payment grace, period boundaries, late-payment proration, balances, rollover, or capability elevation. Platform is the only authority for those decisions.
 
-Entitlement/capability revocation is derived from Platform assignment and effective period state, including payment reversal where the existing effective resolver reports blocked. Recurrence alone does not grant access. A revoked/non-active person link or Training link yields `blocked` and must not expose `trainingUserId`. Credential revocation (Training link/session) and membership capability revocation are distinct events; either may remove operational access, but consumers must preserve user history and must not infer the other event from it.
+## Follow-up before consumer wiring
 
-## Follow-up required before wiring consumers
+1. Independently review the Platform endpoint, schema, key configuration, and replay behavior.
+2. Provision service keys through the approved secret manager before any non-test consumer connection.
+3. Implement Home and Búnker adapters in separate approved tasks, validating the shared contract and fixtures first.
 
-1. Add stable Force classification to Platform catalog or approve a centrally maintained mapping.
-2. Define and implement the inbound service-to-service verifier/replay store and named Home/Búnker caller credentials.
-3. Add a read-only Platform endpoint that reuses the existing effective entitlement service and active link lifecycle.
-4. Validate this schema/fixtures cross-repository before changing Home or Búnker. No SSO or user-session handoff is part of that work.
+No SSO, user-session handoff, Training changes, or consumer calls are part of this implementation.

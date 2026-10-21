@@ -82,6 +82,38 @@ export function canaryBusinessDate(now: Date): string {
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
+/** Convert a Canary local midnight to its exact UTC instant, including DST changes. */
+export function canaryLocalMidnightUtc(localDate: string): Date {
+  parseDateOnly(localDate);
+  const target = Date.parse(`${localDate}T00:00:00.000Z`);
+  let candidate = target;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: BUSINESS_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(candidate);
+    const part = (type: string) => parts.find((entry) => entry.type === type)?.value;
+    const observed = `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}:${part('second')}.000Z`;
+    const adjustment = target - Date.parse(observed);
+    if (adjustment === 0) return new Date(candidate);
+    candidate += adjustment;
+  }
+  throw new RangeError('Could not resolve Canary local midnight');
+}
+
+/** Earliest next period boundary Platform already knows for one entitlement period. */
+export function nextPeriodAccessTransition(input: PeriodAccessInput): Date | null {
+  const today = canaryBusinessDate(input.now);
+  const candidates: Date[] = [];
+  if (input.startsOn > today) candidates.push(canaryLocalMidnightUtc(input.startsOn));
+  if (input.endsOn !== null && input.endsOn >= today) candidates.push(canaryLocalMidnightUtc(addDays(input.endsOn, 1)));
+  if (!input.paymentValidated && input.recurring && derivePeriodAccess(input) === 'provisional') {
+    const graceCutoff = `${input.startsOn.slice(0, 7)}-11`;
+    candidates.push(canaryLocalMidnightUtc(graceCutoff));
+  }
+  return candidates.filter((candidate) => candidate.getTime() > input.now.getTime()).sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+}
+
 /**
  * Derive operational access for one recurring monthly period. The 10th remains
  * available for the entire Canary business date; blocking begins on the 11th.

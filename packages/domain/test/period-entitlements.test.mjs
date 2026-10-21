@@ -3,9 +3,11 @@ import test from 'node:test';
 import {
   availablePeriodBalance,
   canaryBusinessDate,
+  canaryLocalMidnightUtc,
   derivePeriodAccess,
   mayConsumeFromPeriod,
   nextMonthlyPeriod,
+  nextPeriodAccessTransition,
   proratedSessionsForPayment,
   roundHalfUp,
   sessionsForPeriod,
@@ -57,6 +59,13 @@ test('provisional access ends at 23:59:59 Canary on day 10 and blocks at day 11 
   assert.equal(derivePeriodAccess({ ...period, recurring: false, now: new Date('2026-11-05T12:00:00+00:00') }), 'blocked_unpaid', 'non-recurring periods have no grace access');
   assert.equal(derivePeriodAccess({ ...period, now: new Date('2026-10-31T23:00:00+00:00') }), 'blocked_unpaid', 'a future unpaid period is not active early');
   assert.equal(derivePeriodAccess({ ...period, paymentValidated:true, now: new Date('2026-10-31T23:00:00+00:00') }), 'blocked_unpaid', 'even a future prepaid period begins only on its start date');
+});
+
+test('known provisional and period-end transitions resolve to Canary midnight, including DST', () => {
+  const provisional = nextPeriodAccessTransition({ startsOn: '2026-10-01', endsOn: '2026-10-31', now: new Date('2026-10-10T22:59:45.000Z'), recurring: true, paymentValidated: false });
+  assert.equal(provisional?.toISOString(), '2026-10-10T23:00:00.000Z');
+  assert.equal(canaryLocalMidnightUtc('2027-03-29').toISOString(), '2027-03-28T23:00:00.000Z');
+  assert.equal(canaryLocalMidnightUtc('2027-10-25').toISOString(), '2027-10-24T23:00:00.000Z');
 });
 
 test('monthly recurrence creates only the next period with a deterministic idempotency key', () => {

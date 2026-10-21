@@ -15,6 +15,7 @@ import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, cr
 import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
 import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
 import { materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
+import { signedRequestSignature } from '../src/internal-service-auth.ts';
 import { canaryBusinessDate, proratedSessionsForPayment } from '@2j/domain';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
@@ -34,8 +35,74 @@ const trainingLinkingAccountantApp = buildServer(process.env.DATABASE_URL, { aut
 let resolvedTrainingAuth = null;
 const trainingVerifiedLinkingApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }), trainingVerifiedLinkingEnabled: true, resolvePersonAuth: async () => resolvedTrainingAuth });
 const trainingServiceCallsOnlyApp = buildServer(process.env.DATABASE_URL, { trainingServiceCallsEnabled: true, resolvePersonAuth: async () => resolvedTrainingAuth });
+const capabilityKeyId = 'qa-home-v1';
+const capabilitySecret = Buffer.alloc(32, 37).toString('base64url');
+const trainingCapabilitiesApp = buildServer(process.env.DATABASE_URL, { trainingCapabilitiesKeys: { [capabilityKeyId]: { caller:'home', secret:capabilitySecret } } });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close()]); await sql.end(); });
+after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
+
+function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
+  const timestamp = overrides.timestamp ?? new Date().toISOString();
+  const keyId = overrides.keyId ?? capabilityKeyId;
+  return {
+    'x-2j-key-id': keyId,
+    'x-2j-timestamp': timestamp,
+    'x-2j-request-id': requestId,
+    'x-2j-signature': overrides.signature ?? signedRequestSignature(capabilitySecret, { keyId, timestamp, requestId, method:'GET', path:`/api/internal/platform/v1/persons/${personId}/training-capabilities` }),
+  };
+}
+
+test('versioned Training access rights require an explicit level and the internal endpoint verifies, resolves, and consumes service requests', async () => {
+  const service = await createService(`Training access ${randomUUID()}`);
+  const createSubject = async (level) => {
+    const plan = await createPlan([service.id], { basePriceCents:4500, rights:[
+      {rightType:'service_access',serviceId:service.id},
+      {rightType:'training_access',trainingAccessLevel:level},
+    ] });
+    assert.equal(plan.response.statusCode,201,plan.response.body);
+    assert.equal(plan.response.json().rights.find(item=>item.rightType==='training_access').trainingAccessLevel,level);
+    assert.equal((await app.inject({method:'POST',url:`/api/plans/${plan.response.json().id}/activate`})).statusCode,200);
+    const client = (await createClientRequest(clientsAdminApp,{firstName:'Capability',lastName:`${level} ${randomUUID()}`})).json();
+    const sale = await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:plan.response.json().id,startsOn:'2026-10-01',endsOn:'2026-10-31',dueOn:'2026-10-01',amountCents:4500}});
+    assert.equal(sale.statusCode,201,sale.body);
+    const person = await clientsAdminApp.inject({method:'POST',url:'/api/platform/v1/persons',payload:{clientId:client.id}});
+    assert.equal(person.statusCode,201,person.body);
+    const personId=person.json().personId;
+    await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${`training-${level}-${randomUUID()}`},'explicit_admin','capability-test','capability-test')`;
+    return {personId,planId:plan.response.json().id};
+  };
+  assert.equal(planInput.safeParse(planPayload([service.id],{rights:[{rightType:'service_access',serviceId:service.id},{rightType:'training_access',trainingAccessLevel:'full'}]})).success,true);
+  assert.equal(planInput.safeParse(planPayload([service.id],{rights:[{rightType:'service_access',serviceId:service.id},{rightType:'training_access'}]})).success,false);
+  const {personId,planId}=await createSubject('full');
+  const [storedRight]=await sql`SELECT id FROM plan_rights WHERE plan_id=${planId} AND right_type='training_access'`;
+  await assert.rejects(sql`UPDATE plan_rights SET training_access_level='autonomous' WHERE id=${storedRight.id}`,{code:'55000'},'activated historical plan-version access remains immutable');
+  const path=`/api/internal/platform/v1/persons/${personId}/training-capabilities`;
+  assert.equal((await anonymousApp.inject({method:'GET',url:path})).statusCode,503,'no service keys means the internal endpoint stays disabled');
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path})).statusCode,401,'Member/session auth is not accepted in place of service auth');
+  const invalidId=randomUUID();
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId,invalidId,{signature:'A'.repeat(43)})})).statusCode,401);
+  const expiredId=randomUUID();
+  const expiredHeaders=capabilityHeaders(personId,expiredId,{timestamp:new Date(Date.now()-31_000).toISOString()});
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:expiredHeaders})).statusCode,401);
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId,randomUUID(),{keyId:'unknown-key'})})).statusCode,401);
+  const validId=randomUUID(), validHeaders=capabilityHeaders(personId,validId);
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:`${path}?extra=1`,headers:capabilityHeaders(personId)})).statusCode,401,'the signed path must match exactly and cannot carry a query');
+  const valid=await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:validHeaders});
+  assert.equal(valid.statusCode,200,valid.body);
+  assert.equal(valid.headers['cache-control'],'no-store');
+  assert.equal(valid.json().capabilityLevel,'full');
+  assert.deepEqual(valid.json().capabilities,{autonomousTraining:true,routineCreation:true,guidedTraining:true,premiumPrograms:true,aiCoach:true,professionalFollowUp:true});
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:validHeaders})).statusCode,401,'a valid request ID is accepted only once');
+  const raceId=randomUUID(),raceHeaders=capabilityHeaders(personId,raceId);
+  const race=await Promise.all([trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders}),trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders})]);
+  assert.deepEqual(race.map(item=>item.statusCode).sort(),[200,401],'concurrent replay attempts have exactly one winner');
+  const {personId:autonomousId}=await createSubject('autonomous');
+  const autonomous=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v1/persons/${autonomousId}/training-capabilities`,headers:capabilityHeaders(autonomousId)});
+  assert.equal(autonomous.statusCode,200,autonomous.body);
+  assert.equal(autonomous.json().capabilityLevel,'autonomous');
+  assert.equal(autonomous.json().capabilities.aiCoach,false);
+  assert.equal(autonomous.json().capabilities.professionalFollowUp,false);
+});
 
 function createClientRequest(server, payload, key = randomUUID()) {
   return server.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': key }, payload });
@@ -142,6 +209,42 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   await sql`UPDATE schema_migrations SET checksum=${originalChecksum} WHERE name=${migration}`;
 });
 
+test('0034 upgrades a checksummed 0033 database once and installs the replay store', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL);
+  const databaseName=`capability_upgrade_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
+  const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
+  let upgradeDb;
+  try{
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+    sourceUrl.pathname=`/${databaseName}`;
+    upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
+    const directory=new URL('../migrations/',import.meta.url);
+    const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
+    const target='0034_training_access_capabilities.sql';
+    assert.equal(names.at(-1),target);
+    const prior=names.filter(name=>name<target);
+    await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
+    for(const name of prior){
+      const contents=await readFile(new URL(name,directory),'utf8');
+      const checksum=createHash('sha256').update(contents).digest('hex');
+      await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
+    }
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,33);
+    const upgraded=await migrateDatabase(upgradeDb);
+    assert.equal(upgraded.length,34);
+    assert.equal(upgraded.at(-1).name,target);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${target}`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await migrateDatabase(upgradeDb)).length,34,'re-running migration verification applies no duplicate migration');
+  }finally{
+    if(upgradeDb)await upgradeDb.end();
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+    await admin.end();
+  }
+});
+
 test('0024 upgrades representative legacy active and revoked explicit-admin links without rewriting history', async () => {
   const databaseUrl = new URL(process.env.DATABASE_URL);
   const temporaryDatabase = `legacy_${randomUUID().replaceAll('-', '')}`;
@@ -181,7 +284,7 @@ test('0024 upgrades representative legacy active and revoked explicit-admin link
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.assignmentRecurrenceEvents, schema.assignmentEntitlementPeriods, schema.assignmentEntitlementPeriodEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.assignmentRecurrenceEvents, schema.assignmentEntitlementPeriods, schema.assignmentEntitlementPeriodEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformServiceRequestReplays, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
