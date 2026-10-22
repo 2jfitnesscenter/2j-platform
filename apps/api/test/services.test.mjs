@@ -15,6 +15,7 @@ import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, cr
 import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
 import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
 import { materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
+import { signedRequestSignature } from '../src/internal-service-auth.ts';
 import { canaryBusinessDate, proratedSessionsForPayment } from '@2j/domain';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
@@ -34,8 +35,101 @@ const trainingLinkingAccountantApp = buildServer(process.env.DATABASE_URL, { aut
 let resolvedTrainingAuth = null;
 const trainingVerifiedLinkingApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }), trainingVerifiedLinkingEnabled: true, resolvePersonAuth: async () => resolvedTrainingAuth });
 const trainingServiceCallsOnlyApp = buildServer(process.env.DATABASE_URL, { trainingServiceCallsEnabled: true, resolvePersonAuth: async () => resolvedTrainingAuth });
+const capabilityKeyId = 'qa-home-v1';
+const capabilitySecret = Buffer.alloc(32, 37).toString('base64url');
+const trainingCapabilitiesApp = buildServer(process.env.DATABASE_URL, { trainingCapabilitiesKeys: { [capabilityKeyId]: { caller:'home', secret:capabilitySecret } } });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close()]); await sql.end(); });
+after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
+
+function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
+  const timestamp = overrides.timestamp ?? new Date().toISOString();
+  const keyId = overrides.keyId ?? capabilityKeyId;
+  return {
+    'x-2j-key-id': keyId,
+    'x-2j-timestamp': timestamp,
+    'x-2j-request-id': requestId,
+    'x-2j-signature': overrides.signature ?? signedRequestSignature(capabilitySecret, { keyId, timestamp, requestId, method:'GET', path:`/api/internal/platform/v2/persons/${personId}/training-capabilities` }),
+  };
+}
+
+test('versioned Training access rights require effective payment without a tracked quota and the internal endpoint consumes service requests', async () => {
+  const service = await createService(`Training access ${randomUUID()}`);
+  const createSubject = async (level, additionalRights = []) => {
+    const plan = await createPlan([service.id], { basePriceCents:4500, rights:[
+      {rightType:'service_access',serviceId:service.id},
+      {rightType:'training_access',trainingAccessLevel:level},
+      ...additionalRights,
+    ] });
+    assert.equal(plan.response.statusCode,201,plan.response.body);
+    assert.equal(plan.response.json().rights.find(item=>item.rightType==='training_access').trainingAccessLevel,level);
+    assert.equal((await app.inject({method:'POST',url:`/api/plans/${plan.response.json().id}/activate`})).statusCode,200);
+    const client = (await createClientRequest(clientsAdminApp,{firstName:'Capability',lastName:`${level} ${randomUUID()}`})).json();
+    const sale = await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:plan.response.json().id,startsOn:'2026-10-01',endsOn:'2026-10-31',dueOn:'2026-10-01',amountCents:4500}});
+    assert.equal(sale.statusCode,201,sale.body);
+    const person = await clientsAdminApp.inject({method:'POST',url:'/api/platform/v1/persons',payload:{clientId:client.id}});
+    assert.equal(person.statusCode,201,person.body);
+    const personId=person.json().personId;
+    await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${`training-${level}-${randomUUID()}`},'explicit_admin','capability-test','capability-test')`;
+    return {personId,planId:plan.response.json().id,chargeId:sale.json().chargeId};
+  };
+  assert.equal(planInput.safeParse(planPayload([service.id],{rights:[{rightType:'service_access',serviceId:service.id},{rightType:'training_access',trainingAccessLevel:'full'}]})).success,true);
+  assert.equal(planInput.safeParse(planPayload([service.id],{rights:[{rightType:'service_access',serviceId:service.id},{rightType:'training_access'}]})).success,false);
+  const {personId,planId,chargeId}=await createSubject('full');
+  const [storedRight]=await sql`SELECT id FROM plan_rights WHERE plan_id=${planId} AND right_type='training_access'`;
+  await assert.rejects(sql`UPDATE plan_rights SET training_access_level='autonomous' WHERE id=${storedRight.id}`,{code:'55000'},'activated historical plan-version access remains immutable');
+  const path=`/api/internal/platform/v2/persons/${personId}/training-capabilities`;
+  const unpaidFull=await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId)});
+  assert.equal(unpaidFull.statusCode,200,unpaidFull.body);
+  assert.equal(unpaidFull.json().capabilityLevel,'baseline','an unpaid commercial assignment cannot grant elevation but does not erase free baseline');
+  assert.equal(unpaidFull.json().accessState,'baseline');
+  assert.equal(unpaidFull.json().capabilities.aiCoach,false);
+  assert.equal((await anonymousApp.inject({method:'GET',url:path})).statusCode,503,'no service keys means the internal endpoint stays disabled');
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path})).statusCode,401,'Member/session auth is not accepted in place of service auth');
+  const invalidId=randomUUID();
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId,invalidId,{signature:'A'.repeat(43)})})).statusCode,401);
+  const expiredId=randomUUID();
+  const expiredHeaders=capabilityHeaders(personId,expiredId,{timestamp:new Date(Date.now()-31_000).toISOString()});
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:expiredHeaders})).statusCode,401);
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId,randomUUID(),{keyId:'unknown-key'})})).statusCode,401);
+  const validId=randomUUID(), validHeaders=capabilityHeaders(personId,validId);
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:`${path}?extra=1`,headers:capabilityHeaders(personId)})).statusCode,401,'the signed path must match exactly and cannot carry a query');
+  const fullPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(fullPayment.statusCode,201,fullPayment.body);
+  const valid=await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:validHeaders});
+  assert.equal(valid.statusCode,200,valid.body);
+  assert.equal(valid.headers['cache-control'],'no-store');
+  assert.equal(valid.json().capabilityLevel,'full');
+  assert.deepEqual(valid.json().capabilities,{autonomousTraining:true,routineCreation:true,personalRoutineCreation:true,personalRoutineManagement:true,workoutRecording:true,workoutHistory:true,guidedTraining:true,premiumPrograms:true,aiCoach:true,professionalFollowUp:true});
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:validHeaders})).statusCode,401,'a valid request ID is accepted only once');
+  const raceId=randomUUID(),raceHeaders=capabilityHeaders(personId,raceId);
+  const race=await Promise.all([trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders}),trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders})]);
+  assert.deepEqual(race.map(item=>item.statusCode).sort(),[200,401],'concurrent replay attempts have exactly one winner');
+  const {personId:autonomousId,chargeId:autonomousChargeId}=await createSubject('autonomous');
+  const autonomousPath=`/api/internal/platform/v2/persons/${autonomousId}/training-capabilities`;
+  const unpaidAutonomous=await trainingCapabilitiesApp.inject({method:'GET',url:autonomousPath,headers:capabilityHeaders(autonomousId)});
+  assert.equal(unpaidAutonomous.statusCode,200,unpaidAutonomous.body);
+  assert.equal(unpaidAutonomous.json().capabilityLevel,'baseline','an unpaid commercial assignment cannot grant commercial extras');
+  assert.equal(unpaidAutonomous.json().accessState,'baseline');
+  assert.equal(unpaidAutonomous.json().capabilities.guidedTraining,false);
+  const autonomousPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:autonomousChargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(autonomousPayment.statusCode,201,autonomousPayment.body);
+  const autonomous=await trainingCapabilitiesApp.inject({method:'GET',url:autonomousPath,headers:capabilityHeaders(autonomousId)});
+  assert.equal(autonomous.statusCode,200,autonomous.body);
+  assert.equal(autonomous.json().capabilityLevel,'autonomous');
+  assert.equal(autonomous.json().capabilities.aiCoach,false);
+  assert.equal(autonomous.json().capabilities.professionalFollowUp,false);
+
+  const {personId:periodQuotaId,chargeId:periodQuotaChargeId}=await createSubject('full',[{rightType:'period_quota',quotaScope:'shared',quantity:8,period:'month',periodMode:'calendar',timezone:'Atlantic/Canary'}]);
+  const periodQuotaPath=`/api/internal/platform/v2/persons/${periodQuotaId}/training-capabilities`;
+  const unpaidPeriodQuota=await trainingCapabilitiesApp.inject({method:'GET',url:periodQuotaPath,headers:capabilityHeaders(periodQuotaId)});
+  assert.equal(unpaidPeriodQuota.statusCode,200,unpaidPeriodQuota.body);
+  assert.equal(unpaidPeriodQuota.json().capabilityLevel,'baseline','period_quota without payment cannot grant commercial elevation');
+  const periodQuotaPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:periodQuotaChargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(periodQuotaPayment.statusCode,201,periodQuotaPayment.body);
+  const paidPeriodQuota=await trainingCapabilitiesApp.inject({method:'GET',url:periodQuotaPath,headers:capabilityHeaders(periodQuotaId)});
+  assert.equal(paidPeriodQuota.statusCode,200,paidPeriodQuota.body);
+  assert.equal(paidPeriodQuota.json().capabilityLevel,'full','settled period_quota assignment with explicit full right is operational');
+});
 
 function createClientRequest(server, payload, key = randomUUID()) {
   return server.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': key }, payload });
@@ -59,6 +153,45 @@ async function createPlan(serviceIds, overrides = {}, idempotencyKey = randomUUI
   const response = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': idempotencyKey }, payload: body });
   return { body, response };
 }
+
+test('linked person without a client facet receives only free baseline; invitation proof remains outside this API', async () => {
+  const personId=randomUUID(),trainingUserId=`external-${randomUUID()}`;
+  await sql`INSERT INTO platform_persons(id,created_by) VALUES (${personId},'capability-test')`;
+  await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${trainingUserId},'explicit_admin','capability-test','capability-test')`;
+  const response=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(response.statusCode,200,response.body);
+  assert.equal(response.json().capabilityLevel,'baseline');
+  assert.deepEqual(response.json().capabilities,{autonomousTraining:true,routineCreation:false,personalRoutineCreation:true,personalRoutineManagement:true,workoutRecording:true,workoutHistory:true,guidedTraining:false,premiumPrograms:false,aiCoach:false,professionalFollowUp:false});
+});
+
+test('Training suspension is audited, idempotent, independent from commercial rights, and reversible', async () => {
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'Suspension',lastName:`Fixture ${randomUUID()}`})).json();
+  const person=(await clientsAdminApp.inject({method:'POST',url:'/api/platform/v1/persons',payload:{clientId:client.id}})).json();
+  const personId=person.personId,trainingUserId=`suspension-${randomUUID()}`;
+  await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${trainingUserId},'explicit_admin','capability-test','capability-test')`;
+  const path=`/api/platform/v1/persons/${personId}/training-suspension`;
+  const denied=await clientsTrainerApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':randomUUID()},payload:{reason:'Incumplimiento de normas'}});
+  assert.equal(denied.statusCode,403);
+  const suspendKey=randomUUID(),body={reason:'Incumplimiento de normas internas'};
+  const suspended=await clientsAdminApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':suspendKey},payload:body});
+  assert.equal(suspended.statusCode,201,suspended.body); assert.equal(suspended.json().status,'suspended');
+  const replay=await clientsAdminApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':suspendKey},payload:body});
+  assert.equal(replay.statusCode,200); assert.equal(replay.json().replayed,true);
+  const state=await clientsAdminApp.inject({method:'GET',url:path}); assert.equal(state.json().status,'suspended');
+  const caps=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(caps.json().capabilityLevel,'blocked'); assert.equal(caps.json().reasonCode,'ADMIN_SUSPENDED');
+  assert.equal(caps.json().trainingSubject.trainingUserId,trainingUserId);
+  const lift=await clientsAdminApp.inject({method:'POST',url:`${path}/lift`,headers:{'idempotency-key':randomUUID()},payload:{reason:'Revisión completada y acceso restituido'}});
+  assert.equal(lift.statusCode,201,lift.body);
+  const restored=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(restored.json().capabilityLevel,'baseline'); assert.equal(restored.json().suspensionStatus,'lifted');
+  const [audit]=await sql`SELECT count(*)::int AS count FROM platform_identity_audit_events WHERE person_id=${personId} AND action IN ('training.suspended','training.suspension_lifted')`;
+  const [events]=await sql`SELECT count(*)::int AS count FROM platform_training_access_events WHERE person_id=${personId}`;
+  assert.equal(audit.count,2); assert.equal(events.count,2);
+  const [personRow]=await sql`SELECT status FROM platform_persons WHERE id=${personId}`;
+  const [link]=await sql`SELECT status,training_user_id AS "trainingUserId" FROM training_account_links WHERE person_id=${personId}`;
+  assert.equal(personRow.status,'active'); assert.equal(link.status,'active'); assert.equal(link.trainingUserId,trainingUserId);
+});
 
 async function createTrainingReceiptFixture(ttlMs = TRAINING_LINK_TTL_MS) {
   const client = (await createClientRequest(clientsAdminApp, { firstName: 'Receipt', lastName: `Fixture ${randomUUID()}` })).json();
@@ -142,6 +275,45 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   await sql`UPDATE schema_migrations SET checksum=${originalChecksum} WHERE name=${migration}`;
 });
 
+test('0034-0035 upgrade a checksummed 0033 database once and install replay plus suspension stores', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL);
+  const databaseName=`capability_upgrade_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
+  const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
+  let upgradeDb;
+  try{
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+    sourceUrl.pathname=`/${databaseName}`;
+    upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
+    const directory=new URL('../migrations/',import.meta.url);
+    const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
+    const target='0034_training_access_capabilities.sql';
+    const final='0035_training_access_suspensions.sql';
+    assert.equal(names.at(-1),final);
+    const prior=names.filter(name=>name<target);
+    await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
+    for(const name of prior){
+      const contents=await readFile(new URL(name,directory),'utf8');
+      const checksum=createHash('sha256').update(contents).digest('hex');
+      await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
+    }
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,33);
+    const upgraded=await migrateDatabase(upgradeDb);
+    assert.equal(upgraded.length,35);
+    assert.deepEqual(upgraded.slice(-2).map(row=>row.name),[target,final]);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${target}`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${final}`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await upgradeDb`SELECT to_regclass('public.platform_training_access_events') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await migrateDatabase(upgradeDb)).length,35,'re-running migration verification applies no duplicate migration');
+  }finally{
+    if(upgradeDb)await upgradeDb.end();
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+    await admin.end();
+  }
+});
+
 test('0024 upgrades representative legacy active and revoked explicit-admin links without rewriting history', async () => {
   const databaseUrl = new URL(process.env.DATABASE_URL);
   const temporaryDatabase = `legacy_${randomUUID().replaceAll('-', '')}`;
@@ -181,7 +353,7 @@ test('0024 upgrades representative legacy active and revoked explicit-admin link
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.assignmentRecurrenceEvents, schema.assignmentEntitlementPeriods, schema.assignmentEntitlementPeriodEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.assignmentRecurrenceEvents, schema.assignmentEntitlementPeriods, schema.assignmentEntitlementPeriodEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformServiceRequestReplays, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));

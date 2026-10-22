@@ -8,6 +8,9 @@ import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
 import { registerClientPlanRoutes } from './client-plans.js';
 import { registerEntitlementRoutes } from './entitlements.js';
+import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-service-auth.js';
+import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
+import { registerTrainingSuspensionRoutes } from './training-suspensions.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
@@ -32,7 +35,8 @@ const timezone = 'Atlantic/Canary';
 const uuid = z.string().uuid();
 const serviceStatus = z.enum(['active', 'draft']);
 const rightInput = z.object({
-  rightType: z.enum(['service_access', 'sessions_quota', 'period_quota']),
+  rightType: z.enum(['service_access', 'sessions_quota', 'period_quota','training_access']),
+  trainingAccessLevel: z.enum(['full','autonomous']).nullable().optional(),
   serviceId: uuid.transform((value) => value.toLowerCase()).nullable().optional(),
   quotaScope: z.enum(['shared', 'per_service']).nullable().optional(),
   quantity: z.number().int().min(1).max(100_000).nullable().optional(),
@@ -43,10 +47,16 @@ const rightInput = z.object({
   validDays: z.number().int().min(1).max(3660).nullable().optional(),
   validDaysStartRule: z.enum(['purchase', 'first_use']).nullable().optional(),
 }).strict().superRefine((right, context) => {
+  if (right.rightType === 'training_access') {
+    if (!right.trainingAccessLevel) context.addIssue({ code:'custom',path:['trainingAccessLevel'],message:'El acceso a Training debe ser full o autonomous.' });
+    if (right.serviceId != null || right.quantity != null || right.quotaScope != null || right.weeklyFrequency != null || right.period != null || right.periodMode != null || right.timezone != null || right.validDays != null || right.validDaysStartRule != null) context.addIssue({code:'custom',message:'El acceso a Training solo admite su nivel explícito.'});
+  } else if (right.trainingAccessLevel != null) {
+    context.addIssue({code:'custom',path:['trainingAccessLevel'],message:'El nivel Training solo aplica al derecho training_access.'});
+  }
   if (right.rightType === 'service_access') {
     if (!right.serviceId) context.addIssue({ code: 'custom', path: ['serviceId'], message: 'El acceso directo debe indicar un servicio de destino.' });
     if (right.quantity != null || right.quotaScope != null || right.weeklyFrequency != null || right.period != null || right.periodMode != null || right.timezone != null) context.addIssue({ code: 'custom', message: 'El acceso directo no admite cuota ni periodo.' });
-  } else if (!Number.isInteger(right.quantity) || !right.quotaScope) {
+  } else if (right.rightType !== 'training_access' && (!Number.isInteger(right.quantity) || !right.quotaScope)) {
     context.addIssue({ code: 'custom', message: 'Las cuotas necesitan cantidad y alcance.' });
   }
   if (right.quotaScope === 'per_service' && !right.serviceId) context.addIssue({ code: 'custom', message: 'La cuota por servicio debe indicar el servicio de destino.' });
@@ -116,6 +126,7 @@ export type ServerOptions = {
   trainingCanonicalLinkingEnabled?: boolean;
   trainingSummaryEnabled?: boolean;
   trainingSummaryAdapter?: TrainingAdapter;
+  trainingCapabilitiesKeys?: InternalServiceKeys;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
   logger?: FastifyServerOptions['logger'];
@@ -143,6 +154,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     return reply.code(statusCode).send({ error: statusCode < 500 ? 'request_rejected' : 'internal_error' });
   });
   const { client } = createDatabase(databaseUrl);
+  const trainingCapabilitiesKeys = options.trainingCapabilitiesKeys ?? parseInternalServiceKeys(process.env.PLATFORM_INTERNAL_SERVICE_KEYS);
   const authorizationResolver = options.authorizationResolver ?? (async () => null);
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
@@ -196,6 +208,8 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
+  registerTrainingCapabilitiesRoute(app, client, trainingCapabilitiesKeys);
+  registerTrainingSuspensionRoutes(app, client, authorizationResolver);
   registerAssignmentPeriodRoutes(app, client, authorizationResolver);
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
   const allowMemberBooking = async (personId: string | undefined, request: import('fastify').FastifyRequest) => {
@@ -357,7 +371,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     const serviceIds = [...parsed.data.serviceIds].sort(compareCodeUnits);
     const canonicalRights = parsed.data.rights.map((right) => ({
-      rightType: right.rightType, serviceId: right.serviceId ?? null, quotaScope: right.quotaScope ?? null,
+      rightType: right.rightType, trainingAccessLevel:right.trainingAccessLevel??null, serviceId: right.serviceId ?? null, quotaScope: right.quotaScope ?? null,
       quantity: right.quantity ?? null, period: right.period ?? null, periodMode: right.periodMode ?? null,
       weeklyFrequency: right.weeklyFrequency ?? null,
       timezone: right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null,
@@ -384,7 +398,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
         await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents) VALUES (${plan.id},1,${body.kind},${body.renewalCadence ?? null},${body.periodDays ?? null},${timezone},${body.basePriceCents ?? null})`;
         await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) SELECT ${plan.id},1,id FROM services WHERE id IN ${tx(body.serviceIds)}`;
         for (const right of body.rights) {
-          await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quota_scope,quantity,weekly_frequency,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},1,${right.rightType},${right.serviceId ?? null},${right.quotaScope ?? null},${right.quantity ?? null},${right.weeklyFrequency ?? null},${right.period ?? null},${right.periodMode ?? null},${right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null},${right.validDays ?? null},${right.validDaysStartRule ?? null})`;
+          await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,training_access_level,service_id,quota_scope,quantity,weekly_frequency,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},1,${right.rightType},${right.trainingAccessLevel??null},${right.serviceId ?? null},${right.quotaScope ?? null},${right.quantity ?? null},${right.weeklyFrequency ?? null},${right.period ?? null},${right.periodMode ?? null},${right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null},${right.validDays ?? null},${right.validDaysStartRule ?? null})`;
         }
         for (const moduleAccess of body.modules) {
           await tx`INSERT INTO plan_module_accesses(plan_id,plan_version,module,access_level) VALUES (${plan.id},1,${moduleAccess.module},${moduleAccess.accessLevel})`;
@@ -422,7 +436,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const parsed=planInput.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:'validation_error',details:parsed.error.flatten()});
     const body=parsed.data;const serviceIds=[...body.serviceIds].sort(compareCodeUnits);
-    const canonical={...body,serviceIds,modules:[...body.modules].map(item=>({...item,capabilities:[...item.capabilities].sort(compareCodeUnits)})).sort((a,b)=>compareCodeUnits(a.module,b.module)),rights:[...body.rights].map(right=>({...right,serviceId:right.serviceId??null})).sort((a,b)=>compareCodeUnits(JSON.stringify(a),JSON.stringify(b)))};
+    const canonical={...body,serviceIds,modules:[...body.modules].map(item=>({...item,capabilities:[...item.capabilities].sort(compareCodeUnits)})).sort((a,b)=>compareCodeUnits(a.module,b.module)),rights:[...body.rights].map(right=>({...right,trainingAccessLevel:right.trainingAccessLevel??null,serviceId:right.serviceId??null})).sort((a,b)=>compareCodeUnits(JSON.stringify(a),JSON.stringify(b)))};
     const requestHash=createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
     try{
       const result=await client.begin(async tx=>{
@@ -437,7 +451,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
         const version=Number(plan.currentVersion)+1;
         await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents) VALUES (${plan.id},${version},${body.kind},${body.renewalCadence??null},${body.periodDays??null},${timezone},${body.basePriceCents??null})`;
         await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) SELECT ${plan.id},${version},id FROM services WHERE id IN ${tx(serviceIds)}`;
-        for(const right of body.rights)await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id,quota_scope,quantity,weekly_frequency,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},${version},${right.rightType},${right.serviceId??null},${right.quotaScope??null},${right.quantity??null},${right.weeklyFrequency??null},${right.period??null},${right.periodMode??null},${right.rightType==='period_quota'&&right.period!=='plan_period'?timezone:null},${right.validDays??null},${right.validDaysStartRule??null})`;
+        for(const right of body.rights)await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,training_access_level,service_id,quota_scope,quantity,weekly_frequency,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},${version},${right.rightType},${right.trainingAccessLevel??null},${right.serviceId??null},${right.quotaScope??null},${right.quantity??null},${right.weeklyFrequency??null},${right.period??null},${right.periodMode??null},${right.rightType==='period_quota'&&right.period!=='plan_period'?timezone:null},${right.validDays??null},${right.validDaysStartRule??null})`;
         for(const access of body.modules){await tx`INSERT INTO plan_module_accesses(plan_id,plan_version,module,access_level) VALUES (${plan.id},${version},${access.module},${access.accessLevel})`;for(const capability of access.capabilities)await tx`INSERT INTO plan_module_capabilities(plan_id,plan_version,module,capability) VALUES (${plan.id},${version},${access.module},${capability})`;}
         if(plan.status==='active')await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${plan.id} AND version=${version}`;
         await tx`UPDATE plans SET current_version=${version},name=${body.name} WHERE id=${plan.id}`;
@@ -498,7 +512,7 @@ async function listPlans(client: SqlClient, serviceId: string) {
   const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
   return Promise.all(plans.map(async (plan) => {
     const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
-    const rights = await client`SELECT id,right_type AS "rightType",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
+    const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
     const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${plan.id} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
     return { ...plan, services, rights, modules };
   }));
@@ -511,7 +525,7 @@ async function listPlansById(client: SqlClient, planId: string) {
   const plan = rows[0];
   const versionRows = await client`SELECT kind,renewal_cadence AS "renewalCadence",period_days AS "periodDays",base_price_cents AS "basePriceCents" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion}`;
   const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${planId} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
-  const rights = await client`SELECT id,right_type AS "rightType",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${planId} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
+  const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${planId} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
   const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${planId} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
   return [{ ...plan, ...versionRows[0], services, rights, modules }];
 }
