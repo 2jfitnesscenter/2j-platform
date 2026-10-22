@@ -25,3 +25,16 @@ Only `apps/client-app/src/client-app.tsx` and a new `apps/client-app/test/traini
 - Real Home → Platform login is still the test-only `platform-pilot` member session; the Platform passkey credential needs a verified RP ID distinct from Búnker (Búnker's `RP_ID`/`ORIGIN` stay unchanged).
 - The flag needs `TRAINING_SSO_ENABLED` and `TRAINING_SSO_REDIRECT_URL` on Platform and `PLATFORM_SSO_ENABLED` plus a Platform client on Búnker; none is enabled anywhere.
 - Home shows no capability-based UI yet; the API gates are in Búnker (H3).
+
+## Review fixes (independent code review of this branch)
+
+- The button stays disabled after a successful navigation request (a second tap can no longer mint another one-time code) and re-enables only on failure.
+- `trainingSsoDestination` also requires the exact path `/sso` (the only page that redeems a code).
+- The SSO flag stays off inside the Capacitor shell, where a same-tab navigation would replace the app with the Training site; there the previous link remains.
+- The button is not offered when the Training summary already says the account is not linked (the usual-access link remains); Platform still decides in every other case.
+- One `isHttpsOrLoopback` helper backs both URL validators; the navigation hook is a module-level `trainingSsoRuntime.navigate` instead of a test-only component prop; tests use `waitFor`.
+- `VITE_2J_TRAINING_URL` (https or loopback only; the demo never has one) now lives on this branch, where the Home change belongs.
+- Machine-readable handoff and `tasks/2J-INT-H4.md` added.
+- Accepted with justification: the demo bundle still contains the SSO endpoint string (dead code in the demo). The demo cannot reach it: `build:demo` strips every `VITE_*` variable, preview mode forces the feature off (tested: zero requests) and the demo web image answers 404 for `/api/*`. Tree-shaking it out would need a build-time constant that the current `import.meta.env?.` access pattern does not give; revisit if the demo is ever served with an API.
+
+Verification: `@2j/client-app` 23/23, root typecheck 11/11, `build:demo` OK.
