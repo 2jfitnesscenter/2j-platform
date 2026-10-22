@@ -10,7 +10,7 @@
   },
   "scope": "client-pwa visual-only refinement; synthetic demo retained",
   "status": "implemented_locally_pending_owner_visual_review",
-  "implementationCommitSha": "88b7163f1b9330bb5d98ee99c64e61d1a10e4f95",
+  "implementationCommitSha": "88b71635ffe3e39c79906a25362312cb34dcb9f3",
   "productionChanged": false,
   "deploymentPerformed": false,
   "platformChanged": false,
