@@ -48,7 +48,7 @@ function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
     'x-2j-key-id': keyId,
     'x-2j-timestamp': timestamp,
     'x-2j-request-id': requestId,
-    'x-2j-signature': overrides.signature ?? signedRequestSignature(capabilitySecret, { keyId, timestamp, requestId, method:'GET', path:`/api/internal/platform/v1/persons/${personId}/training-capabilities` }),
+    'x-2j-signature': overrides.signature ?? signedRequestSignature(capabilitySecret, { keyId, timestamp, requestId, method:'GET', path:`/api/internal/platform/v2/persons/${personId}/training-capabilities` }),
   };
 }
 
@@ -77,11 +77,12 @@ test('versioned Training access rights require effective payment without a track
   const {personId,planId,chargeId}=await createSubject('full');
   const [storedRight]=await sql`SELECT id FROM plan_rights WHERE plan_id=${planId} AND right_type='training_access'`;
   await assert.rejects(sql`UPDATE plan_rights SET training_access_level='autonomous' WHERE id=${storedRight.id}`,{code:'55000'},'activated historical plan-version access remains immutable');
-  const path=`/api/internal/platform/v1/persons/${personId}/training-capabilities`;
+  const path=`/api/internal/platform/v2/persons/${personId}/training-capabilities`;
   const unpaidFull=await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId)});
   assert.equal(unpaidFull.statusCode,200,unpaidFull.body);
-  assert.equal(unpaidFull.json().capabilityLevel,'blocked','an active-by-date assignment without payment cannot grant full access');
-  assert.equal(unpaidFull.json().accessState,'blocked_unpaid');
+  assert.equal(unpaidFull.json().capabilityLevel,'baseline','an unpaid commercial assignment cannot grant elevation but does not erase free baseline');
+  assert.equal(unpaidFull.json().accessState,'baseline');
+  assert.equal(unpaidFull.json().capabilities.aiCoach,false);
   assert.equal((await anonymousApp.inject({method:'GET',url:path})).statusCode,503,'no service keys means the internal endpoint stays disabled');
   assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path})).statusCode,401,'Member/session auth is not accepted in place of service auth');
   const invalidId=randomUUID();
@@ -98,17 +99,18 @@ test('versioned Training access rights require effective payment without a track
   assert.equal(valid.statusCode,200,valid.body);
   assert.equal(valid.headers['cache-control'],'no-store');
   assert.equal(valid.json().capabilityLevel,'full');
-  assert.deepEqual(valid.json().capabilities,{autonomousTraining:true,routineCreation:true,guidedTraining:true,premiumPrograms:true,aiCoach:true,professionalFollowUp:true});
+  assert.deepEqual(valid.json().capabilities,{autonomousTraining:true,routineCreation:true,personalRoutineCreation:true,personalRoutineManagement:true,workoutRecording:true,workoutHistory:true,guidedTraining:true,premiumPrograms:true,aiCoach:true,professionalFollowUp:true});
   assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:validHeaders})).statusCode,401,'a valid request ID is accepted only once');
   const raceId=randomUUID(),raceHeaders=capabilityHeaders(personId,raceId);
   const race=await Promise.all([trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders}),trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders})]);
   assert.deepEqual(race.map(item=>item.statusCode).sort(),[200,401],'concurrent replay attempts have exactly one winner');
   const {personId:autonomousId,chargeId:autonomousChargeId}=await createSubject('autonomous');
-  const autonomousPath=`/api/internal/platform/v1/persons/${autonomousId}/training-capabilities`;
+  const autonomousPath=`/api/internal/platform/v2/persons/${autonomousId}/training-capabilities`;
   const unpaidAutonomous=await trainingCapabilitiesApp.inject({method:'GET',url:autonomousPath,headers:capabilityHeaders(autonomousId)});
   assert.equal(unpaidAutonomous.statusCode,200,unpaidAutonomous.body);
-  assert.equal(unpaidAutonomous.json().capabilityLevel,'blocked','an active-by-date assignment without payment cannot grant autonomous access');
-  assert.equal(unpaidAutonomous.json().accessState,'blocked_unpaid');
+  assert.equal(unpaidAutonomous.json().capabilityLevel,'baseline','an unpaid commercial assignment cannot grant commercial extras');
+  assert.equal(unpaidAutonomous.json().accessState,'baseline');
+  assert.equal(unpaidAutonomous.json().capabilities.guidedTraining,false);
   const autonomousPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:autonomousChargeId,splits:[{method:'card',amountCents:4500}]}});
   assert.equal(autonomousPayment.statusCode,201,autonomousPayment.body);
   const autonomous=await trainingCapabilitiesApp.inject({method:'GET',url:autonomousPath,headers:capabilityHeaders(autonomousId)});
@@ -118,10 +120,10 @@ test('versioned Training access rights require effective payment without a track
   assert.equal(autonomous.json().capabilities.professionalFollowUp,false);
 
   const {personId:periodQuotaId,chargeId:periodQuotaChargeId}=await createSubject('full',[{rightType:'period_quota',quotaScope:'shared',quantity:8,period:'month',periodMode:'calendar',timezone:'Atlantic/Canary'}]);
-  const periodQuotaPath=`/api/internal/platform/v1/persons/${periodQuotaId}/training-capabilities`;
+  const periodQuotaPath=`/api/internal/platform/v2/persons/${periodQuotaId}/training-capabilities`;
   const unpaidPeriodQuota=await trainingCapabilitiesApp.inject({method:'GET',url:periodQuotaPath,headers:capabilityHeaders(periodQuotaId)});
   assert.equal(unpaidPeriodQuota.statusCode,200,unpaidPeriodQuota.body);
-  assert.equal(unpaidPeriodQuota.json().capabilityLevel,'blocked','period_quota without effective payment cannot grant Training access');
+  assert.equal(unpaidPeriodQuota.json().capabilityLevel,'baseline','period_quota without payment cannot grant commercial elevation');
   const periodQuotaPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:periodQuotaChargeId,splits:[{method:'card',amountCents:4500}]}});
   assert.equal(periodQuotaPayment.statusCode,201,periodQuotaPayment.body);
   const paidPeriodQuota=await trainingCapabilitiesApp.inject({method:'GET',url:periodQuotaPath,headers:capabilityHeaders(periodQuotaId)});
@@ -151,6 +153,45 @@ async function createPlan(serviceIds, overrides = {}, idempotencyKey = randomUUI
   const response = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': idempotencyKey }, payload: body });
   return { body, response };
 }
+
+test('linked person without a client facet receives only free baseline; invitation proof remains outside this API', async () => {
+  const personId=randomUUID(),trainingUserId=`external-${randomUUID()}`;
+  await sql`INSERT INTO platform_persons(id,created_by) VALUES (${personId},'capability-test')`;
+  await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${trainingUserId},'explicit_admin','capability-test','capability-test')`;
+  const response=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(response.statusCode,200,response.body);
+  assert.equal(response.json().capabilityLevel,'baseline');
+  assert.deepEqual(response.json().capabilities,{autonomousTraining:true,routineCreation:false,personalRoutineCreation:true,personalRoutineManagement:true,workoutRecording:true,workoutHistory:true,guidedTraining:false,premiumPrograms:false,aiCoach:false,professionalFollowUp:false});
+});
+
+test('Training suspension is audited, idempotent, independent from commercial rights, and reversible', async () => {
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'Suspension',lastName:`Fixture ${randomUUID()}`})).json();
+  const person=(await clientsAdminApp.inject({method:'POST',url:'/api/platform/v1/persons',payload:{clientId:client.id}})).json();
+  const personId=person.personId,trainingUserId=`suspension-${randomUUID()}`;
+  await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${trainingUserId},'explicit_admin','capability-test','capability-test')`;
+  const path=`/api/platform/v1/persons/${personId}/training-suspension`;
+  const denied=await clientsTrainerApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':randomUUID()},payload:{reason:'Incumplimiento de normas'}});
+  assert.equal(denied.statusCode,403);
+  const suspendKey=randomUUID(),body={reason:'Incumplimiento de normas internas'};
+  const suspended=await clientsAdminApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':suspendKey},payload:body});
+  assert.equal(suspended.statusCode,201,suspended.body); assert.equal(suspended.json().status,'suspended');
+  const replay=await clientsAdminApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':suspendKey},payload:body});
+  assert.equal(replay.statusCode,200); assert.equal(replay.json().replayed,true);
+  const state=await clientsAdminApp.inject({method:'GET',url:path}); assert.equal(state.json().status,'suspended');
+  const caps=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(caps.json().capabilityLevel,'blocked'); assert.equal(caps.json().reasonCode,'ADMIN_SUSPENDED');
+  assert.equal(caps.json().trainingSubject.trainingUserId,trainingUserId);
+  const lift=await clientsAdminApp.inject({method:'POST',url:`${path}/lift`,headers:{'idempotency-key':randomUUID()},payload:{reason:'Revisión completada y acceso restituido'}});
+  assert.equal(lift.statusCode,201,lift.body);
+  const restored=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(restored.json().capabilityLevel,'baseline'); assert.equal(restored.json().suspensionStatus,'lifted');
+  const [audit]=await sql`SELECT count(*)::int AS count FROM platform_identity_audit_events WHERE person_id=${personId} AND action IN ('training.suspended','training.suspension_lifted')`;
+  const [events]=await sql`SELECT count(*)::int AS count FROM platform_training_access_events WHERE person_id=${personId}`;
+  assert.equal(audit.count,2); assert.equal(events.count,2);
+  const [personRow]=await sql`SELECT status FROM platform_persons WHERE id=${personId}`;
+  const [link]=await sql`SELECT status,training_user_id AS "trainingUserId" FROM training_account_links WHERE person_id=${personId}`;
+  assert.equal(personRow.status,'active'); assert.equal(link.status,'active'); assert.equal(link.trainingUserId,trainingUserId);
+});
 
 async function createTrainingReceiptFixture(ttlMs = TRAINING_LINK_TTL_MS) {
   const client = (await createClientRequest(clientsAdminApp, { firstName: 'Receipt', lastName: `Fixture ${randomUUID()}` })).json();
@@ -234,7 +275,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   await sql`UPDATE schema_migrations SET checksum=${originalChecksum} WHERE name=${migration}`;
 });
 
-test('0034 upgrades a checksummed 0033 database once and installs the replay store', async () => {
+test('0034-0035 upgrade a checksummed 0033 database once and install replay plus suspension stores', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL);
   const databaseName=`capability_upgrade_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
@@ -247,7 +288,8 @@ test('0034 upgrades a checksummed 0033 database once and installs the replay sto
     const directory=new URL('../migrations/',import.meta.url);
     const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
     const target='0034_training_access_capabilities.sql';
-    assert.equal(names.at(-1),target);
+    const final='0035_training_access_suspensions.sql';
+    assert.equal(names.at(-1),final);
     const prior=names.filter(name=>name<target);
     await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
     for(const name of prior){
@@ -257,12 +299,14 @@ test('0034 upgrades a checksummed 0033 database once and installs the replay sto
     }
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,33);
     const upgraded=await migrateDatabase(upgradeDb);
-    assert.equal(upgraded.length,34);
-    assert.equal(upgraded.at(-1).name,target);
+    assert.equal(upgraded.length,35);
+    assert.deepEqual(upgraded.slice(-2).map(row=>row.name),[target,final]);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${target}`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${final}`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
-    assert.equal((await migrateDatabase(upgradeDb)).length,34,'re-running migration verification applies no duplicate migration');
+    assert.equal((await upgradeDb`SELECT to_regclass('public.platform_training_access_events') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await migrateDatabase(upgradeDb)).length,35,'re-running migration verification applies no duplicate migration');
   }finally{
     if(upgradeDb)await upgradeDb.end();
     await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);

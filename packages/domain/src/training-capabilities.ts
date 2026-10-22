@@ -1,15 +1,16 @@
-export const TRAINING_CAPABILITIES_CONTRACT = '2J-CAPABILITIES-V1' as const;
+export const TRAINING_CAPABILITIES_CONTRACT = '2J-CAPABILITIES-V2' as const;
 export const MAX_CAPABILITY_TTL_SECONDS = 60;
 export const TRAINING_CAPABILITIES_TTL_MS = MAX_CAPABILITY_TTL_SECONDS * 1_000;
 
-export type CapabilityLevel = 'full' | 'autonomous' | 'blocked';
-export type CapabilityAccessState = 'active' | 'provisional' | 'blocked_unpaid' | 'ended';
+export type CapabilityLevel = 'full' | 'autonomous' | 'baseline' | 'blocked';
+export type CapabilityAccessState = 'active' | 'provisional' | 'blocked_unpaid' | 'ended' | 'baseline' | 'suspended';
 export type TrainingAccessLevel = 'full' | 'autonomous';
 export type TrainingLinkStatus = 'active' | 'not_linked' | 'revoked';
 export type CapabilityReasonCode =
   | 'ACTIVE_FULL' | 'ACTIVE_AUTONOMOUS'
   | 'PROVISIONAL_FULL' | 'PROVISIONAL_AUTONOMOUS'
-  | 'UNPAID_BLOCK' | 'NO_ACTIVE_MEMBERSHIP' | 'PERIOD_ENDED' | 'TRAINING_LINK_REVOKED' | 'TRAINING_LINK_MISSING';
+  | 'TRAINING_LINK_REVOKED' | 'TRAINING_LINK_MISSING'
+  | 'FREE_BASELINE' | 'ADMIN_SUSPENDED';
 
 export interface EffectiveMembershipForCapabilities {
   readonly trainingAccessLevel: TrainingAccessLevel;
@@ -20,7 +21,7 @@ export interface EffectiveMembershipForCapabilities {
 
 export interface TrainingCapabilityContract {
   readonly contract: typeof TRAINING_CAPABILITIES_CONTRACT;
-  readonly version: 1;
+  readonly version: 2;
   readonly personId: string;
   readonly trainingSubject: { readonly linkStatus: TrainingLinkStatus; readonly trainingUserId?: string };
   readonly capabilityLevel: CapabilityLevel;
@@ -28,12 +29,17 @@ export interface TrainingCapabilityContract {
   readonly capabilities: {
     readonly autonomousTraining: boolean;
     readonly routineCreation: boolean;
+    readonly personalRoutineCreation: boolean;
+    readonly personalRoutineManagement: boolean;
+    readonly workoutRecording: boolean;
+    readonly workoutHistory: boolean;
     readonly guidedTraining: boolean;
     readonly premiumPrograms: boolean;
     readonly aiCoach: boolean;
     readonly professionalFollowUp: boolean;
   };
   readonly reasonCode: CapabilityReasonCode;
+  readonly suspensionStatus: 'none' | 'suspended' | 'lifted';
   readonly effectiveFrom: string | null;
   readonly expiresAt: string;
   readonly generatedAt: string;
@@ -46,14 +52,15 @@ export interface ResolveTrainingCapabilitiesInput {
   readonly memberships: readonly EffectiveMembershipForCapabilities[];
   readonly generatedAt: string;
   readonly nextKnownAccessTransition?: string | null;
+  readonly suspensionStatus?: 'none' | 'suspended' | 'lifted';
 }
 
 const blockedCapabilities = {
-  autonomousTraining: false, routineCreation: false, guidedTraining: false,
+  autonomousTraining: false, routineCreation: false, personalRoutineCreation: false, personalRoutineManagement: false, workoutRecording: false, workoutHistory: false, guidedTraining: false,
   premiumPrograms: false, aiCoach: false, professionalFollowUp: false,
 } as const;
 
-/** Maps Platform's already-resolved effective membership states to the downstream V1 contract. */
+/** Maps effective commercial rights over the separately authorized, free autonomous baseline. */
 export function resolveTrainingCapabilities(input: ResolveTrainingCapabilitiesInput): TrainingCapabilityContract {
   const generatedAt = canonicalInstant(input.generatedAt);
   const ttlExpiry = Date.parse(generatedAt) + TRAINING_CAPABILITIES_TTL_MS;
@@ -61,6 +68,7 @@ export function resolveTrainingCapabilities(input: ResolveTrainingCapabilitiesIn
   if (transition !== null && !Number.isFinite(transition)) throw new RangeError('nextKnownAccessTransition must be an ISO timestamp');
   const expiresAt = new Date(transition !== null && transition > Date.parse(generatedAt) ? Math.min(ttlExpiry, transition) : ttlExpiry).toISOString();
   const link = input.link;
+  const suspensionStatus = input.suspensionStatus ?? 'none';
   const effective = input.memberships.filter(item => item.accessState === 'active' || item.accessState === 'provisional');
   const selected = effective.find(item => item.trainingAccessLevel === 'full' && item.accessState === 'active')
     ?? effective.find(item => item.trainingAccessLevel === 'full')
@@ -70,38 +78,44 @@ export function resolveTrainingCapabilities(input: ResolveTrainingCapabilitiesIn
   if (link.status !== 'active' || typeof link.trainingUserId !== 'string' || link.trainingUserId.length === 0) {
     const revoked = link.status === 'revoked';
     return {
-      contract: TRAINING_CAPABILITIES_CONTRACT, version: 1, personId: canonicalUuid(input.personId),
+      contract: TRAINING_CAPABILITIES_CONTRACT, version: 2, personId: canonicalUuid(input.personId),
       trainingSubject: { linkStatus: revoked ? 'revoked' : 'not_linked' }, capabilityLevel: 'blocked',
       accessState, capabilities: blockedCapabilities,
-      reasonCode: revoked ? 'TRAINING_LINK_REVOKED' : 'TRAINING_LINK_MISSING', effectiveFrom: null,
+      reasonCode: revoked ? 'TRAINING_LINK_REVOKED' : 'TRAINING_LINK_MISSING', suspensionStatus, effectiveFrom: null,
       expiresAt, generatedAt, source: { platform: true },
     };
   }
 
-  if (!selected) {
+  if (suspensionStatus === 'suspended') {
     return {
-      contract: TRAINING_CAPABILITIES_CONTRACT, version: 1, personId: canonicalUuid(input.personId),
+      contract: TRAINING_CAPABILITIES_CONTRACT, version: 2, personId: canonicalUuid(input.personId),
       trainingSubject: { linkStatus: 'active', trainingUserId: link.trainingUserId }, capabilityLevel: 'blocked',
-      accessState, capabilities: blockedCapabilities,
-      reasonCode: accessState === 'blocked_unpaid' ? 'UNPAID_BLOCK' : input.memberships.length ? 'PERIOD_ENDED' : 'NO_ACTIVE_MEMBERSHIP',
-      effectiveFrom: null, expiresAt, generatedAt, source: { platform: true },
+      accessState: 'suspended', capabilities: blockedCapabilities,
+      reasonCode: 'ADMIN_SUSPENDED', suspensionStatus, effectiveFrom: null, expiresAt, generatedAt, source: { platform: true },
     };
   }
+
+  if (!selected) return {
+    contract: TRAINING_CAPABILITIES_CONTRACT, version: 2, personId: canonicalUuid(input.personId),
+    trainingSubject: { linkStatus: 'active', trainingUserId: link.trainingUserId }, capabilityLevel: 'baseline',
+    accessState: 'baseline', capabilities: { ...blockedCapabilities, autonomousTraining: true, personalRoutineCreation: true, personalRoutineManagement: true, workoutRecording: true, workoutHistory: true },
+    reasonCode: 'FREE_BASELINE', suspensionStatus, effectiveFrom: null, expiresAt, generatedAt, source: { platform: true },
+  };
 
   const full = selected.trainingAccessLevel === 'full';
   const provisional = selected.accessState === 'provisional';
   return {
-    contract: TRAINING_CAPABILITIES_CONTRACT, version: 1, personId: canonicalUuid(input.personId),
+    contract: TRAINING_CAPABILITIES_CONTRACT, version: 2, personId: canonicalUuid(input.personId),
     trainingSubject: { linkStatus: 'active', trainingUserId: link.trainingUserId },
     capabilityLevel: full ? 'full' : 'autonomous', accessState: selected.accessState,
     capabilities: {
-      autonomousTraining: true, routineCreation: true, guidedTraining: true, premiumPrograms: true,
+      autonomousTraining: true, routineCreation: true, personalRoutineCreation: true, personalRoutineManagement: true, workoutRecording: true, workoutHistory: true, guidedTraining: true, premiumPrograms: true,
       aiCoach: full, professionalFollowUp: full,
     },
     reasonCode: provisional
       ? (full ? 'PROVISIONAL_FULL' : 'PROVISIONAL_AUTONOMOUS')
       : (full ? 'ACTIVE_FULL' : 'ACTIVE_AUTONOMOUS'),
-    effectiveFrom: selected.effectiveFrom, expiresAt, generatedAt, source: { platform: true },
+    suspensionStatus, effectiveFrom: selected.effectiveFrom, expiresAt, generatedAt, source: { platform: true },
   };
 }
 

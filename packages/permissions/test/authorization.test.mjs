@@ -80,6 +80,14 @@ test('limited Member booking cohort management is restricted to Admin', () => {
   assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'member.pilot.booking.manage'), true);
 });
 
+test('Training suspension is Admin-only until a Trainer receives an explicit granular grant', () => {
+  assert.equal(knownPermissions.has('training.suspension.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'training.suspension.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'training.suspension.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'training.suspension.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'training.suspension.manage'), false);
+});
+
 test('runtime role matrix matches its reviewable JSON contract', async () => {
   const contract = JSON.parse(await readFile(new URL('../role-permissions.json', import.meta.url), 'utf8'));
   assert.deepEqual(contract.roles, rolePermissions);

@@ -57,6 +57,7 @@
     "identity.people.manage",
     "member.pilot.booking.manage",
     "settings.manage",
+    "training.suspension.manage",
     "entitlements.read",
     "entitlements.manage",
     "entitlements.adjust",

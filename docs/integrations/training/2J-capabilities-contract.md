@@ -1,49 +1,31 @@
-# 2J-CAPABILITIES-V1 — Platform Training capabilities
+# 2J-CAPABILITIES-V2 — Platform Training capabilities
 
-Status: **Platform-side V1 contract, explicit plan right, resolver, inbound service authentication, durable replay protection, and read-only endpoint are implemented locally on `codex/platform-capabilities-contract`. No consumer is wired and no credentials, deployment, or production activation are included.**
+Status: Platform-side V2 contract and suspension lifecycle are implemented on PR #59. No Home or Búnker consumer, invitation flow, production key, deployment, or real database migration is included.
 
-## Source of truth
+## Identity, baseline and commercial elevation
 
-Platform's canonical person is `platform_persons.id` (`personId`). A Training relationship is held in `training_account_links`; only an active row supplies the opaque `trainingUserId`. Platform owns plan assignments, effective period access, payment-derived state, and the capability result. The resolver consumes those Platform facts and never matches by email or phone.
+`personId` is the canonical human identity. Membership is not identity authorization, and no membership is not an administrative block. An active Platform person with an active canonical Training link receives the free autonomous baseline: `autonomousTraining`, `personalRoutineCreation`, `personalRoutineManagement`, `workoutRecording`, and `workoutHistory`. The baseline does not grant guided training, Premium, AI, or professional follow-up.
 
-2J-098E represents purchased plans in `client_plan_assignments`, recurring windows in `assignment_entitlement_periods`, recurrence and payment validation in append-only event histories, and usage in period-scoped ledger rows. `derivePeriodAccess` and `nextPeriodAccessTransition` in `packages/domain/src/period-entitlements.ts` remain the period authority. This task adds only the next known transition output and does not change 098E business behavior.
+Current explicit commercial rights elevate that baseline. `training_access=autonomous` retains the approved commercial extras (`routineCreation`, `guidedTraining`, `premiumPrograms`) but not AI or professional follow-up. `training_access=full` enables all capabilities, including AI and professional follow-up. Unpaid, ended, or absent commercial assignments fall back to the free baseline. Platform's 098E payment and period derivation remains authoritative for commercial grants.
 
-## Versioned access right and response
+Historical Training routines, workouts, measurements and history remain owned by Training. The contract describes current authorization and must not tell a consumer to delete or hide retained content when commercial rights end. Continuing to use/copy delivered routines and retaining history requires Training-side consumer behavior and is pending E2E verification; Platform does not store routine contents.
 
-The machine-readable response schema is [`contracts/2J-capabilities-v1.schema.json`](../../../contracts/2J-capabilities-v1.schema.json), with representative cases in [`contracts/fixtures/2J-capabilities-v1.json`](../../../contracts/fixtures/2J-capabilities-v1.json). The explicit, versioned plan right is `right_type='training_access'` with `training_access_level='full'|'autonomous'`. A plan version may contain at most one such right. It is part of the immutable plan version and is never inferred from service, area, or plan names.
+Administrative suspension is independent of membership, payment and Training link status. A suspension overrides all operational capability booleans and reports `accessState=suspended`; it preserves person identity, Training link and historical data. Lifting suspension recomputes from current commercial state, returning either full/commercial capabilities or the free baseline.
 
-- `full`: active/provisional explicit full access enables autonomous training, routine creation, guided training, Premium, AI coach, and professional follow-up.
-- `autonomous`: active/provisional explicit autonomous access enables autonomous training, routine creation, guided training, and Premium; AI and professional follow-up stay disabled.
-- `blocked`: no effective Training access right, blocked/ended access, or a missing/revoked Training link disables every operational capability.
+## Versioned response and endpoint
 
-`accessState` stays separate from `capabilityLevel`. A provisional grant retains its explicit level. Link revocation blocks operational capability without relabeling the entitlement as unpaid. `reasonCode` is diagnostic; consumers authorize from `capabilityLevel` and the booleans only. Unknown contract IDs/versions must be rejected.
+The machine-readable schema is [`contracts/2J-capabilities-v2.schema.json`](../../../contracts/2J-capabilities-v2.schema.json), with fixtures at [`contracts/fixtures/2J-capabilities-v2.json`](../../../contracts/fixtures/2J-capabilities-v2.json). V2 is an intentional wire-contract evolution: V1's `blocked` interpretation for no membership could not truthfully express the approved baseline, and no consumers are wired. Consumers must reject unknown versions; V1 is not silently reinterpreted.
 
-For assignments with a 2J-098E entitlement period, the resolver uses Platform's `derivePeriodAccess` result (`active`, `provisional`, `blocked_unpaid`, or `ended`) without recalculating grace, proration, period balances, or rollover. For supported assignments without a tracked period, Platform requires an exempt charge or a fully settled net charge before exposing operational access; assignment dates alone never grant Training capabilities.
+`GET /api/internal/platform/v2/persons/{personId}/training-capabilities` resolves Platform identity, optional active client facet, effective commercial rights, Training link and administrative suspension. It accepts no caller-supplied client ID, membership, or capability state and returns `Cache-Control: no-store`. A legitimate external person can be resolved without a client facet if identity and Training link already exist. This is capability-layer support only; invitation authorization proof is not represented by the current schema.
 
-## Endpoint and service authentication
+The endpoint uses the existing `2J-SERVICE-AUTH-V1` HMAC format, exact canonical path/method/body hashing, constant-time signature comparison, ±30-second request timestamp validation and atomic PostgreSQL replay prevention. Maximum TTL remains 60 seconds and is clipped to the next known commercial transition using `Atlantic/Canary`. Service authentication/database failures fail closed; a successfully authenticated linked person with no current membership receives only the free baseline.
 
-Platform exposes the read-only endpoint:
+## Suspension lifecycle and authorization
 
-`GET /api/internal/platform/v1/persons/{personId}/training-capabilities`
+`training.suspension.manage` is a dedicated permission. Admin receives it through the existing wildcard. Trainer, Reception and Accountant do not receive it by default. Explicit per-Trainer grants await the future granular RBAC policy layer (2J-098C); this PR does not implement that layer. Admin-only lifecycle routes are `GET /api/platform/v1/persons/{personId}/training-suspension`, `POST .../suspend`, and `POST .../lift`. Mutations require a reason and idempotency key and append immutable lifecycle and identity-audit records.
 
-It resolves the Platform person, active client facet, current immutable plan rights, effective access, and Training link on the server. It accepts no client ID or caller-supplied membership/capability state and returns `Cache-Control: no-store`. A Member cookie or session is not accepted as service authentication.
+## Invitation and enrollment boundaries
 
-Inbound authentication uses the existing `2J-SERVICE-AUTH-V1` format: HMAC-SHA256 over canonical UTF-8 fields, base64url signature, and `x-2j-key-id`, `x-2j-timestamp`, `x-2j-request-id`, and `x-2j-signature` headers. The exact method/path and lowercase SHA-256 digest of the empty GET body are signed. Signature comparison is constant-time. The accepted timestamp window is ±30 seconds.
+There is no public unauthenticated self-registration. A Búnker identity must originate from an authorized unified-identity registration path. D278/D279/D280 invitation creation and Home registration are pending E2E integration; PR #59 does not fabricate invitation proof. D281 requires future enrollment to attach the client facet to the same canonical person and preserve the existing Training link and Training-owned history. The current Platform schema and linking contract preserve this identity boundary, but end-to-end enrollment is pending.
 
-Each authenticated request ID is consumed atomically in PostgreSQL and retained for 120 seconds, longer than the accepted clock-skew window. Expired rows are deleted during a subsequent authenticated request. Concurrent replays have one winner. The key ID maps to a named `home` or `bunker` caller. Server-only configuration is `PLATFORM_INTERNAL_SERVICE_KEYS`, a JSON object whose entries contain `caller` and a canonical base64url `secret` of at least 32 bytes. Removing a key ID revokes it; old and new key IDs may coexist during rotation. No real key or secret is stored in this repository.
-
-## Freshness and consumer outage behavior
-
-The maximum capability TTL is **60 seconds**. Platform sets `expiresAt` to the earlier of `generatedAt + 60 seconds` and any next known assignment, entitlement-period, or access-state transition. Known boundaries use `Atlantic/Canary`; consumers never compute a period boundary themselves.
-
-A consumer may use a previously authenticated response only through `expiresAt`. After it expires, operational capabilities fail closed. An outage can never promote `autonomous` to `full` or `blocked` to an operational level. Preserving local login/history is future consumer work and is not implemented here.
-
-Home and Búnker must not calculate membership validity, payment grace, period boundaries, late-payment proration, balances, rollover, or capability elevation. Platform is the only authority for those decisions.
-
-## Follow-up before consumer wiring
-
-1. Independently review the Platform endpoint, schema, key configuration, and replay behavior.
-2. Provision service keys through the approved secret manager before any non-test consumer connection.
-3. Implement Home and Búnker adapters in separate approved tasks, validating the shared contract and fixtures first.
-
-No SSO, user-session handoff, Training changes, or consumer calls are part of this implementation.
+No SSO, user-session handoff, Training changes, membership/payment changes, or consumer calls are part of PR #59.

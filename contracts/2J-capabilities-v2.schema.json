@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://2jfitnesscenter.com/contracts/2J-capabilities-v2.schema.json",
+  "title": "2J Platform Training Capabilities V2",
+  "type": "object", "additionalProperties": false,
+  "required": ["contract","version","personId","trainingSubject","capabilityLevel","accessState","capabilities","reasonCode","suspensionStatus","effectiveFrom","expiresAt","generatedAt","source"],
+  "properties": {
+    "contract": {"const":"2J-CAPABILITIES-V2"}, "version":{"const":2},
+    "personId":{"type":"string","format":"uuid"},
+    "trainingSubject":{"type":"object","additionalProperties":false,"required":["linkStatus"],"oneOf":[
+      {"properties":{"linkStatus":{"const":"active"}},"required":["trainingUserId"]},
+      {"properties":{"linkStatus":{"enum":["not_linked","revoked"]}},"not":{"required":["trainingUserId"]}}],
+      "properties":{"linkStatus":{"enum":["active","not_linked","revoked"]},"trainingUserId":{"type":"string","minLength":1,"maxLength":200}}},
+    "capabilityLevel":{"enum":["full","autonomous","baseline","blocked"]},
+    "accessState":{"enum":["active","provisional","blocked_unpaid","ended","baseline","suspended"]},
+    "capabilities":{"type":"object","additionalProperties":false,"required":["autonomousTraining","routineCreation","personalRoutineCreation","personalRoutineManagement","workoutRecording","workoutHistory","guidedTraining","premiumPrograms","aiCoach","professionalFollowUp"],"properties":{
+      "autonomousTraining":{"type":"boolean"},"routineCreation":{"type":"boolean"},"personalRoutineCreation":{"type":"boolean"},"personalRoutineManagement":{"type":"boolean"},"workoutRecording":{"type":"boolean"},"workoutHistory":{"type":"boolean"},"guidedTraining":{"type":"boolean"},"premiumPrograms":{"type":"boolean"},"aiCoach":{"type":"boolean"},"professionalFollowUp":{"type":"boolean"}}},
+    "reasonCode":{"enum":["ACTIVE_FULL","ACTIVE_AUTONOMOUS","PROVISIONAL_FULL","PROVISIONAL_AUTONOMOUS","TRAINING_LINK_REVOKED","TRAINING_LINK_MISSING","FREE_BASELINE","ADMIN_SUSPENDED"]},
+    "suspensionStatus":{"enum":["none","suspended","lifted"]},
+    "effectiveFrom":{"type":["string","null"],"format":"date"},"expiresAt":{"type":"string","format":"date-time"},"generatedAt":{"type":"string","format":"date-time"},
+    "source":{"type":"object","additionalProperties":false,"required":["platform"],"properties":{"platform":{"const":true}}}
+  }
+}

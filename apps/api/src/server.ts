@@ -10,6 +10,7 @@ import { registerClientPlanRoutes } from './client-plans.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-service-auth.js';
 import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
+import { registerTrainingSuspensionRoutes } from './training-suspensions.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
@@ -208,6 +209,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerClientPlanRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
   registerTrainingCapabilitiesRoute(app, client, trainingCapabilitiesKeys);
+  registerTrainingSuspensionRoutes(app, client, authorizationResolver);
   registerAssignmentPeriodRoutes(app, client, authorizationResolver);
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
   const allowMemberBooking = async (personId: string | undefined, request: import('fastify').FastifyRequest) => {
