@@ -16,7 +16,7 @@
 
 ## Verification
 
-Disposable PostgreSQL 17 container (fresh database): `@2j/api` 251/251; typecheck 11/11. Independent review and QA are **pending**; no browser/E2E run yet (needs H3/H4).
+Disposable PostgreSQL 17 container (fresh database): `@2j/api` 254/254 after the review fixes (was 251/251); typecheck 11/11. Independent review and QA are **pending**; no browser/E2E run yet (needs H3/H4).
 
 ## Pending / open
 
@@ -24,3 +24,13 @@ Disposable PostgreSQL 17 container (fresh database): `@2j/api` 251/251; typechec
 - H4 Home connected mode behind a flag.
 - Platform passkey credential: needs a verified RP ID distinct from Búnker; `platform-pilot` is test-only.
 - Production SHA of Búnker: not verified.
+
+## Review fixes (independent code review of this branch)
+
+- Origin/CSRF protection on code issuance for every authentication provider (was pilot-only).
+- Redemption evaluates capabilities inside the transaction that holds a shared lock on the person, closing the window against a concurrent suspension; the capability read no longer happens for dead codes.
+- One live code per person (new supersedes old) and a per-minute issuance limit instead of a pending-count cap; bounded audit for replays.
+- `resolvePerson` and `resolve` share one session lookup (and `resolvePerson` now refreshes `last_seen_at`).
+- Migration-history tests derive their expectations from the migration directory (latest-migration upgrade, ordered full listing) instead of pinning counts.
+- Machine-readable handoff `2J-INT-H2-training-sso.json` and `tasks/2J-INT-H2.md` added (AGENTS.md).
+

@@ -38,7 +38,9 @@ New in H2:
 - 32 random bytes, only SHA-256 stored, TTL ≤ 60 s (DB constraint), single use (`pending → consumed|expired|revoked`, final, no delete/truncate).
 - Bound to person, active auth subject, audience `2j-training-sso`, purpose `training-session` and the Training user linked at issue time.
 - The browser receives a fixed server-configured URL with the code in the **fragment**; no open redirect, nothing in query strings or logs, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`.
-- At redemption Platform re-evaluates: person active, auth subject active, same active link, capabilities not blocked. A changed binding or a suspension revokes the code; a hit on a used/expired code is rejected and audited. At most 5 pending codes per person.
+- At redemption Platform takes a shared lock on the person row (suspension and lifting take it exclusively), then re-evaluates inside the same transaction: person active, auth subject active, same active link, capabilities not blocked. A suspension or revocation committed before the lock is therefore always seen; one committed after it applies from the next verification (Training re-verifies within 60 s). A changed binding or a suspension revokes the code.
+- One live code per person: issuing a new code supersedes the previous one (`revoked`/`superseded`); at most 10 codes per person per rolling minute. Replays of a used, expired or revoked code stay refused (409/410) and leave at most 5 audit rows per code.
+- Issuance (`POST /api/me/training/sso`) requires the exact member-app origin (`MEMBER_APP_ORIGIN`) and rejects `Sec-Fetch-Site: cross-site`, whichever authentication provider resolved the session; without a configured origin it answers 503.
 - Redemption response carries `personId`, `trainingUserId` and the full V2 payload so Búnker needs no second call.
 - Platform never creates or alters a Training identity here; it only vouches that an authenticated person owns an already-linked Training user.
 
