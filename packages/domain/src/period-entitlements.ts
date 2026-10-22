@@ -8,6 +8,96 @@ export interface EntitlementPeriodWindow {
   readonly endsOn: string | null;
 }
 
+export interface ContractMonthlyEntitlementPeriod extends EntitlementPeriodWindow {
+  readonly periodIndex: number;
+  readonly startsOn: string;
+  readonly endsOn: string;
+}
+
+export type ContractQuantityRule = 'weekday_ratio_v1' | 'fixed_v1' | 'unlimited';
+export type ContractQuantityTermKind = 'natural_month' | 'custom_range' | 'rolling_months' | 'pack' | 'one_off';
+
+export interface ContractQuantityRuleInput {
+  readonly termKind: ContractQuantityTermKind | null;
+  readonly rightType: string;
+  readonly quantityRule: ContractQuantityRule | null;
+  readonly quantity: number | null;
+  readonly weeklyFrequency: number | null;
+}
+
+export type ContractQuantityRuleError = 'quantity_rule_not_allowed' | 'quantity_rule_required' | 'quantity_invalid' | 'weekly_frequency_invalid';
+
+export class EntitlementMaterializationError extends Error {
+  readonly code: 'bag_empty' | 'contract_terms_missing' | 'quantity_rule_invalid' | 'payment_activation_required' | 'idempotency_conflict';
+  constructor(code: 'bag_empty' | 'contract_terms_missing' | 'quantity_rule_invalid' | 'payment_activation_required' | 'idempotency_conflict') {
+    super(code);
+    this.name = 'EntitlementMaterializationError';
+    this.code = code;
+  }
+}
+
+/** Split an already-determined contract range at natural month boundaries. */
+export function splitContractIntoMonthlyEntitlementPeriods(contractStart: string, contractEnd: string): ContractMonthlyEntitlementPeriod[] {
+  try { parseDateOnly(contractStart); parseDateOnly(contractEnd); }
+  catch { throw new RangeError('contract dates must be valid YYYY-MM-DD values'); }
+  if (contractEnd < contractStart) throw new RangeError('contractEnd must be on or after contractStart');
+  const periods: ContractMonthlyEntitlementPeriod[] = [];
+  let startsOn = contractStart;
+  while (startsOn <= contractEnd) {
+    const year = Number(startsOn.slice(0, 4));
+    const month = Number(startsOn.slice(5, 7));
+    const monthEndDate = new Date(0);
+    monthEndDate.setUTCHours(0, 0, 0, 0);
+    monthEndDate.setUTCFullYear(year, month, 0);
+    const monthEnd = monthEndDate.toISOString().slice(0, 10);
+    const endsOn = monthEnd < contractEnd ? monthEnd : contractEnd;
+    periods.push({ periodIndex: periods.length, startsOn, endsOn });
+    if (endsOn === contractEnd) break;
+    startsOn = addDays(endsOn, 1);
+  }
+  return periods;
+}
+
+/** Check the quantity semantics for a term-enabled right; legacy rights stay outside this model. */
+export function validateContractQuantityRule(input: ContractQuantityRuleInput): { valid: true } | { valid: false; error: ContractQuantityRuleError } {
+  if (input.rightType !== 'sessions_quota') return input.quantityRule == null ? { valid: true } : { valid: false, error: 'quantity_rule_not_allowed' };
+  if (input.termKind == null) return input.quantityRule == null ? { valid: true } : { valid: false, error: 'quantity_rule_not_allowed' };
+  if (input.quantityRule == null) return { valid: false, error: 'quantity_rule_required' };
+  if (input.quantityRule === 'weekday_ratio_v1') {
+    if (input.termKind === 'pack' || input.termKind === 'one_off') return { valid: false, error: 'quantity_rule_not_allowed' };
+    if (input.quantity != null) return { valid: false, error: 'quantity_invalid' };
+    if (input.weeklyFrequency == null || !Number.isInteger(input.weeklyFrequency) || input.weeklyFrequency < 1 || input.weeklyFrequency > 5) return { valid: false, error: 'weekly_frequency_invalid' };
+    return { valid: true };
+  }
+  if (input.quantityRule === 'unlimited') {
+    if (input.termKind === 'pack' || input.termKind === 'one_off') return { valid: false, error: 'quantity_rule_not_allowed' };
+    if (input.quantity != null) return { valid: false, error: 'quantity_invalid' };
+    if (input.weeklyFrequency != null) return { valid: false, error: 'weekly_frequency_invalid' };
+    return { valid: true };
+  }
+  if (input.termKind !== 'pack' && input.termKind !== 'one_off') return { valid: false, error: 'quantity_rule_not_allowed' };
+  if (!Number.isInteger(input.quantity) || input.quantity! < 1 || input.quantity! > 100000) return { valid: false, error: 'quantity_invalid' };
+  if (input.weeklyFrequency != null) return { valid: false, error: 'weekly_frequency_invalid' };
+  return { valid: true };
+}
+
+export interface FixedEntitlementPeriodCandidate {
+  readonly periodIndex: 0;
+  readonly entitlementMode: 'quota';
+  readonly formulaId: 'fixed_v1';
+  readonly periodStart: string;
+  readonly periodEnd: string | null;
+  readonly sessionsGranted: number;
+}
+
+/** Build (but do not activate or persist) a fixed-quantity period candidate for a future validated-payment coordinator. */
+export function buildFixedEntitlementPeriodCandidate(activationDate: string, quantity: number, validDays: number | null): FixedEntitlementPeriodCandidate {
+  try { parseDateOnly(activationDate); } catch { throw new RangeError('activationDate must be a valid YYYY-MM-DD value'); }
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) throw new RangeError('quantity must be an integer from 1 to 100000');
+  if (validDays != null && (!Number.isInteger(validDays) || validDays < 1 || validDays > 3660)) throw new RangeError('validDays must be an integer from 1 to 3660');
+  return { periodIndex: 0, entitlementMode: 'quota', formulaId: 'fixed_v1', periodStart: activationDate, periodEnd: validDays == null ? null : addDays(activationDate, validDays - 1), sessionsGranted: quantity };
+}
+
 export interface PeriodAccessInput extends EntitlementPeriodWindow {
   readonly now: Date;
   readonly recurring: boolean;
@@ -40,9 +130,12 @@ export function weekdaysInRange(startsOn: string, endsOn: string): number {
   const start = parseDateOnly(startsOn);
   const end = parseDateOnly(endsOn);
   if (end < start) throw new RangeError('endsOn must be on or after startsOn');
-  let count = 0;
-  for (let day = start.valueOf(); day <= end.valueOf(); day += DAY_MS) {
-    const weekday = new Date(day).getUTCDay();
+  const days = Math.floor((end.valueOf() - start.valueOf()) / DAY_MS) + 1;
+  const weeks = Math.floor(days / 7);
+  let count = weeks * 5;
+  const remainder = days % 7;
+  for (let offset = 0; offset < remainder; offset += 1) {
+    const weekday = new Date(start.valueOf() + offset * DAY_MS).getUTCDay();
     if (weekday >= 1 && weekday <= 5) count += 1;
   }
   return count;

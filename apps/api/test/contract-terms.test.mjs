@@ -7,7 +7,7 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import { calculateContractEnd } from '@2j/domain';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
-import { assignmentContractTerms } from '../src/schema.ts';
+import { assignmentContractTerms, assignmentEntitlementPeriods, clientEntitlementLedger, planRights } from '../src/schema.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: contract term integration tests need PostgreSQL.');
 
@@ -31,9 +31,15 @@ async function createService() {
 }
 
 async function createPlan(serviceId, overrides = {}) {
+  const termKind = overrides.termKind ?? null;
+  const sessionRight = termKind == null
+    ? { rightType: 'sessions_quota', quotaScope: 'shared', quantity: 10 }
+    : ['pack','one_off'].includes(termKind)
+      ? { rightType: 'sessions_quota', quotaScope: 'shared', quantity: 10, quantityRule: 'fixed_v1' }
+      : { rightType: 'sessions_quota', quotaScope: 'shared', weeklyFrequency: 3, quantityRule: 'weekday_ratio_v1' };
   return app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': randomUUID() }, payload: {
     name: `F1-A ${randomUUID()}`, serviceIds: [serviceId], kind: 'recurring', renewalCadence: 'monthly',
-    rights: [{ rightType: 'service_access', serviceId }], ...overrides,
+    rights: [{ rightType: 'service_access', serviceId }, sessionRight], ...overrides,
   } });
 }
 
@@ -148,6 +154,34 @@ test('Drizzle and migration share the natural-month calendar shape constraint', 
   assert.equal(naturalMonthBranch(schemaCheck), naturalMonthBranch(migrationCheck), 'Drizzle natural_month branch must match migration 0036');
 });
 
+test('F1-B quantity and entitlement-period CHECK constraints stay in Drizzle/migration parity',async()=>{
+  const migration=await readFile(new URL('../migrations/0037_contract_entitlement_periods_v1.sql',import.meta.url),'utf8');
+  const normalize=value=>value.replaceAll(/"[a-z_]+"\./g,'').replaceAll('"','').replaceAll(/\s+/g,'').toLowerCase();
+  const expression=(source,name)=>{
+    const marker=new RegExp(`(?:ADD\\s+CONSTRAINT|CONSTRAINT)\\s+${name}\\s+CHECK\\s*\\(`,'i').exec(source);
+    assert.ok(marker,`migration contains ${name}`);
+    const open=source.indexOf('(',marker.index),start=open+1;let depth=1;
+    for(let index=start;index<source.length;index++){
+      if(source[index]==='(')depth++;
+      else if(source[index]===')'&&--depth===0)return source.slice(start,index);
+    }
+    throw new Error(`unterminated ${name}`);
+  };
+  const compare=(table,name)=>{
+    const check=getTableConfig(table).checks.find(item=>item.name===name);
+    assert.ok(check,`Drizzle contains ${name}`);
+    const drizzle=new PgDialect().sqlToQuery(check.value).sql;
+    assert.equal(normalize(drizzle),normalize(expression(migration,name)),`${name} Drizzle expression matches migration`);
+  };
+  compare(planRights,'plan_rights_quantity_rule_allowed');
+  compare(planRights,'plan_rights_type_fields');
+  compare(assignmentEntitlementPeriods,'assignment_entitlement_periods_model');
+  assert.ok(getTableConfig(assignmentEntitlementPeriods).indexes.some(item=>item.config.name==='assignment_entitlement_periods_assignment_right_index_unique'));
+  assert.ok(getTableConfig(clientEntitlementLedger).indexes.some(item=>item.config.name==='client_entitlement_ledger_period_grant_unique'));
+  assert.match(migration,/CREATE UNIQUE INDEX assignment_entitlement_periods_assignment_right_index_unique/);
+  assert.match(migration,/CREATE UNIQUE INDEX client_entitlement_ledger_period_grant_unique/);
+});
+
 test('natural-month PostgreSQL check accepts real month ends and rejects malformed dates', async () => {
   const service = await createService();
   const plan = await createPlan(service.id);
@@ -161,6 +195,7 @@ test('natural-month PostgreSQL check accepts real month ends and rejects malform
     { label:'end is not final calendar day', start:'2026-11-01', end:'2026-11-29', valid:false },
     { label:'leap February is missing its 29th day', start:'2028-02-01', end:'2028-02-28', valid:false },
     { label:'non-leap February ends on the 28th', start:'2027-02-01', end:'2027-02-28', valid:true },
+    { label:'year 2100 February ends on the 28th', start:'2100-02-01', end:'2100-02-28', valid:true },
     { label:'leap February ends on the 29th', start:'2028-02-01', end:'2028-02-29', valid:true },
     { label:'century year 2100 is not leap', start:'2100-02-01', end:'2100-02-29', valid:false },
     { label:'century year 2000 is leap', start:'2000-02-01', end:'2000-02-29', valid:true },
@@ -241,4 +276,25 @@ test('plan contract metadata is additive and assignment terms are immutable, ver
   });
   await assert.rejects(sql`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
     VALUES (${badAssignmentId},'rolling_months','2026-10-15','2027-01-15',3,'grace_from_assignment_v1','enforce',${sql.json(deadline)},'2026-10-15')`, { code:'23514' });
+});
+
+test('term-plan API requires an explicit compatible session quantity modality while legacy payload stays accepted',async()=>{
+  const service=await createService();
+  const invalidRights=[
+    [{rightType:'service_access',serviceId:service.id},{rightType:'sessions_quota',quotaScope:'shared',quantity:12,weeklyFrequency:3}],
+    [{rightType:'service_access',serviceId:service.id},{rightType:'sessions_quota',quotaScope:'shared',quantity:12,weeklyFrequency:3,quantityRule:'weekday_ratio_v1'}],
+    [{rightType:'service_access',serviceId:service.id},{rightType:'sessions_quota',quotaScope:'shared',quantityRule:'unlimited',weeklyFrequency:1}],
+  ];
+  for(const rights of invalidRights){
+    const rejected=await createPlan(service.id,{termKind:'rolling_months',termMonths:3,rights});
+    assert.equal(rejected.statusCode,400,rejected.body);
+  }
+  const valid=await createPlan(service.id,{termKind:'rolling_months',termMonths:3,rights:[
+    {rightType:'service_access',serviceId:service.id},{rightType:'sessions_quota',quotaScope:'shared',weeklyFrequency:3,quantityRule:'weekday_ratio_v1'},
+  ]});
+  assert.equal(valid.statusCode,201,valid.body);
+  assert.equal(valid.json().rights.find(right=>right.rightType==='sessions_quota').quantityRule,'weekday_ratio_v1');
+  const legacy=await createPlan(service.id);
+  assert.equal(legacy.statusCode,201,legacy.body);
+  assert.equal(legacy.json().rights.find(right=>right.rightType==='sessions_quota').quantityRule,null);
 });
