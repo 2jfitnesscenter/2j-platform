@@ -10,7 +10,10 @@ type DB = ReturnType<typeof createDatabase>['client'];
 export const TRAINING_SSO_AUDIENCE = '2j-training-sso';
 export const TRAINING_SSO_PURPOSE = 'training-session';
 export const TRAINING_SSO_TTL_SECONDS = 60;
-export const TRAINING_SSO_MAX_PENDING_PER_PERSON = 5;
+/** At most this many codes can be issued per person in any rolling minute; a new code supersedes the previous live one. */
+export const TRAINING_SSO_MAX_ISSUES_PER_MINUTE = 10;
+/** Repeated redemption attempts of one dead code are audited at most this many times (replay protection itself is unaffected). */
+export const TRAINING_SSO_MAX_REJECTION_AUDITS_PER_CODE = 5;
 export const TRAINING_SSO_REDEEM_PATH = '/api/internal/platform/v2/sso/redeem';
 const hash = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 const redeemBody = z.object({
@@ -26,6 +29,8 @@ export type TrainingSsoOptions = {
   resolvePersonAuth: (request: FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   /** Fixed, server-side destination. The code is appended as a URL fragment so it is never sent to a server or logged. */
   redirectUrl: string | null;
+  /** Exact origin of the member app. Required: issuance enforces it for every authentication provider (CSRF defence). */
+  allowedOrigin: string | null;
 };
 
 function validRedirect(value: string | null) {
@@ -49,11 +54,15 @@ function noStore(reply: FastifyReply) {
  */
 export function registerTrainingSsoRoutes(app: FastifyInstance<any, any, any, any, any>, db: DB, options: TrainingSsoOptions) {
   const redirectBase = validRedirect(options.redirectUrl);
+  const allowedOrigin = options.allowedOrigin;
 
   app.post('/api/me/training/sso', async (request, reply) => {
     noStore(reply);
     if (!options.enabled) return reply.code(423).send({ error: 'training_sso_disabled' });
-    if (!redirectBase) return reply.code(503).send({ error: 'training_sso_not_configured' });
+    if (!redirectBase || !allowedOrigin) return reply.code(503).send({ error: 'training_sso_not_configured' });
+    // Cookie-authenticated, state-changing: the browser must say it comes from the member app, whoever authenticated it.
+    const fetchSite = request.headers['sec-fetch-site'];
+    if (request.headers.origin !== allowedOrigin || fetchSite === 'cross-site') return reply.code(403).send({ error: 'origin_rejected' });
     const auth = await options.resolvePersonAuth(request);
     if (!auth) return reply.code(401).send({ error: 'authentication_required' });
     const [subject] = await db`SELECT s.id FROM platform_person_auth_subjects s JOIN platform_persons p ON p.id=s.person_id
@@ -73,8 +82,11 @@ export function registerTrainingSsoRoutes(app: FastifyInstance<any, any, any, an
     try {
       const issued = await db.begin(async (tx) => {
         await tx`SELECT pg_advisory_xact_lock(hashtextextended(${auth.personId}::text,0))`;
-        const [pending] = await tx`SELECT count(*)::int AS n FROM platform_training_sso_codes WHERE person_id=${auth.personId}::uuid AND state='pending' AND expires_at>now()`;
-        if ((pending?.n ?? 0) >= TRAINING_SSO_MAX_PENDING_PER_PERSON) return null;
+        const [recent] = await tx`SELECT count(*)::int AS n FROM platform_training_sso_codes WHERE person_id=${auth.personId}::uuid AND created_at>now()-interval '1 minute'`;
+        if ((recent?.n ?? 0) >= TRAINING_SSO_MAX_ISSUES_PER_MINUTE) return null;
+        // One live code per person: issuing a new one retires the previous (it can no longer be redeemed).
+        await tx`UPDATE platform_training_sso_codes SET state='revoked',terminal_reason='superseded',version=version+1
+          WHERE person_id=${auth.personId}::uuid AND state='pending' AND expires_at>now()`;
         const [row] = await tx`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,expires_at)
           VALUES (${hash(code)},${auth.personId}::uuid,${subject.id},${caps.trainingSubject.trainingUserId!},${TRAINING_SSO_AUDIENCE},${TRAINING_SSO_PURPOSE},now()+(${TRAINING_SSO_TTL_SECONDS} * interval '1 second'))
           RETURNING id,expires_at AS "expiresAt"`;
@@ -110,10 +122,6 @@ export function registerTrainingSsoRoutes(app: FastifyInstance<any, any, any, an
       if (parsed.data.audience !== TRAINING_SSO_AUDIENCE || parsed.data.purpose !== TRAINING_SSO_PURPOSE) return reply.code(409).send({ error: 'sso_context_mismatch' });
 
       const codeHash = hash(parsed.data.code);
-      const [known] = await db`SELECT person_id AS "personId" FROM platform_training_sso_codes WHERE code_hash=${codeHash}`;
-      if (!known) return reply.code(404).send({ error: 'sso_code_not_found' });
-      // Platform is authoritative for commercial state, suspension and link status; evaluated at redemption time.
-      const computed = await computeTrainingCapabilities(db, String(known.personId));
       const actor = `service:${verified.keyId}`.slice(0, 120);
 
       try {
@@ -121,30 +129,37 @@ export function registerTrainingSsoRoutes(app: FastifyInstance<any, any, any, an
           const [row] = await tx`SELECT id,person_id AS "personId",auth_subject_link_id AS "subjectId",training_user_id AS "trainingUserId",state,expires_at<=now() AS "isExpired"
             FROM platform_training_sso_codes WHERE code_hash=${codeHash} FOR UPDATE`;
           if (!row) return { http: 404, error: 'sso_code_not_found' } as const;
-          const reject = async (action: 'training.sso_rejected', reason: string) => {
-            await tx`INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details) VALUES (${row.personId}::uuid,${actor},${action},${row.id},(${JSON.stringify({ reason })}::text)::jsonb)`;
+          // Replays of a dead code stay rejected, but the evidence they leave is bounded (no unbounded append-only growth).
+          const reject = async (reason: string) => {
+            await tx`INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details)
+              SELECT ${row.personId}::uuid,${actor}::text,'training.sso_rejected',${row.id}::uuid,(${JSON.stringify({ reason })}::text)::jsonb
+              WHERE (SELECT count(*) FROM platform_identity_audit_events WHERE resource_id=${row.id}::uuid AND action='training.sso_rejected')<${TRAINING_SSO_MAX_REJECTION_AUDITS_PER_CODE}`;
           };
-          if (row.state === 'consumed') { await reject('training.sso_rejected', 'already_used'); return { http: 409, error: 'sso_code_already_used' } as const; }
-          if (row.state === 'revoked') { await reject('training.sso_rejected', 'revoked'); return { http: 409, error: 'sso_code_revoked' } as const; }
+          if (row.state === 'consumed') { await reject('already_used'); return { http: 409, error: 'sso_code_already_used' } as const; }
+          if (row.state === 'revoked') { await reject('revoked'); return { http: 409, error: 'sso_code_revoked' } as const; }
           if (row.state === 'expired' || row.isExpired) {
             if (row.state === 'pending') await tx`UPDATE platform_training_sso_codes SET state='expired',terminal_reason='ttl_elapsed',version=version+1 WHERE id=${row.id}`;
-            await reject('training.sso_rejected', 'expired');
+            await reject('expired');
             return { http: 410, error: 'sso_code_expired' } as const;
           }
+          // Serialise with suspension/lifting (they take FOR UPDATE on the person): whatever they commit before this lock is visible to
+          // the capability read below, and anything committed after it applies from the next verification. A stale snapshot cannot win.
+          await tx`SELECT id FROM platform_persons WHERE id=${row.personId}::uuid FOR SHARE`;
           const [binding] = await tx`SELECT 1 AS ok FROM platform_persons p
             JOIN platform_person_auth_subjects s ON s.person_id=p.id AND s.id=${row.subjectId} AND s.status='active'
             JOIN training_account_links l ON l.person_id=p.id AND l.status='active' AND l.training_user_id=${row.trainingUserId}
-            WHERE p.id=${row.personId}::uuid AND p.status='active' FOR SHARE OF p,s,l`;
+            WHERE p.id=${row.personId}::uuid AND p.status='active' FOR SHARE OF s,l`;
           if (!binding) {
             await tx`UPDATE platform_training_sso_codes SET state='revoked',terminal_reason='binding_changed',version=version+1 WHERE id=${row.id}`;
-            await reject('training.sso_rejected', 'binding_changed');
+            await reject('binding_changed');
             return { http: 409, error: 'sso_binding_changed' } as const;
           }
+          const computed = await computeTrainingCapabilities(tx as unknown as DB, String(row.personId));
           if (computed.status !== 'ok') return { http: 503, error: 'capabilities_unavailable' } as const;
           const caps = computed.payload;
           if (caps.capabilityLevel === 'blocked' || caps.trainingSubject.trainingUserId !== row.trainingUserId) {
             await tx`UPDATE platform_training_sso_codes SET state='revoked',terminal_reason='capability_blocked',version=version+1 WHERE id=${row.id}`;
-            await reject('training.sso_rejected', 'capability_blocked');
+            await reject('capability_blocked');
             return { http: 403, error: 'training_access_blocked', reasonCode: caps.reasonCode } as const;
           }
           await tx`UPDATE platform_training_sso_codes SET state='consumed',consumed_key_id=${verified.keyId},version=version+1 WHERE id=${row.id}`;

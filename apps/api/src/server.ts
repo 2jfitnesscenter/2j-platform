@@ -253,6 +253,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     keys: trainingCapabilitiesKeys,
     resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
     redirectUrl: options.trainingSsoRedirectUrl ?? null,
+    allowedOrigin: options.memberAppOrigin ?? null,
   });
   registerAssignmentPeriodRoutes(app, client, authorizationResolver);
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();

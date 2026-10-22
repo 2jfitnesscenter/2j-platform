@@ -17,7 +17,8 @@ const homeKey = { id: 'qa-home-v1', secret: Buffer.alloc(32, 12).toString('base6
 const keys = { [bunkerKey.id]: { caller: 'bunker', secret: bunkerKey.secret }, [homeKey.id]: { caller: 'home', secret: homeKey.secret } };
 let currentAuth = null;
 const redirectUrl = 'http://127.0.0.1:8080/sso';
-const base = { trainingCapabilitiesKeys: keys, resolvePersonAuth: async () => currentAuth, trainingSsoRedirectUrl: redirectUrl };
+const memberOrigin = 'http://127.0.0.1:5173';
+const base = { trainingCapabilitiesKeys: keys, resolvePersonAuth: async () => currentAuth, trainingSsoRedirectUrl: redirectUrl, memberAppOrigin: memberOrigin };
 const app = buildServer(process.env.DATABASE_URL, { ...base, logger: false, trainingSsoEnabled: true });
 const disabledApp = buildServer(process.env.DATABASE_URL, { ...base, logger: false });
 const unconfiguredApp = buildServer(process.env.DATABASE_URL, { ...base, logger: false, trainingSsoEnabled: true, trainingSsoRedirectUrl: null });
@@ -36,7 +37,7 @@ async function createPerson({ link = true } = {}) {
 
 async function issue(person, server = app) {
   currentAuth = person.auth;
-  const response = await server.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json' }, payload: {} });
+  const response = await server.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} });
   const code = response.statusCode === 201 ? new URL(response.json().redirectUrl).hash.slice('#code='.length) : null;
   return { response, code };
 }
@@ -53,14 +54,14 @@ function redeemRequest(code, overrides = {}) {
 test('issuance is off by default, needs configuration and an authenticated person, and never persists the raw code', async () => {
   const person = await createPerson();
   currentAuth = person.auth;
-  const off = await disabledApp.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json' }, payload: {} });
+  const off = await disabledApp.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} });
   assert.equal(off.statusCode, 423); assert.equal(off.json().error, 'training_sso_disabled');
-  const unconfigured = await unconfiguredApp.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json' }, payload: {} });
+  const unconfigured = await unconfiguredApp.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} });
   assert.equal(unconfigured.statusCode, 503);
   currentAuth = null;
-  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json' }, payload: {} })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} })).statusCode, 401);
   currentAuth = { ...person.auth, authSubject: 'someone-else' };
-  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json' }, payload: {} })).statusCode, 401, 'a subject that is not bound to the person is rejected');
+  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} })).statusCode, 401, 'a subject that is not bound to the person is rejected');
 
   const { response, code } = await issue(person);
   assert.equal(response.statusCode, 201, response.body);
@@ -172,9 +173,68 @@ test('administrative suspension blocks issuance and redemption, is reversible, a
   assert.equal(link.status, 'active'); assert.equal(link.trainingUserId, person.trainingUserId, 'suspension keeps identity and link');
 });
 
-test('a person cannot hold more than five pending codes', async () => {
+test('a person has at most one live code: a new one supersedes the previous, and issuance is rate limited per minute', async () => {
   const person = await createPerson();
-  for (let index = 0; index < 5; index += 1) assert.equal((await issue(person)).response.statusCode, 201);
+  const first = await issue(person), second = await issue(person);
+  assert.equal(first.response.statusCode, 201); assert.equal(second.response.statusCode, 201);
+  const old = await app.inject(redeemRequest(first.code));
+  assert.equal(old.statusCode, 409); assert.equal(old.json().error, 'sso_code_revoked', 'the superseded code can no longer be redeemed');
+  const [{ live }] = await sql`SELECT count(*)::int AS live FROM platform_training_sso_codes WHERE person_id=${person.personId} AND state='pending'`;
+  assert.equal(live, 1, 'exactly one pending code per person');
+  assert.equal((await sql`SELECT terminal_reason FROM platform_training_sso_codes WHERE code_hash=${hash(first.code)}`)[0].terminal_reason, 'superseded');
+  assert.equal((await app.inject(redeemRequest(second.code))).statusCode, 200, 'the newest code works');
+  for (let index = 0; index < 8; index += 1) assert.equal((await issue(person)).response.statusCode, 201);
   const limited = await issue(person);
   assert.equal(limited.response.statusCode, 429); assert.equal(limited.response.json().error, 'training_sso_rate_limited');
+});
+
+test('issuance requires the member-app origin for every authentication provider (CSRF), not only the pilot', async () => {
+  const person = await createPerson();
+  currentAuth = person.auth;
+  const attempt = headers => app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', ...headers }, payload: {} });
+  assert.equal((await attempt({})).statusCode, 403, 'no Origin');
+  assert.equal((await attempt({ origin: 'https://attacker.example' })).statusCode, 403, 'foreign Origin');
+  assert.equal((await attempt({ origin: `${memberOrigin}.attacker.example` })).statusCode, 403, 'lookalike Origin');
+  assert.equal((await attempt({ origin: memberOrigin, 'sec-fetch-site': 'cross-site' })).statusCode, 403, 'browser says cross-site');
+  assert.equal((await sql`SELECT count(*)::int AS n FROM platform_training_sso_codes WHERE person_id=${person.personId}`)[0].n, 0, 'nothing is issued for a rejected request');
+  assert.equal((await attempt({ origin: memberOrigin, 'sec-fetch-site': 'same-site' })).statusCode, 201);
+  const noOriginConfigured = buildServer(process.env.DATABASE_URL, { ...base, memberAppOrigin: undefined, logger: false, trainingSsoEnabled: true });
+  try { assert.equal((await noOriginConfigured.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} })).statusCode, 503, 'without a configured member origin it fails closed'); }
+  finally { await noOriginConfigured.close(); }
+});
+
+test('a suspension committed while a redemption is in flight is never ignored (no stale capability snapshot)', async () => {
+  const person = await createPerson();
+  const { code } = await issue(person);
+  const path = `/api/platform/v1/persons/${person.personId}/training-suspension`;
+  let redemption;
+  // The suspension transaction holds the person lock, exactly as the admin route does; the redemption starts meanwhile and must wait for it.
+  await sql.begin(async tx => {
+    await tx`SELECT id FROM platform_persons WHERE id=${person.personId} FOR UPDATE`;
+    await tx`INSERT INTO platform_training_access_events(person_id,action,reason,actor_id,idempotency_key,request_hash) VALUES (${person.personId},'suspended','Prueba de carrera en canje','qa',${randomUUID()},${hash(randomUUID())})`;
+    redemption = app.inject(redeemRequest(code));
+    await new Promise(resolve => setTimeout(resolve, 400));
+    const early = await Promise.race([redemption.then(() => 'finished'), new Promise(resolve => setTimeout(() => resolve('waiting'), 50))]);
+    assert.equal(early, 'waiting', 'the redemption blocks on the person lock instead of reading around it');
+  });
+  const result = await redemption;
+  assert.equal(result.statusCode, 403, result.body); assert.equal(result.json().reasonCode, 'ADMIN_SUSPENDED');
+  assert.equal((await sql`SELECT state,terminal_reason FROM platform_training_sso_codes WHERE code_hash=${hash(code)}`)[0].terminal_reason, 'capability_blocked');
+  assert.ok(path);
+});
+
+test('replays of a dead code stay rejected but leave bounded evidence', async () => {
+  const person = await createPerson();
+  const { code } = await issue(person);
+  assert.equal((await app.inject(redeemRequest(code))).statusCode, 200);
+  for (let index = 0; index < 12; index += 1) assert.equal((await app.inject(redeemRequest(code))).statusCode, 409, 'every replay is refused');
+  const [{ n }] = await sql`SELECT count(*)::int AS n FROM platform_identity_audit_events WHERE person_id=${person.personId} AND action='training.sso_rejected'`;
+  assert.equal(n, 5, 'rejection evidence is capped per code');
+  const expiredCode = randomBytes(32).toString('base64url');
+  await sql`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,expires_at)
+    VALUES (${hash(expiredCode)},${person.personId},${person.subjectId},${person.trainingUserId},'2j-training-sso','training-session',now()+interval '1 second')`;
+  await new Promise(resolve => setTimeout(resolve, 1300));
+  for (let index = 0; index < 8; index += 1) assert.equal((await app.inject(redeemRequest(expiredCode))).statusCode, 410);
+  const [{ expiredAudits }] = await sql`SELECT count(*)::int AS "expiredAudits" FROM platform_identity_audit_events r JOIN platform_training_sso_codes c ON c.id=r.resource_id WHERE c.code_hash=${hash(expiredCode)} AND r.action='training.sso_rejected'`;
+  assert.ok(expiredAudits <= 5);
 });
