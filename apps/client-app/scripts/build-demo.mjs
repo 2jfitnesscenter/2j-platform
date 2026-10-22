@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,15 +24,27 @@ process.env.VITE_2J_HUB_DEMO = 'true';
 process.env.VITE_2J_BUILD_ID = 'synthetic-demo';
 
 const emptyEnvDirectory = await mkdtemp(join(tmpdir(), '2j-home-demo-env-'));
+let buildStarted = false;
 try {
   const { build } = await import('vite');
+  buildStarted = true;
   await build({
     root: appRoot,
     mode: 'demo',
     envDir: emptyEnvDirectory,
     build: { outDir: outputDirectory, emptyOutDir: true },
   });
+  for (const file of await readdir(join(outputDirectory, 'assets'))) {
+    if (!file.endsWith('.js')) continue;
+    const bundle = await readFile(join(outputDirectory, 'assets', file), 'utf8');
+    if (bundle.includes('app.2jfitnesscenter.com')) {
+      throw new Error('The synthetic demo bundle must not contain the production Búnker URL.');
+    }
+  }
   await writeFile(markerPath, markerText, { flag: 'wx' });
+} catch (error) {
+  if (buildStarted) await rm(outputDirectory, { recursive: true, force: true });
+  throw error;
 } finally {
   await rm(emptyEnvDirectory, { recursive: true, force: true });
 }

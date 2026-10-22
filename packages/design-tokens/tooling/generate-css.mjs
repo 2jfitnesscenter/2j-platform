@@ -38,7 +38,7 @@ const lines = [
 const outputPath = resolve(root, 'src/tokens.css');
 if (process.argv.includes('--check')) {
   const current = await readFile(outputPath, 'utf8').catch(() => '');
-  if (current !== lines) {
+  if (current.replaceAll('\r\n', '\n') !== lines) {
     console.error('tokens.css is stale; regenerate from tokens.json');
     process.exitCode = 1;
   }
