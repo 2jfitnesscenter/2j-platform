@@ -17,11 +17,12 @@ ALTER TABLE plan_versions ADD CONSTRAINT plan_versions_payment_rule_allowed
 ALTER TABLE plan_versions ADD CONSTRAINT plan_versions_payment_block_allowed
   CHECK (payment_block IS NULL OR payment_block IN ('enforce','off'));
 ALTER TABLE plan_versions ADD CONSTRAINT plan_versions_contract_metadata_coherent CHECK (
-  (term_kind IS NULL AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NULL AND payment_block IS NULL)
-  OR (term_kind='natural_month' AND kind='recurring' AND term_months IS NULL AND max_span_days IS NULL AND renewal_cadence='monthly' AND payment_rule='monthly_day10_v1' AND payment_block IN ('enforce','off'))
-  OR (term_kind='custom_range' AND kind='recurring' AND term_months IS NULL AND payment_rule='grace_from_assignment_v1' AND payment_block IN ('enforce','off'))
-  OR (term_kind='rolling_months' AND kind='recurring' AND term_months IN (3,6,12) AND max_span_days IS NULL AND payment_rule='grace_from_assignment_v1' AND payment_block IN ('enforce','off'))
-  OR (term_kind IN ('pack','one_off') AND kind='session_pack' AND term_months IS NULL AND max_span_days IS NULL AND payment_rule='on_payment_v1' AND payment_block='off')
+  COALESCE((term_kind IS NULL AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NULL AND payment_block IS NULL)
+  OR (term_kind='natural_month' AND kind='recurring' AND term_months IS NULL AND max_span_days IS NULL AND renewal_cadence IS NOT NULL AND renewal_cadence='monthly' AND payment_rule IS NOT NULL AND payment_rule='monthly_day10_v1' AND payment_block IS NOT NULL AND payment_block IN ('enforce','off'))
+  OR (term_kind='custom_range' AND kind='recurring' AND term_months IS NULL AND payment_rule IS NOT NULL AND payment_rule='grace_from_assignment_v1' AND payment_block IS NOT NULL AND payment_block IN ('enforce','off'))
+  OR (term_kind='rolling_months' AND kind='recurring' AND term_months IS NOT NULL AND term_months IN (3,6,12) AND max_span_days IS NULL AND payment_rule IS NOT NULL AND payment_rule='grace_from_assignment_v1' AND payment_block IS NOT NULL AND payment_block IN ('enforce','off'))
+  OR (term_kind='pack' AND kind='session_pack' AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NOT NULL AND payment_rule='on_payment_v1' AND payment_block IS NOT NULL AND payment_block='off')
+  OR (term_kind='one_off' AND kind='session_pack' AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NOT NULL AND payment_rule='on_payment_v1' AND payment_block IS NOT NULL AND payment_block='off'), FALSE)
 );
 
 CREATE FUNCTION contract_end_v1(start_date date, term_months integer)
@@ -44,6 +45,9 @@ BEGIN
   END IF;
   target_index := EXTRACT(YEAR FROM start_date)::integer * 12 + EXTRACT(MONTH FROM start_date)::integer - 1 + term_months;
   target_year := target_index / 12;
+  IF target_year < 1 OR target_year > 9999 THEN
+    RAISE EXCEPTION 'calculated contract end exceeds supported YYYY date range' USING ERRCODE='22008';
+  END IF;
   target_month := target_index % 12 + 1;
   target_last_day := CASE
     WHEN target_month IN (4,6,9,11) THEN 30
@@ -84,17 +88,18 @@ CREATE TABLE assignment_contract_terms (
   ),
   CONSTRAINT assignment_contract_terms_months_range CHECK (term_months IS NULL OR term_months IN (3,6,12)),
   CONSTRAINT assignment_contract_terms_dates_coherent CHECK (
-    (term_kind='natural_month' AND contract_start IS NOT NULL AND contract_end IS NOT NULL AND term_months IS NULL
+    COALESCE((term_kind='natural_month' AND contract_start IS NOT NULL AND contract_end IS NOT NULL AND term_months IS NULL
       AND EXTRACT(DAY FROM contract_start)=1 AND EXTRACT(YEAR FROM contract_start)=EXTRACT(YEAR FROM contract_end)
       AND EXTRACT(MONTH FROM contract_start)=EXTRACT(MONTH FROM contract_end)
       AND EXTRACT(DAY FROM contract_end)=CASE WHEN EXTRACT(MONTH FROM contract_end) IN (4,6,9,11) THEN 30
         WHEN EXTRACT(MONTH FROM contract_end)=2 THEN CASE WHEN EXTRACT(YEAR FROM contract_end)::integer % 400=0 OR (EXTRACT(YEAR FROM contract_end)::integer % 4=0 AND EXTRACT(YEAR FROM contract_end)::integer % 100<>0) THEN 29 ELSE 28 END
-        ELSE 31 END AND contract_start>=assigned_local_date AND payment_rule='monthly_day10_v1')
+        ELSE 31 END AND contract_start>=assigned_local_date AND payment_rule IS NOT NULL AND payment_rule='monthly_day10_v1')
     OR (term_kind='custom_range' AND contract_start IS NOT NULL AND contract_end IS NOT NULL AND term_months IS NULL
-      AND contract_end>=contract_start AND contract_start>=assigned_local_date AND payment_rule='grace_from_assignment_v1')
-    OR (term_kind='rolling_months' AND contract_start IS NOT NULL AND contract_end IS NOT NULL AND term_months IN (3,6,12)
-      AND contract_start>=assigned_local_date AND contract_end=contract_end_v1(contract_start,term_months) AND payment_rule='grace_from_assignment_v1')
-    OR (term_kind IN ('pack','one_off') AND contract_start IS NULL AND contract_end IS NULL AND term_months IS NULL AND payment_rule='on_payment_v1' AND payment_block='off')
+      AND contract_end>=contract_start AND contract_start>=assigned_local_date AND payment_rule IS NOT NULL AND payment_rule='grace_from_assignment_v1')
+    OR (term_kind='rolling_months' AND contract_start IS NOT NULL AND contract_end IS NOT NULL AND term_months IS NOT NULL AND term_months IN (3,6,12)
+      AND contract_start>=assigned_local_date AND contract_end=contract_end_v1(contract_start,term_months) AND payment_rule IS NOT NULL AND payment_rule='grace_from_assignment_v1')
+    OR (term_kind='pack' AND contract_start IS NULL AND contract_end IS NULL AND term_months IS NULL AND payment_rule IS NOT NULL AND payment_rule='on_payment_v1' AND payment_block='off')
+    OR (term_kind='one_off' AND contract_start IS NULL AND contract_end IS NULL AND term_months IS NULL AND payment_rule IS NOT NULL AND payment_rule='on_payment_v1' AND payment_block='off'), FALSE)
   ),
   CONSTRAINT assignment_contract_terms_deadline_assignment CHECK (deadline_computation->>'assignedLocalDate'=assigned_local_date::text)
 );

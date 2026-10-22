@@ -64,6 +64,64 @@ test('SQL contract_end_v1 matches all required examples and domain results for e
     ORDER BY starts.start_date,terms.months`;
   assert.equal(results.length, 2191 * 3);
   for (const row of results) assert.equal(row.end, calculateContractEnd(row.start, row.months), `${row.start} + ${row.months} months`);
+  for (const [start, months, expected] of [['9998-10-15',12,'9999-10-14'],['9999-09-30',3,'9999-12-31']]) {
+    const [row] = await sql`SELECT contract_end_v1(${start}::date,${months})::text AS end`;
+    assert.equal(row.end, expected);
+    assert.equal(row.end, calculateContractEnd(start, months));
+  }
+  for (const [start, months] of [['9999-10-15',3],['9999-12-31',12]]) {
+    assert.throws(() => calculateContractEnd(start, months), RangeError);
+    await assert.rejects(sql`SELECT contract_end_v1(${start}::date,${months})`, error => error.code === '22008');
+  }
+});
+
+test('PostgreSQL plan-version coherence rejects NULL and incompatible fields for every term branch', async () => {
+  const service = await createService();
+  const cases = [
+    { label:'rolling duration NULL', kind:'recurring', cadence:'monthly', termKind:'rolling_months', termMonths:null, maxSpanDays:null, paymentRule:'grace_from_assignment_v1', paymentBlock:'enforce' },
+    { label:'rolling payment block NULL', kind:'recurring', cadence:'monthly', termKind:'rolling_months', termMonths:3, maxSpanDays:null, paymentRule:'grace_from_assignment_v1', paymentBlock:null },
+    { label:'natural-month payment rule NULL', kind:'recurring', cadence:'monthly', termKind:'natural_month', termMonths:null, maxSpanDays:null, paymentRule:null, paymentBlock:'enforce' },
+    { label:'pack incompatible duration', kind:'session_pack', cadence:null, termKind:'pack', termMonths:3, maxSpanDays:null, paymentRule:'on_payment_v1', paymentBlock:'off' },
+    { label:'one-off incompatible duration', kind:'session_pack', cadence:null, termKind:'one_off', termMonths:3, maxSpanDays:null, paymentRule:'on_payment_v1', paymentBlock:'off' },
+  ];
+  for (const item of cases) {
+    const plan = await createPlan(service.id);
+    assert.equal(plan.statusCode, 201, plan.body);
+    const planId = plan.json().id;
+    await assert.rejects(sql`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,timezone,term_kind,term_months,max_span_days,payment_rule,payment_block)
+      VALUES (${planId},2,${item.kind},${item.cadence},'Atlantic/Canary',${item.termKind},${item.termMonths},${item.maxSpanDays},${item.paymentRule},${item.paymentBlock})`,
+      error => error.code === '23514' && error.constraint_name === 'plan_versions_contract_metadata_coherent', item.label);
+  }
+});
+
+test('PostgreSQL assignment-term coherence rejects missing dates and duration across all branches', async () => {
+  const service = await createService();
+  const plan = await createPlan(service.id, { termKind:'rolling_months', termMonths:3 });
+  assert.equal(plan.statusCode, 201, plan.body);
+  const clientId = randomUUID(), planId = plan.json().id;
+  await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1A','CHECK fixture')`;
+  const cases = [
+    { label:'rolling duration NULL', termKind:'rolling_months', start:'2026-10-15', end:'2027-01-14', months:null, rule:'grace_from_assignment_v1', block:'enforce' },
+    { label:'rolling start NULL', termKind:'rolling_months', start:null, end:'2027-01-14', months:3, rule:'grace_from_assignment_v1', block:'enforce' },
+    { label:'natural-month end NULL', termKind:'natural_month', start:'2026-11-01', end:null, months:null, rule:'monthly_day10_v1', block:'enforce' },
+    { label:'custom-range start NULL', termKind:'custom_range', start:null, end:'2026-11-14', months:null, rule:'grace_from_assignment_v1', block:'enforce' },
+    { label:'custom-range end NULL', termKind:'custom_range', start:'2026-10-15', end:null, months:null, rule:'grace_from_assignment_v1', block:'enforce' },
+    { label:'pack has contract date', termKind:'pack', start:'2026-10-15', end:null, months:null, rule:'on_payment_v1', block:'off' },
+    { label:'one-off has contract date', termKind:'one_off', start:'2026-10-15', end:null, months:null, rule:'on_payment_v1', block:'off' },
+  ];
+  for (const item of cases) {
+    const assignmentId = randomUUID(), chargeId = randomUUID(), assigned = '2026-10-15', dueOn = '2026-10-20';
+    await sql`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash)
+      VALUES (${chargeId},${clientId},${planId},'Constraint fixture',1000,${dueOn},'f1a-test',${randomUUID()},${hash})`;
+    await sql`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by)
+      VALUES (${assignmentId},${clientId},${planId},1,${chargeId},'2026-10-15','2027-01-14',${randomUUID()},${hash},'f1a-test')`;
+    const deadline = { rule:item.rule, assignedLocalDate:assigned, inputs:{graceDays:5}, dueOn };
+    await assert.rejects(sql.begin(async tx => {
+      await tx`SET LOCAL session_replication_role = replica`;
+      await tx`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
+        VALUES (${assignmentId},${item.termKind},${item.start},${item.end},${item.months},${item.rule},${item.block},${tx.json(deadline)},${assigned})`;
+    }), error => error.code === '23514' && error.constraint_name === 'assignment_contract_terms_dates_coherent', item.label);
+  }
 });
 
 test('plan contract metadata is additive and assignment terms are immutable, verified snapshots', async () => {

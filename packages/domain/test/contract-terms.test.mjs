@@ -42,6 +42,9 @@ test('calculateContractEnd invariants hold for every date from 2026 through 2031
 test('calculateContractEnd rejects invalid dates, unsupported terms, and results outside DATE range', () => {
   assert.throws(() => calculateContractEnd('2026-02-30',3), RangeError);
   assert.throws(() => calculateContractEnd('2026-10-15',4), RangeError);
+  assert.equal(calculateContractEnd('9998-10-15',12),'9999-10-14');
+  assert.equal(calculateContractEnd('9999-09-30',3),'9999-12-31');
+  assert.throws(() => calculateContractEnd('9999-10-15',3), RangeError);
   assert.throws(() => calculateContractEnd('9999-12-31',12), RangeError);
 });
 
