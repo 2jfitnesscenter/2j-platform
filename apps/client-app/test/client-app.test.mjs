@@ -1,7 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import React from 'react';
+
+test('Home visual identity keeps the Expo graphite and lime glass theme scoped to the client PWA', async () => {
+  const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+  const visualUnification = css.slice(css.lastIndexOf('/* Home visual unification:'));
+  assert.doesNotMatch(css, /#10B981/i);
+  assert.match(visualUnification, /--2j-color-brand:#A4D65E/);
+  assert.match(visualUnification, /--2j-color-canvas:#151719/);
+  assert.match(visualUnification, /\.client-app\.hub-theme\.hub-theme-light \{[\s\S]*?--2j-color-brand:#A4D65E/);
+  assert.match(visualUnification, /--hub-glass-border:rgb\(255 255 255 \/ 15%\)/);
+  assert.match(visualUnification, /backdrop-filter:blur\(24px\) saturate\(145%\)/);
+  assert.match(visualUnification, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(visualUnification, /\.hub-theme \.button\.primary[\s\S]*?background:linear-gradient\(145deg,#B9E37C,#A4D65E 70%\)/);
+  assert.match(visualUnification, /@media \(max-width:430px\)[\s\S]*?\.hub-theme \.preview-pill \{ min-height:26px; padding:0 7px; font-size:9px/);
+  assert.doesNotMatch(visualUnification, /\.admin-web|\.staff-app/);
+});
 
 async function uiHarness() {
   const testing = await import('@testing-library/react');
