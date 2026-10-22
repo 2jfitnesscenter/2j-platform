@@ -1,11 +1,13 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import postgres from 'postgres';
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import { calculateContractEnd } from '@2j/domain';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+import { assignmentContractTerms } from '../src/schema.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: contract term integration tests need PostgreSQL.');
 
@@ -121,6 +123,64 @@ test('PostgreSQL assignment-term coherence rejects missing dates and duration ac
       await tx`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
         VALUES (${assignmentId},${item.termKind},${item.start},${item.end},${item.months},${item.rule},${item.block},${tx.json(deadline)},${assigned})`;
     }), error => error.code === '23514' && error.constraint_name === 'assignment_contract_terms_dates_coherent', item.label);
+  }
+});
+
+test('Drizzle and migration share the natural-month calendar shape constraint', async () => {
+  const migration = await readFile(new URL('../migrations/0036_contract_terms_dates.sql', import.meta.url), 'utf8');
+  const drizzleCheck = getTableConfig(assignmentContractTerms).checks.find(item => item.name === 'assignment_contract_terms_dates_coherent');
+  assert.ok(drizzleCheck, 'Drizzle assignment terms must define the coherence check');
+  const schemaCheck = new PgDialect().sqlToQuery(drizzleCheck.value).sql.replaceAll('"assignment_contract_terms".', '');
+  const migrationStart = migration.indexOf('CONSTRAINT assignment_contract_terms_dates_coherent CHECK (');
+  const migrationEnd = migration.indexOf('CONSTRAINT assignment_contract_terms_deadline_assignment CHECK', migrationStart);
+  const migrationCheck = migration.slice(migrationStart, migrationEnd);
+
+  assert.notEqual(migrationStart, -1);
+  assert.notEqual(migrationEnd, -1);
+  const naturalMonthBranch = value => {
+    const normalized = value.replaceAll('"', '').replaceAll(/\s+/g, '');
+    const start = normalized.indexOf("(term_kind='natural_month'");
+    const end = normalized.indexOf("OR(term_kind='custom_range'", start);
+    assert.notEqual(start, -1);
+    assert.notEqual(end, -1);
+    return normalized.slice(start, end);
+  };
+  assert.equal(naturalMonthBranch(schemaCheck), naturalMonthBranch(migrationCheck), 'Drizzle natural_month branch must match migration 0036');
+});
+
+test('natural-month PostgreSQL check accepts real month ends and rejects malformed dates', async () => {
+  const service = await createService();
+  const plan = await createPlan(service.id);
+  assert.equal(plan.statusCode, 201, plan.body);
+  const planId = plan.json().id;
+  const clientId = randomUUID();
+  await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1A','Natural month fixture')`;
+  const cases = [
+    { label:'start is not first day', start:'2026-11-02', end:'2026-11-30', valid:false },
+    { label:'end crosses month', start:'2026-11-01', end:'2026-12-31', valid:false },
+    { label:'end is not final calendar day', start:'2026-11-01', end:'2026-11-29', valid:false },
+    { label:'leap February is missing its 29th day', start:'2028-02-01', end:'2028-02-28', valid:false },
+    { label:'non-leap February ends on the 28th', start:'2027-02-01', end:'2027-02-28', valid:true },
+    { label:'leap February ends on the 29th', start:'2028-02-01', end:'2028-02-29', valid:true },
+    { label:'century year 2100 is not leap', start:'2100-02-01', end:'2100-02-29', valid:false },
+    { label:'century year 2000 is leap', start:'2000-02-01', end:'2000-02-29', valid:true },
+    { label:'year differs despite same month and day', start:'2026-11-01', end:'2027-11-30', valid:false },
+  ];
+
+  for (const item of cases) {
+    const assignmentId = randomUUID(), chargeId = randomUUID();
+    await sql`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash)
+      VALUES (${chargeId},${clientId},${planId},'Natural month fixture',1000,${item.start},'f1a-test',${randomUUID()},${hash})`;
+    await sql`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by)
+      VALUES (${assignmentId},${clientId},${planId},1,${chargeId},${item.start},${item.end},${randomUUID()},${hash},'f1a-test')`;
+    const deadline = { rule:'monthly_day10_v1', assignedLocalDate:item.start, inputs:{ day:10 }, dueOn:item.start };
+    const insert = () => sql.begin(async tx => {
+      await tx`SET LOCAL session_replication_role = replica`;
+      await tx`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
+        VALUES (${assignmentId},'natural_month',${item.start},${item.end},NULL,'monthly_day10_v1','enforce',${tx.json(deadline)},${item.start})`;
+    });
+    if (item.valid) await insert();
+    else await assert.rejects(insert(), error => error.code === '23514' && error.constraint_name === 'assignment_contract_terms_dates_coherent', item.label);
   }
 });
 
