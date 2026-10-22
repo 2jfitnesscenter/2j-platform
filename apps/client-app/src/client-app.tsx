@@ -162,7 +162,7 @@ const makeHubPreview = (now = new Date()) => {
     purchases: [{id:'b0000000-0000-4000-8000-000000000001',status:'completed',paymentState:'paid',totalCents:3290,createdAt:now.toISOString(),lines:[{productName:'Proteína 2J',variantLabel:'Chocolate · 900 g',quantity:1,unitPriceCents:3290,lineTotalCents:3290}]}] satisfies MemberPurchase[],
   };
 };
-const HUB_TRAINING_URL = 'https://app.2jfitnesscenter.com';
+const HUB_TRAINING_URL = import.meta.env?.VITE_2J_HUB_DEMO === 'true' ? '' : 'https://app.2jfitnesscenter.com';
 const HUB_STAFF_URL = import.meta.env?.VITE_2J_STAFF_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5175' : '');
 const HUB_ADMIN_URL = import.meta.env?.VITE_2J_ADMIN_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5174' : '');
 const HUB_BUILD_ID = import.meta.env?.VITE_2J_BUILD_ID || 'local';
