@@ -39,7 +39,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
       (SELECT COALESCE(jsonb_agg(jsonb_build_object('id',s.id,'name',s.name,'area',a.name) ORDER BY lower(s.name),s.id),'[]'::jsonb) FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version) AS services,
       (SELECT COALESCE(jsonb_agg(jsonb_build_object('rightType',r.right_type,'trainingAccessLevel',r.training_access_level,'serviceId',r.service_id,'serviceName',s.name,'quantity',r.quantity,'period',r.period,'quotaScope',r.quota_scope) ORDER BY r.right_type,r.service_id NULLS FIRST,r.id),'[]'::jsonb) FROM plan_rights r LEFT JOIN services s ON s.id=r.service_id WHERE r.plan_id=p.id AND r.plan_version=p.current_version) AS rights
       ,(SELECT COALESCE(jsonb_agg(jsonb_build_object('module',m.module,'accessLevel',m.access_level,'capabilities',COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb)) ORDER BY m.module),'[]'::jsonb) FROM plan_module_accesses m WHERE m.plan_id=p.id AND m.plan_version=p.current_version) AS modules
-      FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.status='active' AND v.frozen_at IS NOT NULL
+      FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.status='active' AND v.frozen_at IS NOT NULL AND v.term_kind IS NULL
         AND NOT EXISTS (SELECT 1 FROM plan_rights r WHERE r.plan_id=p.id AND r.plan_version=p.current_version AND r.right_type='service_access' AND r.service_id IS NULL)
         AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version AND (s.status<>'active' OR a.status<>'active'))
       ORDER BY lower(p.name),p.id`;
@@ -99,10 +99,11 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
           if(data.operationKind==='renewal'&&(!source.endsOn||data.startsOn<=String(source.endsOn)))return {error:'renewal_must_follow_current_term' as const};
           if(data.operationKind==='change'&&data.startsOn<=String(source.startsOn))return {error:'change_must_be_effective_after_start' as const};
         }
-        const [plan] = await tx`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.base_price_cents AS "basePriceCents",v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.timezone FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.id=${data.planId} AND p.status='active' AND v.frozen_at IS NOT NULL
+        const [plan] = await tx`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.term_kind AS "termKind",v.base_price_cents AS "basePriceCents",v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.timezone FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.id=${data.planId} AND p.status='active' AND v.frozen_at IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM plan_rights r WHERE r.plan_id=p.id AND r.plan_version=p.current_version AND r.right_type='service_access' AND r.service_id IS NULL)
           AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version AND (s.status<>'active' OR a.status<>'active')) FOR SHARE OF p,v`;
         if (!plan) return { error: 'plan_unavailable' as const };
+        if (plan.termKind != null) return { error: 'contract_terms_not_available' as const };
         const [cash] = data.paymentMethod === 'cash' ? await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE` : [];
         if (data.paymentMethod === 'cash' && !cash) return { error: 'cash_session_required' as const };
         const concept = `${plan.name} · Cuota`;
