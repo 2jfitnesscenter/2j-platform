@@ -12,6 +12,7 @@ if (!process.env.DATABASE_URL)
 const sql = postgres(process.env.DATABASE_URL, { max: 8, connect_timeout: 5 });
 await migrateDatabase(sql);
 let clientId = "";
+const testOwnedRequirementIds = new Set();
 const admin = buildServer(process.env.DATABASE_URL, {
   authorizationResolver: async () => ({ actorId: "comm-admin", role: "admin" }),
 });
@@ -57,16 +58,24 @@ const bookingTrainer = buildServer(process.env.DATABASE_URL, {
   }),
 });
 after(async () => {
-  await Promise.all([
-    admin.close(),
-    trainer.close(),
-    reception.close(),
-    accountant.close(),
-    portal.close(),
-    bookingAdmin.close(),
-    bookingTrainer.close(),
-    sql.end(),
-  ]);
+  try {
+    if (testOwnedRequirementIds.size) {
+      await sql`UPDATE document_requirements
+        SET active=false, archived_at=COALESCE(archived_at,now()), updated_at=now()
+        WHERE id IN ${sql([...testOwnedRequirementIds])} AND active=true`;
+    }
+  } finally {
+    await Promise.all([
+      admin.close(),
+      trainer.close(),
+      reception.close(),
+      accountant.close(),
+      portal.close(),
+      bookingAdmin.close(),
+      bookingTrainer.close(),
+      sql.end(),
+    ]);
+  }
 });
 async function createClient() {
   const response = await admin.inject({
@@ -455,6 +464,7 @@ test("consent acceptance snapshots exact content, is idempotent and cannot be al
   const service=await admin.inject({method:"POST",url:"/api/services",payload:{name:`Reserva consentida ${randomUUID()}`,areaId:area.json().id,status:"active"}});
   const requirement=await admin.inject({method:"POST",url:"/api/document-requirements",payload:{scopeType:"service",scopeId:service.json().id,requirementType:"consent",consentId:consent.json().id,required:true}});
   assert.equal(requirement.statusCode,201,requirement.body);
+  testOwnedRequirementIds.add(requirement.json().id);
   const session=await bookingAdmin.inject({method:"POST",url:"/api/calendar/sessions",payload:{serviceId:service.json().id,areaId:area.json().id,startsAt:new Date(Date.now()+3*86400000).toISOString(),durationMinutes:45,capacity:2}});
   assert.equal(session.statusCode,201,session.body);
   const blockedByNewVersion=await bookingAdmin.inject({method:"POST",url:`/api/calendar/sessions/${session.json().id}/reservations`,payload:{clientId:id}});
@@ -564,6 +574,7 @@ test("required service documents block only new reservations, with audited admin
     },
   });
   assert.equal(requirement.statusCode, 201, requirement.body);
+  testOwnedRequirementIds.add(requirement.json().id);
   const start = new Date(Date.now() + 3 * 86400000).toISOString();
   const session = await bookingAdmin.inject({
     method: "POST",
@@ -755,6 +766,7 @@ test("form, consent and document requirement archiving preserves history and is 
     },
   });
   assert.equal(requirement.statusCode, 201, requirement.body);
+  testOwnedRequirementIds.add(requirement.json().id);
   assert.equal(
     (
       await admin.inject({
@@ -808,6 +820,7 @@ test("form, consent and document requirement archiving preserves history and is 
     },
   });
   assert.equal(consentRequirement.statusCode, 201, consentRequirement.body);
+  testOwnedRequirementIds.add(consentRequirement.json().id);
   assert.equal(
     (
       await admin.inject({
