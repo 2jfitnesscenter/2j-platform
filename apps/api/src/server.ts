@@ -10,6 +10,7 @@ import { registerClientPlanRoutes } from './client-plans.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-service-auth.js';
 import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
+import { registerTrainingSsoRoutes } from './training-sso.js';
 import { registerTrainingSuspensionRoutes } from './training-suspensions.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
 import { registerCalendarRoutes } from './calendar.js';
@@ -161,6 +162,9 @@ export type ServerOptions = {
   trainingSummaryEnabled?: boolean;
   trainingSummaryAdapter?: TrainingAdapter;
   trainingCapabilitiesKeys?: InternalServiceKeys;
+  /** One-time Training SSO (Platform -> Búnker). Off by default; never enabled implicitly. */
+  trainingSsoEnabled?: boolean;
+  trainingSsoRedirectUrl?: string | null;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
   logger?: FastifyServerOptions['logger'];
@@ -244,6 +248,12 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerEntitlementRoutes(app, client, authorizationResolver);
   registerTrainingCapabilitiesRoute(app, client, trainingCapabilitiesKeys);
   registerTrainingSuspensionRoutes(app, client, authorizationResolver);
+  registerTrainingSsoRoutes(app, client, {
+    enabled: options.trainingSsoEnabled === true,
+    keys: trainingCapabilitiesKeys,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    redirectUrl: options.trainingSsoRedirectUrl ?? null,
+  });
   registerAssignmentPeriodRoutes(app, client, authorizationResolver);
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
   const allowMemberBooking = async (personId: string | undefined, request: import('fastify').FastifyRequest) => {
@@ -603,6 +613,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
     trainingServiceCallsEnabled: process.env.TRAINING_SERVICE_CALLS_ENABLED === 'true',
     trainingSummaryEnabled: process.env.TRAINING_SUMMARY_ENABLED === 'true',
+    trainingSsoEnabled: process.env.TRAINING_SSO_ENABLED === 'true',
+    trainingSsoRedirectUrl: process.env.TRAINING_SSO_REDIRECT_URL ?? null,
     memberAppOrigin: process.env.MEMBER_APP_ORIGIN ?? null,
     ...(localDemoClientId ? { clientAuthorizationResolver: async () => ({ clientId: localDemoClientId.toLowerCase() }) } : {}),
   });

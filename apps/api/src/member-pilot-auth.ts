@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { createDatabase } from './db.js';
 import type { ClientAuthorizationContext } from './communications.js';
+import type { ResolvedPersonAuth } from './training-link-protocol.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const COOKIE = '2j_member_pilot';
@@ -47,6 +48,20 @@ export function createMemberPilotAuth(database: DB, options: { enabled: boolean;
       return matches;
     });
     return rows[0] ? { clientId: rows[0].clientId, personId: rows[0].personId } : null;
+  }
+
+  /** Person-level identity from the same session; unlike `resolve` it does not require a client facet (external persons). */
+  async function resolvePerson(request: FastifyRequest): Promise<ResolvedPersonAuth | null> {
+    if (!enabled) return null;
+    const raw = cookieValue(request);
+    if (!raw || !/^[A-Za-z0-9_-]{40,64}$/.test(raw)) return null;
+    const rows = await database`SELECT s.person_id AS "personId",a.auth_subject AS "authSubject",a.provider,a.provider_version AS "providerVersion"
+      FROM platform_member_sessions s
+      JOIN platform_person_auth_subjects a ON a.id=s.auth_subject_link_id AND a.person_id=s.person_id AND a.status='active' AND a.provider='platform-pilot'
+      JOIN platform_persons p ON p.id=s.person_id AND p.status='active'
+      JOIN platform_member_pilot_credentials credential ON credential.auth_subject_link_id=a.id AND credential.status='active'
+      WHERE s.session_hash=${hash(raw)} AND s.revoked_at IS NULL AND s.expires_at>now() LIMIT 1`;
+    return rows[0] ? { personId: String(rows[0].personId), authSubject: String(rows[0].authSubject), provider: String(rows[0].provider), providerVersion: Number(rows[0].providerVersion) } : null;
   }
 
   function setCookie(reply: any, value: string, request: FastifyRequest, maxAge: number) {
@@ -112,5 +127,5 @@ export function createMemberPilotAuth(database: DB, options: { enabled: boolean;
     });
   }
 
-  return { enabled, resolve, register, csrfAllowed, cookieName: COOKIE };
+  return { enabled, resolve, resolvePerson, register, csrfAllowed, cookieName: COOKIE };
 }
