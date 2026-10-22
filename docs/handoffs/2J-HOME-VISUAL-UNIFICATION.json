@@ -1,0 +1,81 @@
+{
+  "taskId": "2J-HOME-VISUAL-UNIFICATION",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-VISUAL-UNIFICATION",
+  "baseSha": "0987639f212402e987c20a049aacdfca3a73bd17",
+  "references": {
+    "expoRepository": "2jfitnesscenter/2j-mobile",
+    "expoCommit": "880fb9db03c17466cd8edc1dae1926a3ac8517c5",
+    "pwaCommit": "0987639f212402e987c20a049aacdfca3a73bd17"
+  },
+  "scope": "client-pwa visual-only refinement; synthetic demo retained",
+  "status": "implemented_locally_pending_owner_visual_review",
+  "implementationCommitSha": "88b7163f1b9330bb5d98ee99c64e61d1a10e4f95",
+  "productionChanged": false,
+  "deploymentPerformed": false,
+  "platformChanged": false,
+  "bunkerChanged": false,
+  "databaseChanged": false,
+  "dnsOrProxyChanged": false,
+  "officialLogo": "pending_owner_asset; no verified source asset found",
+  "montserratFontAsset": "not_found; system fallback retained",
+  "visualTokens": {
+    "canvas": "#151719",
+    "primaryAccent": "#A4D65E",
+    "onAccent": "#151719",
+    "scope": ".client-app.hub-theme"
+  },
+  "screenshots": {
+    "directory": "C:\\Users\\juanj\\Documents\\Codex\\2026-10-22\\home-visual-unification-review",
+    "files": [
+      "inicio-mobile-390x844.png",
+      "reservas-mobile-390x844.png",
+      "bunker-mobile-390x844.png",
+      "tienda-mobile-390x844.png",
+      "perfil-mobile-390x844.png",
+      "ajustes-mobile-390x844.png",
+      "inicio-desktop-1440x1000.png"
+    ]
+  },
+  "tests": {
+    "clientApp": { "passed": 15, "failed": 0 },
+    "typecheck": "passed",
+    "productionBuild": "passed",
+    "syntheticBuild": "passed",
+    "composeConfig": "passed",
+    "browser": {
+      "viewports": ["375x812", "390x844", "412x915", "1440x1000"],
+      "horizontalOverflow": false,
+      "syntheticFetchCalls": 0,
+      "navigationDestinations": 5,
+      "lightThemeAccent": "#A4D65E",
+      "bunkerLaunch": "disabled"
+    },
+    "nginxConfig": "passed",
+    "containerSmoke": {
+      "root": 200,
+      "bundle": 200,
+      "demoLabel": true,
+      "blockedRoutes": {
+        "/api": 404,
+        "/api/me": 404,
+        "/pilot": 404,
+        "/pilot/member/login": 404,
+        "/auth/login": 404,
+        "/payments": 404,
+        "/bookings": 404
+      },
+      "temporaryContainerStopped": true
+    },
+    "lint": "not_available_no_script",
+    "databaseSuites": "not_run_no_database_scope"
+  },
+  "dockerImage": {
+    "tag": "2j-home-visual-unification:0987639",
+    "digest": "sha256:0445253accc5a4c7457f97bba2de9d37c113b6e80518bc1270029df5333ee099",
+    "published": false
+  },
+  "independentReview": "pending",
+  "ownerVisualReview": "pending",
+  "nextAction": "owner reviews screenshots and supplies official registered logo before publication candidate"
+}
