@@ -1,4 +1,5 @@
 import type { TransactionSql } from 'postgres';
+import { evaluateTermPaymentAccess } from './term-payment-access.js';
 
 export type BookingBlockingReason =
   | 'client_inactive' | 'session_cancelled' | 'session_started' | 'session_full'
@@ -62,11 +63,12 @@ export type BookingEligibilityResult =
 type EntitlementRow = {
   assignmentId: string; planId: string; planName: string; assignmentStatus: string;
   lastEvent: string | null; startsOn: string; endsOn: string | null;
+  termKind: string | null;
   accessRightId: string; accessValidDays: number | null; accessValidDaysStartRule: string | null;
   quotaRightId: string | null; quotaRightType: 'sessions_quota'|'period_quota'|null;
   quantity: number | null; period: string | null; periodMode: string | null; timezone: string | null;
   validDays: number | null; validDaysStartRule: string | null; balance: number | null;
-  entitlementPeriodId: string | null; periodStatus: string | null; periodBalance: number | null; periodSessions: number | null;
+  entitlementPeriodId: string | null; periodStatus: string | null; entitlementMode: string | null; periodBalance: number | null; periodSessions: number | null;
 };
 
 /**
@@ -124,9 +126,11 @@ export async function evaluateBookingEligibility(
       CASE WHEN quota.id IS NULL OR quota.right_type<>'sessions_quota' THEN NULL
         WHEN ep.id IS NOT NULL THEN ep.balance
         ELSE (SELECT COALESCE(sum(l.quantity),0)::int FROM client_entitlement_ledger l WHERE l.assignment_id=a.id AND l.right_key=quota.id::text AND l.entitlement_period_id IS NULL) END AS balance,
-      ep.id AS "entitlementPeriodId",ep.period_status AS "periodStatus",ep.balance AS "periodBalance",ep.sessions_snapshot AS "periodSessions"
+      v.term_kind AS "termKind",
+      ep.id AS "entitlementPeriodId",ep.period_status AS "periodStatus",ep.entitlement_mode AS "entitlementMode",ep.balance AS "periodBalance",ep.sessions_snapshot AS "periodSessions"
     FROM client_plan_assignments a
     JOIN plans p ON p.id=a.plan_id
+    JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
     LEFT JOIN LATERAL (SELECT e.event_type FROM client_plan_assignment_events e WHERE e.assignment_id=a.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1) latest ON true
     JOIN plan_services ps ON ps.plan_id=a.plan_id AND ps.plan_version=a.plan_version AND ps.service_id=${serviceId}
     JOIN plan_rights access ON access.plan_id=a.plan_id AND access.plan_version=a.plan_version
@@ -135,7 +139,7 @@ export async function evaluateBookingEligibility(
       AND quota.right_type IN ('sessions_quota','period_quota')
       AND (quota.service_id=${serviceId} OR (quota.service_id IS NULL AND quota.quota_scope='shared'))
     LEFT JOIN LATERAL (
-      SELECT p.id,p.sessions_snapshot,
+      SELECT p.id,p.sessions_snapshot,p.entitlement_mode,
         COALESCE((SELECT sum(l.quantity)::int FROM client_entitlement_ledger l WHERE l.entitlement_period_id=p.id AND l.right_key=p.right_id::text),0)::int AS balance,
         CASE WHEN EXISTS(SELECT 1 FROM assignment_entitlement_period_events e WHERE e.period_id=p.id AND e.event_type='payment_validated') THEN 'active'
           WHEN (now() AT TIME ZONE 'Atlantic/Canary')::date BETWEEN p.period_start AND LEAST(p.period_end,date_trunc('month',p.period_start)::date+9)
@@ -170,9 +174,17 @@ export async function evaluateBookingEligibility(
 
   const alternatives: BookingEntitlementOption[] = [];
   const reasons = new Set<BookingBlockingReason>();
+  const paymentAccess = await evaluateTermPaymentAccess(tx, [...groups].filter(([, group]) => group.unavailable.length === 0).map(([assignmentId, group]) => ({
+    assignmentId,
+    termKind: group.rows[0]?.termKind ?? null,
+  })), now);
   for (const [assignmentId, group] of groups) {
     if (group.unavailable.length) { group.unavailable.forEach((reason) => reasons.add(reason)); continue; }
     const first = group.rows[0]!;
+    const payment = paymentAccess.get(assignmentId);
+    if (first.termKind !== null && !payment) { reasons.add('entitlement_unavailable'); continue; }
+    if (payment?.state === 'entitlement_unavailable') { reasons.add('entitlement_unavailable'); continue; }
+    if (payment?.state === 'payment_overdue' && !request.ignoreDebt) { reasons.add('debt_restriction'); continue; }
     const quotaRows = group.rows.filter((row) => row.quotaRightId);
     const validityRows = [
       ...(first.accessValidDays && first.accessValidDaysStartRule ? [{ rightId: first.accessRightId, validDays: first.accessValidDays, rule: first.accessValidDaysStartRule }] : []),
@@ -203,7 +215,15 @@ export async function evaluateBookingEligibility(
     let exhausted = false;
     for (const quota of quotaRows) {
       if (quota.quotaRightType === 'sessions_quota') {
-        if (quota.entitlementPeriodId && quota.periodStatus !== 'active' && quota.periodStatus !== 'provisional') {
+        if (first.termKind !== null) {
+          if (!quota.entitlementPeriodId || !quota.entitlementMode) {
+            exhausted = true; reasons.add('entitlement_unavailable');
+          } else if (quota.entitlementMode === 'quota' && Number(quota.periodBalance ?? 0) <= 0) {
+            exhausted = true;
+          } else if (quota.entitlementMode !== 'quota' && quota.entitlementMode !== 'unlimited') {
+            exhausted = true; reasons.add('entitlement_unavailable');
+          }
+        } else if (quota.entitlementPeriodId && quota.periodStatus !== 'active' && quota.periodStatus !== 'provisional') {
           exhausted = true; reasons.add('entitlement_unavailable');
         } else if (quota.entitlementPeriodId && quota.periodStatus === 'provisional') {
           // Provisional reservations are bounded by the initial monthly estimate.
@@ -230,7 +250,8 @@ export async function evaluateBookingEligibility(
     alternatives.push({ assignmentId, planId: first.planId, planName: first.planName, accessRightId: first.accessRightId,
       quotaRightIds: quotaRows.map((right) => right.quotaRightId!), sessionsQuotaRightIds: sessionsRows.map((right) => right.quotaRightId!),
       entitlementPeriodIdsByRightId: Object.fromEntries(sessionsRows.filter((right) => right.entitlementPeriodId).map((right) => [right.quotaRightId!, right.entitlementPeriodId!])),
-      availableBalance: sessionsRows.length ? Math.min(...sessionsRows.map((right) => Number(right.balance ?? 0))) : null,
+      availableBalance: sessionsRows.some((right) => right.entitlementMode !== 'unlimited')
+        ? Math.min(...sessionsRows.map((right) => Number(right.balance ?? 0))) : null,
       periodUsage, validUntil });
   }
   if (!alternatives.length) {
