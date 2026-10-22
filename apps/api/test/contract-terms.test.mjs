@@ -7,6 +7,7 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import { calculateContractEnd } from '@2j/domain';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+import { coordinateContractAssignment, ContractAssignmentError } from '../src/contract-assignment-coordinator.ts';
 import { assignmentContractTerms, assignmentEntitlementPeriods, clientEntitlementLedger, planRights } from '../src/schema.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: contract term integration tests need PostgreSQL.');
@@ -297,4 +298,87 @@ test('term-plan API requires an explicit compatible session quantity modality wh
   const legacy=await createPlan(service.id);
   assert.equal(legacy.statusCode,201,legacy.body);
   assert.equal(legacy.json().rights.find(right=>right.rightType==='sessions_quota').quantityRule,null);
+});
+
+test('F1-C coordinator atomically creates one charge, frozen terms, and initial bags for supported contract types',async()=>{
+  const service=await createService();
+  const clientId=randomUUID();
+  await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1-C','Coordinator fixture')`;
+  const actor={actorId:'f1c-test-admin',role:'admin'};
+  const clock=new Date('2026-10-15T12:00:00Z');
+  const cases=[
+    {termKind:'natural_month',termMonths:null,maxSpanDays:null,contractStart:'2026-11-01',customRangeEnd:undefined,dueOn:'2026-11-10',contractEnd:'2026-11-30',periods:1},
+    {termKind:'custom_range',termMonths:null,maxSpanDays:20,contractStart:'2026-10-15',customRangeEnd:'2026-10-31',dueOn:'2026-10-20',contractEnd:'2026-10-31',periods:1},
+    {termKind:'rolling_months',termMonths:3,maxSpanDays:null,contractStart:'2026-10-15',customRangeEnd:undefined,dueOn:'2026-10-20',contractEnd:'2027-01-14',periods:4},
+  ];
+  for(const item of cases){
+    const plan=await createPlan(service.id,{termKind:item.termKind,termMonths:item.termMonths,maxSpanDays:item.maxSpanDays,basePriceCents:5000});
+    assert.equal(plan.statusCode,201,plan.body);
+    const planId=plan.json().id;
+    assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+    const result=await coordinateContractAssignment(sql,{clientId,planId,idempotencyKey:randomUUID(),contractStart:item.contractStart,...(item.customRangeEnd?{customRangeEnd:item.customRangeEnd}:{}),amountCents:5000},actor,clock);
+    assert.equal(result.dueOn,item.dueOn);
+    assert.equal(result.paymentBlockEffectiveOn,item.termKind==='natural_month'?'2026-11-11':'2026-10-21');
+    assert.equal(result.endsOn,item.contractEnd);
+    assert.equal(result.periods.length,item.periods);
+    const [charge]=await sql`SELECT due_on::text AS due_on,plan_id,amount_cents FROM economic_charges WHERE id=${result.chargeId}`;
+    assert.deepEqual({...charge,amount_cents:Number(charge.amount_cents)},{due_on:item.dueOn,plan_id:planId,amount_cents:5000});
+    const [terms]=await sql`SELECT term_kind,contract_start::text AS contract_start,contract_end::text AS contract_end,term_months,payment_rule,payment_block,deadline_computation
+      FROM assignment_contract_terms WHERE assignment_id=${result.assignmentId}`;
+    assert.equal(terms.term_kind,item.termKind);assert.equal(terms.contract_start,item.contractStart);assert.equal(terms.contract_end,item.contractEnd);
+    assert.equal(terms.term_months,item.termMonths);assert.equal(terms.payment_rule,item.termKind==='natural_month'?'monthly_day10_v1':'grace_from_assignment_v1');
+    assert.equal(terms.deadline_computation.dueOn,item.dueOn);
+    assert.equal(terms.deadline_computation.paymentBlockEffectiveOn,result.paymentBlockEffectiveOn);
+    const [counts]=await sql`SELECT count(*)::int AS assignment_count,(SELECT count(*)::int FROM economic_charges WHERE id=${result.chargeId}) AS charge_count,
+      (SELECT count(*)::int FROM assignment_entitlement_periods WHERE assignment_id=${result.assignmentId}) AS period_count,
+      (SELECT count(*)::int FROM client_entitlement_ledger WHERE assignment_id=${result.assignmentId} AND entry_type='grant') AS grant_count
+      FROM client_plan_assignments WHERE id=${result.assignmentId}`;
+    assert.deepEqual(counts,{assignment_count:1,charge_count:1,period_count:item.periods,grant_count:item.periods});
+  }
+  const legacySale=await createPlan(service.id);
+  assert.equal(legacySale.statusCode,201);
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${legacySale.json().id}/activate`})).statusCode,200);
+  const legacyAssignment=await app.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:legacySale.json().id,startsOn:'2026-10-15',dueOn:'2026-10-20',amountCents:1000}});
+  assert.equal(legacyAssignment.statusCode,201,legacyAssignment.body,'existing 098E legacy sale remains unchanged');
+});
+
+test('F1-C coordinator serializes same-key retries and rejects changed payload without duplicate ledger facts',async()=>{
+  const service=await createService();const plan=await createPlan(service.id,{termKind:'rolling_months',termMonths:3,basePriceCents:5000});
+  assert.equal(plan.statusCode,201,plan.body);const planId=plan.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+  const clientId=randomUUID(),key=randomUUID(),actor={actorId:'f1c-race-admin',role:'admin'},now=new Date('2026-10-15T12:00:00Z');
+  await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1-C','Race fixture')`;
+  const input={clientId,planId,idempotencyKey:key,contractStart:'2026-10-15',amountCents:5000};
+  await assert.rejects(coordinateContractAssignment(sql,{...input,dueOn:'2026-10-22'},actor,now),
+    error=>error instanceof ContractAssignmentError&&error.code==='validation_error','caller-supplied dueOn is rejected; the coordinator is authoritative');
+  const results=await Promise.all([coordinateContractAssignment(sql,input,actor,now),coordinateContractAssignment(sql,input,actor,now)]);
+  assert.deepEqual(results.map(row=>row.replay).sort(),[false,true]);
+  assert.equal(results[0].assignmentId,results[1].assignmentId);assert.equal(results[0].chargeId,results[1].chargeId);
+  await assert.rejects(coordinateContractAssignment(sql,{...input,amountCents:5100},actor,now),error=>error instanceof ContractAssignmentError&&error.code==='idempotency_conflict');
+  const [counts]=await sql`SELECT count(*)::int AS assignments,(SELECT count(*)::int FROM economic_charges WHERE client_id=${clientId}) AS charges,
+    (SELECT count(*)::int FROM assignment_entitlement_periods WHERE assignment_id=${results[0].assignmentId}) AS periods,
+    (SELECT count(*)::int FROM client_entitlement_ledger WHERE assignment_id=${results[0].assignmentId} AND entry_type='grant') AS grants
+    FROM client_plan_assignments WHERE client_id=${clientId}`;
+  assert.deepEqual(counts,{assignments:1,charges:1,periods:4,grants:4});
+});
+
+test('F1-C coordinator rolls back the charge and assignment when initial bag materialization fails',async()=>{
+  const service=await createService();const plan=await createPlan(service.id,{termKind:'custom_range',maxSpanDays:10,basePriceCents:5000});
+  assert.equal(plan.statusCode,201,plan.body);const planId=plan.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+  const clientId=randomUUID();await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1-C','Rollback fixture')`;
+  const termsBefore=(await sql`SELECT count(*)::int AS count FROM assignment_contract_terms`)[0].count;
+  await assert.rejects(coordinateContractAssignment(sql,{clientId,planId,idempotencyKey:randomUUID(),contractStart:'2026-10-17',customRangeEnd:'2026-10-18',amountCents:5000},
+    {actorId:'f1c-rollback-admin',role:'admin'},new Date('2026-10-17T12:00:00Z')),
+  error=>error instanceof ContractAssignmentError&&error.code==='bag_empty');
+  const [counts]=await sql`SELECT (SELECT count(*)::int FROM client_plan_assignments WHERE client_id=${clientId}) AS assignments,
+    (SELECT count(*)::int FROM economic_charges WHERE client_id=${clientId}) AS charges,
+    (SELECT count(*)::int FROM assignment_contract_terms) AS all_terms,
+    (SELECT count(*)::int FROM client_entitlement_ledger WHERE client_id=${clientId}) AS grants`;
+  assert.deepEqual(counts,{assignments:0,charges:0,all_terms:termsBefore,grants:0});
+});
+
+test('F1-C coordinator enforces entitlement permission server-side',async()=>{
+  await assert.rejects(coordinateContractAssignment(sql,{}, {actorId:'trainer-without-sale',role:'trainer'},new Date('2026-10-15T12:00:00Z')),
+    error=>error instanceof ContractAssignmentError&&error.code==='permission_denied');
 });
