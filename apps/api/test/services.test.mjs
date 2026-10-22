@@ -275,7 +275,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   await sql`UPDATE schema_migrations SET checksum=${originalChecksum} WHERE name=${migration}`;
 });
 
-test('0034-0035 upgrade a checksummed 0033 database once and install replay plus suspension stores', async () => {
+test('0036 upgrades the checksummed current-main schema once and preserves legacy rows', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL);
   const databaseName=`capability_upgrade_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
@@ -287,26 +287,37 @@ test('0034-0035 upgrade a checksummed 0033 database once and install replay plus
     upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     const directory=new URL('../migrations/',import.meta.url);
     const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
-    const target='0034_training_access_capabilities.sql';
-    const final='0035_training_access_suspensions.sql';
-    assert.equal(names.at(-1),final);
-    const prior=names.filter(name=>name<target);
+    const contract='0036_contract_terms_dates.sql';
+    assert.equal(names.at(-1),contract);
+    const prior=names.filter(name=>name<contract);
     await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
     for(const name of prior){
       const contents=await readFile(new URL(name,directory),'utf8');
       const checksum=createHash('sha256').update(contents).digest('hex');
       await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
     }
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,33);
+    const legacyPlanId=randomUUID();
+    const [legacyArea]=await upgradeDb`SELECT id FROM areas WHERE normalized_name='la sala'`;
+    const [legacyService]=await upgradeDb`INSERT INTO services(area_id,name,status) VALUES (${legacyArea.id},${`Legacy upgrade ${randomUUID()}`},'active') RETURNING id`;
+    await upgradeDb.begin(async tx=>{
+      await tx`INSERT INTO plans(id,name,status,current_version,idempotency_key,request_hash) VALUES (${legacyPlanId},'Legacy upgrade fixture','draft',1,${randomUUID()},${'b'.repeat(64)})`;
+      await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,timezone) VALUES (${legacyPlanId},1,'recurring','monthly','Atlantic/Canary')`;
+      await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) VALUES (${legacyPlanId},1,${legacyService.id})`;
+      await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id) VALUES (${legacyPlanId},1,'service_access',${legacyService.id})`;
+    });
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,35);
     const upgraded=await migrateDatabase(upgradeDb);
-    assert.equal(upgraded.length,35);
-    assert.deepEqual(upgraded.slice(-2).map(row=>row.name),[target,final]);
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${target}`)[0].count,1);
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${final}`)[0].count,1);
+    assert.equal(upgraded.length,36);
+    assert.deepEqual(upgraded.slice(-1).map(row=>row.name),[contract]);
+    assert.deepEqual(upgraded.slice(-3).map(row=>row.name),['0034_training_access_capabilities.sql','0035_training_access_suspensions.sql',contract]);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${contract}`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_training_access_events') IS NOT NULL AS exists`)[0].exists,true);
-    assert.equal((await migrateDatabase(upgradeDb)).length,35,'re-running migration verification applies no duplicate migration');
+    assert.equal((await migrateDatabase(upgradeDb)).length,36,'re-running migration verification applies no duplicate migration');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE term_kind IS NOT NULL`)[0].count,0,'migration must not rewrite legacy plan versions');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE plan_id=${legacyPlanId} AND version=1 AND term_kind IS NULL AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NULL AND payment_block IS NULL`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_contract_terms`)[0].count,0,'migration must not fabricate terms for legacy assignments');
   }finally{
     if(upgradeDb)await upgradeDb.end();
     await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
@@ -353,7 +364,7 @@ test('0024 upgrades representative legacy active and revoked explicit-admin link
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.assignmentRecurrenceEvents, schema.assignmentEntitlementPeriods, schema.assignmentEntitlementPeriodEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformServiceRequestReplays, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.assignmentContractTerms, schema.clientPlanAssignmentEvents, schema.assignmentRecurrenceEvents, schema.assignmentEntitlementPeriods, schema.assignmentEntitlementPeriodEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformServiceRequestReplays, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -384,6 +395,28 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
   const rightIndexes = await sql`SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND indexname IN ('plan_rights_global_unique','plan_rights_service_unique')`;
   assert.equal(rightIndexes.length, 2);
   for (const index of rightIndexes) assert.match(index.indexdef, /COALESCE\(period, ''(?:::text)?\)/, `${index.indexname} must distinguish quota periods`);
+});
+
+test('0036 migrates a fresh database from zero and verifies the upgrade from current main exactly once', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`f1a_fresh_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
+  const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});let fresh;
+  try{
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+    sourceUrl.pathname=`/${databaseName}`;fresh=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
+    assert.equal((await fresh`SELECT to_regclass('public.plan_versions') AS table`)[0].table,null,'fresh database starts empty');
+    const first=await migrateDatabase(fresh);
+    assert.equal(first.length,36);
+    assert.equal(first.at(-1).name,'0036_contract_terms_dates.sql');
+    const second=await migrateDatabase(fresh);
+    assert.deepEqual(second.map(row=>[row.name,row.checksum.trim()]),first.map(row=>[row.name,row.checksum.trim()]));
+    assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0036_contract_terms_dates.sql'`)[0].count,1);
+    assert.equal((await fresh`SELECT to_regprocedure('contract_end_v1(date,integer)') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await fresh`SELECT to_regclass('public.assignment_contract_terms') IS NOT NULL AS exists`)[0].exists,true);
+  }finally{
+    if(fresh)await fresh.end();
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
+  }
 });
 
 test('2J-078B identity stays person-scoped and 2J-089 summary contract is strict and disabled by default', async () => {

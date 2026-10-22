@@ -73,9 +73,25 @@ export const planInput = z.object({
   name: z.string().trim().min(1).max(100), serviceIds: z.array(uuid.transform((value) => value.toLowerCase())).min(1).max(20), kind: z.enum(['recurring', 'session_pack']),
   renewalCadence: z.enum(['weekly', 'monthly', 'custom_period']).nullable().optional(),
   periodDays: z.number().int().min(1).max(3660).nullable().optional(), basePriceCents: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  termKind:z.enum(['natural_month','custom_range','rolling_months','pack','one_off']).nullable().optional(),termMonths:z.number().int().nullable().optional(),maxSpanDays:z.number().int().nullable().optional(),paymentRule:z.enum(['monthly_day10_v1','grace_from_assignment_v1','on_payment_v1']).nullable().optional(),paymentBlock:z.enum(['enforce','off']).nullable().optional(),
   modules: z.array(z.object({ module: z.enum(['reservations','training','nutrition','health']), accessLevel: z.enum(['limited','full']), capabilities: z.array(z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,3}$/)).max(30).default([]) }).strict()).max(10).default([]),
   rights: z.array(rightInput).min(1).max(40),
 }).strict().superRefine((plan, context) => {
+  const termKind=plan.termKind??null;
+  if(termKind===null){if([plan.termMonths,plan.maxSpanDays,plan.paymentRule,plan.paymentBlock].some(value=>value!=null))context.addIssue({code:'custom',path:['termKind'],message:'Los metadatos de contrato requieren termKind.'});}
+  else {
+    const expectedRule=termKind==='natural_month'?'monthly_day10_v1':['pack','one_off'].includes(termKind)?'on_payment_v1':'grace_from_assignment_v1';
+    const expectedKind=['pack','one_off'].includes(termKind)?'session_pack':'recurring';
+    if(plan.kind!==expectedKind)context.addIssue({code:'custom',path:['kind'],message:'El tipo de plan no es compatible con termKind.'});
+    if(plan.paymentRule!=null&&plan.paymentRule!==expectedRule)context.addIssue({code:'custom',path:['paymentRule'],message:'La regla de pago no es compatible con termKind.'});
+    if(termKind==='natural_month'&&(plan.termMonths!=null||plan.maxSpanDays!=null||plan.renewalCadence!=='monthly'))context.addIssue({code:'custom',path:['termKind'],message:'natural_month requiere renovación mensual y no admite duración ni máximo de rango.'});
+    if(termKind==='custom_range'&&plan.termMonths!=null)context.addIssue({code:'custom',path:['termMonths'],message:'custom_range no admite termMonths.'});
+    if(termKind==='rolling_months'&&(![3,6,12].includes(plan.termMonths??0)||plan.maxSpanDays!=null))context.addIssue({code:'custom',path:['termMonths'],message:'rolling_months requiere 3, 6 o 12 meses y no admite maxSpanDays.'});
+    if(['pack','one_off'].includes(termKind)&&(plan.termMonths!=null||plan.maxSpanDays!=null))context.addIssue({code:'custom',path:['termKind'],message:'pack y one_off no usan duración ni rango fijo.'});
+    if(['pack','one_off'].includes(termKind)&&plan.paymentBlock!=null&&plan.paymentBlock!=='off')context.addIssue({code:'custom',path:['paymentBlock'],message:'pack y one_off se activan tras validar el pago y no usan bloqueo por deuda.'});
+  }
+  if(plan.termMonths!=null&&![3,6,12].includes(plan.termMonths))context.addIssue({code:'custom',path:['termMonths'],message:'Solo se admiten contratos de 3, 6 o 12 meses.'});
+  if(plan.maxSpanDays!=null&&(plan.maxSpanDays<1||plan.maxSpanDays>3660))context.addIssue({code:'custom',path:['maxSpanDays'],message:'maxSpanDays debe estar entre 1 y 3660.'});
   if (new Set(plan.serviceIds).size !== plan.serviceIds.length) context.addIssue({ code: 'custom', path: ['serviceIds'], message: 'No se pueden repetir servicios.' });
   if (plan.kind === 'recurring' && !plan.renewalCadence) context.addIssue({ code: 'custom', path: ['renewalCadence'], message: 'El plan recurrente requiere una renovación definida.' });
   if (plan.kind === 'session_pack' && (plan.renewalCadence != null || plan.periodDays != null)) context.addIssue({ code: 'custom', path: ['kind'], message: 'El bono de sesiones no tiene renovación.' });
@@ -383,6 +399,8 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
         rights: canonicalRights, basePriceCents: body.basePriceCents ?? null,
       modules: [...body.modules].map((item) => ({ ...item, capabilities: [...item.capabilities].sort(compareCodeUnits) })).sort((a,b) => compareCodeUnits(a.module,b.module)),
     };
+    const contract=normalizePlanContract(body);
+    if(contract.termKind!==null)Object.assign(canonicalBody,{termKind:contract.termKind,termMonths:contract.termMonths,maxSpanDays:contract.maxSpanDays,paymentRule:contract.paymentRule,paymentBlock:contract.paymentBlock});
     const requestHash = createHash('sha256').update(JSON.stringify(canonicalBody)).digest('hex');
     try {
       const result = await client.begin(async (tx) => {
@@ -395,7 +413,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
         if (existing) return existing.requestHash.trim() === requestHash ? { id: existing.id, replay: true as const } : { error: 'idempotency_conflict' as const };
         const [plan] = await tx`INSERT INTO plans(name,status,current_version,idempotency_key,request_hash) VALUES (${body.name},'draft',1,${idempotencyKey},${requestHash}) RETURNING id`;
         if (!plan) throw new Error('Plan insert returned no row');
-        await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents) VALUES (${plan.id},1,${body.kind},${body.renewalCadence ?? null},${body.periodDays ?? null},${timezone},${body.basePriceCents ?? null})`;
+        await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents,term_kind,term_months,max_span_days,payment_rule,payment_block) VALUES (${plan.id},1,${body.kind},${body.renewalCadence ?? null},${body.periodDays ?? null},${timezone},${body.basePriceCents ?? null},${contract.termKind},${contract.termMonths},${contract.maxSpanDays},${contract.paymentRule},${contract.paymentBlock})`;
         await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) SELECT ${plan.id},1,id FROM services WHERE id IN ${tx(body.serviceIds)}`;
         for (const right of body.rights) {
           await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,training_access_level,service_id,quota_scope,quantity,weekly_frequency,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},1,${right.rightType},${right.trainingAccessLevel??null},${right.serviceId ?? null},${right.quotaScope ?? null},${right.quantity ?? null},${right.weeklyFrequency ?? null},${right.period ?? null},${right.periodMode ?? null},${right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null},${right.validDays ?? null},${right.validDaysStartRule ?? null})`;
@@ -437,6 +455,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     if(!parsed.success)return reply.code(400).send({error:'validation_error',details:parsed.error.flatten()});
     const body=parsed.data;const serviceIds=[...body.serviceIds].sort(compareCodeUnits);
     const canonical={...body,serviceIds,modules:[...body.modules].map(item=>({...item,capabilities:[...item.capabilities].sort(compareCodeUnits)})).sort((a,b)=>compareCodeUnits(a.module,b.module)),rights:[...body.rights].map(right=>({...right,trainingAccessLevel:right.trainingAccessLevel??null,serviceId:right.serviceId??null})).sort((a,b)=>compareCodeUnits(JSON.stringify(a),JSON.stringify(b)))};
+    const contract=normalizePlanContract(body);if(contract.termKind!==null)Object.assign(canonical,{termKind:contract.termKind,termMonths:contract.termMonths,maxSpanDays:contract.maxSpanDays,paymentRule:contract.paymentRule,paymentBlock:contract.paymentBlock});
     const requestHash=createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
     try{
       const result=await client.begin(async tx=>{
@@ -449,7 +468,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
         if(services.length!==serviceIds.length)return {error:'service_not_found' as const};
         if(services.some(item=>item.status==='archived'))return {error:'service_archived' as const};
         const version=Number(plan.currentVersion)+1;
-        await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents) VALUES (${plan.id},${version},${body.kind},${body.renewalCadence??null},${body.periodDays??null},${timezone},${body.basePriceCents??null})`;
+        await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents,term_kind,term_months,max_span_days,payment_rule,payment_block) VALUES (${plan.id},${version},${body.kind},${body.renewalCadence??null},${body.periodDays??null},${timezone},${body.basePriceCents??null},${contract.termKind},${contract.termMonths},${contract.maxSpanDays},${contract.paymentRule},${contract.paymentBlock})`;
         await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) SELECT ${plan.id},${version},id FROM services WHERE id IN ${tx(serviceIds)}`;
         for(const right of body.rights)await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,training_access_level,service_id,quota_scope,quantity,weekly_frequency,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},${version},${right.rightType},${right.trainingAccessLevel??null},${right.serviceId??null},${right.quotaScope??null},${right.quantity??null},${right.weeklyFrequency??null},${right.period??null},${right.periodMode??null},${right.rightType==='period_quota'&&right.period!=='plan_period'?timezone:null},${right.validDays??null},${right.validDaysStartRule??null})`;
         for(const access of body.modules){await tx`INSERT INTO plan_module_accesses(plan_id,plan_version,module,access_level) VALUES (${plan.id},${version},${access.module},${access.accessLevel})`;for(const capability of access.capabilities)await tx`INSERT INTO plan_module_capabilities(plan_id,plan_version,module,capability) VALUES (${plan.id},${version},${access.module},${capability})`;}
@@ -508,8 +527,16 @@ function compareCodeUnits(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function normalizePlanContract(plan: {termKind?:string|null|undefined;termMonths?:number|null|undefined;maxSpanDays?:number|null|undefined;paymentRule?:string|null|undefined;paymentBlock?:string|null|undefined}) {
+  const termKind=plan.termKind??null;
+  if(termKind===null)return{termKind:null,termMonths:null,maxSpanDays:null,paymentRule:null,paymentBlock:null};
+  const paymentRule=termKind==='natural_month'?'monthly_day10_v1':['pack','one_off'].includes(termKind)?'on_payment_v1':'grace_from_assignment_v1';
+  const paymentBlock=['pack','one_off'].includes(termKind)?'off':plan.paymentBlock??'enforce';
+  return{termKind,termMonths:plan.termMonths??null,maxSpanDays:plan.maxSpanDays??null,paymentRule,paymentBlock};
+}
+
 async function listPlans(client: SqlClient, serviceId: string) {
-  const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
+  const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",v.term_kind AS "termKind",v.term_months AS "termMonths",v.max_span_days AS "maxSpanDays",v.payment_rule AS "paymentRule",v.payment_block AS "paymentBlock" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
   return Promise.all(plans.map(async (plan) => {
     const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
     const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
@@ -523,7 +550,7 @@ async function listPlansById(client: SqlClient, planId: string) {
   const rows = await client`SELECT id,name,status,current_version AS "currentVersion" FROM plans WHERE id=${planId}`;
   if (!rows[0]) return [];
   const plan = rows[0];
-  const versionRows = await client`SELECT kind,renewal_cadence AS "renewalCadence",period_days AS "periodDays",base_price_cents AS "basePriceCents" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion}`;
+  const versionRows = await client`SELECT kind,renewal_cadence AS "renewalCadence",period_days AS "periodDays",base_price_cents AS "basePriceCents",term_kind AS "termKind",term_months AS "termMonths",max_span_days AS "maxSpanDays",payment_rule AS "paymentRule",payment_block AS "paymentBlock" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion}`;
   const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${planId} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
   const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${planId} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
   const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${planId} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
