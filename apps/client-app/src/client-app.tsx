@@ -162,7 +162,19 @@ const makeHubPreview = (now = new Date()) => {
     purchases: [{id:'b0000000-0000-4000-8000-000000000001',status:'completed',paymentState:'paid',totalCents:3290,createdAt:now.toISOString(),lines:[{productName:'Proteína 2J',variantLabel:'Chocolate · 900 g',quantity:1,unitPriceCents:3290,lineTotalCents:3290}]}] satisfies MemberPurchase[],
   };
 };
-const HUB_TRAINING_URL = import.meta.env?.VITE_2J_HUB_DEMO === 'true' ? '' : 'https://app.2jfitnesscenter.com';
+/** Training URL for this build: empty in the synthetic demo; a staging/local override must be https (or loopback http); otherwise production. */
+export function resolveTrainingUrl(demoFlag: unknown, configured: unknown): string {
+  if (demoFlag === 'true') return '';
+  if (typeof configured === 'string' && configured) {
+    try {
+      const url = new URL(configured);
+      const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+      if (!url.username && !url.password && !url.search && !url.hash && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback))) return url.origin;
+    } catch { /* fall through to production */ }
+  }
+  return 'https://app.2jfitnesscenter.com';
+}
+const HUB_TRAINING_URL = resolveTrainingUrl(import.meta.env?.VITE_2J_HUB_DEMO, import.meta.env?.VITE_2J_TRAINING_URL);
 const HUB_STAFF_URL = import.meta.env?.VITE_2J_STAFF_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5175' : '');
 const HUB_ADMIN_URL = import.meta.env?.VITE_2J_ADMIN_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5174' : '');
 const HUB_BUILD_ID = import.meta.env?.VITE_2J_BUILD_ID || 'local';

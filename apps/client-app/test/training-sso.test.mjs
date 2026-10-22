@@ -120,3 +120,13 @@ test('the synthetic demo can never use the connected Búnker entry', async () =>
   assert.equal(fetchCount, 0);
   cleanup(); dom.window.close();
 });
+
+test('the Training URL can be overridden only with https or loopback; the demo never has one', async () => {
+  const { resolveTrainingUrl } = await import('../src/client-app.tsx');
+  const prod = 'https://app.2jfitnesscenter.com';
+  assert.equal(resolveTrainingUrl(undefined, undefined), prod);
+  assert.equal(resolveTrainingUrl('true', 'https://staging.example.com'), '', 'the synthetic demo has no Training origin');
+  assert.equal(resolveTrainingUrl(undefined, 'https://staging.example.com/anything'), 'https://staging.example.com');
+  assert.equal(resolveTrainingUrl(undefined, 'http://localhost:4300'), 'http://localhost:4300');
+  for (const bad of ['http://staging.example.com', 'ftp://x', 'javascript:alert(1)', 'https://u:p@x.example', 'https://x.example/?q=1', 'https://x.example/#h', 'not a url', 42]) assert.equal(resolveTrainingUrl(undefined, bad), prod, String(bad));
+});
