@@ -41,6 +41,7 @@ const rightInput = z.object({
   quotaScope: z.enum(['shared', 'per_service']).nullable().optional(),
   quantity: z.number().int().min(1).max(100_000).nullable().optional(),
   weeklyFrequency: z.number().int().min(1).max(5).nullable().optional(),
+  quantityRule: z.enum(['weekday_ratio_v1','fixed_v1','unlimited']).nullable().optional(),
   period: z.enum(['week', 'month', 'plan_period']).nullable().optional(),
   periodMode: z.enum(['calendar', 'rolling']).nullable().optional(),
   timezone: z.literal(timezone).optional(),
@@ -49,20 +50,23 @@ const rightInput = z.object({
 }).strict().superRefine((right, context) => {
   if (right.rightType === 'training_access') {
     if (!right.trainingAccessLevel) context.addIssue({ code:'custom',path:['trainingAccessLevel'],message:'El acceso a Training debe ser full o autonomous.' });
-    if (right.serviceId != null || right.quantity != null || right.quotaScope != null || right.weeklyFrequency != null || right.period != null || right.periodMode != null || right.timezone != null || right.validDays != null || right.validDaysStartRule != null) context.addIssue({code:'custom',message:'El acceso a Training solo admite su nivel explícito.'});
+    if (right.serviceId != null || right.quantity != null || right.quotaScope != null || right.weeklyFrequency != null || right.quantityRule != null || right.period != null || right.periodMode != null || right.timezone != null || right.validDays != null || right.validDaysStartRule != null) context.addIssue({code:'custom',message:'El acceso a Training solo admite su nivel explícito.'});
   } else if (right.trainingAccessLevel != null) {
     context.addIssue({code:'custom',path:['trainingAccessLevel'],message:'El nivel Training solo aplica al derecho training_access.'});
   }
   if (right.rightType === 'service_access') {
     if (!right.serviceId) context.addIssue({ code: 'custom', path: ['serviceId'], message: 'El acceso directo debe indicar un servicio de destino.' });
-    if (right.quantity != null || right.quotaScope != null || right.weeklyFrequency != null || right.period != null || right.periodMode != null || right.timezone != null) context.addIssue({ code: 'custom', message: 'El acceso directo no admite cuota ni periodo.' });
-  } else if (right.rightType !== 'training_access' && (!Number.isInteger(right.quantity) || !right.quotaScope)) {
+    if (right.quantity != null || right.quotaScope != null || right.weeklyFrequency != null || right.quantityRule != null || right.period != null || right.periodMode != null || right.timezone != null) context.addIssue({ code: 'custom', message: 'El acceso directo no admite cuota ni periodo.' });
+  } else if (right.rightType === 'period_quota' && (!Number.isInteger(right.quantity) || !right.quotaScope || right.quantityRule != null)) {
     context.addIssue({ code: 'custom', message: 'Las cuotas necesitan cantidad y alcance.' });
+  } else if (right.rightType === 'sessions_quota' && !right.quotaScope) {
+    context.addIssue({ code:'custom',message:'Las cuotas necesitan cantidad y alcance.' });
   }
   if (right.quotaScope === 'per_service' && !right.serviceId) context.addIssue({ code: 'custom', message: 'La cuota por servicio debe indicar el servicio de destino.' });
   if (right.quotaScope === 'shared' && right.serviceId) context.addIssue({ code: 'custom', message: 'La cuota compartida debe aplicarse globalmente a los servicios incluidos.' });
   if (right.rightType === 'period_quota' && (!right.period || (right.period === 'plan_period' ? right.periodMode != null || right.timezone != null : !right.periodMode || (right.timezone ?? timezone) !== timezone))) context.addIssue({ code: 'custom', message: 'La cuota periódica necesita un modo y zona horaria Atlantic/Canary, salvo que siga el periodo del plan.' });
   if (right.weeklyFrequency != null && right.rightType !== 'sessions_quota') context.addIssue({ code: 'custom', message: 'La frecuencia semanal solo aplica a una bolsa de sesiones.' });
+  if (right.quantityRule != null && right.rightType !== 'sessions_quota') context.addIssue({code:'custom',message:'La modalidad de cantidad solo aplica a bolsas de sesiones.'});
   if (right.rightType !== 'period_quota' && (right.period != null || right.periodMode != null || right.timezone != null)) context.addIssue({ code: 'custom', message: 'Solo las cuotas periódicas admiten periodo y zona horaria.' });
   if ((right.validDays == null) !== (right.validDaysStartRule == null)) context.addIssue({ code: 'custom', message: 'La caducidad necesita indicar si comienza en la compra o en el primer uso.' });
 });
@@ -102,8 +106,22 @@ export const planInput = z.object({
   if (new Set(plan.modules.map((item) => item.module)).size !== plan.modules.length) context.addIssue({ code: 'custom', path: ['modules'], message: 'No se puede repetir el acceso a un módulo.' });
   plan.modules.forEach((item, index) => { if (new Set(item.capabilities).size !== item.capabilities.length || item.capabilities.some((capability) => capability.split('.')[0] !== item.module)) context.addIssue({ code: 'custom', path: ['modules', index, 'capabilities'], message: 'Las capacidades deben ser únicas y pertenecer al módulo.' }); });
   plan.rights.forEach((right, index) => {
+    if (right.rightType === 'sessions_quota') {
+      if (termKind == null) {
+        if (right.quantityRule != null || !Number.isInteger(right.quantity)) context.addIssue({code:'custom',path:['rights',index],message:'Los derechos legacy requieren una cantidad fija y no admiten modalidad.'});
+      } else if (['natural_month','custom_range','rolling_months'].includes(termKind)) {
+        if (right.quantityRule === 'weekday_ratio_v1') {
+          if (right.quantity != null || right.weeklyFrequency == null) context.addIssue({code:'custom',path:['rights',index],message:'weekday_ratio_v1 requiere frecuencia semanal y no admite cantidad fija.'});
+        } else if (right.quantityRule === 'unlimited') {
+          if (right.quantity != null || right.weeklyFrequency != null) context.addIssue({code:'custom',path:['rights',index],message:'unlimited no admite cantidad ni frecuencia.'});
+        } else context.addIssue({code:'custom',path:['rights',index],message:'El contrato requiere una modalidad explícita para la bolsa de sesiones.'});
+      } else if (['pack','one_off'].includes(termKind)) {
+        if (right.quantityRule !== 'fixed_v1' || !Number.isInteger(right.quantity) || right.weeklyFrequency != null) context.addIssue({code:'custom',path:['rights',index],message:'pack y one_off requieren cantidad fija sin frecuencia semanal.'});
+      }
+    }
     if (right.serviceId && !plan.serviceIds.includes(right.serviceId)) context.addIssue({ code: 'custom', path: ['rights', index, 'serviceId'], message: 'El derecho debe apuntar a un servicio incluido en el plan.' });
   });
+  if (termKind != null && !plan.rights.some((right) => right.rightType === 'sessions_quota')) context.addIssue({code:'custom',path:['rights'],message:'Los contratos requieren al menos un derecho de bolsa de sesiones.'});
   const scopedRights = new Set<string>();
   for (const [index, right] of plan.rights.entries()) {
     const scopeKey = `${right.rightType}:${right.period ?? ''}:${right.serviceId ?? '*'}`;
@@ -389,7 +407,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const canonicalRights = parsed.data.rights.map((right) => ({
       rightType: right.rightType, trainingAccessLevel:right.trainingAccessLevel??null, serviceId: right.serviceId ?? null, quotaScope: right.quotaScope ?? null,
       quantity: right.quantity ?? null, period: right.period ?? null, periodMode: right.periodMode ?? null,
-      weeklyFrequency: right.weeklyFrequency ?? null,
+      weeklyFrequency: right.weeklyFrequency ?? null, quantityRule: right.quantityRule ?? null,
       timezone: right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null,
       validDays: right.validDays ?? null, validDaysStartRule: right.validDaysStartRule ?? null,
     })).sort((a, b) => compareCodeUnits(JSON.stringify(a), JSON.stringify(b)));
@@ -416,7 +434,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
         await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents,term_kind,term_months,max_span_days,payment_rule,payment_block) VALUES (${plan.id},1,${body.kind},${body.renewalCadence ?? null},${body.periodDays ?? null},${timezone},${body.basePriceCents ?? null},${contract.termKind},${contract.termMonths},${contract.maxSpanDays},${contract.paymentRule},${contract.paymentBlock})`;
         await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) SELECT ${plan.id},1,id FROM services WHERE id IN ${tx(body.serviceIds)}`;
         for (const right of body.rights) {
-          await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,training_access_level,service_id,quota_scope,quantity,weekly_frequency,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},1,${right.rightType},${right.trainingAccessLevel??null},${right.serviceId ?? null},${right.quotaScope ?? null},${right.quantity ?? null},${right.weeklyFrequency ?? null},${right.period ?? null},${right.periodMode ?? null},${right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null},${right.validDays ?? null},${right.validDaysStartRule ?? null})`;
+          await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,training_access_level,service_id,quota_scope,quantity,weekly_frequency,quantity_rule,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},1,${right.rightType},${right.trainingAccessLevel??null},${right.serviceId ?? null},${right.quotaScope ?? null},${right.quantity ?? null},${right.weeklyFrequency ?? null},${right.quantityRule??null},${right.period ?? null},${right.periodMode ?? null},${right.rightType === 'period_quota' && right.period !== 'plan_period' ? timezone : null},${right.validDays ?? null},${right.validDaysStartRule ?? null})`;
         }
         for (const moduleAccess of body.modules) {
           await tx`INSERT INTO plan_module_accesses(plan_id,plan_version,module,access_level) VALUES (${plan.id},1,${moduleAccess.module},${moduleAccess.accessLevel})`;
@@ -454,7 +472,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const parsed=planInput.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:'validation_error',details:parsed.error.flatten()});
     const body=parsed.data;const serviceIds=[...body.serviceIds].sort(compareCodeUnits);
-    const canonical={...body,serviceIds,modules:[...body.modules].map(item=>({...item,capabilities:[...item.capabilities].sort(compareCodeUnits)})).sort((a,b)=>compareCodeUnits(a.module,b.module)),rights:[...body.rights].map(right=>({...right,trainingAccessLevel:right.trainingAccessLevel??null,serviceId:right.serviceId??null})).sort((a,b)=>compareCodeUnits(JSON.stringify(a),JSON.stringify(b)))};
+    const canonical={...body,serviceIds,modules:[...body.modules].map(item=>({...item,capabilities:[...item.capabilities].sort(compareCodeUnits)})).sort((a,b)=>compareCodeUnits(a.module,b.module)),rights:[...body.rights].map(right=>({...right,trainingAccessLevel:right.trainingAccessLevel??null,serviceId:right.serviceId??null,quantityRule:right.quantityRule??null})).sort((a,b)=>compareCodeUnits(JSON.stringify(a),JSON.stringify(b)))};
     const contract=normalizePlanContract(body);if(contract.termKind!==null)Object.assign(canonical,{termKind:contract.termKind,termMonths:contract.termMonths,maxSpanDays:contract.maxSpanDays,paymentRule:contract.paymentRule,paymentBlock:contract.paymentBlock});
     const requestHash=createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
     try{
@@ -470,7 +488,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
         const version=Number(plan.currentVersion)+1;
         await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,period_days,timezone,base_price_cents,term_kind,term_months,max_span_days,payment_rule,payment_block) VALUES (${plan.id},${version},${body.kind},${body.renewalCadence??null},${body.periodDays??null},${timezone},${body.basePriceCents??null},${contract.termKind},${contract.termMonths},${contract.maxSpanDays},${contract.paymentRule},${contract.paymentBlock})`;
         await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) SELECT ${plan.id},${version},id FROM services WHERE id IN ${tx(serviceIds)}`;
-        for(const right of body.rights)await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,training_access_level,service_id,quota_scope,quantity,weekly_frequency,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},${version},${right.rightType},${right.trainingAccessLevel??null},${right.serviceId??null},${right.quotaScope??null},${right.quantity??null},${right.weeklyFrequency??null},${right.period??null},${right.periodMode??null},${right.rightType==='period_quota'&&right.period!=='plan_period'?timezone:null},${right.validDays??null},${right.validDaysStartRule??null})`;
+        for(const right of body.rights)await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,training_access_level,service_id,quota_scope,quantity,weekly_frequency,quantity_rule,period,period_mode,timezone,valid_days,valid_days_start_rule) VALUES (${plan.id},${version},${right.rightType},${right.trainingAccessLevel??null},${right.serviceId??null},${right.quotaScope??null},${right.quantity??null},${right.weeklyFrequency??null},${right.quantityRule??null},${right.period??null},${right.periodMode??null},${right.rightType==='period_quota'&&right.period!=='plan_period'?timezone:null},${right.validDays??null},${right.validDaysStartRule??null})`;
         for(const access of body.modules){await tx`INSERT INTO plan_module_accesses(plan_id,plan_version,module,access_level) VALUES (${plan.id},${version},${access.module},${access.accessLevel})`;for(const capability of access.capabilities)await tx`INSERT INTO plan_module_capabilities(plan_id,plan_version,module,capability) VALUES (${plan.id},${version},${access.module},${capability})`;}
         if(plan.status==='active')await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${plan.id} AND version=${version}`;
         await tx`UPDATE plans SET current_version=${version},name=${body.name} WHERE id=${plan.id}`;
@@ -539,7 +557,7 @@ async function listPlans(client: SqlClient, serviceId: string) {
   const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",v.term_kind AS "termKind",v.term_months AS "termMonths",v.max_span_days AS "maxSpanDays",v.payment_rule AS "paymentRule",v.payment_block AS "paymentBlock" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
   return Promise.all(plans.map(async (plan) => {
     const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
-    const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
+    const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",quantity_rule AS "quantityRule",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
     const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${plan.id} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
     return { ...plan, services, rights, modules };
   }));
@@ -552,7 +570,7 @@ async function listPlansById(client: SqlClient, planId: string) {
   const plan = rows[0];
   const versionRows = await client`SELECT kind,renewal_cadence AS "renewalCadence",period_days AS "periodDays",base_price_cents AS "basePriceCents",term_kind AS "termKind",term_months AS "termMonths",max_span_days AS "maxSpanDays",payment_rule AS "paymentRule",payment_block AS "paymentBlock" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion}`;
   const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${planId} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
-  const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${planId} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
+  const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",quantity_rule AS "quantityRule",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${planId} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
   const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${planId} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
   return [{ ...plan, ...versionRows[0], services, rights, modules }];
 }

@@ -275,7 +275,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   await sql`UPDATE schema_migrations SET checksum=${originalChecksum} WHERE name=${migration}`;
 });
 
-test('0036 upgrades the checksummed current-main schema once and preserves legacy rows', async () => {
+test('0037 upgrades the checksummed current-main schema once and preserves legacy rows', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL);
   const databaseName=`capability_upgrade_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
@@ -287,7 +287,7 @@ test('0036 upgrades the checksummed current-main schema once and preserves legac
     upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     const directory=new URL('../migrations/',import.meta.url);
     const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
-    const contract='0036_contract_terms_dates.sql';
+    const contract='0037_contract_entitlement_periods_v1.sql';
     assert.equal(names.at(-1),contract);
     const prior=names.filter(name=>name<contract);
     await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
@@ -305,16 +305,18 @@ test('0036 upgrades the checksummed current-main schema once and preserves legac
       await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) VALUES (${legacyPlanId},1,${legacyService.id})`;
       await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id) VALUES (${legacyPlanId},1,'service_access',${legacyService.id})`;
     });
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,35);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,36);
     const upgraded=await migrateDatabase(upgradeDb);
-    assert.equal(upgraded.length,36);
+    assert.equal(upgraded.length,37);
     assert.deepEqual(upgraded.slice(-1).map(row=>row.name),[contract]);
-    assert.deepEqual(upgraded.slice(-3).map(row=>row.name),['0034_training_access_capabilities.sql','0035_training_access_suspensions.sql',contract]);
+    assert.deepEqual(upgraded.slice(-3).map(row=>row.name),['0035_training_access_suspensions.sql','0036_contract_terms_dates.sql',contract]);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${contract}`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='quantity_rule'`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='assignment_entitlement_periods' AND column_name IN ('period_index','entitlement_mode','formula_id','weekdays_in_period','sessions_granted')`)[0].count,5);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_training_access_events') IS NOT NULL AS exists`)[0].exists,true);
-    assert.equal((await migrateDatabase(upgradeDb)).length,36,'re-running migration verification applies no duplicate migration');
+    assert.equal((await migrateDatabase(upgradeDb)).length,37,'re-running migration verification applies no duplicate migration');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE term_kind IS NOT NULL`)[0].count,0,'migration must not rewrite legacy plan versions');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE plan_id=${legacyPlanId} AND version=1 AND term_kind IS NULL AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NULL AND payment_block IS NULL`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_contract_terms`)[0].count,0,'migration must not fabricate terms for legacy assignments');
@@ -397,7 +399,7 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
   for (const index of rightIndexes) assert.match(index.indexdef, /COALESCE\(period, ''(?:::text)?\)/, `${index.indexname} must distinguish quota periods`);
 });
 
-test('0036 migrates a fresh database from zero and verifies the upgrade from current main exactly once', async () => {
+test('0037 migrates a fresh database from zero and verifies the upgrade from current main exactly once', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`f1a_fresh_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
   const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});let fresh;
@@ -406,13 +408,14 @@ test('0036 migrates a fresh database from zero and verifies the upgrade from cur
     sourceUrl.pathname=`/${databaseName}`;fresh=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     assert.equal((await fresh`SELECT to_regclass('public.plan_versions') AS table`)[0].table,null,'fresh database starts empty');
     const first=await migrateDatabase(fresh);
-    assert.equal(first.length,36);
-    assert.equal(first.at(-1).name,'0036_contract_terms_dates.sql');
+    assert.equal(first.length,37);
+    assert.equal(first.at(-1).name,'0037_contract_entitlement_periods_v1.sql');
     const second=await migrateDatabase(fresh);
     assert.deepEqual(second.map(row=>[row.name,row.checksum.trim()]),first.map(row=>[row.name,row.checksum.trim()]));
-    assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0036_contract_terms_dates.sql'`)[0].count,1);
+    assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0037_contract_entitlement_periods_v1.sql'`)[0].count,1);
     assert.equal((await fresh`SELECT to_regprocedure('contract_end_v1(date,integer)') IS NOT NULL AS exists`)[0].exists,true);
     assert.equal((await fresh`SELECT to_regclass('public.assignment_contract_terms') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await fresh`SELECT to_regprocedure('entitlement_weekdays(date,date)') IS NOT NULL AS exists`)[0].exists,true);
   }finally{
     if(fresh)await fresh.end();
     await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();

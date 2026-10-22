@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { TransactionSql } from 'postgres';
 import { can, type AuthorizationContext } from '@2j/permissions';
-import { canaryBusinessDate, nextMonthlyPeriod, proratedSessionsForPayment, sessionsForPeriod, weekdaysInRange } from '@2j/domain';
+import { canaryBusinessDate, EntitlementMaterializationError, nextMonthlyPeriod, proratedSessionsForPayment, sessionsForPeriod, splitContractIntoMonthlyEntitlementPeriods, validateContractQuantityRule, weekdaysInRange } from '@2j/domain';
 import type { createDatabase } from './db.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
@@ -18,6 +18,85 @@ const deterministicUuid = (value: string) => {
 const validDate = (value: string) => datePattern.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`)) && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0,10) === value;
 const monthEnd = (value: string) => new Date(Date.UTC(Number(value.slice(0,4)), Number(value.slice(5,7)), 0)).toISOString().slice(0,10);
 const isCalendarMonth = (start: string, end: string) => start.endsWith('-01') && end === monthEnd(start);
+
+/** Materialize the frozen F1-B quota/unlimited snapshot for an already-created term assignment.
+ * Call inside the assignment-creation transaction. Payment activation for pack/one_off stays in F1-C.
+ */
+export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId: string, actorId: string) {
+  const [assignment] = await tx`SELECT a.id,a.client_id AS "clientId",a.plan_id AS "planId",a.plan_version AS "planVersion",
+      v.term_kind AS "termKind",v.kind AS "planKind",v.base_price_cents AS "basePriceCents"
+    FROM client_plan_assignments a JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
+    WHERE a.id=${assignmentId} FOR UPDATE OF a`;
+  if (!assignment) throw new EntitlementMaterializationError('contract_terms_missing');
+  const [terms] = await tx`SELECT term_kind AS "termKind",contract_start::text AS "contractStart",contract_end::text AS "contractEnd",
+      term_months AS "termMonths",payment_rule AS "paymentRule",payment_block AS "paymentBlock"
+    FROM assignment_contract_terms WHERE assignment_id=${assignment.id}`;
+  if (!terms || terms.termKind !== assignment.termKind) throw new EntitlementMaterializationError('contract_terms_missing');
+  if (terms.termKind === 'pack' || terms.termKind === 'one_off') throw new EntitlementMaterializationError('payment_activation_required');
+  if (!['natural_month','custom_range','rolling_months'].includes(String(terms.termKind)) || !terms.contractStart || !terms.contractEnd) {
+    throw new EntitlementMaterializationError('contract_terms_missing');
+  }
+  const rights = await tx`SELECT id,right_type AS "rightType",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,
+      weekly_frequency AS "weeklyFrequency",quantity_rule AS "quantityRule",valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule"
+    FROM plan_rights WHERE plan_id=${assignment.planId} AND plan_version=${assignment.planVersion} AND right_type='sessions_quota' ORDER BY id`;
+  if (rights.length === 0) throw new EntitlementMaterializationError('quantity_rule_invalid');
+
+  // Fully calculate first so a zero bag or invalid right cannot leave a partial set behind.
+  const candidates: Array<{right: typeof rights[number]; periodIndex:number; start:string; end:string|null; mode:'quota'|'unlimited'; formula:'weekday_ratio_v1'|'fixed_v1'|null; weekdays:number|null; frequency:number|null; granted:number|null; snapshot:Record<string,unknown>}> = [];
+  const contractSnapshot={termKind:terms.termKind,termMonths:terms.termMonths,contractStart:terms.contractStart,contractEnd:terms.contractEnd,paymentRule:terms.paymentRule,paymentBlock:terms.paymentBlock};
+  for (const right of rights) {
+    const rule = validateContractQuantityRule({termKind:terms.termKind,rightType:String(right.rightType),quantityRule:right.quantityRule,quantity:right.quantity,weeklyFrequency:right.weeklyFrequency});
+    if (!rule.valid || (right.quantityRule !== 'weekday_ratio_v1' && right.quantityRule !== 'unlimited')) throw new EntitlementMaterializationError('quantity_rule_invalid');
+    if (right.quantityRule === 'unlimited') {
+      candidates.push({right,periodIndex:0,start:String(terms.contractStart),end:String(terms.contractEnd),mode:'unlimited',formula:null,weekdays:null,frequency:null,granted:null,
+        snapshot:{version:1,planId:assignment.planId,planVersion:assignment.planVersion,contract:contractSnapshot,right:{id:right.id,rightType:right.rightType,quantityRule:'unlimited',quantity:right.quantity,weeklyFrequency:right.weeklyFrequency,quotaScope:right.quotaScope,serviceId:right.serviceId,validDays:right.validDays,validDaysStartRule:right.validDaysStartRule},entitlementMode:'unlimited',periodIndex:0,periodStart:terms.contractStart,periodEnd:terms.contractEnd}});
+      continue;
+    }
+    for (const period of splitContractIntoMonthlyEntitlementPeriods(String(terms.contractStart),String(terms.contractEnd))) {
+      const weekdays = weekdaysInRange(period.startsOn,period.endsOn);
+      const frequency = Number(right.weeklyFrequency);
+      const granted = sessionsForPeriod(weekdays,frequency);
+      if (granted === 0) throw new EntitlementMaterializationError('bag_empty');
+      candidates.push({right,periodIndex:period.periodIndex,start:period.startsOn,end:period.endsOn,mode:'quota',formula:'weekday_ratio_v1',weekdays,frequency,granted,
+        snapshot:{version:1,planId:assignment.planId,planVersion:assignment.planVersion,contract:contractSnapshot,right:{id:right.id,rightType:right.rightType,quantityRule:'weekday_ratio_v1',quantity:right.quantity,weeklyFrequency:frequency,quotaScope:right.quotaScope,serviceId:right.serviceId,validDays:right.validDays,validDaysStartRule:right.validDaysStartRule},formulaId:'weekday_ratio_v1',entitlementMode:'quota',periodIndex:period.periodIndex,periodStart:period.startsOn,periodEnd:period.endsOn,weekdaysInPeriod:weekdays,sessionsGranted:granted}});
+    }
+  }
+
+  const materialized: Array<{id:string;rightId:string;periodIndex:number;mode:'quota'|'unlimited';sessionsGranted:number|null;replay:boolean}> = [];
+  for (const candidate of candidates) {
+    const periodHash = hash(candidate.snapshot);
+    const periodKey = deterministicUuid(`term-period:${assignment.id}:${candidate.right.id}:${candidate.periodIndex}`);
+    const inserted = await tx`INSERT INTO assignment_entitlement_periods(assignment_id,client_id,right_id,period_index,entitlement_mode,formula_id,period_start,period_end,weekdays_in_period,weekly_frequency,sessions_granted,sessions_snapshot,snapshot,idempotency_key,request_hash)
+      VALUES (${assignment.id},${assignment.clientId},${candidate.right.id},${candidate.periodIndex},${candidate.mode},${candidate.formula},${candidate.start},${candidate.end},${candidate.weekdays},${candidate.frequency},${candidate.granted},NULL,${tx.json(JSON.parse(JSON.stringify(candidate.snapshot)))},${periodKey},${periodHash})
+      ON CONFLICT DO NOTHING RETURNING id`;
+    let periodId = inserted[0]?.id as string|undefined;
+    let replay = !periodId;
+    if (!periodId) {
+      const [prior] = await tx`SELECT id,request_hash AS "requestHash" FROM assignment_entitlement_periods
+        WHERE idempotency_key=${periodKey} OR (assignment_id=${assignment.id} AND right_id=${candidate.right.id} AND period_index=${candidate.periodIndex})`;
+      if (!prior || String(prior.requestHash).trim() !== periodHash) throw new EntitlementMaterializationError('idempotency_conflict');
+      periodId = String(prior.id);
+    }
+    if (candidate.mode === 'quota') {
+      const grantKey = deterministicUuid(`term-grant:${assignment.id}:${periodId}:${candidate.right.id}`);
+      const grantHash = hash({assignmentId:assignment.id,clientId:assignment.clientId,rightId:candidate.right.id,periodId,quantity:candidate.granted});
+      const grant = await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,actor_id,idempotency_key,request_hash,entitlement_period_id)
+        VALUES (${assignment.clientId},${assignment.id},${String(candidate.right.id)},'grant',${candidate.granted},'Bolsa inicial del contrato',${actorId},${grantKey},${grantHash},${periodId})
+        ON CONFLICT DO NOTHING RETURNING id`;
+      if (!grant.length) {
+        const [priorGrant] = await tx`SELECT id,quantity,request_hash AS "requestHash",idempotency_key AS "idempotencyKey" FROM client_entitlement_ledger
+          WHERE entitlement_period_id=${periodId} AND right_key=${String(candidate.right.id)} AND entry_type='grant'`;
+        if (!priorGrant || Number(priorGrant.quantity) !== candidate.granted || String(priorGrant.requestHash).trim() !== grantHash || priorGrant.idempotencyKey !== grantKey) {
+          throw new EntitlementMaterializationError('idempotency_conflict');
+        }
+      }
+    }
+    if (!replay) await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
+      VALUES (${actorId},'entitlement_period.materialized','client_plan_assignment',${assignment.id},${assignment.clientId},${tx.json({periodId,rightId:candidate.right.id,periodIndex:candidate.periodIndex,entitlementMode:candidate.mode,sessionsGranted:candidate.granted})})`;
+    materialized.push({id:periodId,rightId:String(candidate.right.id),periodIndex:candidate.periodIndex,mode:candidate.mode,sessionsGranted:candidate.granted,replay});
+  }
+  return {assignmentId:String(assignment.id),periods:materialized,replay:materialized.every(period=>period.replay)};
+}
 
 export async function activateSettledEntitlementPeriods(tx: Tx, chargeId: string, actorId: string, now = new Date()) {
   const [charge] = await tx`SELECT id,client_id AS "clientId",amount_cents AS "amountCents",state FROM economic_charges WHERE id=${chargeId} FOR UPDATE`;
