@@ -30,6 +30,19 @@ pnpm --filter @2j/client-app preview:demo
 
 Open `http://127.0.0.1:4173/`. This dedicated build always uses synthetic fixtures, including when the URL has no query parameter; it cannot fall through into Platform API mode. The generated files are written to `apps/client-app/dist-demo/`; the build script supplies only the fixed demo flag and a synthetic build label, ignores `.env` files and shell `VITE_*` settings, and refuses to replace an output directory it did not create. The demo is visibly marked **DEMO · DATOS FICTICIOS**. It makes no API calls, exposes no staff/admin pilot links, and does not open the production Búnker app. This is a local static candidate, not a deployment or a live Platform integration.
 
+## Isolated static container candidate
+
+After building `dist-demo`, validate the isolated Nginx image and Compose file:
+
+```powershell
+docker compose -f apps/client-app/staging/compose.yaml config --quiet
+docker compose -f apps/client-app/staging/compose.yaml build
+docker compose -f apps/client-app/staging/compose.yaml up -d
+docker exec 2j-home-synthetic-demo-home-demo-1 nginx -t
+```
+
+The image copies only `dist-demo` assets and the Nginx config; the Compose service has no API, database, credentials, mounts, published ports, or non-internal network. Nginx serves only the static shell/assets and returns 404 for API, pilot, authentication, booking, payment, staff/admin and unknown paths. This Compose candidate is intentionally not reachable from the host or Internet. Stop the local verification container with `docker compose -f apps/client-app/staging/compose.yaml down`. Public access would require a separately reviewed reverse-proxy/network change and owner approval; do not add a public port mapping.
+
 ## Normal mode
 
 Without the exact preview opt-in, the app calls its existing `/api/me`, booking, membership, documents, consent and notification APIs and relies on the server for identity and authorization. The optional local pilot login UI requires the separate build flag `VITE_2J_PILOT_MEMBER_LOGIN=true`; it submits a synthetic local access code to the loopback-only Platform API, which sets the HttpOnly session cookie. The pilot URL opens normal mode without `?preview=1`, while adding the exact preview opt-in still loads fixture data without API calls. Do not point it at real personal data until a production identity/session provider and hosting have been approved.
