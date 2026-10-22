@@ -23,7 +23,8 @@ import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
-import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
+import { createTrainingLinkTransactions, registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
+import { createTrainingLinkFlow, createTrainingServiceClient, registerTrainingLinkFlowRoutes, type TrainingServiceClient } from './training-link-flow.js';
 import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, type TrainingAdapter } from './training-integration.js';
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
@@ -167,6 +168,13 @@ export type ServerOptions = {
   trainingSsoRedirectUrl?: string | null;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
+  /** Bilateral link lifecycle (finish linking with the owner's proof, activate, revoke). Off by default; needs verified + canonical linking and service calls. */
+  trainingLinkLifecycleEnabled?: boolean;
+  /** Idempotent provisioning of a minimal Training profile. Off by default. */
+  trainingProvisioningEnabled?: boolean;
+  trainingServiceClient?: TrainingServiceClient;
+  /** Development/test only: lets the signed Training client talk to a loopback http origin. */
+  trainingServiceAllowInsecureLoopback?: boolean;
   logger?: FastifyServerOptions['logger'];
 };
 
@@ -191,6 +199,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     if (statusCode >= 500) app.log.error({ errorCode: fastifyError.code ?? 'unknown', method: request.method, route }, 'request failed');
     return reply.code(statusCode).send({ error: statusCode < 500 ? 'request_rejected' : 'internal_error' });
   });
+  if (options.trainingServiceAllowInsecureLoopback && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Insecure loopback Training calls are restricted to development/test environments.');
   const { client } = createDatabase(databaseUrl);
   const trainingCapabilitiesKeys = options.trainingCapabilitiesKeys ?? parseInternalServiceKeys(process.env.PLATFORM_INTERNAL_SERVICE_KEYS);
   const authorizationResolver = options.authorizationResolver ?? (async () => null);
@@ -296,12 +305,42 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
       trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
       trainingCanonicalLinkingEnabled: options.trainingCanonicalLinkingEnabled === true,
+      ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
       ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
       ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
       ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
       fetcher: globalThis.fetch,
     }),
   }));
+  const lifecycleOn = options.trainingLinkLifecycleEnabled === true || options.trainingProvisioningEnabled === true;
+  const trainingServiceClient = options.trainingServiceClient ?? createTrainingServiceClient({
+    trainingVerifiedLinkingEnabled: lifecycleOn,
+    trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
+    ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
+    ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
+    fetcher: globalThis.fetch,
+    ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
+  });
+  const linkVerifier = options.trainingLinkVerifier ?? createRemoteTrainingLinkVerifier({
+    trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
+    trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
+    ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
+    ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
+    fetcher: globalThis.fetch,
+    ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
+  });
+  registerTrainingLinkFlowRoutes(app, client, {
+    enabled: options.trainingLinkLifecycleEnabled === true && options.trainingVerifiedLinkingEnabled === true && options.trainingCanonicalLinkingEnabled === true && options.trainingServiceCallsEnabled === true,
+    provisioningEnabled: options.trainingProvisioningEnabled === true && options.trainingServiceCallsEnabled === true,
+    flow: createTrainingLinkFlow(client, { client: trainingServiceClient }),
+    transactions: createTrainingLinkTransactions(client, { enabled: options.trainingVerifiedLinkingEnabled === true, serviceCallsEnabled: options.trainingServiceCallsEnabled === true, verifier: linkVerifier }),
+    lifecycle: (app as unknown as { trainingCanonicalLinkLifecycle: ReturnType<typeof createTrainingCanonicalLinkLifecycle> }).trainingCanonicalLinkLifecycle,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    resolveAuthorization: authorizationResolver,
+    allowedOrigin: options.memberAppOrigin ?? null,
+  });
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }
@@ -614,6 +653,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
     trainingServiceCallsEnabled: process.env.TRAINING_SERVICE_CALLS_ENABLED === 'true',
     trainingSummaryEnabled: process.env.TRAINING_SUMMARY_ENABLED === 'true',
+    trainingVerifiedLinkingEnabled: process.env.TRAINING_VERIFIED_LINKING_ENABLED === 'true',
+    trainingCanonicalLinkingEnabled: process.env.TRAINING_CANONICAL_LINKING_ENABLED === 'true',
+    trainingLinkLifecycleEnabled: process.env.TRAINING_LINK_LIFECYCLE_ENABLED === 'true',
+    trainingProvisioningEnabled: process.env.TRAINING_PROVISIONING_ENABLED === 'true',
+    trainingServiceAllowInsecureLoopback: process.env.TRAINING_SERVICE_ALLOW_INSECURE_LOOPBACK === 'true',
     trainingSsoEnabled: process.env.TRAINING_SSO_ENABLED === 'true',
     trainingSsoRedirectUrl: process.env.TRAINING_SSO_REDIRECT_URL ?? null,
     memberAppOrigin: process.env.MEMBER_APP_ORIGIN ?? null,
