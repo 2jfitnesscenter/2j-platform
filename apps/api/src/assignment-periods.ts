@@ -64,18 +64,49 @@ export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId
 
   const materialized: Array<{id:string;rightId:string;periodIndex:number;mode:'quota'|'unlimited';sessionsGranted:number|null;replay:boolean}> = [];
   for (const candidate of candidates) {
-    const periodHash = hash(candidate.snapshot);
+    const periodHash = hash({
+      assignmentId:String(assignment.id),clientId:String(assignment.clientId),planId:String(assignment.planId),planVersion:Number(assignment.planVersion),
+      rightId:String(candidate.right.id),periodIndex:candidate.periodIndex,entitlementMode:candidate.mode,formulaId:candidate.formula,
+      periodStart:candidate.start,periodEnd:candidate.end,weekdaysInPeriod:candidate.weekdays,weeklyFrequency:candidate.frequency,sessionsGranted:candidate.granted,
+      contract:contractSnapshot,snapshot:candidate.snapshot,
+    });
     const periodKey = deterministicUuid(`term-period:${assignment.id}:${candidate.right.id}:${candidate.periodIndex}`);
-    const inserted = await tx`INSERT INTO assignment_entitlement_periods(assignment_id,client_id,right_id,period_index,entitlement_mode,formula_id,period_start,period_end,weekdays_in_period,weekly_frequency,sessions_granted,sessions_snapshot,snapshot,idempotency_key,request_hash)
-      VALUES (${assignment.id},${assignment.clientId},${candidate.right.id},${candidate.periodIndex},${candidate.mode},${candidate.formula},${candidate.start},${candidate.end},${candidate.weekdays},${candidate.frequency},${candidate.granted},NULL,${tx.json(JSON.parse(JSON.stringify(candidate.snapshot)))},${periodKey},${periodHash})
-      ON CONFLICT DO NOTHING RETURNING id`;
+    let inserted;
+    try {
+      inserted = await tx`INSERT INTO assignment_entitlement_periods(assignment_id,client_id,right_id,period_index,entitlement_mode,formula_id,period_start,period_end,weekdays_in_period,weekly_frequency,sessions_granted,sessions_snapshot,snapshot,idempotency_key,request_hash)
+        VALUES (${assignment.id},${assignment.clientId},${candidate.right.id},${candidate.periodIndex},${candidate.mode},${candidate.formula},${candidate.start},${candidate.end},${candidate.weekdays},${candidate.frequency},${candidate.granted},NULL,${tx.json(JSON.parse(JSON.stringify(candidate.snapshot)))},${periodKey},${periodHash})
+        ON CONFLICT DO NOTHING RETURNING id`;
+    } catch (error) {
+      if ((error as {code?:string}).code === '23505') throw new EntitlementMaterializationError('idempotency_conflict');
+      throw error;
+    }
     let periodId = inserted[0]?.id as string|undefined;
     let replay = !periodId;
     if (!periodId) {
-      const [prior] = await tx`SELECT id,request_hash AS "requestHash" FROM assignment_entitlement_periods
-        WHERE idempotency_key=${periodKey} OR (assignment_id=${assignment.id} AND right_id=${candidate.right.id} AND period_index=${candidate.periodIndex})`;
-      if (!prior || String(prior.requestHash).trim() !== periodHash) throw new EntitlementMaterializationError('idempotency_conflict');
-      periodId = String(prior.id);
+      const [prior] = await tx`SELECT id,assignment_id AS "assignmentId",client_id AS "clientId",right_id AS "rightId",period_index AS "periodIndex",
+          entitlement_mode AS mode,formula_id AS formula,period_start::text AS "periodStart",period_end::text AS "periodEnd",
+          weekdays_in_period AS weekdays,weekly_frequency AS frequency,sessions_granted AS granted,
+          idempotency_key AS "idempotencyKey",request_hash AS "requestHash"
+        FROM assignment_entitlement_periods
+        WHERE assignment_id=${assignment.id} AND client_id=${assignment.clientId} AND right_id=${candidate.right.id} AND period_index=${candidate.periodIndex}`;
+      if (prior) {
+        const exactReplay = String(prior.assignmentId) === String(assignment.id)
+          && String(prior.clientId) === String(assignment.clientId)
+          && String(prior.rightId) === String(candidate.right.id)
+          && Number(prior.periodIndex) === candidate.periodIndex
+          && prior.mode === candidate.mode && prior.formula === candidate.formula
+          && prior.periodStart === candidate.start && prior.periodEnd === candidate.end
+          && prior.weekdays === candidate.weekdays && prior.frequency === candidate.frequency && prior.granted === candidate.granted
+          && prior.idempotencyKey === periodKey && String(prior.requestHash).trim() === periodHash;
+        if (!exactReplay) throw new EntitlementMaterializationError('idempotency_conflict');
+        periodId = String(prior.id);
+      } else {
+        const [keyOwner] = await tx`SELECT id FROM assignment_entitlement_periods WHERE idempotency_key=${periodKey}`;
+        if (keyOwner) throw new EntitlementMaterializationError('idempotency_conflict');
+        // Another unique period coordinate (such as an overlapping start date)
+        // conflicted. It cannot be treated as a replay without exact coordinates.
+        throw new EntitlementMaterializationError('idempotency_conflict');
+      }
     }
     if (candidate.mode === 'quota') {
       const grantKey = deterministicUuid(`term-grant:${assignment.id}:${periodId}:${candidate.right.id}`);
@@ -84,9 +115,12 @@ export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId
         VALUES (${assignment.clientId},${assignment.id},${String(candidate.right.id)},'grant',${candidate.granted},'Bolsa inicial del contrato',${actorId},${grantKey},${grantHash},${periodId})
         ON CONFLICT DO NOTHING RETURNING id`;
       if (!grant.length) {
-        const [priorGrant] = await tx`SELECT id,quantity,request_hash AS "requestHash",idempotency_key AS "idempotencyKey" FROM client_entitlement_ledger
+        const [priorGrant] = await tx`SELECT id,assignment_id AS "assignmentId",client_id AS "clientId",right_key AS "rightKey",entitlement_period_id AS "periodId",
+            quantity,request_hash AS "requestHash",idempotency_key AS "idempotencyKey" FROM client_entitlement_ledger
           WHERE entitlement_period_id=${periodId} AND right_key=${String(candidate.right.id)} AND entry_type='grant'`;
-        if (!priorGrant || Number(priorGrant.quantity) !== candidate.granted || String(priorGrant.requestHash).trim() !== grantHash || priorGrant.idempotencyKey !== grantKey) {
+        if (!priorGrant || String(priorGrant.assignmentId) !== String(assignment.id) || String(priorGrant.clientId) !== String(assignment.clientId)
+          || priorGrant.rightKey !== String(candidate.right.id) || String(priorGrant.periodId) !== periodId
+          || Number(priorGrant.quantity) !== candidate.granted || String(priorGrant.requestHash).trim() !== grantHash || priorGrant.idempotencyKey !== grantKey) {
           throw new EntitlementMaterializationError('idempotency_conflict');
         }
       }
