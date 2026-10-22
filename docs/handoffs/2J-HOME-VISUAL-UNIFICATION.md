@@ -5,7 +5,7 @@
 - Repositorio: `2jfitnesscenter/2j-platform`
 - Rama: `agent/codex/2J-HOME-VISUAL-UNIFICATION`
 - Base funcional: `0987639f212402e987c20a049aacdfca3a73bd17` (`2j-home-004`)
-- Commit de implementación: `88b7163f1b9330bb5d98ee99c64e61d1a10e4f95`
+- Commit de implementación: `88b71635ffe3e39c79906a25362312cb34dcb9f3`
 - Referencia visual Expo revisada: `880fb9db03c17466cd8edc1dae1926a3ac8517c5` (`2j-mobile`)
 - No hay integración real, despliegue, cambios en Caddy/DNS/Contabo, Platform, Búnker ni bases de datos.
 
