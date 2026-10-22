@@ -243,7 +243,12 @@ test('plan contract metadata is additive and assignment terms are immutable, ver
   const blockedSale = await app.inject({ method:'POST', url:`/api/clients/${clientId}/plans`, headers:{'idempotency-key':randomUUID()}, payload:{planId,startsOn:'2026-10-15',endsOn:'2027-01-14',dueOn:'2026-10-20',amountCents:1000} });
   assert.equal(blockedSale.statusCode, 409);
   assert.equal(blockedSale.json().error, 'contract_terms_not_available');
-  assert.equal((await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${clientId}`)[0].count, 0);
+  const [blockedCounts]=await sql`SELECT (SELECT count(*)::int FROM economic_charges WHERE client_id=${clientId}) charges,
+    (SELECT count(*)::int FROM client_plan_assignments WHERE client_id=${clientId}) assignments,
+    (SELECT count(*)::int FROM assignment_contract_terms t JOIN client_plan_assignments a ON a.id=t.assignment_id WHERE a.client_id=${clientId}) terms,
+    (SELECT count(*)::int FROM assignment_entitlement_periods WHERE client_id=${clientId}) periods,
+    (SELECT count(*)::int FROM client_entitlement_ledger WHERE client_id=${clientId} AND entry_type='grant') grants`;
+  assert.deepEqual(blockedCounts,{charges:0,assignments:0,terms:0,periods:0,grants:0});
 
   const chargeId = randomUUID(), assignmentId = randomUUID();
   await sql.begin(async tx => {
@@ -354,12 +359,132 @@ test('F1-C coordinator serializes same-key retries and rejects changed payload w
   const results=await Promise.all([coordinateContractAssignment(sql,input,actor,now),coordinateContractAssignment(sql,input,actor,now)]);
   assert.deepEqual(results.map(row=>row.replay).sort(),[false,true]);
   assert.equal(results[0].assignmentId,results[1].assignmentId);assert.equal(results[0].chargeId,results[1].chargeId);
+  const business = result => { const { replay, ...payload } = result; return payload; };
+  assert.deepEqual(business(results[0]),business(results[1]),'same-key replay returns the persisted business result unchanged');
   await assert.rejects(coordinateContractAssignment(sql,{...input,amountCents:5100},actor,now),error=>error instanceof ContractAssignmentError&&error.code==='idempotency_conflict');
+  const secondPlan=await createPlan(service.id,{termKind:'rolling_months',termMonths:3,basePriceCents:5000});
+  assert.equal(secondPlan.statusCode,201,secondPlan.body);
+  const secondPlanId=secondPlan.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${secondPlanId}/activate`})).statusCode,200);
+  for(const mutated of [
+    {...input,contractStart:'2026-10-16'},
+    {...input,customRangeEnd:'2027-01-14'},
+    {...input,adjustmentReason:'Motivo diferente'},
+    {...input,planId:secondPlanId},
+  ]) await assert.rejects(coordinateContractAssignment(sql,mutated,actor,now),error=>error instanceof ContractAssignmentError&&error.code==='idempotency_conflict');
+  const [settings] = await sql`SELECT grace_days FROM economic_settings WHERE singleton=true`;
+  await sql`UPDATE economic_settings SET grace_days=7 WHERE singleton=true`;
+  const replayAfterSettingsChange = await coordinateContractAssignment(sql,input,actor,now);
+  await sql`UPDATE economic_settings SET grace_days=${settings.grace_days} WHERE singleton=true`;
+  assert.deepEqual(business(replayAfterSettingsChange),business(results[0]),'replay uses persisted due dates, periods and grants rather than current settings');
+  assert.equal(replayAfterSettingsChange.dueOn,'2026-10-20');
+  assert.equal(replayAfterSettingsChange.paymentBlockEffectiveOn,'2026-10-21');
+  assert.deepEqual(replayAfterSettingsChange.periods.map(period=>[period.startsOn,period.endsOn]),[
+    ['2026-10-15','2026-10-31'],['2026-11-01','2026-11-30'],['2026-12-01','2026-12-31'],['2027-01-01','2027-01-14'],
+  ]);
+  assert.deepEqual(replayAfterSettingsChange.periods.map(period=>period.id),results[0].periods.map(period=>period.id));
+  assert.deepEqual(replayAfterSettingsChange.grants,results[0].grants);
   const [counts]=await sql`SELECT count(*)::int AS assignments,(SELECT count(*)::int FROM economic_charges WHERE client_id=${clientId}) AS charges,
     (SELECT count(*)::int FROM assignment_entitlement_periods WHERE assignment_id=${results[0].assignmentId}) AS periods,
     (SELECT count(*)::int FROM client_entitlement_ledger WHERE assignment_id=${results[0].assignmentId} AND entry_type='grant') AS grants
     FROM client_plan_assignments WHERE client_id=${clientId}`;
   assert.deepEqual(counts,{assignments:1,charges:1,periods:4,grants:4});
+});
+
+test('F1-C idempotency key is isolated across clients, while independent keys execute concurrently',async()=>{
+  const service=await createService();const plan=await createPlan(service.id,{termKind:'rolling_months',termMonths:3,basePriceCents:5000});
+  assert.equal(plan.statusCode,201,plan.body);const planId=plan.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+  const clientA=randomUUID(),clientB=randomUUID(),actor={actorId:'f1c-isolation-admin',role:'admin'},now=new Date('2026-10-15T12:00:00Z');
+  await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientA},'F1-C','Client A'),(${clientB},'F1-C','Client B')`;
+  const sameKey=randomUUID();
+  const inputA={clientId:clientA,planId,idempotencyKey:sameKey,contractStart:'2026-10-15',amountCents:5000};
+  const first=await coordinateContractAssignment(sql,inputA,actor,now);
+  await assert.rejects(coordinateContractAssignment(sql,{...inputA,clientId:clientB},actor,now),error=>error instanceof ContractAssignmentError&&error.code==='idempotency_conflict');
+  const [clientBRows]=await sql`SELECT (SELECT count(*)::int FROM client_plan_assignments WHERE client_id=${clientB}) assignments,
+    (SELECT count(*)::int FROM economic_charges WHERE client_id=${clientB}) charges,
+    (SELECT count(*)::int FROM assignment_contract_terms t JOIN client_plan_assignments a ON a.id=t.assignment_id WHERE a.client_id=${clientB}) terms,
+    (SELECT count(*)::int FROM assignment_entitlement_periods WHERE client_id=${clientB}) periods,
+    (SELECT count(*)::int FROM client_entitlement_ledger WHERE client_id=${clientB} AND entry_type='grant') grants`;
+  assert.deepEqual(clientBRows,{assignments:0,charges:0,terms:0,periods:0,grants:0});
+
+  const keyA=randomUUID(),keyB=randomUUID();
+  const [resultA,resultB]=await Promise.all([
+    coordinateContractAssignment(sql,{...inputA,idempotencyKey:keyA},actor,now),
+    coordinateContractAssignment(sql,{...inputA,clientId:clientB,idempotencyKey:keyB},actor,now),
+  ]);
+  assert.notEqual(resultA.assignmentId,resultB.assignmentId);assert.notEqual(resultA.chargeId,resultB.chargeId);
+  assert.notEqual(resultA.periods[0].id,resultB.periods[0].id);
+  assert.notDeepEqual(resultA.grants.map(row=>row.id),resultB.grants.map(row=>row.id));
+  const [ownership]=await sql`SELECT count(DISTINCT a.client_id)::int clients,count(DISTINCT a.charge_id)::int charges,
+      count(DISTINCT t.assignment_id)::int terms,count(DISTINCT p.id)::int periods,count(DISTINCT g.id)::int grants
+    FROM client_plan_assignments a JOIN assignment_contract_terms t ON t.assignment_id=a.id
+    JOIN assignment_entitlement_periods p ON p.assignment_id=a.id JOIN client_entitlement_ledger g ON g.assignment_id=a.id AND g.entry_type='grant'
+    WHERE a.id IN (${resultA.assignmentId},${resultB.assignmentId})`;
+  assert.deepEqual(ownership,{clients:2,charges:2,terms:2,periods:8,grants:8});
+  assert.notEqual(first.assignmentId,resultA.assignmentId);
+});
+
+test('F1-C concurrent cross-client requests with the same key conflict instead of cross-replaying',async()=>{
+  const service=await createService();const plan=await createPlan(service.id,{termKind:'rolling_months',termMonths:3,basePriceCents:5000});
+  assert.equal(plan.statusCode,201,plan.body);const planId=plan.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+  const clientA=randomUUID(),clientB=randomUUID(),key=randomUUID(),actor={actorId:'f1c-cross-race-admin',role:'admin'},now=new Date('2026-10-15T12:00:00Z');
+  await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientA},'F1-C','Race A'),(${clientB},'F1-C','Race B')`;
+  const requests=[clientA,clientB].map(clientId=>coordinateContractAssignment(sql,{clientId,planId,idempotencyKey:key,contractStart:'2026-10-15',amountCents:5000},actor,now));
+  const settled=await Promise.allSettled(requests);
+  assert.deepEqual(settled.map(result=>result.status).sort(),['fulfilled','rejected']);
+  const winner=settled.find(result=>result.status==='fulfilled').value;
+  const loser=settled.find(result=>result.status==='rejected').reason;
+  assert.ok(loser instanceof ContractAssignmentError&&loser.code==='idempotency_conflict');
+  const [owner]=await sql`SELECT client_id AS "clientId" FROM client_plan_assignments WHERE id=${winner.assignmentId}`;
+  const other=owner.clientId===clientA?clientB:clientA;
+  const [loserRows]=await sql`SELECT (SELECT count(*)::int FROM client_plan_assignments WHERE client_id=${other}) assignments,
+    (SELECT count(*)::int FROM economic_charges WHERE client_id=${other}) charges,
+    (SELECT count(*)::int FROM assignment_entitlement_periods WHERE client_id=${other}) periods,
+    (SELECT count(*)::int FROM client_entitlement_ledger WHERE client_id=${other} AND entry_type='grant') grants`;
+  assert.deepEqual(loserRows,{assignments:0,charges:0,periods:0,grants:0});
+});
+
+test('F1-C rolling six and twelve month assignments retain one charge and split monthly bags accurately',async()=>{
+  const service=await createService(),clientId=randomUUID(),actor={actorId:'f1c-long-admin',role:'admin'},now=new Date('2026-10-15T12:00:00Z');
+  await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1-C','Long contract fixture')`;
+  for(const [months,expectedEnd,count] of [[6,'2027-04-14',7],[12,'2027-10-14',13]]){
+    const plan=await createPlan(service.id,{termKind:'rolling_months',termMonths:months,basePriceCents:5000});
+    assert.equal(plan.statusCode,201,plan.body);const planId=plan.json().id;
+    assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+    const result=await coordinateContractAssignment(sql,{clientId,planId,idempotencyKey:randomUUID(),contractStart:'2026-10-15',amountCents:5000},actor,now);
+    assert.equal(result.endsOn,expectedEnd);assert.equal(result.dueOn,'2026-10-20');assert.equal(result.periods.length,count);
+    assert.equal(result.periods[0].startsOn,'2026-10-15');assert.equal(result.periods[0].endsOn,'2026-10-31');
+    assert.equal(result.periods.at(-1).startsOn,months===6?'2027-04-01':'2027-10-01');assert.equal(result.periods.at(-1).endsOn,expectedEnd);
+    const [counts]=await sql`SELECT (SELECT count(*)::int FROM economic_charges WHERE id=${result.chargeId}) charges,
+      (SELECT count(*)::int FROM client_plan_assignments WHERE id=${result.assignmentId}) assignments,
+      (SELECT count(*)::int FROM assignment_contract_terms WHERE assignment_id=${result.assignmentId}) terms,
+      (SELECT count(*)::int FROM assignment_entitlement_periods WHERE assignment_id=${result.assignmentId}) periods`;
+    assert.deepEqual(counts,{charges:1,assignments:1,terms:1,periods:count});
+  }
+});
+
+test('F1-C unlimited coordinator materializes one full-term period without a ledger grant and replays its ID',async()=>{
+  const service=await createService(),clientId=randomUUID(),actor={actorId:'f1c-unlimited-admin',role:'admin'},now=new Date('2026-10-15T12:00:00Z');
+  await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1-C','Unlimited fixture')`;
+  const plan=await createPlan(service.id,{termKind:'rolling_months',termMonths:3,basePriceCents:5000,rights:[
+    {rightType:'service_access',serviceId:service.id},{rightType:'sessions_quota',quotaScope:'shared',quantityRule:'unlimited'},
+  ]});
+  assert.equal(plan.statusCode,201,plan.body);const planId=plan.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+  const input={clientId,planId,idempotencyKey:randomUUID(),contractStart:'2026-10-15',amountCents:5000};
+  const first=await coordinateContractAssignment(sql,input,actor,now),replay=await coordinateContractAssignment(sql,input,actor,now);
+  assert.equal(first.periods.length,1);assert.equal(first.periods[0].mode,'unlimited');assert.equal(first.periods[0].sessionsGranted,null);
+  assert.equal(first.periods[0].startsOn,'2026-10-15');assert.equal(first.periods[0].endsOn,'2027-01-14');
+  assert.deepEqual(replay.periods.map(period=>period.id),first.periods.map(period=>period.id));assert.equal(replay.replay,true);
+  assert.deepEqual(first.grants,[]);assert.deepEqual(replay.grants,[]);
+  const [counts]=await sql`SELECT (SELECT count(*)::int FROM economic_charges WHERE id=${first.chargeId}) charges,
+    (SELECT count(*)::int FROM client_plan_assignments WHERE id=${first.assignmentId}) assignments,
+    (SELECT count(*)::int FROM assignment_contract_terms WHERE assignment_id=${first.assignmentId}) terms,
+    (SELECT count(*)::int FROM assignment_entitlement_periods WHERE assignment_id=${first.assignmentId}) periods,
+    (SELECT count(*)::int FROM client_entitlement_ledger WHERE assignment_id=${first.assignmentId} AND entry_type='grant') grants`;
+  assert.deepEqual(counts,{charges:1,assignments:1,terms:1,periods:1,grants:0});
 });
 
 test('F1-C coordinator rolls back the charge and assignment when initial bag materialization fails',async()=>{
@@ -376,6 +501,7 @@ test('F1-C coordinator rolls back the charge and assignment when initial bag mat
     (SELECT count(*)::int FROM assignment_contract_terms) AS all_terms,
     (SELECT count(*)::int FROM client_entitlement_ledger WHERE client_id=${clientId}) AS grants`;
   assert.deepEqual(counts,{assignments:0,charges:0,all_terms:termsBefore,grants:0});
+  assert.equal((await sql`SELECT count(*)::int AS count FROM assignment_entitlement_periods WHERE client_id=${clientId}`)[0].count,0);
 });
 
 test('F1-C coordinator enforces entitlement permission server-side',async()=>{

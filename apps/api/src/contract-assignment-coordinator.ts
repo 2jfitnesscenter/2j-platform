@@ -28,6 +28,40 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 const dbCode = (error: unknown) => typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
 const monthEnd = (value: string) => new Date(Date.UTC(Number(value.slice(0, 4)), Number(value.slice(5, 7)), 0)).toISOString().slice(0, 10);
 
+async function loadPersistedAssignmentResult(tx: Tx, assignmentId: string, replay: boolean) {
+  const [row] = await tx`SELECT a.id AS "assignmentId",a.charge_id AS "chargeId",a.starts_on::text AS "startsOn",a.ends_on::text AS "endsOn",
+      c.due_on::text AS "dueOn",t.term_kind AS "termKind",t.contract_start::text AS "contractStart",t.contract_end::text AS "contractEnd",
+      t.term_months AS "termMonths",t.payment_rule AS "paymentRule",t.payment_block AS "paymentBlock",t.deadline_computation AS deadline
+    FROM client_plan_assignments a JOIN economic_charges c ON c.id=a.charge_id
+    JOIN assignment_contract_terms t ON t.assignment_id=a.id WHERE a.id=${assignmentId}`;
+  if (!row) throw new ContractAssignmentError('idempotency_conflict');
+  if (row.deadline?.dueOn !== row.dueOn) throw new ContractAssignmentError('idempotency_conflict');
+  const periods = await tx`SELECT id,right_id AS "rightId",period_index AS "periodIndex",period_start::text AS "startsOn",
+      period_end::text AS "endsOn",entitlement_mode AS mode,sessions_granted AS "sessionsGranted"
+    FROM assignment_entitlement_periods WHERE assignment_id=${assignmentId} ORDER BY right_id,period_index`;
+  const grants = await tx`SELECT id,entitlement_period_id AS "periodId",right_key AS "rightId",quantity
+    FROM client_entitlement_ledger WHERE assignment_id=${assignmentId} AND entry_type='grant' AND entitlement_period_id IS NOT NULL
+    ORDER BY entitlement_period_id,id`;
+  return {
+    assignmentId: String(row.assignmentId), chargeId: String(row.chargeId), startsOn: String(row.startsOn),
+    endsOn: row.endsOn == null ? null : String(row.endsOn), dueOn: String(row.dueOn),
+    paymentBlockEffectiveOn: row.deadline.paymentBlockEffectiveOn ?? null,
+    contract: {
+      termKind: row.termKind, termMonths: row.termMonths == null ? null : Number(row.termMonths),
+      contractStart: row.contractStart == null ? null : String(row.contractStart),
+      contractEnd: row.contractEnd == null ? null : String(row.contractEnd),
+      paymentRule: row.paymentRule, paymentBlock: row.paymentBlock,
+    },
+    periods: periods.map(period => ({
+      id: String(period.id), rightId: String(period.rightId), periodIndex: period.periodIndex == null ? null : Number(period.periodIndex),
+      startsOn: String(period.startsOn), endsOn: period.endsOn == null ? null : String(period.endsOn), mode: period.mode,
+      sessionsGranted: period.sessionsGranted == null ? null : Number(period.sessionsGranted),
+    })),
+    grants: grants.map(grant => ({ id: String(grant.id), periodId: String(grant.periodId), rightId: String(grant.rightId), quantity: Number(grant.quantity) })),
+    replay,
+  };
+}
+
 export class ContractAssignmentError extends Error {
   constructor(readonly code: string) { super(code); this.name = 'ContractAssignmentError'; }
 }
@@ -65,12 +99,7 @@ export async function coordinateContractAssignment(
         FROM client_plan_assignments WHERE idempotency_key=${input.idempotencyKey}`;
       if (prior) {
         if (String(prior.requestHash).trim() !== requestHash) throw new ContractAssignmentError('idempotency_conflict');
-        const [terms] = await tx`SELECT term_kind AS "termKind",contract_start::text AS "contractStart",contract_end::text AS "contractEnd",term_months AS "termMonths"
-          FROM assignment_contract_terms WHERE assignment_id=${prior.id}`;
-        const periods = await tx`SELECT id,right_id AS "rightId",period_index AS "periodIndex",entitlement_mode AS mode,sessions_granted AS "sessionsGranted"
-          FROM assignment_entitlement_periods WHERE assignment_id=${prior.id} ORDER BY right_id,period_index`;
-        if (!terms) throw new ContractAssignmentError('idempotency_conflict');
-        return { assignmentId: String(prior.id), chargeId: String(prior.chargeId), startsOn: String(prior.startsOn), endsOn: prior.endsOn == null ? null : String(prior.endsOn), contract: terms, periods, replay: true };
+        return loadPersistedAssignmentResult(tx as Tx, String(prior.id), true);
       }
 
       const [client] = await tx`SELECT id,status FROM clients WHERE id=${input.clientId} FOR UPDATE`;
@@ -177,13 +206,13 @@ export async function coordinateContractAssignment(
       await tx`INSERT INTO client_plan_assignment_events(assignment_id,event_type,effective_on,actor_id,actor_role,idempotency_key,request_hash)
         VALUES (${assignmentId},'activated',${input.contractStart},${context.actorId},${context.role},${randomUUID()},${requestHash})`;
 
-      const materialization = await materializeContractEntitlementPeriods(tx as Tx, assignmentId, context.actorId);
+      await materializeContractEntitlementPeriods(tx as Tx, assignmentId, context.actorId);
       await tx`INSERT INTO client_events(client_id,event_type,actor_id,actor_role) VALUES (${client.id},'client.plan_assigned',${context.actorId},${context.role})`;
       await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
         VALUES (${context.actorId},'client_plan.assigned','client_plan_assignment',${assignmentId},${client.id},${tx.json({planId:plan.id,planVersion:Number(plan.currentVersion),chargeId,amountCents:input.amountCents,termKind,contractStart:input.contractStart,contractEnd,dueOn:deadline.dueOn})})`;
       await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
         VALUES (${context.actorId},'charge.created','charge',${chargeId},${client.id},${tx.json({amountCents:input.amountCents,planId:plan.id,assignmentId,dueOn:deadline.dueOn})})`;
-      return { assignmentId, chargeId, startsOn: input.contractStart, endsOn: contractEnd, dueOn: deadline.dueOn, paymentBlockEffectiveOn, contract: contractSnapshot, periods: materialization.periods, replay: false };
+      return loadPersistedAssignmentResult(tx as Tx, assignmentId, false);
     });
   } catch (error) {
     if (error instanceof ContractAssignmentError) throw error;
