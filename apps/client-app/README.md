@@ -19,6 +19,17 @@ pnpm --filter @2j/client-app dev -- --host 127.0.0.1 --port 5173
 
 Open `http://127.0.0.1:5173/?preview=1`. Fixture data is fictional, API-free, and write actions are disabled or simulated locally. Preview appears only when the build flag is `VITE_2J_HUB_PREVIEW=true` **and** the URL has exactly one `preview=1` parameter. A build flag or URL parameter alone cannot enable preview; `/` stays in normal API mode.
 
+## Static synthetic demo build
+
+Create and inspect a static release candidate without inheriting `.env` files or shell `VITE_*` settings:
+
+```powershell
+pnpm --filter @2j/client-app build:demo
+pnpm --filter @2j/client-app preview:demo
+```
+
+Open `http://127.0.0.1:4173/`. This dedicated build always uses synthetic fixtures, including when the URL has no query parameter; it cannot fall through into Platform API mode. The generated files are written to `apps/client-app/dist-demo/`; the build script supplies only the fixed demo flag and a synthetic build label, ignores `.env` files and shell `VITE_*` settings, and refuses to replace an output directory it did not create. The demo is visibly marked **DEMO · DATOS FICTICIOS**. It makes no API calls, exposes no staff/admin pilot links, and does not open the production Búnker app. This is a local static candidate, not a deployment or a live Platform integration.
+
 ## Normal mode
 
 Without the exact preview opt-in, the app calls its existing `/api/me`, booking, membership, documents, consent and notification APIs and relies on the server for identity and authorization. The optional local pilot login UI requires the separate build flag `VITE_2J_PILOT_MEMBER_LOGIN=true`; it submits a synthetic local access code to the loopback-only Platform API, which sets the HttpOnly session cookie. The pilot URL opens normal mode without `?preview=1`, while adding the exact preview opt-in still loads fixture data without API calls. Do not point it at real personal data until a production identity/session provider and hosting have been approved.

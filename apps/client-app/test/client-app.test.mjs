@@ -394,7 +394,11 @@ test('profile completes only the signed-in client’s form and records an explic
 });
 
 test('2J Hub preview is build-gated, presents five destinations and never calls the API', async (t) => {
-  const { isHubPreviewEnabled, HUB_TRAINING_URL } = await import('../src/client-app.tsx').then(({clientAppTestHelpers}) => clientAppTestHelpers);
+  const { isHubPreviewEnabled, isHubDemoBuild, HUB_TRAINING_URL } = await import('../src/client-app.tsx').then(({clientAppTestHelpers}) => clientAppTestHelpers);
+  assert.equal(isHubDemoBuild(true), true);
+  assert.equal(isHubDemoBuild('true'), true);
+  assert.equal(isHubDemoBuild(false), false);
+  assert.equal(isHubDemoBuild('false'), false);
   assert.equal(isHubPreviewEnabled(false, '?preview=1'), false);
   assert.equal(isHubPreviewEnabled('false', '?preview=1'), false);
   assert.equal(isHubPreviewEnabled(true, '?preview=1'), true);
@@ -411,20 +415,18 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   t.after(() => t.mock.timers.reset());
 
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/?preview=1' });
-  const clipboard = [];
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
     navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
     HTMLInputElement: { configurable: true, value: dom.window.HTMLInputElement }, HTMLTextAreaElement: { configurable: true, value: dom.window.HTMLTextAreaElement }, HTMLSelectElement: { configurable: true, value: dom.window.HTMLSelectElement }, Event: { configurable: true, value: dom.window.Event },
     sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '11111111-1111-4111-8111-111111111111' } },
   });
-  Object.defineProperty(dom.window.navigator, 'clipboard', { configurable: true, value: { writeText: async value => clipboard.push(value) } });
   const requests = [];
   globalThis.fetch = async (input, init = {}) => { requests.push({ url: String(input), method: init.method ?? 'GET' }); throw new Error('Preview must not reach fetch.'); };
   const { render, cleanup, fireEvent, within, ClientApp } = await uiHarness();
   const ui = render(React.createElement(ClientApp, { previewModeOverride: true }));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Juan' }));
-  assert.ok(ui.getByText('Vista previa', { selector: '.preview-pill' }));
+  assert.ok(ui.getByText('DEMO · DATOS FICTICIOS', { selector: '.preview-pill' }));
   assert.ok(ui.getByRole('heading', { name: 'Próxima reserva' }));
   assert.ok(ui.getByText('Bienvenido a tu espacio 2J'));
   assert.ok(ui.getByText('Funcional'));
@@ -448,10 +450,10 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Búnker' }));
   assert.ok(await ui.findByRole('heading', { name: 'Búnker' }));
-  const trainingLink = ui.getByRole('link', { name: /Abrir Búnker/ });
-  assert.equal(trainingLink.getAttribute('href'), 'https://app.2jfitnesscenter.com');
-  assert.equal(trainingLink.getAttribute('target'), '_blank');
-  assert.match(trainingLink.getAttribute('rel'), /noopener/);
+  assert.ok(ui.getByText('La conexión con Búnker no está activa en esta demo sintética.'));
+  assert.equal(ui.queryByRole('link', { name: /Abrir Búnker/ }), null, 'demo must not navigate to the real Búnker app');
+  assert.equal(ui.getByRole('button', { name: 'Abrir Búnker' }).disabled, true);
+  assert.ok(ui.getByText('La demo no abre aplicaciones ni servicios externos.'));
 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Tienda' }));
   assert.ok(await ui.findByRole('heading', { name: 'Tienda' }));
@@ -470,12 +472,10 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   fireEvent.click(ui.getByRole('radio', { name: /Oscuro/ }));
   assert.equal(ui.container.querySelector('.client-app')?.classList.contains('hub-theme-light'), false);
   assert.equal(dom.window.localStorage.getItem('2j.member.appearance.v1'), null, 'preview does not persist appearance hints');
-  assert.ok(ui.getByRole('heading', { name: 'Herramientas del piloto' }));
-  fireEvent.click(ui.getByRole('button', { name: 'Copiar información de diagnóstico' }));
-  await ui.findByText('Información de diagnóstico copiada.');
-  assert.match(clipboard[0], /mode=fixture-preview/);
-  assert.match(clipboard[0], /viewport=\d+x\d+/);
-  assert.doesNotMatch(clipboard[0], /Juan|Demo|token|cookie|secret/i);
+  assert.equal(ui.queryByRole('heading', { name: 'Herramientas del piloto' }), null, 'public demo must not expose staff/admin pilot tools');
+  assert.equal(ui.queryByRole('link', { name: /Abrir área de entrenador|Abrir administración/ }), null);
+  assert.equal(ui.queryByRole('button', { name: 'Copiar información de diagnóstico' }), null);
+  assert.equal(ui.queryByText(/Vista piloto/), null);
   assert.deepEqual(requests, [], 'preview appearance changes stay local and preview makes zero API calls');
 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Inicio' }));
