@@ -1,0 +1,31 @@
+{
+  "task": "2J-HOME-SETTINGS-SECURITY",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-SETTINGS-SECURITY",
+  "baseSha": "7074177be0e9db7d42342466813627392f4a6d03",
+  "status": "verified-local",
+  "changedFiles": [
+    "apps/client-app/test/client-app.test.mjs",
+    "docs/handoffs/2J-HOME-SETTINGS-SECURITY.md",
+    "docs/handoffs/2J-HOME-SETTINGS-SECURITY.json"
+  ],
+  "tests": {
+    "clientApp": { "passed": 25, "failed": 0 },
+    "memberPreferencesApiIntegration": { "passed": 8, "failed": 0, "database": "ephemeral local PostgreSQL" },
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "dependencies": [
+    "D185 requires Platform session-list eligibility.",
+    "Measurements requires Work Platform contract.",
+    "Búnker capability presentation must consume trainingCapabilities from GET /api/me/membership per owner direction / PR #73."
+  ],
+  "safety": {
+    "basedOnClaudeRebased": true,
+    "stackedOnPushPr71": true,
+    "providerCalls": false,
+    "merge": false,
+    "deployment": false,
+    "productionData": false
+  }
+}
