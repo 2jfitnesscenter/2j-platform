@@ -87,10 +87,17 @@
     "findingsFixed": 5,
     "tests": {
       "platformApi": "269/269",
-      "bunkerApi": "823 pass, 0 fail, 47 skipped",
+      "bunkerApi": "827 pass, 0 fail, 47 skipped (874)",
       "bunkerFrontend": "1865/1865",
       "e2eSso": "15/15",
       "e2eLink": "8/8"
-    }
-  }
+    },
+    "followUp": [
+      "kiosk token re-check",
+      "guided program freeze",
+      "TRUSTED_PROXIES",
+      "reviewer package"
+    ]
+  },
+  "reviewerPackage": "docs/review/2J-INT-CLOSURE/README.md"
 }

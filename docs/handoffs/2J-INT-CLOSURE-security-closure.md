@@ -57,8 +57,8 @@ See `docs/runbooks/2J-INT-proxy-and-rate-limits.md` (documentation only, nothing
 
 ## 8. Residual risks
 
-- Kiosk bearer tokens (4 h) are minted after the capability check at check-in; a suspension during that window does not revoke an already-issued token until it expires (personal workout writes only).
-- Finishing a workout can advance the progress of a guided program the account already owns after its fee ended; it never adds or activates one.
+- ~~Kiosk bearer tokens (4 h) survive a suspension~~ → **resolved in the follow-up (section 10)**: re-checked on every use; remaining latency ≤ 60 s (capability cache). Instant push from Platform is proposed, not built.
+- ~~Finishing a workout advances a guided program after the fee ended~~ → **resolved in the follow-up (section 10)**: the workout is recorded, the program is frozen without `guidedTraining`.
 - Staff can assign guided programs irrespective of the member's fee (by design).
 - Legacy and shadow users are not blocked (by design; enforcement is opt-in per user).
 - Rate limiting in Platform is in-memory per process.
@@ -74,3 +74,16 @@ See `docs/runbooks/2J-INT-proxy-and-rate-limits.md` (documentation only, nothing
 3. Reviewer approvals on the six PRs, and an explicit owner decision before any flag, Caddy change or deployment.
 
 Status: `validated_locally_by_implementer_pending_independent_review`.
+
+## 10. Follow-up pass (kiosk, guided programs, proxy trust, reviewer package)
+
+Same caveat: implemented and tested by the implementing agent; **not** independent.
+
+| Topic | Change | Evidence |
+|---|---|---|
+| Suspension and kiosk | Kiosk token routes (`session`, `active`, `rest`, `finish`) re-check the Platform gate on every use (`readKioskMember`): blocked account → 403 `capability_required`, room presence ends, in-progress workout kept (the server inactivity sweep still closes it into history). Legacy/staff: no Platform call, no change. Existing tokens and the token format are unchanged; lifting restores the same token. Latency ≤ 60 s. | Búnker tests "kiosk tokens are re-checked on every use…", "legacy members never call Platform from the kiosk…" |
+| Guided programs | Separation of *conservation* (program, history, workouts: always kept) from *use* (closing/advancing the program: needs `guidedTraining`, the same right sync already requires). Finish always records the workout; without the right the program is frozen and the answer carries `guidedProgress: 'frozen'`. | Búnker test "finishing a workout of a guided program records it for everyone…" |
+| X-Forwarded-For | A private address is not proof of a proxy. New optional `TRUSTED_PROXIES` (Búnker): only listed peers are believed, client = rightmost non-proxy hop; wide/malformed values stop start-up. Default unchanged (legacy rule) so nothing moves by itself. Runbook now lists exact configuration and eight pre-production tests. | Búnker `bunker-rate-limit.test.js`; runbook |
+| Reviewer package | `docs/review/2J-INT-CLOSURE/` (README with PR order and SHAs, CONTRACTS, MIGRATIONS, ROUTE-MATRIX (generated), CHECKLISTS with acceptance/rejection criteria). | — |
+
+Final results after this pass: Platform API 269/269 (unchanged code); Búnker API 874 tests, 827 pass, 0 fail, 47 skipped; Búnker frontend 1865/1865; E2E 15/15 and 8/8.
