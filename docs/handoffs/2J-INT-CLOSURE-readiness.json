@@ -1,0 +1,16 @@
+{
+  "taskId": "2J-INT-CLOSURE",
+  "branch": "agent/claude/2J-INT-CLOSURE",
+  "builtOn": ["agent/claude/2J-INT-E2E"],
+  "bunkerBranch": "agent/claude/2J-INT-BUNKER-CLOSURE",
+  "status": "validated_locally_pending_independent_review",
+  "architecture": { "centralAuth": "platform-owned WebAuthn passkeys, dev/test only, off by default", "rpId": "home.2jfitnesscenter.com", "bunkerPasskeys": "unchanged", "bridge": "one-time SSO codes" },
+  "migrations": ["0040_training_link_activation_provisioning", "0041_platform_passkeys"],
+  "flags": { "platform": ["TRAINING_LINK_LIFECYCLE_ENABLED", "TRAINING_PROVISIONING_ENABLED", "PLATFORM_PASSKEYS_ENABLED", "PLATFORM_PASSKEY_RP_ID", "TRAINING_SERVICE_ALLOW_INSECURE_LOOPBACK"], "bunker": ["PLATFORM_LINK_LIFECYCLE_ENABLED", "PLATFORM_PROVISIONING_ENABLED"], "defaults": "all off" },
+  "commits": { "platform": ["4994f5e", "32d2f2e", "8650342", "9b9d852"], "bunker": ["7bddedc", "8fcc4df", "5f2d3f0", "92d5dca"] },
+  "tests": { "platformApi": "266/266", "platformWorkspace": "all pass", "typecheck": "11/11", "build": "9/9", "bunkerApi": "816 pass, 0 fail, 47 skipped", "bunkerFrontend": "1865/1865", "e2eSso": "15/15", "e2eLink": "8/8" },
+  "notCovered": ["real-device WebAuthn", "native shells/assetlinks", "Búnker link-proof UI", "admin and Home passkey UI", "routineCreation commercial distinction", "production Búnker SHA"],
+  "productionTouched": false,
+  "review": { "independentSecurityReview": "pending", "independentQa": "pending", "reviewerApproval": "pending" },
+  "pullRequests": "draft only, stacked, no merge"
+}
