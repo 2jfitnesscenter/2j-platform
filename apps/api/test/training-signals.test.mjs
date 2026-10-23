@@ -62,6 +62,7 @@ test('it does nothing at all unless explicitly enabled, and the proof of concept
 test('history before the dispatcher was first enabled is never replayed', async () => {
   const before = await person();
   assert.equal((await act(before.personId, 'suspend')).statusCode, 201);
+  await sql`UPDATE platform_training_signal_deliveries SET state='abandoned',last_error='test_cleanup' WHERE state='pending'`;   // leftovers of an earlier run on this database
   await sql`DELETE FROM platform_training_signal_state`;           // "first run": the cut-off is taken now
   await new Promise(resolve => setTimeout(resolve, 20));
   reset();
