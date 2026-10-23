@@ -21,7 +21,7 @@ Free baseline = `autonomousTraining`, `personalRoutineCreation`, `personalRoutin
 
 | Situation | Class | Result |
 |---|---|---|
-| network error, timeout, 5xx, 408, 429, or an answer whose clock is unusable (generated far in the future / already expired) | **unavailable** | safe degradation: a known suspension/revocation keeps blocking (persisted across restarts), otherwise the free baseline; paid rights are never granted unverified. A circuit breaker (backoff 5 s, 10 s, 20 s, 30 s) answers immediately instead of making every request wait for the 3 s timeout; one probe passes after each backoff. |
+| network error, timeout, 5xx, 408, 429, or an answer whose clock is unusable (generated far in the future / already expired) | **unavailable** | safe degradation: a known suspension/revocation keeps blocking (persisted across restarts), otherwise the free baseline; paid rights are never granted unverified. A circuit breaker (backoff 2 s, 4 s, 8 s, then 12 s; so recovery after an outage is noticed within at most 12 s) answers immediately instead of making every request wait for the 3 s timeout; one probe passes after each backoff. |
 | 401/403/404/other 4xx (Platform does not accept our call or does not know the person) | **rejected** | **fail closed**: view `blocked` (`PLATFORM_REJECTED`), cached 5 s, **not** persisted as a restriction, alert. |
 | invalid JSON or contract, an answer about another person or another Training user, an impossible validity window | **inconsistent** | **fail closed**: view `blocked` (`IDENTITY_INCONSISTENT`), cached 5 s, not persisted, alert. |
 | Platform not configured on an enforced user | misconfiguration | baseline only (never paid rights), loud alert. |

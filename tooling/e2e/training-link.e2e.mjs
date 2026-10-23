@@ -57,7 +57,7 @@ async function startBunker() {
   state.bunker = startProcess(out, 'bunker', ['server.js'], bunkerApiDir, {
     PORT: String(state.ports.bunker), DATA_DIR: path.join(out, 'bunker-data'), SECRET_FILE: path.join(out, 'bunker-data', 'secret'), RP_ID: 'localhost', ORIGIN: B(),
     PLATFORM_SSO_ENABLED: 'true', PLATFORM_API_BASE_URL: P(), PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
-    PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true', PLATFORM_PROOF_RECONCILIATION_ENABLED: 'true', PLATFORM_LINK_LIFECYCLE_ENABLED: 'true', PLATFORM_PROVISIONING_ENABLED: 'true',
+    PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true', PLATFORM_BREAKER_BASE_MS: '200', PLATFORM_PROOF_RECONCILIATION_ENABLED: 'true', PLATFORM_LINK_LIFECYCLE_ENABLED: 'true', PLATFORM_PROVISIONING_ENABLED: 'true',
     PLATFORM_SERVICE_AUTH_KEYS: JSON.stringify({ [proofKey.id]: b64(proofKey.secret) }),
   });
   await waitHttp(`${B()}/api/health`, 'Búnker', out);
@@ -249,18 +249,21 @@ E2E('L5', 'duplication is refused: a second person cannot claim an account that 
 });
 
 E2E('L6', 'H3: a Platform code never silently replaces the session of another account; only an explicit confirmation does', async () => {
-  const started = await member('c', 'POST', '/api/me/training/sso', {});
-  assert.equal(started.status, 201, started.text);
-  const code = remember(new URL(started.json.redirectUrl).hash.slice('#code='.length));
+  const platformCode = async () => { const started = await member('c', 'POST', '/api/me/training/sso', {}); assert.equal(started.status, 201, started.text); return remember(new URL(started.json.redirectUrl).hash.slice('#code='.length)); };
   const other = bunkerPasskeyCookie('hist-a');                              // this browser is signed in as ANOTHER account
-  const attempt = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin: B() }, cookie: other });
-  assert.equal(attempt.status, 409, attempt.text); assert.equal(attempt.json.error, 'session_switch_confirmation_required');
-  assert.equal(attempt.headers.get('set-cookie'), null, 'no cookie issued: the session was not replaced');
+  const redeem = code => httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin: B() }, cookie: other });
+  const confirm = (ticket, cookie) => httpCall(B(), 'POST', '/api/platform/v1/sso/confirm', { body: { ticket }, headers: { origin: B() }, cookie });
+  const first = await redeem(await platformCode());
+  assert.equal(first.status, 409, first.text); assert.equal(first.json.error, 'session_switch_confirmation_required');
+  assert.equal(first.headers.get('set-cookie'), null, 'no cookie issued: the session was not replaced');
   assert.equal((await httpCall(B(), 'GET', '/api/me', { cookie: other })).status, 200, 'the browser is still signed in as the first account');
-  remember(attempt.json.ticket);
-  assert.equal((await httpCall(B(), 'POST', '/api/platform/v1/sso/confirm', { body: { ticket: attempt.json.ticket }, headers: { origin: B() }, cookie: bunkerPasskeyCookie('hist-b') })).status, 400, 'another browser session cannot use the ticket');
-  const confirmed = await httpCall(B(), 'POST', '/api/platform/v1/sso/confirm', { body: { ticket: attempt.json.ticket }, headers: { origin: B() }, cookie: other });
+  remember(first.json.ticket);
+  assert.equal((await confirm(first.json.ticket, bunkerPasskeyCookie('hist-b'))).status, 400, 'another browser session cannot use the ticket (and the attempt burns it)');
+  const second = await redeem(await platformCode());                        // a new ticket, for the browser that is really signed in
+  assert.equal(second.status, 409, second.text); remember(second.json.ticket);
+  const confirmed = await confirm(second.json.ticket, other);
   assert.equal(confirmed.status, 200, confirmed.text); assert.match(confirmed.headers.get('set-cookie') || '', /gymsid=/); assert.equal(confirmed.json.user.authLevel, 'sso');
+  assert.equal((await confirm(second.json.ticket, other)).status, 400, 'a ticket is single use');
 });
 
 E2E('X1', 'logs of both services contain no proof codes, challenges, cookies or secrets', async () => {
