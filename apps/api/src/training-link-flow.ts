@@ -47,10 +47,15 @@ export function createTrainingServiceClient(options: RemoteTrainingLinkVerifierO
 }
 
 /* ------------------------------------------------------------------ lifecycle service */
-const REFUSALS = new Set(['link_conflict', 'proof_required', 'not_provisioned', 'training_user_not_found', 'already_provisioned', 'idempotency_conflict']);
+/**
+ * Definitive refusals from Training: the attempt ends as a terminal `conflict`. `proof_required` is deliberately NOT here (H12): it can be a lag between
+ * Training storing the owner's receipt and Platform asking, so the link stays `pending` and the same call can be retried (`resume`) until the owner's
+ * proof is visible; a genuine absence is closed by an administrator (revoke of the pending link) or by the next link transaction.
+ */
+const REFUSALS = new Set(['link_conflict', 'not_provisioned', 'training_user_not_found', 'already_provisioned', 'idempotency_conflict']);
 const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 
-export type LinkActivation = { status: 'active'; replay: boolean } | { status: 'ack_unavailable' } | { status: 'refused'; reason: string } | { status: 'not_found' | 'not_pending' };
+export type LinkActivation = { status: 'active'; replay: boolean } | { status: 'ack_unavailable' } | { status: 'proof_pending' } | { status: 'refused'; reason: string } | { status: 'not_found' | 'not_pending' };
 export type LinkRevocation = { status: 'revoked'; waived: boolean } | { status: 'revocation_pending' } | { status: 'not_linked' } | { status: 'cancelled' };
 export type Provisioning = { status: 'active'; trainingUserId: string; linkId: string } | { status: 'provisioning_pending' } | { status: 'link_pending'; trainingUserId: string; linkId: string }
   | { status: 'conflict' | 'person_unavailable' | 'already_provisioned' | 'refused'; reason?: string };
@@ -79,6 +84,7 @@ export function createTrainingLinkFlow(db: DB, options: { client: TrainingServic
         // A definitive refusal (the owner's proof is missing, the person/user is already linked elsewhere ...) ends the attempt; an outage leaves it pending for a retry.
         if (refusal && REFUSALS.has(refusal)) await tx`UPDATE training_account_links SET status='conflict',link_version=link_version+1,updated_by=${actor.slice(0, 120)} WHERE link_id=${linkId}::uuid AND status='pending'`;
       });
+      if (refusal === 'proof_required') return { status: 'proof_pending' };
       return refusal && REFUSALS.has(refusal) ? { status: 'refused', reason: refusal } : { status: 'ack_unavailable' };
     }
     if (result.data.linkId !== link.linkId || result.data.trainingUserId !== link.trainingUserId) return { status: 'ack_unavailable' };   // never trust an acknowledgement for something else
@@ -224,6 +230,7 @@ export function registerTrainingLinkFlowRoutes(app: FastifyInstance<any, any, an
   const activationReply = (reply: any, activation: LinkActivation, linkId: string) => {
     if (activation.status === 'active') return reply.code(200).send({ v: 1, status: 'active', linkId });
     if (activation.status === 'ack_unavailable') return reply.code(202).send({ v: 1, status: 'pending', linkId, retry: true });
+    if (activation.status === 'proof_pending') return reply.code(202).send({ v: 1, status: 'pending', linkId, retry: true, reason: 'proof_not_yet_visible' });
     if (activation.status === 'refused') return reply.code(409).send({ error: activation.reason });
     return reply.code(409).send({ error: 'link_not_pending' });
   };

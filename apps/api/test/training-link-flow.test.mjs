@@ -157,12 +157,23 @@ test('Training unavailable or refusing: the link stays pending (retryable) or en
   const resumed = await admin('POST', `/api/platform/v1/persons/${person.personId}/training-link/resume`, {});
   assert.equal(resumed.statusCode, 200, resumed.body);
   assert.equal((await linkOf(person.personId))[0].status, 'active');
-  // A definitive refusal closes the attempt.
+  // H12: "proof_required" can be a lag between Training storing the owner's receipt and Platform asking: the link stays pending and the SAME call is retried.
+  const lagging = await createPerson(), laggingUser = `hist-${randomUUID()}`;
+  const proof3 = await startProof(lagging, laggingUser);
+  training.refuse = 'proof_required';
+  const waiting = await member('POST', '/api/me/training/link', proof3);
+  assert.equal(waiting.statusCode, 202, waiting.body); assert.equal(waiting.json().reason, 'proof_not_yet_visible'); assert.equal(waiting.json().retry, true);
+  assert.equal((await linkOf(lagging.personId))[0].status, 'pending', 'not a terminal conflict');
+  assert.equal((await audit(lagging.personId, 'training.link_ack_failed')).length, 1);
+  training.refuse = null;
+  assert.equal((await admin('POST', `/api/platform/v1/persons/${lagging.personId}/training-link/resume`, {})).statusCode, 200, 'the retry completes once the proof is visible');
+  assert.equal((await linkOf(lagging.personId))[0].status, 'active');
+  // A definitive refusal (another person already holds the account) closes the attempt for good.
   const refused = await createPerson(), refusedUser = `hist-${randomUUID()}`;
   const proof2 = await startProof(refused, refusedUser);
-  training.refuse = 'proof_required';
+  training.refuse = 'link_conflict';
   const result = await member('POST', '/api/me/training/link', proof2);
-  assert.equal(result.statusCode, 409); assert.equal(result.json().error, 'proof_required');
+  assert.equal(result.statusCode, 409); assert.equal(result.json().error, 'link_conflict');
   assert.equal((await linkOf(refused.personId))[0].status, 'conflict');
   assert.equal((await audit(refused.personId, 'training.link_ack_failed')).length, 1);
   training.refuse = null;
