@@ -20,11 +20,11 @@ Estados cubiertos: `available`, `full`, `booked`, `not_allowed_by_plan`, `waitli
 - Build de monorepo: 9/9 tareas PASS. En Windows fue necesario regenerar temporalmente `packages/design-tokens/src/tokens.css` por la diferencia de finales de línea del checkout; se restauró y no forma parte del diff.
 - `git diff --check`: PASS.
 - No hay script `lint` en el package raíz ni en los paquetes de este repositorio.
-- CI del Draft PR: pendiente.
+- CI inicial sobre `3ed78d4875a0c10aa078b0e487af366d378584ab`: `pnpm install`, migraciones sintéticas, typecheck, suite completa, build y secret scan PASS; `quality` termina FAIL únicamente en `pnpm audit --audit-level high` por el advisory existente `GHSA-mrhx-c7xc-m3w5` (Zod transitivo de `apps/api`, versión afectada `<4.6.6`; también informa una vulnerabilidad LOW). El lockfile y las dependencias no se modificaron en esta tarea.
 - Primer intento API antes de compilar dependencias: falló porque el worktree nuevo carecía de `node_modules` y de `packages/domain/dist`; se instalaron las dependencias con `pnpm install --frozen-lockfile` y se compiló el paquete requerido antes de la prueba válida.
 
 ## Revisión y coordinación
 
-Falta la revisión independiente y el estado CI de GitHub. Work Home y Claude Code deben recibir el contrato después de integrar el PR, conforme a la petición de producto; todavía no se envió ningún mensaje porque el cambio no está fusionado.
+Falta la revisión independiente. La CI tiene bloqueado el gate de auditoría por una vulnerabilidad de dependencia preexistente y ajena a este cambio. Work Home y Claude Code deben recibir el contrato después de integrar el PR, conforme a la petición de producto; todavía no se envió ningún mensaje porque el cambio no está fusionado.
 
 No hay cambios en Home, Búnker, `2jfitnessapp`, migraciones, reglas de reserva, pagos, contratos ni otras ramas de integración.
