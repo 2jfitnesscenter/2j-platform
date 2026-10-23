@@ -61,6 +61,8 @@ If the integration code itself fails (an exception in the gate), legacy and anon
 
 ## 5. SSO (Platform → Búnker)
 
+> **Superseded by browser binding (decision 3, see `BROWSER-BINDING.md`).** The flow now **starts at Búnker** (`GET /api/platform/v1/sso/start` sets the HttpOnly cookie `j2ssob` and sends Home only `#sso_challenge=SHA256(verifier)`); issuance is `POST /api/me/training/sso {challenge}` (challenge required, stored, immutable, migration 0042); redemption is **v2** `{v:2, code, verifier, audience, purpose}` and a wrong or missing verifier never consumes the code. Búnker needs `PLATFORM_HOME_URL`. v1 redemption no longer exists: Home, Platform and Búnker must be deployed as a set. The text below describes the unchanged parts (hash-only storage, 60 s, single use, session handling).
+
 Issue: `POST /api/me/training/sso` (member session, exact member origin, not cross-site) → `{redirectUrl: <fixed Training /sso>#code=<43-char base64url>}`; hash-only storage, 60 s, single use, one live code per person, ≤ 10/min, person row locked.
 Redeem: Búnker → `POST /api/internal/platform/v2/sso/redeem` (signed; caller must be `bunker`) → Platform re-evaluates binding + capabilities in the same transaction and consumes the code. The browser-facing route on Búnker is `POST /api/platform/v1/sso/redeem` (different path on purpose: it is the page's own endpoint). Búnker then requires an **active acknowledged** link for exactly that person, no conflicting link, not an `ADMIN_UIDS` account.
 **Session handling (H3).** No session → a new sso session. Same account with a passkey session → the passkey session is kept. Same account with an older sso session → refreshed. A valid session of **another account → never replaced silently**: answer `409 session_switch_confirmation_required` with a single-use ticket (60 s) bound to the browser session that is signed in, plus both names; the landing page shows "this browser is signed in as A; continue as B?"; only `POST /api/platform/v1/sso/confirm {ticket}` from that same session, after re-checking the account and link, switches. Residual: a visitor with *no* session can still be signed in by a link carrying someone else's code (login CSRF without a victim session); binding the code to the initiating browser needs a Home↔Búnker handshake that was not built (see README residual risks).
@@ -92,3 +94,22 @@ Behaviour read from the code (`api/lib/guided-routes.js`, `guided-store.js`, `AI
 | Trainer assigns a routine / program to a member | staff writes into the member's state (`assign-routine` copies a personal routine; `assign-program` adds a guided program) | staff role guards (never the member's capabilities) |
 | Admin / trainer curation (`/api/guided/*` writes) | official catalogue management | role guards (`staff`) |
 No new capability was invented: the feature maps onto `guidedTraining` (content and program use) and the free baseline (recording).
+
+## 9. `2J-CAPABILITY-SIGNAL-V1` (Platform → Búnker, restrict-only, off by default — proof of concept)
+
+`POST /api/platform/v1/signals`, signed with `2J-SERVICE-AUTH-V1`. Body (strict): `{v:1, signalId:uuid, kind:'suspended'|'lifted', personId:uuid, trainingUserId, sequence:int≥1, occurredAt:ISO-ms}`. Answers: `200 {v:1, status:'applied'|'ignored', signalId, reason?}`, `423` flag off, `401`, `400`, `409` replayed request id, `404` no active link for that person+user.
+Semantics: `suspended` blocks now and is remembered as a restriction; `lifted` only forgets the cached verdict (Platform is asked again and decides); ordered per person by `sequence` (older/equal → `ignored`); an in-flight capability answer fetched before the signal is discarded (epoch guard); legacy/shadow users are never blocked by a signal. Flags: Búnker `PLATFORM_SIGNALS_ENABLED`, Platform `TRAINING_SIGNALS_ENABLED` (+ `TRAINING_SIGNALS_INTERVAL_MS`), dispatcher refuses to start outside development/test. Migration 0043. Full proposal, threat model and measurements: `SIGNALS-PROPOSAL.md`.
+
+## 10. Capabilities consumer validation (decision 2) — supplement to §2
+
+The Búnker consumer additionally refuses (fail closed, class *inconsistent*) an answer that contradicts itself: `ADMIN_SUSPENDED` unless `accessState: suspended`, `suspensionStatus: suspended`, level `blocked` and **every flag false**; `FREE_BASELINE` unless level `baseline`, state `baseline` and exactly the five baseline flags; a link reason on an active link or an active reason on a revoked/missing link; level `blocked` with no restriction reason; an `accessState: baseline` with a paid reason. It reads at most 64 KB, and refuses a `redirected` answer or one whose final URL is not the requested origin + path. Timestamps are RFC 3339 `Z` (milliseconds optional). Equivalence evidence with the other consumer: `CONSUMER-COMPARISON.md`.
+
+## 11. Compatibility matrix (shared contracts changed in this pass)
+
+| Contract | Change | Producer ↔ consumer verified |
+|---|---|---|
+| SSO issue (Home → Platform) | `{challenge}` required | Home 29 tests · Platform 15 SSO tests · E2E SSO 16 |
+| SSO redeem (Búnker → Platform) | v1 → **v2** (+`verifier`) | Platform 15 · Búnker SSO suite · E2E SSO 16 (both directions of the negative cases) |
+| `/sso/start` (new, Búnker) | Home reads `#sso_challenge` | Home 14 + Búnker frontend 1875 + a real-browser run |
+| Signals (new) | optional, flags off | Platform 8 · Búnker 6 · latency run with real processes |
+| Capabilities V2 | stricter consumer validation, **same wire format** | corpus 59 scenarios on both consumers; Platform emits only consistent answers (domain tests) |

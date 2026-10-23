@@ -57,3 +57,14 @@ Separate hosts and DNS names, Caddy with the safe `header_up` rules of `docs/run
 ## Open decisions for the owner
 
 Which hosts/domains; who runs staging, QA and the independent audit; whether real-device WebAuthn testing is wanted before any production rollout (recommended: yes); whether a time-box is set after which staging is destroyed.
+
+## Additions after the final pre-audit decisions (2026-10-23) — still design only
+
+Nothing below creates a host, flag, secret or database. They are conditions the staging design must also satisfy now that three components exist that did not when this note was first written.
+
+1. **Browser-bound SSO (migration 0042).** Búnker needs `PLATFORM_HOME_URL` = the exact `https` staging Home origin, which must be in `STAGING_ORIGINS`; the start-up check refuses a Home URL outside the allow-list or a production one. The `j2ssob` cookie is `Secure` + `HttpOnly` + `SameSite=Lax` + `Path=/api/platform/v1/sso`: staging is the first place where Safari/iOS, in-app browsers and PWA cookie jars can be tested (see `docs/review/2J-INT-CLOSURE/REAL-DEVICE-QA.md`). Home, Platform and Búnker must be deployed to staging **as a set** (redeem v2 is not compatible with v1).
+2. **Signed signals (migration 0043).** The dispatcher is dev/test-only today. In staging it would need the explicit `staging` profile check (never "NODE_ENV=test on a public host"), its own service key id `stg-…` per direction, `PLATFORM_SIGNALS_ENABLED` / `TRAINING_SIGNALS_ENABLED` still opt-in, and an alert route for `platform_signal_*`. Test cases: signal on, signal off, Búnker down, Platform down, clock skew, key rotation.
+3. **One consumer of capabilities** (`platform-sso`; see `CONSUMER-COMPARISON.md`). The conformance corpus (`api/scripts/compare-capabilities-consumers.mjs`) is part of the staging acceptance run.
+4. **Fake data inventory** (extends "Data"): per persona the staging seed must create a Platform person + auth subject + (where relevant) a Training user with the right mode — legacy, legacy-linked, shadow, enforced-free, enforced-Fuerza, enforced-autonomous, suspended, revoked link, provisioned, kiosk-only member, admin/trainer. Codes/credentials are generated per run, printed once, and never reused; `tooling/e2e/smoke-stack.mjs` is the template (loopback today).
+5. **Own secrets, flags off:** staging secrets are generated in the staging secret store, never copied from development or production; every feature flag starts OFF and is switched on one at a time by the QA procedure, each with its rollback step.
+6. **Real-device QA runs here and only here** (procedure: `docs/review/2J-INT-CLOSURE/REAL-DEVICE-QA.md`). Production receives no QA traffic.

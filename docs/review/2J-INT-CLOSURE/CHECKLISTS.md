@@ -76,3 +76,18 @@ Nothing here is ticked. Each box is to be completed by the independent reviewer 
 ## E. Not covered by this package
 
 Real-device WebAuthn, native shells, load/performance, accessibility, the Home visual commits, production infrastructure, backups, and legal/consent texts.
+
+## F. Added in the second pass (final pre-audit decisions) — also unticked
+
+**Security (reviewer)**
+- [ ] Browser binding (`BROWSER-BINDING.md`): with a valid code and **no** `j2ssob` cookie the redeem is refused before Platform is called; with a wrong verifier Platform refuses and the code is **not** consumed; the challenge in the DB is immutable (probe in `MIGRATIONS.md` 0042); `/sso/start` cannot be made to redirect anywhere but `PLATFORM_HOME_URL`.
+- [ ] Redeem **v1** is really gone (send `{code, audience, purpose}` with a valid signature: must fail), and an old Home build cannot obtain a code (no `challenge`: must fail).
+- [ ] Signals (`SIGNALS-PROPOSAL.md`): there is no signal kind that grants; `lifted` never makes the account usable before Platform's own answer; old/duplicate sequence is ignored; unsigned, stale-timestamp and replayed-request-id signals are refused; the signal carries ids only; both flags OFF = no new behaviour; the dispatcher refuses to start outside development/test.
+- [ ] Capabilities consumer: run `node api/scripts/compare-capabilities-consumers.mjs`, read the six intended differences, add scenarios of your own to `capabilities-corpus.mjs`; confirm no self-contradicting answer widens access.
+- [ ] The Codex consumer branch is untouched; decide which consumer survives (`CONSUMER-COMPARISON.md`).
+- [ ] PR hygiene: the Home visual commits are only in #65 (and duplicated on two other branches by identical patches); no commit is lost or duplicated by the merge plan (`PR-DEPENDENCIES.md`); migrations 0039–0043 are free on `main`.
+- [ ] Legacy: `api/scripts/legacy-differential.mjs` against a fresh `main` — only the array-body `PUT /api/data` 400 differs.
+
+**QA (real devices):** the whole of `REAL-DEVICE-QA.md` (S1–S18) on staging — not run.
+
+**Known failing test not caused by this work:** `apps/api/test/term-payment-booking.integration.test.mjs` (3 cases from PR #63, already on `main`) hard-codes a session at `2026-10-23T12:00:00Z` and asserts `eligible`/bookable at the real clock; from that instant on it fails with `session_started`. The file is byte-identical to `origin/main`. The reviewer should expect these 3 failures on any run after 2026-10-23T12:00Z (or run with the clock before it) and ask the owner of #63 to make the test clock-independent. It was not modified here.

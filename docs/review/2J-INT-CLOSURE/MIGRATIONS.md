@@ -50,3 +50,13 @@ Covered by: `apps/api/test/platform-passkeys.test.mjs`.
 ## Rollback
 
 Forward-only (project convention). Rolling back = restore the pre-migration backup of the database; the application code with all flags off does not read the new tables.
+
+## 0042 — browser binding of SSO codes (decision 3)
+
+File `apps/api/migrations/0042_training_sso_browser_binding.sql`. Additive: `platform_training_sso_codes.binding_challenge char(43)` (nullable column so history stays valid), CHECK `^[A-Za-z0-9_-]{43}$`; the insert trigger now **requires** a challenge for every new code; `protect_platform_training_sso_code()` extended so the challenge is immutable. Rows issued before the migration (none exist outside disposable databases) cannot be redeemed by the new path (they have no challenge) — they expire in ≤ 60 s anyway.
+Probes (disposable DB): `INSERT` a code without `binding_challenge` → fails (23514); `UPDATE … SET binding_challenge=…` on an existing code → fails (55000); a challenge of 42 chars → fails the CHECK. Covered by `training-sso.test.mjs` "the binding is immutable and every stored code carries one".
+
+## 0043 — signal delivery bookkeeping (decision 4, proof of concept)
+
+File `apps/api/migrations/0043_training_signal_deliveries.sql`. Adds `platform_training_signal_state` (singleton: when the dispatcher was first enabled) and `platform_training_signal_deliveries` (one row per `platform_training_access_events` row: `seq` bigserial, `signal_id`, state `pending|delivered|superseded|abandoned`, attempts, `next_attempt_at`, `last_error` ≤ 80 chars, timestamps). Constraints: state/kind CHECKs, one delivery per event (unique + FK), error text bounded. **Read-only with respect to the existing event table.** Unused unless `TRAINING_SIGNALS_ENABLED=true` (dev/test only); with the flag off the tables stay empty.
+Covered by `training-signals.test.mjs` "the bookkeeping is constrained…". Rollback: forward-only like the others; with the dispatcher off nothing reads the tables.
