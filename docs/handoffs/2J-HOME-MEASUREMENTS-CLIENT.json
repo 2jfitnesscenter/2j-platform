@@ -18,6 +18,13 @@
     "D01 versus D08 and D28: measurement write eligibility for clients without an active fee; no specific resolution A entry found.",
     "Conflict #8 (D12 versus D35): correction audit old/new values versus permanent deletion of erroneous values; no specific resolution A entry found."
   ],
+  "pushBranchCoordination": {
+    "claudeBranch": "origin/agent/claude/2J-PUSH-INFRA",
+    "claudeHead": "fc3b3ae51f3e03f7df977a10690ef8b6b940a27f",
+    "mergeBase": "f87818afe474176c6e6ae77cb4d62a7e73fc1adf",
+    "risk": "Home and Claude branches add overlapping client push file paths.",
+    "safeNextStep": "Stack/rebase the Home draft on Claude's published head and reconcile client files once; do not merge both independent heads directly into main."
+  },
   "changedFiles": [
     "docs/handoffs/2J-HOME-MEASUREMENTS-CLIENT.md",
     "docs/handoffs/2J-HOME-MEASUREMENTS-CLIENT.json"

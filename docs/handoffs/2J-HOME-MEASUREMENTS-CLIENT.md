@@ -50,3 +50,7 @@ Home/Codex: en una rama cliente posterior, consumir ese contrato con pantallas r
 - Solo se añade este handoff a la rama cliente.
 - No se tocan API/DB Platform, Búnker, autenticación, capacidades, datos, producción, infraestructura ni la rama de capacidades.
 - No se ejecutan pruebas: no hay cambios ejecutables en esta rama. La calidad de la implementación Push sigue verificada en su commit anterior; este handoff no altera esos archivos.
+
+## Coordinación de ramas Push
+
+La referencia `origin/agent/claude/2J-PUSH-INFRA` (`fc3b3ae51f3e03f7df977a10690ef8b6b940a27f`) y Home parten de bases distintas; su merge-base actual es `f87818afe474176c6e6ae77cb4d62a7e73fc1adf`. Ambas líneas incluyen los mismos nombres de archivos de cliente Push. Antes de publicar/combinar, Claude debe publicar primero su Draft y la rama Home debe apilarse o rebasarse contra ese head, conservando solo la diferencia Home y resolviendo esos archivos una sola vez. No combinar ambos heads directamente contra main.
