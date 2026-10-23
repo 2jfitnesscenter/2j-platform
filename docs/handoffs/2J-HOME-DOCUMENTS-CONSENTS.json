@@ -1,0 +1,33 @@
+{
+  "task": "2J-HOME-DOCUMENTS-CONSENTS",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-DOCUMENTS-CONSENTS",
+  "baseSha": "7074177be0e9db7d42342466813627392f4a6d03",
+  "status": "verified-local",
+  "changedFiles": [
+    "apps/client-app/test/client-app.test.mjs",
+    "docs/handoffs/2J-HOME-DOCUMENTS-CONSENTS.md",
+    "docs/handoffs/2J-HOME-DOCUMENTS-CONSENTS.json"
+  ],
+  "tests": {
+    "clientApp": { "passed": 26, "failed": 0 },
+    "communicationsApiIntegration": { "passed": 9, "failed": 0, "database": "ephemeral local PostgreSQL" },
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "blockers": [
+    "D48/D150 need a unified member document archive/read contract.",
+    "D151 needs a restricted attachment-upload and review contract.",
+    "D63 needs profile-edit and verified-email contracts.",
+    "D64 needs a drawing/signature and signed-document contract.",
+    "D152 push event linkage for requested/rejected documents is not verified."
+  ],
+  "safety": {
+    "basedOnClaudeRebased": true,
+    "providerCalls": false,
+    "push": false,
+    "merge": false,
+    "deployment": false,
+    "productionData": false
+  }
+}
