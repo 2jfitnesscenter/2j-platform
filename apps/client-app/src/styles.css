@@ -301,6 +301,8 @@ body:has(.client-app.hub-theme) { min-width:320px; background:#0B0F12; color:#F4
 .home-book-cta h2 { margin:4px 0; font-size:clamp(24px,6vw,32px); letter-spacing:-.04em; }
 .home-book-cta .button { width:100%; min-height:50px; }
 .home-next-booking { display:grid; gap:12px; }
+.next-booking-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.next-booking-actions .text-button,.next-booking-actions .quiet-button { min-height:44px; }
 .next-booking-content { display:grid; gap:6px; padding:14px; border-radius:13px; background:#182125; }
 .next-booking-content .next-booking-service { display:flex; flex-wrap:wrap; align-items:center; gap:8px; color:#F4F6F8; font-size:16px; font-weight:700; }
 .individual-tag,.confirmed-pill { display:inline-flex; align-items:center; width:max-content; min-height:27px; padding:0 9px; border:1px solid #315847; border-radius:999px; background:#1B3029; color:#9DE5C7; font-size:11px; font-weight:700; }

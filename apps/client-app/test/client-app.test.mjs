@@ -328,15 +328,17 @@ test('Member manually selects separate sessions, explicitly joins waitlist, sees
   assert.ok(await ui.findByRole('heading', { name: 'Próxima reserva' }));
   assert.ok(ui.getByText('Confirmada'));
   assert.equal(ui.container.querySelector('.home-next-booking')?.textContent.includes('Lista de espera'), false);
-  fireEvent.click(ui.getByRole('button', { name: /Mis reservas/ }));
-  await ui.findByRole('heading', { name: 'Mis reservas' });
   fireEvent.click(ui.getByRole('button', { name: 'Cancelar' }));
   assert.ok(await ui.findByRole('dialog', { name: '¿Cancelar esta reserva?' }));
   assert.ok(ui.getByText('Si cancelas ahora, recuperarás la sesión.'));
   fireEvent.click(ui.getByRole('button', { name: 'Cancelar reserva' }));
-  assert.ok(await ui.findByText('Todavía no tienes reservas próximas.'));
-  fireEvent.click(ui.getByRole('button', { name: 'Inicio', exact: true }));
-  assert.ok(await ui.findByText('No tienes ninguna reserva próxima.'));
+  await ui.findByText('La reserva se ha cancelado.');
+  assert.equal(ui.container.querySelector('.home-next-booking'), null);
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil' }));
+  fireEvent.click(ui.getByRole('button', { name: /Próximas, lista de espera e historial/ }));
+  await ui.findByRole('heading', { name: 'Mis reservas' });
+  assert.ok(ui.getByText('Todavía no tienes reservas próximas.'));
+  assert.ok(ui.getByText('En lista de espera'));
   cleanup(); dom.window.close();
 });
 
@@ -526,7 +528,7 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   cleanup(); dom.window.close();
 });
 
-test('Inicio V2 shows the no-upcoming-reservation state and neutral news empty state', async () => {
+test('Inicio hides the upcoming booking card when empty and Perfil keeps access to Mis reservas', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
@@ -538,7 +540,7 @@ test('Inicio V2 shows the no-upcoming-reservation state and neutral news empty s
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Eva', lastName: 'Piloto', email: null, status: 'active' } }));
     if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }));
-    if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [{ status: 'waiting', startsAt: new Date(Date.now() + 86_400_000).toISOString() }] }));
+    if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', status: 'waiting', sessionId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: new Date(Date.now() + 86_400_000).toISOString(), durationMinutes: 45, serviceName: 'Funcional', areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] }));
     if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [] }));
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]));
     if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
@@ -546,12 +548,17 @@ test('Inicio V2 shows the no-upcoming-reservation state and neutral news empty s
     if (url.startsWith('/api/me/notifications')) return new Response(JSON.stringify({ items: [] }));
     throw new Error(`Unexpected request ${url}`);
   };
-  const { render, cleanup, ClientApp } = await uiHarness();
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
   const ui = render(React.createElement(ClientApp));
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Eva' }));
-  assert.ok(ui.getByText('No tienes ninguna reserva próxima.'));
+  assert.equal(ui.container.querySelector('.home-next-booking'), null);
   assert.ok(ui.getByText('Ahora mismo no hay noticias publicadas.'));
-  assert.equal(ui.container.querySelectorAll('.home-news,.home-book-cta,.home-next-booking').length, 3);
+  assert.equal(ui.container.querySelectorAll('.home-news,.home-book-cta,.home-next-booking').length, 2);
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Mis reservas' }));
+  fireEvent.click(ui.getByRole('button', { name: /Próximas, lista de espera e historial/ }));
+  assert.ok(await ui.findByRole('heading', { name: 'Mis reservas' }));
+  assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelectorAll('button').length, 5);
   cleanup(); dom.window.close();
 });
 
