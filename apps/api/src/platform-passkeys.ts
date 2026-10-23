@@ -28,14 +28,18 @@ export type PlatformPasskeyOptions = {
   maxRequestsPerMinute?: number;
 };
 
-/** True when `rpId` is a valid relying-party id for `origin` (the origin host itself or a registrable parent, never an IP or a public suffix-looking label). */
+/**
+ * True only when `rpId` IS the exact host of `origin`. A registrable parent (for example `2jfitnesscenter.com` for
+ * `home.2jfitnesscenter.com`) is deliberately refused: it would make every credential valid for every sibling subdomain, and an RP ID can never
+ * be narrowed again once credentials exist. Widening it is a code change that needs a security review, not a configuration value.
+ */
 export function rpIdMatchesOrigin(rpId: string, origin: string) {
   try {
     const url = new URL(origin);
     if (!/^[a-z0-9.-]+$/.test(rpId) || rpId.startsWith('.') || rpId.endsWith('.') || !(rpId.includes('.') || rpId === 'localhost')) return false;
     if (/^\d+\.\d+\.\d+\.\d+$/.test(rpId) || url.hostname.startsWith('[')) return false;
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1'))) return false;
-    return url.hostname === rpId || url.hostname.endsWith(`.${rpId}`);
+    return url.hostname === rpId;
   } catch { return false; }
 }
 

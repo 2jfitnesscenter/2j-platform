@@ -270,3 +270,34 @@ test('a definitive Training refusal during provisioning is recorded and final; a
   const dump = JSON.stringify(await sql`SELECT * FROM platform_identity_audit_events WHERE person_id=${person.personId}`);
   assert.ok(!dump.includes(KEY.secret));
 });
+
+test('provisioning is not on by default, has no member-facing route, needs an administrator, and the server refuses to enable it outside development/test', async () => {
+  // Defaults: a server built without the flag answers 423 to an administrator (nothing reaches Training).
+  const person = await createPerson(); training.calls.length = 0;
+  const route = `/api/platform/v1/persons/${person.personId}/training-provision`;
+  assert.equal((await noProvisioning.inject({ method: 'POST', url: route, headers: { 'content-type': 'application/json', 'idempotency-key': randomUUID() }, payload: { displayName: 'Socio' } })).statusCode, 423);
+  assert.equal((await disabled.inject({ method: 'POST', url: route, headers: { 'content-type': 'application/json', 'idempotency-key': randomUUID() }, payload: { displayName: 'Socio' } })).statusCode, 423);
+  assert.equal(training.calls.length, 0);
+  // The only provisioning route is the administrator one: members and anonymous callers cannot reach any variant.
+  currentAuth = person.auth;
+  for (const url of [route, '/api/me/training/provision', `/api/me/training-provision`, '/api/platform/v1/training-provision']) {
+    const memberTry = await app.inject({ method: 'POST', url, headers: { 'content-type': 'application/json', origin: memberOrigin, 'idempotency-key': randomUUID() }, payload: { displayName: 'Socio' } });
+    assert.ok([403, 404].includes(memberTry.statusCode) || (url === route && memberTry.statusCode === 201), url);
+    if (url !== route) assert.equal(memberTry.statusCode, 404, `${url} does not exist`);
+  }
+  // An administrator-only permission: the route authorizes with identity.people.manage (trainer is refused, anonymous is 401).
+  actor = { actorId: 'qa-trainer', role: 'trainer' };
+  assert.equal((await admin('POST', route, { displayName: 'Socio' }, { 'idempotency-key': randomUUID() })).statusCode, 403);
+  actor = null;
+  assert.equal((await admin('POST', route, { displayName: 'Socio' }, { 'idempotency-key': randomUUID() })).statusCode, 401);
+  actor = { actorId: 'qa-admin', role: 'admin' };
+  // The server itself refuses to switch it on in a production-like process.
+  const previous = process.env.NODE_ENV;
+  for (const env of ['production', 'staging', '']) {
+    process.env.NODE_ENV = env;
+    try { assert.throws(() => buildServer(process.env.DATABASE_URL, { ...base, ...flags }), /restricted to development\/test/, `NODE_ENV=${env}`); } finally { process.env.NODE_ENV = previous; }
+  }
+  // Lifecycle without provisioning builds fine (a flag per capability).
+  const lifecycleOnly = buildServer(process.env.DATABASE_URL, { ...base, ...flags, trainingProvisioningEnabled: false });
+  await lifecycleOnly.close();
+});

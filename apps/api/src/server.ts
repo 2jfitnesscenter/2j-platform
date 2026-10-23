@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import Fastify, { type FastifyError, type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import { createHash, createHmac } from 'node:crypto';
@@ -149,6 +150,22 @@ export function mapDatabaseError(error: unknown) {
   return { status: 500, body: { error: 'internal_error', message: 'No se pudo completar la operación.' } };
 }
 
+/** Validates the trusted-proxy list: concrete addresses or narrow CIDRs only, so a typo can never trust the whole internet. */
+export function parseTrustedProxies(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 4) throw new Error('trustedProxies must be a list of at most 4 proxy addresses.');
+  return value.map(entry => {
+    if (typeof entry !== 'string') throw new Error('trustedProxies entries must be strings.');
+    const [address, prefix, ...rest] = entry.trim().split('/');
+    const family = address ? isIP(address) : 0;
+    const bits = family === 4 ? 32 : 128;
+    const length = prefix === undefined ? bits : /^\d{1,3}$/.test(prefix) ? Number(prefix) : NaN;
+    const minimum = family === 4 ? 16 : 64;
+    if (!family || rest.length || !Number.isInteger(length) || length > bits || (prefix !== undefined && length < minimum)) throw new Error('trustedProxies entries must be an IP address or a CIDR no wider than /16 (IPv4) or /64 (IPv6).');
+    return prefix === undefined ? address! : `${address}/${length}`;
+  });
+}
+
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
   bookingEligibilityResolver?: BookingEligibilityResolver;
@@ -175,6 +192,8 @@ export type ServerOptions = {
   /** Exact relying-party id, immutable once credentials exist (for example home.2jfitnesscenter.com). */
   platformPasskeyRpId?: string | null;
   platformPasskeyMaxRequestsPerMinute?: number;
+  /** Exact addresses/CIDRs of the reverse proxies allowed to set X-Forwarded-For/-Proto (empty = trust none, the default). Never `true` or a catch-all: see docs/runbooks/2J-INT-proxy-and-rate-limits.md. */
+  trustedProxies?: string[];
   trainingLinkLifecycleEnabled?: boolean;
   /** Idempotent provisioning of a minimal Training profile. Off by default. */
   trainingProvisioningEnabled?: boolean;
@@ -188,10 +207,13 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   if (options.memberPilotAuthEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) {
     throw new Error('Pilot member authentication is restricted to development/test environments.');
   }
+  if (options.trainingProvisioningEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training provisioning is restricted to development/test environments until a later, explicitly approved phase.');
   if (options.platformPasskeysEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Platform passkeys are restricted to development/test environments until a security review approves a rollout.');
   if (options.memberPilotBookingEnabled && (!options.memberPilotAuthEnabled || !['development', 'test'].includes(process.env.NODE_ENV ?? ''))) throw new Error('Member booking pilot mutations require development/test Member pilot authentication.');
   if (options.memberPilotCohortManagementEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Member pilot cohort management is restricted to development/test environments.');
+  const trustedProxies = parseTrustedProxies(options.trustedProxies);
   const app = Fastify({
+    trustProxy: trustedProxies.length ? trustedProxies : false,
     logger: options.logger ?? { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/' }; } } },
     bodyLimit: 16_384,
   });
@@ -664,6 +686,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     trainingVerifiedLinkingEnabled: process.env.TRAINING_VERIFIED_LINKING_ENABLED === 'true',
     trainingCanonicalLinkingEnabled: process.env.TRAINING_CANONICAL_LINKING_ENABLED === 'true',
     platformPasskeysEnabled: process.env.PLATFORM_PASSKEYS_ENABLED === 'true',
+    trustedProxies: (process.env.PLATFORM_TRUSTED_PROXIES ?? '').split(',').map(value => value.trim()).filter(Boolean),
     platformPasskeyRpId: process.env.PLATFORM_PASSKEY_RP_ID ?? null,
     trainingLinkLifecycleEnabled: process.env.TRAINING_LINK_LIFECYCLE_ENABLED === 'true',
     trainingProvisioningEnabled: process.env.TRAINING_PROVISIONING_ENABLED === 'true',

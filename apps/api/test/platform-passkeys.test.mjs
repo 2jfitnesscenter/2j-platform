@@ -5,6 +5,7 @@ import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
 import { rpIdMatchesOrigin } from '../src/platform-passkeys.ts';
+import { parseTrustedProxies } from '../src/server.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: Platform passkey tests cannot be skipped.');
 process.env.NODE_ENV = 'test';
@@ -91,7 +92,7 @@ const sessionWorks = async cookie => (await post(app, '/api/platform/v1/training
 
 test('relying-party id must match the member origin; passkeys are off by default and refused outside development/test', async () => {
   assert.equal(rpIdMatchesOrigin('home.2jfitnesscenter.com', 'https://home.2jfitnesscenter.com'), true);
-  assert.equal(rpIdMatchesOrigin('2jfitnesscenter.com', 'https://home.2jfitnesscenter.com'), true, 'a registrable parent is valid but would widen the credential scope');
+  assert.equal(rpIdMatchesOrigin('2jfitnesscenter.com', 'https://home.2jfitnesscenter.com'), false, 'the apex is refused: it would widen every credential to all sibling subdomains');
   assert.equal(rpIdMatchesOrigin('other.example', 'https://home.2jfitnesscenter.com'), false);
   assert.equal(rpIdMatchesOrigin('com', 'https://home.2jfitnesscenter.com'), false);
   assert.equal(rpIdMatchesOrigin('127.0.0.1', 'http://127.0.0.1:5173'), false);
@@ -210,4 +211,64 @@ test('ceremony endpoints are rate limited per client', async () => {
   const results = [];
   for (let i = 0; i < 5; i++) results.push((await post(throttled, '/api/me/passkeys/login/options')).statusCode);
   assert.deepEqual(results, [200, 200, 200, 429, 429]);
+});
+
+test('the effective RP ID is the exact Home host and cannot be widened to the apex by configuration', async () => {
+  const HOME = 'https://home.2jfitnesscenter.com';
+  assert.equal(rpIdMatchesOrigin('home.2jfitnesscenter.com', HOME), true, 'the intended production pair');
+  for (const widened of ['2jfitnesscenter.com', 'com', 'www.2jfitnesscenter.com', 'evil.home.2jfitnesscenter.com', '.2jfitnesscenter.com', 'home.2jfitnesscenter.com.']) assert.equal(rpIdMatchesOrigin(widened, HOME), false, widened);
+  // This phase only accepts loopback member origins, so the production host cannot even be configured by accident...
+  assert.throws(() => buildServer(process.env.DATABASE_URL, { ...flags, memberAppOrigin: HOME, platformPasskeysEnabled: true, platformPasskeyRpId: 'home.2jfitnesscenter.com' }), /loopback/);
+  // ... and a missing, parent or unrelated RP ID is refused before any route exists, on the loopback origin too.
+  for (const rpId of [null, 'com', 'localhost.com', '2jfitnesscenter.com', '127.0.0.1']) {
+    assert.throws(() => buildServer(process.env.DATABASE_URL, { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: rpId }), /relying-party/, String(rpId));
+  }
+  // The RP ID stored with every credential is the one that signed it; a credential row for another RP ID never logs in.
+  const personId = await createPerson();
+  const { device } = await registerDevice(personId);
+  await sql`ALTER TABLE platform_passkeys DISABLE TRIGGER platform_passkey_protection`;
+  try { await sql`UPDATE platform_passkeys SET rp_id='other.example' WHERE person_id=${personId}`; } finally { await sql`ALTER TABLE platform_passkeys ENABLE TRIGGER platform_passkey_protection`; }
+  assert.equal((await login(device)).statusCode, 401, 'rp_id mismatch');
+});
+
+test('trusted proxies are explicit and narrow; client IP limits ignore spoofed X-Forwarded-For unless the peer is a trusted proxy', async () => {
+  assert.deepEqual(parseTrustedProxies(undefined), []);
+  assert.deepEqual(parseTrustedProxies(['127.0.0.1', '::1', '10.0.0.0/16']), ['127.0.0.1', '::1', '10.0.0.0/16']);
+  for (const bad of [true, 1, 'x', ['0.0.0.0/0'], ['::/0'], ['10.0.0.0/8'], ['10.0.0.1/33'], ['999.1.1.1'], ['loopback'], ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4', '10.0.0.5'], [5], ['10.0.0.1/16/1']]) assert.throws(() => parseTrustedProxies(bad), /trustedProxies/, JSON.stringify(bad));
+  assert.throws(() => buildServer(process.env.DATABASE_URL, { ...flags, trustedProxies: ['0.0.0.0/0'] }), /trustedProxies/);
+  const hit = (server, remoteAddress, forwarded, proto) => server.inject({ method: 'POST', url: '/api/me/passkeys/login/options', remoteAddress, headers: { 'content-type': 'application/json', origin: ORIGIN, ...(forwarded ? { 'x-forwarded-for': forwarded } : {}), ...(proto ? { 'x-forwarded-proto': proto } : {}) }, payload: {} });
+  const strict = { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: RP_ID, platformPasskeyMaxRequestsPerMinute: 3 };
+  const direct = buildServer(process.env.DATABASE_URL, strict);
+  const trusted = buildServer(process.env.DATABASE_URL, { ...strict, trustedProxies: ['10.0.0.5'] });
+  try {
+    // Default: nobody is trusted, so rotating a forged first hop does not create fresh buckets.
+    const seen = [];
+    for (let i = 0; i < 5; i++) seen.push((await hit(direct, '10.0.0.5', `198.51.100.${i}, 203.0.113.9`)).statusCode);
+    assert.deepEqual(seen, [200, 200, 200, 429, 429]);
+    // Trusted proxy: the address it appended decides; forged leftmost entries do not.
+    const forged = [];
+    for (let i = 0; i < 5; i++) forged.push((await hit(trusted, '10.0.0.5', `198.51.100.${i}, 203.0.113.9`)).statusCode);
+    assert.deepEqual(forged, [200, 200, 200, 429, 429], 'rotating the leftmost entry does not evade the limit');
+    assert.equal((await hit(trusted, '10.0.0.5', '203.0.113.77')).statusCode, 200, 'a different real client has its own bucket');
+    // A peer that is NOT the trusted proxy cannot make the server believe its header.
+    const outsider = [];
+    for (let i = 0; i < 5; i++) outsider.push((await hit(trusted, '192.0.2.50', `203.0.113.${100 + i}`)).statusCode);
+    assert.deepEqual(outsider, [200, 200, 200, 429, 429], 'an untrusted peer is keyed by its own address');
+  } finally { await Promise.all([direct.close(), trusted.close()]); }
+
+  // Behind the trusted TLS-terminating proxy the session cookie is Secure; without it (or from an untrusted peer) the header is not believed.
+  const app2 = buildServer(process.env.DATABASE_URL, { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: RP_ID, platformPasskeyMaxRequestsPerMinute: 10_000, trustedProxies: ['10.0.0.5'] });
+  try {
+    const personId = await createPerson();
+    const issued = await post(app2, `/api/platform/v1/persons/${personId}/passkey-enrollments`);
+    const enrollmentToken = issued.json().enrollmentToken, device = createAuthenticator();
+    const begin = (await post(app2, '/api/me/passkeys/register/options', { enrollmentToken })).json();
+    assert.equal((await post(app2, '/api/me/passkeys/register/verify', { enrollmentToken, challengeId: begin.challengeId, response: device.register(begin.options.challenge) })).statusCode, 201);
+    const loginVia = async (remoteAddress, proto) => {
+      const o = (await hit(app2, remoteAddress, undefined, proto)).json();
+      return app2.inject({ method: 'POST', url: '/api/me/passkeys/login/verify', remoteAddress, headers: { 'content-type': 'application/json', origin: ORIGIN, ...(proto ? { 'x-forwarded-proto': proto } : {}) }, payload: { challengeId: o.challengeId, response: device.assert(o.options.challenge) } });
+    };
+    assert.match(String((await loginVia('10.0.0.5', 'https')).headers['set-cookie']), /; Secure/);
+    assert.doesNotMatch(String((await loginVia('192.0.2.50', 'https')).headers['set-cookie']), /; Secure/, 'an untrusted peer cannot claim TLS');
+  } finally { await app2.close(); }
 });
