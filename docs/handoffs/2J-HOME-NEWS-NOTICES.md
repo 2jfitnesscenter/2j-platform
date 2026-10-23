@@ -3,7 +3,7 @@
 ## Estado local
 
 - Rama: `agent/codex/2J-HOME-NEWS-NOTICES`.
-- Base rebased: `ad29788c83e671c4d8d989558d60dec2c65eada2` (the rebased Store branch, based on Claude `MEASUREMENTS-CLIENT-rebased` and `PUSH-CLIENT-rebased`).
+- Base rebased: `13cb5094b52411dfbcb6b8d2f089d4030b4ca56d` (the rebased Store branch, based on Claude `MEASUREMENTS-CLIENT-rebased` and `PUSH-CLIENT-rebased`).
 - Se añadió una prueba de reintento para lectura de noticias; no se cambió el contrato API ni la lógica de publicación.
 
 ## Real, simulado y pendiente
