@@ -19,7 +19,11 @@ const capabilities = { manage: true, attendance: true, overrideCapacity: false, 
 const baseData = { weekStart: key(monday), timezone: 'Atlantic/Canary', sessions: [], areas: [area], services: [], templates: [], professionals: [], capabilities };
 const startsAt = `${baseData.weekStart}T17:00:00.000Z`;
 const session = (n, overrides = {}) => ({ id: `s-${n}`, serviceId: `service-${n}`, serviceName: `Servicio ${n}`, areaId: area.id, areaName: area.name, templateId: null, source: 'manual', startsAt, durationMinutes: 60, capacity: 8, status: 'scheduled', isIndividual: false, occupiedCount: 3, overbookCount: 0, waitlistCount: 0, professionalId: `staff-${n}`, professionalName: `Profesional ${n}`, ...overrides });
-const serve = (sessions, caps = capabilities) => { globalThis.fetch = async (url) => String(url).includes('/api/calendar/week') ? response({ ...baseData, sessions, capabilities: caps }) : String(url).includes('/attendees') ? response({ reservations: [], waitlist: [] }) : response({}); };
+const serve = (sessions, caps = capabilities) => {
+  const services = [...new Map(sessions.map(item => [item.serviceId, { id: item.serviceId, name: item.serviceName, areaId: item.areaId }])).values()];
+  const professionals = [...new Map(sessions.filter(item => item.professionalId).map(item => [item.professionalId, { id: item.professionalId, displayName: item.professionalName, calendarColor: null }])).values()];
+  globalThis.fetch = async (url) => String(url).includes('/api/calendar/week') ? response({ ...baseData, sessions, services, professionals, capabilities: caps }) : String(url).includes('/attendees') ? response({ reservations: [], waitlist: [] }) : response({});
+};
 const wide = () => { window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); };
 const narrow = () => { window.matchMedia = (query) => ({ matches: /1120/.test(query), addEventListener() {}, removeEventListener() {} }); };
 const mount = async () => { render(React.createElement(CalendarPage)); await screen.findByRole('group', { name: 'Vista de agenda' }); await waitFor(() => assert.ok(document.querySelector('.session-card, .day-empty'))); };
@@ -99,6 +103,32 @@ test('narrow screens default to Día, disable Semana with a reason, and show the
   assert.equal(screen.getByRole('button', { name: 'Día' }).getAttribute('aria-pressed'), 'true');
   assert.ok(document.querySelector('.week-strip.is-visible'));
   assert.ok(screen.getByRole('tablist', { name: 'Días de la semana' }));
+});
+
+test('service, professional and status filters combine; clearing them restores the full agenda', async () => {
+  wide();
+  serve([
+    session(1, { serviceId: 'service-yoga', serviceName: 'Yoga', professionalId: 'staff-ana', professionalName: 'Ana', waitlistCount: 2 }),
+    session(2, { serviceId: 'service-yoga', serviceName: 'Yoga', professionalId: 'staff-luis', professionalName: 'Luis', startsAt: new Date(Date.parse(startsAt) + 60 * 60_000).toISOString(), occupiedCount: 8, capacity: 8 }),
+    session(3, { serviceId: 'service-fuerza', serviceName: 'Fuerza', professionalId: 'staff-ana', professionalName: 'Ana', startsAt: new Date(Date.parse(startsAt) + 120 * 60_000).toISOString(), status: 'cancelled' }),
+  ]);
+  await mount();
+  assert.equal(cardsIn('.week-view'), 3);
+  fireEvent.change(screen.getByLabelText('Servicio'), { target: { value: 'service-yoga' } });
+  assert.equal(cardsIn('.week-view'), 2, 'service narrows the agenda');
+  fireEvent.change(screen.getByLabelText('Profesional'), { target: { value: 'staff-ana' } });
+  assert.equal(cardsIn('.week-view'), 1, 'professional combines with service');
+  assert.ok(screen.getByRole('button', { name: /Yoga/ }));
+  fireEvent.change(screen.getByLabelText('Filtrar sesiones'), { target: { value: 'waitlist' } });
+  assert.equal(cardsIn('.week-view'), 1, 'status combines with both catalog filters');
+  fireEvent.change(screen.getByLabelText('Filtrar sesiones'), { target: { value: 'cancelled' } });
+  assert.equal(cardsIn('.week-view'), 0, 'cancelled sessions outside the selected service/professional stay hidden');
+  assert.ok(screen.getAllByText('Sin sesiones para este filtro').length > 0);
+  fireEvent.click(screen.getByRole('button', { name: 'Limpiar filtros' }));
+  assert.equal(cardsIn('.week-view'), 3, 'reset restores all sessions');
+  assert.equal(screen.getByLabelText('Servicio').value, '');
+  assert.equal(screen.getByLabelText('Profesional').value, '');
+  assert.equal(screen.getByLabelText('Filtrar sesiones').value, 'all');
 });
 
 test('permissions: without manage the agenda offers no creation, editing or template actions', async () => {
