@@ -1,0 +1,23 @@
+{
+  "task": "2J-HOME-STORE-HISTORY",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-STORE-HISTORY",
+  "baseSha": "b77e144fb47d5d47bfc6318725f72f73e739903e",
+  "status": "verified-local",
+  "changedFiles": [
+    "apps/client-app/test/client-app.test.mjs",
+    "docs/handoffs/2J-HOME-STORE-HISTORY.md",
+    "docs/handoffs/2J-HOME-STORE-HISTORY.json"
+  ],
+  "tests": {
+    "clientApp": { "passed": 17, "failed": 0 },
+    "storeApiIntegration": { "passed": 8, "failed": 0, "database": "disposable local QA PostgreSQL" },
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "blockers": [
+    "D49 unified history needs membership-payment and invoice contracts; fiscal gate remains closed.",
+    "Online ordering and delivery workflow are unavailable; D31 vs D52 purchase eligibility is unresolved in the registry."
+  ],
+  "safety": { "providerCalls": false, "push": false, "merge": false, "deployment": false, "productionData": false }
+}

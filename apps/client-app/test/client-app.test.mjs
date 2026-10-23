@@ -720,3 +720,42 @@ test('preview Store uses fictional nutrition and merchandising fixtures without 
   fireEvent.click(ui.getByRole('button',{name:'Perfil'}));assert.ok(ui.getByText('Proteína 2J · Chocolate · 900 g × 1'));assert.equal(fetchCount,0);
   cleanup();dom.window.close();
 });
+
+test('live Store reads Platform catalog and purchase history, including D31 access without a fee', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage },
+  });
+  const product = { id: '11111111-1111-4111-8111-111111111111', category: 'nutrition', name: 'Proteína 2J', description: 'Sabor vainilla', variants: [{ id: '22222222-2222-4222-8222-222222222222', label: 'Vainilla · 900 g', size: '900 g', flavor: 'Vainilla', priceCents: 3290, availability: 'pocas_unidades' }] };
+  const purchase = { id: '33333333-3333-4333-8333-333333333333', status: 'completed', paymentState: 'paid', totalCents: 3290, createdAt: '2026-10-20T12:00:00.000Z', lines: [{ productName: 'Proteína 2J', variantLabel: 'Vainilla · 900 g', quantity: 1, unitPriceCents: 3290, lineTotalCents: 3290 }] };
+  const requests = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input); requests.push({ url, method: init.method ?? 'GET' });
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '44444444-4444-4444-8444-444444444444', firstName: 'Eva', lastName: 'Piloto', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
+    if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
+    if (url === '/api/me/store/catalog') return new Response(JSON.stringify({ items: [product] }));
+    if (url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [purchase] }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
+  };
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Eva' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Tienda', exact: true }));
+  assert.ok(await ui.findByRole('heading', { name: 'Proteína 2J' }));
+  assert.ok(ui.getByText('Pocas unidades'));
+  fireEvent.click(ui.getByRole('button', { name: 'Merchandising' }));
+  assert.ok(ui.getByText('Aún no hay productos en esta categoría.'));
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
+  assert.ok(await ui.findByText('Pagada en el centro'));
+  assert.ok(ui.getByText('Proteína 2J · Vainilla · 900 g × 1'));
+  assert.equal(requests.some(request => request.url === '/api/me/store/catalog'), true);
+  assert.equal(requests.some(request => request.url === '/api/me/store/purchases'), true);
+  assert.equal(requests.some(request => request.method !== 'GET'), false);
+  cleanup(); dom.window.close();
+});
