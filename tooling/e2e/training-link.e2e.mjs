@@ -154,6 +154,8 @@ E2E('L1', 'a historical account links only with its owner\'s proof; both sides a
   assert.equal(sso.redeemed.status, 200, sso.redeemed.text);
   const data = await httpCall(B(), 'GET', '/api/data', { cookie: sso.cookie });
   assert.equal(data.status, 200); assert.match(JSON.stringify(data.json), /Rutina histórica hist-a/, 'historical routines survive the link');
+  // H1: a historical user left in legacy mode keeps what the passkey gives, also through the Platform sign-in (no capability closure, no Platform call needed).
+  for (const route of ['/api/guided', '/api/premium']) assert.notEqual((await httpCall(B(), 'GET', route, { cookie: sso.cookie })).json?.code, 'capability_required', `legacy sso ${route}`);
   state.people.a.sso = sso.cookie;
 });
 
@@ -244,6 +246,21 @@ E2E('L5', 'duplication is refused: a second person cannot claim an account that 
   assert.equal((await platformLinks('x')).filter(link => link.status === 'active').length, 0);
   assert.equal(bunkerUser('hist-a').personId, state.people.a.personId, 'hist-a still belongs to A');
   assert.equal(bunkerUser('hist-a').platformLink.state, 'active');
+});
+
+E2E('L6', 'H3: a Platform code never silently replaces the session of another account; only an explicit confirmation does', async () => {
+  const started = await member('c', 'POST', '/api/me/training/sso', {});
+  assert.equal(started.status, 201, started.text);
+  const code = remember(new URL(started.json.redirectUrl).hash.slice('#code='.length));
+  const other = bunkerPasskeyCookie('hist-a');                              // this browser is signed in as ANOTHER account
+  const attempt = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin: B() }, cookie: other });
+  assert.equal(attempt.status, 409, attempt.text); assert.equal(attempt.json.error, 'session_switch_confirmation_required');
+  assert.equal(attempt.headers.get('set-cookie'), null, 'no cookie issued: the session was not replaced');
+  assert.equal((await httpCall(B(), 'GET', '/api/me', { cookie: other })).status, 200, 'the browser is still signed in as the first account');
+  remember(attempt.json.ticket);
+  assert.equal((await httpCall(B(), 'POST', '/api/platform/v1/sso/confirm', { body: { ticket: attempt.json.ticket }, headers: { origin: B() }, cookie: bunkerPasskeyCookie('hist-b') })).status, 400, 'another browser session cannot use the ticket');
+  const confirmed = await httpCall(B(), 'POST', '/api/platform/v1/sso/confirm', { body: { ticket: attempt.json.ticket }, headers: { origin: B() }, cookie: other });
+  assert.equal(confirmed.status, 200, confirmed.text); assert.match(confirmed.headers.get('set-cookie') || '', /gymsid=/); assert.equal(confirmed.json.user.authLevel, 'sso');
 });
 
 E2E('X1', 'logs of both services contain no proof codes, challenges, cookies or secrets', async () => {

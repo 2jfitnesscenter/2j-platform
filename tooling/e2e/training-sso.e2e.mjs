@@ -196,6 +196,9 @@ before(async () => {
     const [link] = await state.sql`SELECT link_id FROM training_account_links WHERE person_id=${person.personId}`;
     const acked = await activateTrainingLink(B(), proofKey, { linkId: link.link_id, personId: person.personId, trainingUserId: person.uid });
     assert.equal(acked.status, 200, `Búnker acknowledgement ${label}: ${acked.text}`);
+    // Sessions follow the mode of the user (H1): these personas are opted in to enforcement, exactly like an administrator would do one by one.
+    assert.equal((await adminSetMode(person.uid, 'shadow')).status, 200, `shadow ${label}`);
+    assert.equal((await adminSetMode(person.uid, 'enforced')).status, 200, `enforced ${label}`);
   }
 });
 
