@@ -41,9 +41,21 @@ test('manifest rejects production/public release modes', async () => {
 test('manifest rejects secret and local-data paths', async () => {
   const root = await fixture();
   try {
+    await writeFile(join(root, '.env.local'), 'DATABASE_URL=secret');
+    await assert.rejects(createPilotManifest(root, identity), /forbidden_release_path:\.env\.local/);
+    await rm(join(root, '.env.local'));
     await mkdir(join(root, 'data'));
     await writeFile(join(root, 'data/customer.json'), '{}');
     await assert.rejects(createPilotManifest(root, identity), /forbidden_release_path:data/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('manifest permits the tracked non-secret .env.example template', async () => {
+  const root = await fixture();
+  try {
+    await writeFile(join(root, '.env.example'), 'DATABASE_URL=postgres://127.0.0.1/example');
+    const manifest = await createPilotManifest(root, identity);
+    assert.ok(manifest.files.some((file) => file.path === '.env.example'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

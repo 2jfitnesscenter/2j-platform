@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
-const forbiddenPath = /(^|\/)(\.git|node_modules|data|backups|\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx))($|\/)/i;
+const forbiddenPath = /(^|\/)(\.git|node_modules|data|backups|\.env(?:\.(?!example$)[^/]*)?|.*\.(?:pem|key|p12|pfx))($|\/)/i;
 
 export async function listReleaseFiles(root) {
   const files = [];

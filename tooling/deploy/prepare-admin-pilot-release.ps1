@@ -25,7 +25,7 @@ $dirty = @(& git status --porcelain --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $dirty.Count -gt 0) { throw 'PrepareOnly requires a clean committed working tree.' }
 $trackedPaths = @(& git ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Could not inspect tracked release paths.' }
-$unsafeTracked = @($trackedPaths | Where-Object { $_ -match '(^|/)(\.env(?:\..*)?|data|backups|.*\.(?:pem|key|p12|pfx))($|/)' })
+$unsafeTracked = @($trackedPaths | Where-Object { $_ -match '(^|/)(\.env(?:\.(?!example$)[^/]*)?|data|backups|.*\.(?:pem|key|p12|pfx))($|/)' })
 if ($unsafeTracked.Count -gt 0) { throw "Tracked secret or local-data path prevents release preparation: $($unsafeTracked -join ', ')" }
 
 Write-Host "PREPARE_ONLY=yes"
