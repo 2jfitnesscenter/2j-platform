@@ -10,7 +10,7 @@
     "docs/handoffs/2J-HOME-STORE-HISTORY.json"
   ],
   "tests": {
-    "clientApp": { "passed": 25, "failed": 0, "note": "Full suite on the rebased stack; API integration test was run earlier on the same API code." },
+    "clientApp": { "passed": 26, "failed": 0, "note": "Full suite on the rebased stack; API integration test was run earlier on the same API code." },
     "storeApiIntegration": { "passed": 8, "failed": 0, "database": "disposable local QA PostgreSQL" },
     "typecheck": "passed",
     "build": "passed"
