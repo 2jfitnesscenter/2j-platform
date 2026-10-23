@@ -10,7 +10,7 @@
     "docs/handoffs/2J-HOME-NEWS-NOTICES.json"
   ],
   "tests": {
-    "clientApp": { "passed": 25, "failed": 0, "note": "Full rebased stack suite; API integration test was run earlier on the same API code." },
+    "clientApp": { "passed": 27, "failed": 0, "note": "Full rebased stack suite; API integration test was run earlier on the same API code." },
     "centerNewsApiIntegration": { "passed": 1, "failed": 0, "database": "ephemeral local PostgreSQL" },
     "typecheck": "passed",
     "build": "passed"

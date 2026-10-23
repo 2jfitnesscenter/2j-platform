@@ -16,7 +16,7 @@
 
 ## Verificación
 
-- Suite completa de cliente, después de apilar sobre las ramas rebased: 25/25. La prueba de noticias simula una caída temporal de `GET /api/me/news`, usa el reintento de Inicio y comprueba que se renderiza el contenido recuperado sin cuota.
+- Suite completa de cliente en esta rama ya rebased: 27/27. La prueba de noticias simula una caída temporal de `GET /api/me/news`, usa el reintento de Inicio y comprueba que se renderiza el contenido recuperado sin cuota.
 - API `center-news.test.mjs`: 1/1 sobre un contenedor PostgreSQL efímero local, aislado y retirado tras la prueba; verifica permisos editoriales, visibilidad, destacado, retirada y auditoría.
 - Typecheck y build de `@2j/client-app`: correctos.
 - La prueba de Home emplea respuestas de contrato sintéticas; la de API usa PostgreSQL local, no staging ni producción.
