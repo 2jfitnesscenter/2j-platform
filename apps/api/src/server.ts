@@ -701,6 +701,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     trainingLinkLifecycleEnabled: process.env.TRAINING_LINK_LIFECYCLE_ENABLED === 'true',
     trainingProvisioningEnabled: process.env.TRAINING_PROVISIONING_ENABLED === 'true',
     trainingSignalsEnabled: process.env.TRAINING_SIGNALS_ENABLED === 'true',
+    ...(Number.isInteger(Number(process.env.TRAINING_SIGNALS_INTERVAL_MS)) && Number(process.env.TRAINING_SIGNALS_INTERVAL_MS) >= 100 ? { trainingSignalsIntervalMs: Number(process.env.TRAINING_SIGNALS_INTERVAL_MS) } : {}),
     trainingServiceAllowInsecureLoopback: process.env.TRAINING_SERVICE_ALLOW_INSECURE_LOOPBACK === 'true',
     trainingSsoEnabled: process.env.TRAINING_SSO_ENABLED === 'true',
     trainingSsoRedirectUrl: process.env.TRAINING_SSO_REDIRECT_URL ?? null,
