@@ -266,7 +266,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   assert.deepEqual(first.map((item) => item.name), names);
   for (const name of names) {
     const contents = await readFile(new URL(name, directory), 'utf8');
-    assert.equal(first.find((item) => item.name === name)?.checksum.trim(), createHash('sha256').update(contents).digest('hex'));
+    assert.equal(first.find((item) => item.name === name)?.checksum.trim(), createHash('sha256').update(contents.replace(/\r\n/g, '\n')).digest('hex'), 'new rows store the checksum of the LF form, whatever the checkout line endings');
   }
   const migration = names[0];
   const originalChecksum = first.find((item) => item.name === migration).checksum.trim();
