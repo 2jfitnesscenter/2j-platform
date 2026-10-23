@@ -21,7 +21,7 @@ Las fechas de inicio de contrato se derivan de la fecha actual; las sesiones se 
 - `pnpm build --force`: **9 tareas correctas**. En Windows fue necesario regenerar `packages/design-tokens/src/tokens.css` temporalmente porque `core.autocrlf=true` convierte LF a CRLF y el verificador compara bytes; el archivo local original se restauró y no forma parte del diff.
 - Lint: el repositorio no define ningún script `lint` en los manifiestos de workspace.
 - `git diff --check`: PASS.
-- CI de GitHub para el nuevo head: pendiente de la ejecución de PR.
+- CI de GitHub en el head de implementación `51dd00b7958fb7cdc4c52a5f3c4c373cdaa9e347`: `quality` PASS y `secret scan` PASS. Esta nota solo actualiza documentación; los checks del nuevo head se verificarán tras publicarla.
 
 Las pruebas crean sus propias bases temporales sintéticas y las eliminan en `finally`. Las bases sintéticas de origen usadas para lanzar las suites no contienen datos productivos.
 
@@ -34,3 +34,4 @@ Otros fixtures de sesiones futuras fijas, sin dependencia del reloj actual y con
 ## Stack de calendario
 
 El rebase del stack de agenda de PR #50 y el commit `4690c9c2` de filtros se está realizando en una rama/worktree separado sobre el `origin/main` actualizado. La rama de este handoff permanece independiente y no contiene esos commits. El stack no se publicará sin autorización.
+
