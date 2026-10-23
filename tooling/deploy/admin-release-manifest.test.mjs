@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -67,5 +69,16 @@ test('manifest hashes every included artifact and is written only once', async (
     assert.ok(manifest.files.every((file) => /^[0-9a-f]{64}$/.test(file.sha256)));
     assert.deepEqual(JSON.parse(await readFile(join(root, 'release-manifest.json'), 'utf8')), manifest);
     await assert.rejects(writePilotManifest(root, identity), /EEXIST/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('release archive hash helper returns a SHA-256 digest', async () => {
+  const root = await fixture();
+  try {
+    const archive = join(root, 'candidate.zip');
+    await writeFile(archive, 'synthetic archive');
+    const actual = execFileSync(process.execPath, [join(process.cwd(), 'tooling/deploy/sha256-file.mjs'), archive], { encoding: 'utf8' }).trim();
+    const expected = createHash('sha256').update('synthetic archive').digest('hex');
+    assert.equal(actual, expected);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
