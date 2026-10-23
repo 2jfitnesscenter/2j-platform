@@ -21,7 +21,7 @@ Las fechas de inicio de contrato se derivan de la fecha actual; las sesiones se 
 - `pnpm build --force`: **9 tareas correctas**. En Windows fue necesario regenerar `packages/design-tokens/src/tokens.css` temporalmente porque `core.autocrlf=true` convierte LF a CRLF y el verificador compara bytes; el archivo local original se restauró y no forma parte del diff.
 - Lint: el repositorio no define ningún script `lint` en los manifiestos de workspace.
 - `git diff --check`: PASS.
-- CI de GitHub en el head de implementación `51dd00b7958fb7cdc4c52a5f3c4c373cdaa9e347`: `quality` PASS y `secret scan` PASS. Esta nota solo actualiza documentación; los checks del nuevo head se verificarán tras publicarla.
+- CI de GitHub en el head `b8aac1c756216bb630f9bcf3dc4e1030d0dc595a`: `quality` PASS y `secret scan` PASS. Esta revisión del handoff generará un nuevo head documental; sus checks deberán verificarse después del push.
 
 Las pruebas crean sus propias bases temporales sintéticas y las eliminan en `finally`. Las bases sintéticas de origen usadas para lanzar las suites no contienen datos productivos.
 
@@ -33,4 +33,13 @@ Otros fixtures de sesiones futuras fijas, sin dependencia del reloj actual y con
 
 ## Stack de calendario
 
-El rebase del stack de agenda de PR #50 y el commit `4690c9c2` de filtros se está realizando en una rama/worktree separado sobre el `origin/main` actualizado. La rama de este handoff permanece independiente y no contiene esos commits. El stack no se publicará sin autorización.
+El stack se rebasó localmente, sin publicar, en `C:\Users\juanj\Dev\2J\temp\calendar-stack-rebase`, desde el merge-base `7392c4709c66cc131d3d3857c1a177e86f31e137` hasta el commit de filtros `4690c9c2381ca90657fac55c506b17a54bf69193`, sobre `origin/main` `f87818afe474176c6e6ae77cb4d62a7e73fc1adf`. Contiene ocho commits: los siete commits de agenda (`bd09b800` a `0bf26004`) más `4690c9c2`; el head local final es `10b49265f99799dfcdc5c8f28f9f6f6068173f57`. La rama de este handoff/PR #68 permanece independiente y no incluye esos commits.
+
+Resolución de conflictos de `apps/admin-web/src/calendar-page.tsx`:
+
+1. Al aplicar `bd09b80`, se conservaron los componentes de diseño V2 de PR #50 (`PageHeader`, `Card`, `SegmentedControl` y `Button`) y se reincorporó el eyebrow de `origin/main` (`HOY · ATLANTIC/CANARY`). Para el título del día se mantuvo `dayMonthDate.format`, que evita repetir el nombre del día junto a la etiqueta abreviada.
+2. Al aplicar `4690c9c`, se combinaron los filtros nuevos de servicio/profesional con los filtros de sesión, etiquetas de días y navegación de fechas existentes en `origin/main`; se conservaron los controles accesibles de la barra de filtros. El test detectó que `spanishDate.format` duplicaba el día (`Vie vie, 23 oct`), así que se dejó `dayMonthDate.format`.
+
+También hubo un conflicto en `apps/admin-web/test/clients-page.test.mjs` al aplicar `2c73969`: se conservaron tanto el mensaje explícito de la aserción de foco como el timeout de 5 segundos añadido para CI lento.
+
+Verificación local del stack rebasado sobre DB PostgreSQL sintética limpia, usando solo durante la ejecución un overlay temporal del fixture corregido que se restauró al acabar: suite completa PASS; API **246/246**, Admin Web **186/186**, Client App y Staff App PASS. La suite Admin inicial señaló el nombre de día duplicado; tras corregirlo, la suite completa limpia pasó. `pnpm typecheck`: **11/11**. `pnpm build --force`: **9/9**. `git diff --check`: PASS. No hay script `lint` en los manifiestos del repositorio. La rama del stack está limpia, adelantada ocho commits respecto a `origin/main` y no se ha publicado; requiere revisión/autorización antes de push.
