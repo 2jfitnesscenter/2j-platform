@@ -3,7 +3,7 @@
 ## Estado
 
 - Rama local: `agent/codex/2J-HOME-DOCUMENTS-CONSENTS`.
-- Base rebased de Claude: `7074177be0e9db7d42342466813627392f4a6d03` (`MEASUREMENTS-CLIENT-rebased`), que ya contiene la integración local apilada sobre PUSH-CLIENT-rebased/PR #71.
+- Base rebased de Claude: `5945ee7e3ec25fe6d46129e51d7199d09fcb13f7` (base de la pila local: NEWS-NOTICES sobre STORE-HISTORY, #78).
 - Se añadió regresión de documentos y consentimientos accesibles sin cuota; no se cambiaron contratos ni lógica de negocio.
 
 ## Real, prototipo y pendientes
