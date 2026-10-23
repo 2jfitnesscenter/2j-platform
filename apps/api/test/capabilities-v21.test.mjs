@@ -65,3 +65,45 @@ test('V2.1 endpoint keeps the service-authentication rules: a V2 signature does 
   assert.equal((await app.inject({ method: 'GET', url: V21(personId), headers: replayHeaders })).statusCode, 200);
   assert.equal((await app.inject({ method: 'GET', url: V21(personId), headers: replayHeaders })).statusCode, 401, 'a request id is single use');
 });
+
+// ---- Home: the member's own V2.1 capabilities through GET /api/me/membership (no service signature in the client)
+const sessions = new Map();
+const memberApp = buildServer(process.env.DATABASE_URL, { clientAuthorizationResolver: async request => sessions.get(String(request.headers['x-test-client'] ?? '')) ?? null, authorizationResolver: async () => ({ actorId: 'v21-admin', role: 'admin' }) });
+after(async () => { await memberApp.close(); });
+async function member({ withPerson = true } = {}) {
+  const response = await memberApp.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': randomUUID() }, payload: { firstName: 'Ana', lastName: `V21 ${randomUUID().slice(0, 8)}` } });
+  assert.equal(response.statusCode, 201, response.body);
+  const client = response.json(); let personId = null;
+  if (withPerson) { personId = await person(); await sql`INSERT INTO platform_person_clients(person_id,client_id,linked_by) VALUES (${personId}::uuid,${client.id}::uuid,'v21-test')`; }
+  sessions.set(client.id, { clientId: client.id, ...(personId ? { personId } : {}) });
+  return { clientId: client.id, personId, header: { 'x-test-client': client.id } };
+}
+const membership = who => memberApp.inject({ method: 'GET', url: '/api/me/membership', headers: who.header });
+
+test('GET /api/me/membership carries the member\'s V2.1 capabilities: free baseline with Entrena con 2J and Premium, no Training user id, no HMAC', async () => {
+  const who = await member();
+  const response = await membership(who);
+  assert.equal(response.statusCode, 200, response.body);
+  const { trainingCapabilities: caps, assignments, active } = response.json();
+  assert.ok(Array.isArray(assignments) && Array.isArray(active), 'the existing membership fields are unchanged');
+  assert.deepEqual({ contract: caps.contract, revision: caps.revision, level: caps.capabilityLevel, reason: caps.reasonCode, subject: caps.trainingSubject }, { contract: '2J-CAPABILITIES-V2.1', revision: 1, level: 'baseline', reason: 'FREE_BASELINE', subject: { linkStatus: 'not_linked' } });
+  assert.equal(caps.capabilities.guidedTraining, true); assert.equal(caps.capabilities.premiumPrograms, true);
+  assert.equal(caps.capabilities.aiCoach, false); assert.equal(caps.capabilities.professionalFollowUp, false);
+  assert.ok(Date.parse(caps.expiresAt) - Date.parse(caps.generatedAt) <= 60_000);
+  assert.equal(response.headers['cache-control'], 'no-store');
+});
+
+test('GET /api/me/membership never leaks the Training user id, reports suspension as blocked, and is silent (null) for a member without a Platform person', async () => {
+  const linked = await member(); const trainingUserId = await link(linked.personId);
+  const body = (await membership(linked)).json();
+  assert.deepEqual(body.trainingCapabilities.trainingSubject, { linkStatus: 'active' });
+  assert.equal(JSON.stringify(body).includes(trainingUserId), false, 'the Training user id stays server-side');
+  await suspend(linked.personId);
+  const suspended = (await membership(linked)).json().trainingCapabilities;
+  assert.deepEqual({ level: suspended.capabilityLevel, reason: suspended.reasonCode, anyFlag: Object.values(suspended.capabilities).some(Boolean) }, { level: 'blocked', reason: 'ADMIN_SUSPENDED', anyFlag: false });
+  const withoutPerson = await member({ withPerson: false });
+  const plain = await membership(withoutPerson);
+  assert.equal(plain.statusCode, 200);
+  assert.equal(plain.json().trainingCapabilities, null);
+  assert.equal((await memberApp.inject({ method: 'GET', url: '/api/me/membership' })).statusCode, 401, 'no session, no data');
+});

@@ -29,3 +29,16 @@ Owner decisions applied (2026-10-23): Premium and Oposiciones are free for regis
 
 ## Tests
 domain 34/34 (5 new), API 247/247 (3 new): unlinked baseline + V2 unchanged, linked/revoked/suspended (linked and unlinked)/lifted, service-auth rules for the V2.1 path (a V2 signature does not open V2.1, replay, bad id, unknown person).
+
+## Cross-check with Work Home's `agent/codex/2J-CAPABILITIES-D40-D41` (374c559) — used only as a reference, not merged
+Its baseline is the **same flag set** as V2.1 (`autonomousTraining`, `personalRoutineCreation`, `personalRoutineManagement`, `workoutRecording`, `workoutHistory`, `guidedTraining`, `premiumPrograms`; `routineCreation`, `aiCoach`, `professionalFollowUp` false; suspension and a missing/revoked link block). The difference is **how**: that branch edits V2 in place (`contract: 2J-CAPABILITIES-V2`, same endpoint), which would hand Búnker's V2 consumers (they validate the baseline exactly) an answer they reject. V2.1 carries the same decision under its own contract id and path, so V2 is unchanged. Two deliberate differences from that branch: (a) a person with **no** link gets the baseline (owner decision A23, "registered does not require a Búnker link"); (b) suspension is reported for unlinked people too. That branch's `services.test.mjs` line and `2J-capabilities-contract.md` wording can be dropped when V2.1 lands.
+
+## For Home: `GET /api/me/membership`
+The response gains `trainingCapabilities` (the member's own V2.1 answer, computed server-side from the session — **no HMAC, no internal endpoint in the client**). Existing fields (`asOf`, `timezone`, `assignments`, `active`) are unchanged. Shape: the V2.1 contract with `trainingSubject` reduced to `{ linkStatus }` (the Training user id never leaves the server). `null` when the member has no active Platform person yet. Reuse it for at most `expiresAt` (≤ 60 s) and read flags, never recompute rights in Home.
+```json
+{ "contract": "2J-CAPABILITIES-V2.1", "revision": 1, "version": 2, "personId": "…", "trainingSubject": { "linkStatus": "not_linked" },
+  "capabilityLevel": "baseline", "accessState": "baseline", "reasonCode": "FREE_BASELINE", "suspensionStatus": "none",
+  "capabilities": { "autonomousTraining": true, "routineCreation": false, "personalRoutineCreation": true, "personalRoutineManagement": true, "workoutRecording": true, "workoutHistory": true, "guidedTraining": true, "premiumPrograms": true, "aiCoach": false, "professionalFollowUp": false },
+  "effectiveFrom": null, "generatedAt": "…", "expiresAt": "…", "source": { "platform": true } }
+```
+Tests added: 2 in `apps/api/test/capabilities-v21.test.mjs` (baseline for a member with no link, no Training id leaked, suspension, no person → `null`, no session → 401). API suite 249/249.
