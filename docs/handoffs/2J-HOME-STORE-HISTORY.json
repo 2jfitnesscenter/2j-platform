@@ -2,7 +2,7 @@
   "task": "2J-HOME-STORE-HISTORY",
   "repository": "2jfitnesscenter/2j-platform",
   "branch": "agent/codex/2J-HOME-STORE-HISTORY",
-  "baseSha": "b77e144fb47d5d47bfc6318725f72f73e739903e",
+  "baseSha": "7074177be0e9db7d42342466813627392f4a6d03",
   "status": "verified-local",
   "changedFiles": [
     "apps/client-app/test/client-app.test.mjs",
@@ -10,7 +10,7 @@
     "docs/handoffs/2J-HOME-STORE-HISTORY.json"
   ],
   "tests": {
-    "clientApp": { "passed": 17, "failed": 0 },
+    "clientApp": { "passed": 25, "failed": 0, "note": "Full suite on the rebased stack; API integration test was run earlier on the same API code." },
     "storeApiIntegration": { "passed": 8, "failed": 0, "database": "disposable local QA PostgreSQL" },
     "typecheck": "passed",
     "build": "passed"

@@ -3,7 +3,7 @@
 ## Estado local
 
 - Rama: `agent/codex/2J-HOME-STORE-HISTORY`.
-- Base: `b77e144fb47d5d47bfc6318725f72f73e739903e`.
+- Base rebased: `7074177be0e9db7d42342466813627392f4a6d03` (Claude `MEASUREMENTS-CLIENT-rebased`, apilada sobre `PUSH-CLIENT-rebased`).
 - Alcance: comprobar el consumo real del catálogo e historial de ventas desde Home y añadir regresión de interfaz. No se añadieron operaciones de compra.
 
 ## Real, simulado y pendiente
@@ -16,7 +16,7 @@
 
 ## Pruebas
 
-- Cliente: 17/17; la prueba nueva valida que Home consume los dos endpoints de Platform, presenta disponibilidad/precio e historial de ventas sin cuota y no envía mutaciones.
+- Suite completa de cliente, después de apilar sobre la rama rebased: 25/25. La prueba del flujo de tienda valida que Home consume los dos endpoints de Platform, presenta disponibilidad/precio e historial de ventas sin cuota y no envía mutaciones.
 - API `store.test.mjs`: 8/8 en PostgreSQL local descartable de QA; cubre catálogo, stock resumido, privacidad del historial y snapshots de venta.
 - Typecheck y build de `@2j/client-app`: correctos.
 - La UI se probó con respuestas sintéticas contractuales. Persistencia y aislamiento se comprobaron por las pruebas de integración API en base local; no se usó staging ni producción.
