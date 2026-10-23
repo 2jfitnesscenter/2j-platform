@@ -174,7 +174,7 @@ test('informational client messages are marked read without opening a nonexisten
   const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));fireEvent.click(await ui.findByRole('button',{name:/Notificaciones/}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Nuevo mensaje del centro'}));await ui.findByText('Este aviso es informativo; los mensajes del centro todavía no están disponibles aquí.');assert.equal(item.readAt!==null,true);assert.equal(ui.queryByRole('heading',{name:'Mensajes'}),null);item.deeplink='https://evil.test';item.readAt=null;fireEvent.click(ui.getByRole('button',{name:'Notificaciones'}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Nuevo mensaje del centro'}));assert.ok(await ui.findByText('Este aviso no tiene un destino disponible.'));assert.ok(ui.getByRole('heading',{name:'Notificaciones'}));cleanup();dom.window.close();
 });
 
-test('Member selects service and explicit session, confirms, and retries a lost response with the same key', async () => {
+test('Member books one session after server eligibility and retries a lost response with the same key', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
@@ -216,16 +216,14 @@ test('Member selects service and explicit session, confirms, and retries a lost 
   fireEvent.click(await ui.findByRole('button', { name: /Fuerza funcional/ }));
   const sessionDay = clientAppTestHelpers.dateKey(new Date(session.startsAt));
   fireEvent.click(ui.getByRole('button', { name: `${Number(sessionDay.slice(-2))}, hay sesiones` }));
-  assert.ok(await ui.findByRole('button', { name: /Fuerza funcional.*Alex Rivera/ }));
-  fireEvent.click(ui.getByRole('button', { name: /Fuerza funcional.*Alex Rivera/ }));
+  assert.ok(await ui.findByRole('button', { name: new RegExp(`${clientAppTestHelpers.timeLabel(session.startsAt)} · Disponible`) }));
+  fireEvent.click(ui.container.querySelector('.session-card-detail'));
   assert.ok(await ui.findByRole('dialog'));
-  fireEvent.click(ui.getByRole('button', { name: 'Añadir reserva a la selección' }));
-  fireEvent.click(ui.getByRole('button', { name: 'Revisar selección' }));
-  assert.ok(await ui.findByRole('heading', { name: 'Confirmar reservas' }));
-  fireEvent.click(ui.getByRole('button', { name: 'Confirmar reservas' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Reservar' }));
   assert.ok(await ui.findByText('No se ha podido completar esta operación. Puedes volver a intentarlo.'));
-  fireEvent.click(ui.getByRole('button', { name: 'Reintentar las que no se completaron' }));
-  assert.ok(await ui.findByText('Reserva confirmada'));
+  fireEvent.click(ui.getByRole('button', { name: 'Reservar' }));
+  assert.ok(await ui.findByText('Reserva realizada correctamente.'));
+  assert.equal(ui.queryByRole('dialog'), null);
   assert.equal(reservationKeys.length, 2);
   assert.equal(reservationKeys[0], reservationKeys[1]);
   cleanup(); dom.window.close();
@@ -261,14 +259,14 @@ test('Member outside the booking cohort can browse sessions but sees a clear dis
   assert.ok(await ui.findByRole('heading', { name: 'Hola, Bea' }));
   fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   fireEvent.click(await ui.findByRole('button', { name: /Fuerza/ }));
-  fireEvent.click(ui.container.querySelector('.session-card'));
-  assert.ok(within(await ui.findByRole('dialog')).getByText('Las reservas desde la app todavía no están activadas para tu cuenta.'));
-  assert.equal(ui.getByRole('button', { name: 'Añadir reserva a la selección' }).disabled, true);
+  fireEvent.click(ui.container.querySelector('.session-card-detail'));
+  assert.ok(within(await ui.findByRole('dialog')).getByText('Las reservas desde la app todavía no están activadas para esta cuenta.'));
+  assert.equal(ui.getByRole('button', { name: 'Reservar' }).disabled, true);
   assert.equal(mutationAttempted, false);
   cleanup(); dom.window.close();
 });
 
-test('Member manually selects separate sessions, explicitly joins waitlist, sees mixed results and updated next booking', async (t) => {
+test('Member sees compact class cards, confirms waitlist, and finds both in Próximas/Historial', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-10T10:00:00.000Z') });
   t.after(() => t.mock.timers.reset());
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
@@ -283,13 +281,13 @@ test('Member manually selects separate sessions, explicitly joins waitlist, sees
   const free = { ...base, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: '2026-10-13T17:00:00.000Z', occupiedCount: 3 };
   const full = { ...base, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', startsAt: '2026-10-13T19:00:00.000Z', occupiedCount: 8, waitlistCount: 1 };
   const details = { [free.id]: { ...free, eligible: true, canJoinWaitlist: false, availableAlternatives: [] }, [full.id]: { ...full, eligible: false, eligibilityReason: 'session_full', canJoinWaitlist: true, availableAlternatives: [] } };
-  const mutations = []; let booked = false; let cancelled = false;
+  const mutations = []; let booked = false; let joinedWaitlist = false; let cancelled = false;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', firstName: 'Lucía', lastName: 'Piloto', email: null, status: 'active' } }));
     if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: true }));
-    if (url === '/api/me/bookings') return new Response(JSON.stringify(booked ? { reservations: [cancelled ? { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'cancelled', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false } : { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'reserved', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }], waitlist: [{ id: 'abababab-abab-4bab-8bab-abababababab', status: 'waiting', sessionId: full.id, startsAt: full.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] } : { reservations: [], waitlist: [] }));
+    if (url === '/api/me/bookings') return new Response(JSON.stringify(booked ? { reservations: [cancelled ? { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'cancelled', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false } : { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'reserved', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }], waitlist: joinedWaitlist ? [{ id: 'abababab-abab-4bab-8bab-abababababab', status: 'waiting', sessionId: full.id, startsAt: full.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] : [] } : { reservations: [], waitlist: [] }));
     if (url === '/api/me/booking-services') return new Response(JSON.stringify({ services: [service] }));
     if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [free, full] }));
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
@@ -299,7 +297,7 @@ test('Member manually selects separate sessions, explicitly joins waitlist, sees
     if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
     if (url === `/api/me/sessions/${free.id}` || url === `/api/me/sessions/${full.id}`) { const sessionId = url.split('/').at(-1); return new Response(JSON.stringify({ session: details[sessionId] })); }
     if (url.endsWith('/cancellation-preview')) return new Response(JSON.stringify({ canCancel: true, cancellation: { summary: 'Si cancelas ahora, recuperarás la sesión.' } }));
-    if (init.method === 'POST' && (url.endsWith('/reservations') || url.endsWith('/waitlist'))) { mutations.push({ url, key: new Headers(init.headers).get('idempotency-key') }); booked = true; return new Response(JSON.stringify({ status: url.endsWith('/waitlist') ? 'waiting' : 'reserved' }), { status: 201 }); }
+    if (init.method === 'POST' && (url.endsWith('/reservations') || url.endsWith('/waitlist'))) { mutations.push({ url, key: new Headers(init.headers).get('idempotency-key') }); if(url.endsWith('/waitlist')) joinedWaitlist=true; else booked = true; return new Response(JSON.stringify({ status: url.endsWith('/waitlist') ? 'waiting' : 'reserved' }), { status: 201 }); }
     if (init.method === 'PATCH' && url.endsWith('/cancel')) { cancelled = true; return new Response(JSON.stringify({ status: 'cancelled' })); }
     throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
   };
@@ -310,21 +308,25 @@ test('Member manually selects separate sessions, explicitly joins waitlist, sees
   fireEvent.click(ui.getByRole('button', { name: `${Number(date.slice(-2))}, hay sesiones` }));
   assert.equal(ui.container.querySelectorAll('.session-card').length, 2);
   assert.doesNotMatch(ui.container.textContent, /Repetir cada semana|Todos los lunes|Reserva recurrente/i);
-  fireEvent.click(ui.container.querySelectorAll('.session-card')[0]);
-  fireEvent.click(await ui.findByRole('button', { name: 'Añadir reserva a la selección' }));
-  fireEvent.click(ui.container.querySelectorAll('.session-card')[1]);
-  fireEvent.click(await ui.findByRole('button', { name: 'Solicitar lista de espera' }));
-  assert.ok(ui.getByText('Has seleccionado 2 clases'));
-  fireEvent.click(ui.getByRole('button', { name: 'Revisar selección' }));
-  assert.ok(ui.getByText(/Solicitud de lista de espera/));
-  fireEvent.click(ui.getByRole('button', { name: 'Confirmar reservas' }));
-  assert.ok(await ui.findByText('Reserva confirmada'));
-  assert.ok(ui.getByText('En lista de espera'));
+  assert.equal(ui.container.querySelectorAll('.session-card-detail').length, 2);
+  assert.equal(ui.container.querySelectorAll('.session-waitlist-button').length, 1);
+  assert.equal(ui.container.querySelectorAll('.session-card')[1].textContent.includes(clientAppTestHelpers.timeLabel(full.startsAt)), true);
+  assert.equal(ui.container.querySelectorAll('.session-card')[1].textContent.includes('en espera'), false);
+  fireEvent.click(ui.container.querySelectorAll('.session-card-detail')[0]);
+  assert.ok(await ui.findByRole('dialog'));
+  fireEvent.click(await ui.findByRole('button', { name: 'Reservar' }));
+  assert.ok(await ui.findByText('Reserva realizada correctamente.'));
+  fireEvent.click(await ui.findByRole('button', { name: 'Lista de espera' }));
+  assert.ok(await ui.findByRole('dialog', { name: /¿Quieres apuntarte/ }));
+  assert.ok(ui.getByText(/no garantiza una plaza/i));
+  fireEvent.click(ui.getByRole('button', { name: 'Confirmar solicitud' }));
+  assert.ok(await ui.findByText('Solicitud enviada. La lista de espera no garantiza una plaza.'));
+  assert.equal(joinedWaitlist,true);
   assert.equal(mutations.length, 2);
   assert.equal(new Set(mutations.map(item => item.key)).size, 2);
   assert.ok(mutations.some(item => item.url.endsWith('/reservations')));
   assert.ok(mutations.some(item => item.url.endsWith('/waitlist')));
-  fireEvent.click(ui.getByRole('button', { name: 'Volver a Inicio' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Inicio' }));
   assert.ok(await ui.findByRole('heading', { name: 'Próxima reserva' }));
   assert.ok(ui.getByText('Confirmada'));
   assert.equal(ui.container.querySelector('.home-next-booking')?.textContent.includes('Lista de espera'), false);
@@ -335,10 +337,18 @@ test('Member manually selects separate sessions, explicitly joins waitlist, sees
   await ui.findByText('La reserva se ha cancelado.');
   assert.equal(ui.container.querySelector('.home-next-booking'), null);
   fireEvent.click(ui.getByRole('button', { name: 'Perfil' }));
-  fireEvent.click(ui.getByRole('button', { name: /Próximas, lista de espera e historial/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Próximas e historial/ }));
   await ui.findByRole('heading', { name: 'Mis reservas' });
-  assert.ok(ui.getByText('Todavía no tienes reservas próximas.'));
+  assert.equal(ui.getByRole('tab', { name: 'Próximas' }).getAttribute('aria-selected'), 'true');
   assert.ok(ui.getByText('En lista de espera'));
+  assert.equal(ui.container.querySelectorAll('[role="tab"]').length,2);
+  assert.equal(ui.container.textContent.includes('posición'),false);
+  fireEvent.keyDown(ui.getByRole('tab', { name: 'Próximas' }), { key: 'ArrowRight' });
+  assert.equal(ui.getByRole('tab', { name: 'Historial' }).getAttribute('aria-selected'), 'true');
+  fireEvent.keyDown(ui.getByRole('tab', { name: 'Historial' }), { key: 'ArrowLeft' });
+  assert.equal(ui.getByRole('tab', { name: 'Próximas' }).getAttribute('aria-selected'), 'true');
+  fireEvent.click(ui.getByRole('tab', { name: 'Historial' }));
+  assert.ok(await ui.findByText('Cancelada'));
   cleanup(); dom.window.close();
 });
 
@@ -500,16 +510,15 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Reservar' }));
   fireEvent.click(ui.getByRole('button', { name: /Funcional/ }));
-  fireEvent.click(ui.container.querySelectorAll('.session-card')[0]);
+  fireEvent.click(ui.container.querySelectorAll('.session-card-detail')[0]);
   assert.ok(await ui.findByRole('dialog'));
   assert.ok(ui.getByText('Ya tienes una reserva asociada a esta sesión.'));
   fireEvent.click(ui.getByRole('button', { name: 'Cerrar detalle' }));
   fireEvent.click(ui.container.querySelectorAll('.month-day.has-sessions')[1]);
-  fireEvent.click(ui.container.querySelectorAll('.session-card')[0]);
-  fireEvent.click(ui.getByRole('button', { name: 'Añadir reserva a la selección' }));
-  fireEvent.click(ui.getByRole('button', { name: 'Revisar selección' }));
-  assert.ok(ui.getByText('Vista previa: puedes revisar la selección, pero no se envía ni crea reservas.'));
-  assert.equal(ui.getByRole('button', { name: 'Confirmar reservas' }).disabled, true);
+  fireEvent.click(ui.container.querySelectorAll('.session-card-detail')[0]);
+  assert.ok(await ui.findByRole('dialog'));
+  assert.ok(ui.getByText('Vista previa: las acciones no se envían.'));
+  assert.equal(ui.getByRole('button', { name: 'Reservar' }).disabled, true);
 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Perfil' }));
   assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
@@ -556,7 +565,7 @@ test('Inicio hides the upcoming booking card when empty and Perfil keeps access 
   assert.equal(ui.container.querySelectorAll('.home-news,.home-book-cta,.home-next-booking').length, 2);
   fireEvent.click(ui.getByRole('button', { name: 'Perfil' }));
   assert.ok(await ui.findByRole('heading', { name: 'Mis reservas' }));
-  fireEvent.click(ui.getByRole('button', { name: /Próximas, lista de espera e historial/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Próximas e historial/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Mis reservas' }));
   assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelectorAll('button').length, 5);
   cleanup(); dom.window.close();
