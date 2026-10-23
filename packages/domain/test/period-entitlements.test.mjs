@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   availablePeriodBalance,
+  buildFixedEntitlementPeriodCandidate,
   canaryBusinessDate,
   canaryLocalMidnightUtc,
   derivePeriodAccess,
@@ -11,6 +12,8 @@ import {
   proratedSessionsForPayment,
   roundHalfUp,
   sessionsForPeriod,
+  splitContractIntoMonthlyEntitlementPeriods,
+  validateContractQuantityRule,
   weekdaysInRange,
 } from '../src/period-entitlements.ts';
 
@@ -31,7 +34,7 @@ test('period weekday fixtures cover short, long, and differently aligned months'
 });
 
 test('session bags use integer ROUND_HALF_UP and validate weekly frequency', () => {
-  for (const [days, frequency, expected] of [[20, 3, 12], [21, 3, 13], [22, 3, 13], [23, 3, 14], [20, 1, 4], [20, 2, 8], [20, 4, 16], [5, 2, 2], [7, 2, 3], [1, 2, 0]]) {
+  for (const [days, frequency, expected] of [[20, 3, 12], [21, 3, 13], [22, 3, 13], [23, 3, 14], [20, 1, 4], [20, 2, 8], [20, 4, 16], [20, 5, 20], [5, 2, 2], [7, 2, 3], [1, 2, 0]]) {
     assert.equal(sessionsForPeriod(days, frequency), expected);
   }
   assert.equal(roundHalfUp(5, 2), 3);
@@ -39,6 +42,65 @@ test('session bags use integer ROUND_HALF_UP and validate weekly frequency', () 
   assert.equal(roundHalfUp(1, 2), 1);
   assert.throws(() => sessionsForPeriod(20, 0), /weeklyFrequency/);
   assert.throws(() => sessionsForPeriod(20, 6), /weeklyFrequency/);
+});
+
+test('contract terms split into contiguous inclusive natural-month entitlement periods', () => {
+  const cases = [
+    ['2026-11-01','2026-11-30',[['2026-11-01','2026-11-30']]],
+    ['2026-10-15','2026-10-31',[['2026-10-15','2026-10-31']]],
+    ['2026-10-15','2026-11-14',[['2026-10-15','2026-10-31'],['2026-11-01','2026-11-14']]],
+    ['2026-10-15','2027-01-14',[['2026-10-15','2026-10-31'],['2026-11-01','2026-11-30'],['2026-12-01','2026-12-31'],['2027-01-01','2027-01-14']]],
+    ['2026-10-15','2027-04-14',null],
+    ['2026-10-15','2027-10-14',null],
+    ['2028-02-01','2028-02-29',[['2028-02-01','2028-02-29']]],
+    ['2026-12-30','2027-01-02',[['2026-12-30','2026-12-31'],['2027-01-01','2027-01-02']]],
+  ];
+  for (const [start,end,expected] of cases) {
+    const periods = splitContractIntoMonthlyEntitlementPeriods(start,end);
+    if (expected) assert.deepEqual(periods.map(item=>[item.startsOn,item.endsOn]),expected);
+    if (start==='2026-10-15' && end==='2027-04-14') assert.equal(periods.length,7);
+    if (start==='2026-10-15' && end==='2027-10-14') assert.equal(periods.length,13);
+    assert.deepEqual(periods.map(item=>item.periodIndex),periods.map((_,index)=>index));
+    for (let index=1;index<periods.length;index++) {
+      const nextDay=new Date(`${periods[index-1].endsOn}T00:00:00Z`);nextDay.setUTCDate(nextDay.getUTCDate()+1);
+      assert.equal(periods[index].startsOn,nextDay.toISOString().slice(0,10));
+    }
+    assert.equal(periods[0].startsOn,start);
+    assert.equal(periods.at(-1).endsOn,end);
+  }
+  assert.throws(()=>splitContractIntoMonthlyEntitlementPeriods('2026-11-02','2026-11-01'),/on or after/);
+  assert.throws(()=>splitContractIntoMonthlyEntitlementPeriods('2026-02-30','2026-03-01'),/valid/);
+});
+
+test('weekday calculation uses inclusive calendar arithmetic across weekends, leap day and year boundaries', () => {
+  assert.equal(weekdaysInRange('2026-11-02','2026-11-06'),5);
+  assert.equal(weekdaysInRange('2026-11-07','2026-11-08'),0);
+  assert.equal(weekdaysInRange('2026-11-06','2026-11-06'),1);
+  assert.equal(weekdaysInRange('2026-11-07','2026-11-07'),0);
+  assert.equal(weekdaysInRange('2028-02-28','2028-02-29'),2);
+  assert.equal(weekdaysInRange('2026-12-31','2027-01-04'),3);
+  assert.equal(weekdaysInRange('2026-11-01','2026-11-30'),21);
+});
+
+test('quantity rules distinguish legacy, weekday-ratio, fixed and unlimited modalities', () => {
+  const valid = input => assert.deepEqual(validateContractQuantityRule(input),{valid:true});
+  const invalid = (input,error) => assert.deepEqual(validateContractQuantityRule(input),{valid:false,error});
+  valid({termKind:null,rightType:'sessions_quota',quantityRule:null,quantity:10,weeklyFrequency:null});
+  valid({termKind:'rolling_months',rightType:'sessions_quota',quantityRule:'weekday_ratio_v1',quantity:null,weeklyFrequency:3});
+  valid({termKind:'natural_month',rightType:'sessions_quota',quantityRule:'unlimited',quantity:null,weeklyFrequency:null});
+  valid({termKind:'pack',rightType:'sessions_quota',quantityRule:'fixed_v1',quantity:10,weeklyFrequency:null});
+  invalid({termKind:'rolling_months',rightType:'sessions_quota',quantityRule:null,quantity:10,weeklyFrequency:3},'quantity_rule_required');
+  invalid({termKind:'rolling_months',rightType:'sessions_quota',quantityRule:'weekday_ratio_v1',quantity:10,weeklyFrequency:3},'quantity_invalid');
+  invalid({termKind:'one_off',rightType:'sessions_quota',quantityRule:'fixed_v1',quantity:1,weeklyFrequency:1},'weekly_frequency_invalid');
+  invalid({termKind:null,rightType:'service_access',quantityRule:'unlimited',quantity:null,weeklyFrequency:null},'quantity_rule_not_allowed');
+});
+
+test('fixed period candidate counts activation day and leaves legacy addLocalDays policy untouched', () => {
+  assert.deepEqual(buildFixedEntitlementPeriodCandidate('2026-10-12',8,90),{
+    periodIndex:0,entitlementMode:'quota',formulaId:'fixed_v1',periodStart:'2026-10-12',periodEnd:'2027-01-09',sessionsGranted:8,
+  });
+  assert.equal(buildFixedEntitlementPeriodCandidate('2026-10-12',1,null).periodEnd,null);
+  assert.throws(()=>buildFixedEntitlementPeriodCandidate('2026-10-12',0,90),/quantity/);
 });
 
 test('late payment grants only weekdays from effective Canary activation through period end', () => {

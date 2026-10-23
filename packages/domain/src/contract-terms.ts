@@ -3,6 +3,50 @@ export type ContractTermKind = typeof CONTRACT_TERM_KINDS[number];
 
 export type ContractRangeError = 'invalid_date' | 'custom_range_invalid' | 'custom_range_before_assignment' | 'custom_range_exceeds_max_span';
 
+export interface ContractPaymentDeadlineInput {
+  readonly termKind: 'natural_month' | 'custom_range' | 'rolling_months';
+  readonly assignedLocalDate: string;
+  readonly contractStart: string;
+  readonly contractEnd: string;
+  readonly dueDay: number;
+  readonly graceDays: number;
+}
+
+export interface ContractPaymentDeadline {
+  readonly rule: 'monthly_day10_v1' | 'grace_from_assignment_v1';
+  readonly assignedLocalDate: string;
+  readonly inputs: { readonly dueDay: number } | { readonly graceDays: number };
+  readonly dueOn: string;
+  /** Payment remains valid through dueOn; an enforced access block begins at this local date's midnight. */
+  readonly accessBlockEffectiveOn: string;
+}
+
+/** Calculate the authoritative inclusive payment date using date-only Atlantic/Canary business dates. */
+export function calculateContractPaymentDeadline(input: ContractPaymentDeadlineInput): ContractPaymentDeadline {
+  parseDateOnly(input.assignedLocalDate);
+  const start = parseDateOnly(input.contractStart);
+  const end = parseDateOnly(input.contractEnd);
+  let dueOn: string;
+  let rule: ContractPaymentDeadline['rule'];
+  let inputs: ContractPaymentDeadline['inputs'];
+  if (input.termKind === 'natural_month') {
+    const validation = validateNaturalMonthContract(input.assignedLocalDate, input.contractStart, input.contractEnd);
+    if (!validation.valid) throw new RangeError(validation.error);
+    if (!Number.isInteger(input.dueDay) || input.dueDay < 1 || input.dueDay > 28) throw new RangeError('dueDay must be an integer from 1 to 28');
+    dueOn = formatDateOnly({ year: start.year, month: start.month, day: input.dueDay });
+    rule = 'monthly_day10_v1';
+    inputs = { dueDay: input.dueDay };
+  } else {
+    if (dateOrdinal(start) < dateOrdinal(parseDateOnly(input.assignedLocalDate)) || dateOrdinal(end) < dateOrdinal(start)) throw new RangeError('contract range must start on or after assignment and end on or after start');
+    if (!Number.isInteger(input.graceDays) || input.graceDays < 1 || input.graceDays > 60) throw new RangeError('graceDays must be an integer from 1 to 60');
+    dueOn = addDateDays(input.assignedLocalDate, input.graceDays);
+    rule = 'grace_from_assignment_v1';
+    inputs = { graceDays: input.graceDays };
+  }
+  // Keep the payment deadline (inclusive) separate from the next local midnight when access can be blocked.
+  return { rule, assignedLocalDate: input.assignedLocalDate, inputs, dueOn, accessBlockEffectiveOn: addDateDays(dueOn, 1) };
+}
+
 /** Contract anniversary arithmetic on strict DATE-only values; supported terms are the approved 3/6/12 months. */
 export function calculateContractEnd(startDate: string, termMonths: number): string {
   const start = parseDateOnly(startDate);

@@ -14,7 +14,7 @@ import postgres from 'postgres';
 import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
 import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
 import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
-import { materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
+import { activateSettledEntitlementPeriods, materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
 import { signedRequestSignature } from '../src/internal-service-auth.ts';
 import { canaryBusinessDate, proratedSessionsForPayment } from '@2j/domain';
 
@@ -275,7 +275,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   await sql`UPDATE schema_migrations SET checksum=${originalChecksum} WHERE name=${migration}`;
 });
 
-test('0036 upgrades the checksummed current-main schema once and preserves legacy rows', async () => {
+test('0037 upgrades the checksummed current-main schema once and preserves legacy rows', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL);
   const databaseName=`capability_upgrade_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
@@ -287,8 +287,9 @@ test('0036 upgrades the checksummed current-main schema once and preserves legac
     upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     const directory=new URL('../migrations/',import.meta.url);
     const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
-    const contract='0036_contract_terms_dates.sql';
-    assert.equal(names.at(-1),contract);
+    const contract='0037_contract_entitlement_periods_v1.sql';
+    assert.ok(names.includes(contract));
+    assert.equal(names.at(-1),'0038_economic_grace_days.sql');
     const prior=names.filter(name=>name<contract);
     await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
     for(const name of prior){
@@ -296,28 +297,174 @@ test('0036 upgrades the checksummed current-main schema once and preserves legac
       const checksum=createHash('sha256').update(contents).digest('hex');
       await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
     }
-    const legacyPlanId=randomUUID();
+    const legacyPlanId=randomUUID(),legacyClientId=randomUUID(),legacyChargeId=randomUUID(),legacyPendingChargeId=randomUUID(),legacyAssignmentId=randomUUID(),legacyRightId=randomUUID(),legacyPeriodId=randomUUID(),legacyPendingPeriodId=randomUUID();
+    const today=canaryBusinessDate(new Date());
+    const currentPeriodStart=`${today.slice(0,7)}-01`;
+    const currentPeriodEnd=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10);
+    const priorMonthEnd=new Date(`${currentPeriodStart}T00:00:00.000Z`);priorMonthEnd.setUTCDate(priorMonthEnd.getUTCDate()-1);
+    const priorPeriodEnd=priorMonthEnd.toISOString().slice(0,10);
+    const priorPeriodStart=`${priorPeriodEnd.slice(0,7)}-01`;
     const [legacyArea]=await upgradeDb`SELECT id FROM areas WHERE normalized_name='la sala'`;
     const [legacyService]=await upgradeDb`INSERT INTO services(area_id,name,status) VALUES (${legacyArea.id},${`Legacy upgrade ${randomUUID()}`},'active') RETURNING id`;
     await upgradeDb.begin(async tx=>{
+      // Schema-36 has no supported way to create historical state except fixture SQL.
+      // Seed the exact result of catalog activation: active plan + immutable version.
       await tx`INSERT INTO plans(id,name,status,current_version,idempotency_key,request_hash) VALUES (${legacyPlanId},'Legacy upgrade fixture','draft',1,${randomUUID()},${'b'.repeat(64)})`;
       await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,timezone) VALUES (${legacyPlanId},1,'recurring','monthly','Atlantic/Canary')`;
       await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) VALUES (${legacyPlanId},1,${legacyService.id})`;
       await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id) VALUES (${legacyPlanId},1,'service_access',${legacyService.id})`;
+      await tx`INSERT INTO plan_rights(id,plan_id,plan_version,right_type,quota_scope,quantity,weekly_frequency) VALUES (${legacyRightId},${legacyPlanId},1,'sessions_quota','shared',8,3)`;
+      await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${legacyPlanId} AND version=1`;
+      await tx`UPDATE plans SET status='active' WHERE id=${legacyPlanId}`;
+      await tx`INSERT INTO clients(id,first_name,last_name) VALUES (${legacyClientId},'Legacy F1-B','Fixture')`;
+      await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash)
+        VALUES (${legacyChargeId},${legacyClientId},${legacyPlanId},'Legacy paid contract',8000,${priorPeriodStart},'migration-fixture',${randomUUID()},${'c'.repeat(64)})`;
+      await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash)
+        VALUES (${legacyPendingChargeId},${legacyClientId},${legacyPlanId},'Legacy pending period',8000,${currentPeriodStart},'migration-fixture',${randomUUID()},${'a'.repeat(64)})`;
+      await tx`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by)
+        VALUES (${legacyAssignmentId},${legacyClientId},${legacyPlanId},1,${legacyChargeId},${priorPeriodStart},NULL,${randomUUID()},${'d'.repeat(64)},'migration-fixture')`;
+      await tx`INSERT INTO assignment_entitlement_periods(id,assignment_id,client_id,right_id,period_start,period_end,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash)
+        VALUES (${legacyPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},${priorPeriodStart},${priorPeriodEnd},3,entitlement_sessions_v1(entitlement_weekdays(${priorPeriodStart},${priorPeriodEnd}),3),
+          ${tx.json({version:1,source:'098E migration fixture'})},${randomUUID()},${'e'.repeat(64)})`;
+      await tx`INSERT INTO assignment_entitlement_periods(id,assignment_id,client_id,right_id,period_start,period_end,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash)
+        VALUES (${legacyPendingPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},${currentPeriodStart},${currentPeriodEnd},3,entitlement_sessions_v1(entitlement_weekdays(${currentPeriodStart},${currentPeriodEnd}),3),
+          ${tx.json({version:1,source:'098E pending-payment fixture'})},${randomUUID()},${'9'.repeat(64)})`;
+      const [legacySessions]=await tx`SELECT sessions_snapshot FROM assignment_entitlement_periods WHERE id=${legacyPeriodId}`;
+      await tx`INSERT INTO assignment_recurrence_events(assignment_id,enabled,actor_id,effective_on,reason,idempotency_key,request_hash)
+        VALUES (${legacyAssignmentId},true,'migration-fixture',${priorPeriodStart},'Legacy recurrence enabled',${randomUUID()},${'f'.repeat(64)})`;
+      await tx`INSERT INTO assignment_entitlement_period_events(period_id,assignment_id,client_id,right_id,event_type,charge_id,actor_id,reason,idempotency_key,request_hash)
+        VALUES (${legacyPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},'charge_linked',${legacyChargeId},'migration-fixture','Legacy charge linked',${randomUUID()},${'1'.repeat(64)})`;
+      await tx`INSERT INTO assignment_entitlement_period_events(period_id,assignment_id,client_id,right_id,event_type,charge_id,actor_id,reason,idempotency_key,request_hash)
+        VALUES (${legacyPendingPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},'charge_linked',${legacyPendingChargeId},'migration-fixture','Legacy pending charge linked',${randomUUID()},${'8'.repeat(64)})`;
+      await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,actor_id,idempotency_key,request_hash)
+        VALUES (${randomUUID()},${legacyChargeId},${legacyClientId},'payment',8000,'migration-fixture',${randomUUID()},${'2'.repeat(64)})`;
+      const [payment]=await tx`SELECT id FROM economic_transactions WHERE charge_id=${legacyChargeId}`;
+      await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${payment.id},'cash',8000)`;
+      await tx`INSERT INTO assignment_entitlement_period_events(period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on,sessions_granted,actor_id,reason,idempotency_key,request_hash)
+        VALUES (${legacyPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},'payment_validated',${legacyChargeId},${priorPeriodStart},${legacySessions.sessions_snapshot},'migration-fixture','Legacy payment validated',${randomUUID()},${'3'.repeat(64)})`;
+      await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,actor_id,idempotency_key,request_hash,entitlement_period_id)
+        VALUES (${legacyClientId},${legacyAssignmentId},${legacyRightId},'grant',${legacySessions.sessions_snapshot},'Legacy period grant','migration-fixture',${randomUUID()},${'4'.repeat(64)},${legacyPeriodId})`;
     });
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,35);
+    // LEGACY_FIXTURE_VALID_BEFORE_0037: these checks prove the seed is a valid
+    // schema-36 operational state, not merely rows accepted by loose SQL.
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version
+      WHERE p.id=${legacyPlanId} AND p.status='active' AND v.frozen_at IS NOT NULL AND v.term_kind IS NULL`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: active plan and frozen legacy version');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_plan_assignments a JOIN clients c ON c.id=a.client_id JOIN plans p ON p.id=a.plan_id
+      JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version JOIN economic_charges ch ON ch.id=a.charge_id
+      WHERE a.id=${legacyAssignmentId} AND a.client_id=${legacyClientId} AND a.plan_id=${legacyPlanId} AND a.plan_version=1 AND a.status='active'
+        AND c.status='active' AND p.status='active' AND v.frozen_at IS NOT NULL AND a.starts_on=${priorPeriodStart} AND a.ends_on IS NULL
+        AND ch.client_id=a.client_id AND ch.plan_id=a.plan_id`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: active assignment matches active client, frozen plan version, and valid charge');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_rights r JOIN plan_services ps ON ps.plan_id=r.plan_id AND ps.plan_version=r.plan_version
+      JOIN services s ON s.id=ps.service_id AND s.status='active' JOIN areas ar ON ar.id=s.area_id AND ar.status='active'
+      WHERE r.id=${legacyRightId} AND r.plan_id=${legacyPlanId} AND r.plan_version=1 AND r.right_type='sessions_quota' AND r.quantity=8 AND r.weekly_frequency=3`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: legacy quota right is valid');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_entitlement_periods p JOIN assignment_entitlement_period_events e ON e.period_id=p.id
+      JOIN client_entitlement_ledger l ON l.entitlement_period_id=p.id AND l.assignment_id=p.assignment_id AND l.client_id=p.client_id AND l.right_key=p.right_id::text
+      WHERE p.id=${legacyPeriodId} AND p.assignment_id=${legacyAssignmentId} AND p.client_id=${legacyClientId} AND p.right_id=${legacyRightId}
+        AND p.period_start=${priorPeriodStart} AND p.period_end=${priorPeriodEnd} AND p.sessions_snapshot>0
+        AND e.event_type='payment_validated' AND e.sessions_granted=p.sessions_snapshot AND l.entry_type='grant' AND l.quantity=p.sessions_snapshot`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: historical period, validation event, and grant agree');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId} AND enabled=true AND effective_on=${priorPeriodStart}`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: recurrence history is valid');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_schema='public' AND table_name='plan_rights' AND column_name='quantity_rule'`)[0].count,0,'LEGACY_FIXTURE_VALID_BEFORE_0037: quantity_rule does not yet exist');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_schema='public' AND table_name='assignment_entitlement_periods' AND column_name IN ('period_index','entitlement_mode','formula_id','weekdays_in_period','sessions_granted')`)[0].count,0,'LEGACY_FIXTURE_VALID_BEFORE_0037: no F1-B period facts exist yet');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_entitlement_periods p JOIN assignment_entitlement_period_events e ON e.period_id=p.id
+      JOIN economic_charges ch ON ch.id=e.charge_id WHERE p.id=${legacyPendingPeriodId} AND e.event_type='charge_linked'
+        AND ch.state='pending' AND NOT EXISTS(SELECT 1 FROM assignment_entitlement_period_events v WHERE v.period_id=p.id AND v.event_type='payment_validated')`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: current period legitimately awaits payment activation');
+    const legacyBefore={
+      periods:await upgradeDb`SELECT id,assignment_id,client_id,right_id,period_start::text,period_end::text,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash FROM assignment_entitlement_periods WHERE assignment_id=${legacyAssignmentId} ORDER BY period_start`,
+      events:await upgradeDb`SELECT period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on::text,sessions_granted,actor_id,reason,idempotency_key,request_hash FROM assignment_entitlement_period_events WHERE period_id=${legacyPeriodId} ORDER BY event_type`,
+      pendingEvents:await upgradeDb`SELECT period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on::text,sessions_granted,actor_id,reason,idempotency_key,request_hash FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} ORDER BY event_type`,
+      grants:await upgradeDb`SELECT id,client_id,assignment_id,right_key,entry_type,quantity,entitlement_period_id,request_hash FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId}`,
+      recurrence:await upgradeDb`SELECT assignment_id,enabled,actor_id,effective_on::text,reason,idempotency_key,request_hash FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId}`,
+      balance:await upgradeDb`SELECT COALESCE(sum(quantity),0)::int AS amount FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId} AND right_key=${legacyRightId}`,
+    };
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,36);
     const upgraded=await migrateDatabase(upgradeDb);
-    assert.equal(upgraded.length,36);
-    assert.deepEqual(upgraded.slice(-1).map(row=>row.name),[contract]);
-    assert.deepEqual(upgraded.slice(-3).map(row=>row.name),['0034_training_access_capabilities.sql','0035_training_access_suspensions.sql',contract]);
+    assert.equal(upgraded.length,38);
+    assert.deepEqual(upgraded.slice(-2).map(row=>row.name),[contract,'0038_economic_grace_days.sql']);
+    assert.deepEqual(upgraded.slice(-3).map(row=>row.name),['0036_contract_terms_dates.sql',contract,'0038_economic_grace_days.sql']);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${contract}`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='quantity_rule'`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='assignment_entitlement_periods' AND column_name IN ('period_index','entitlement_mode','formula_id','weekdays_in_period','sessions_granted')`)[0].count,5);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_training_access_events') IS NOT NULL AS exists`)[0].exists,true);
-    assert.equal((await migrateDatabase(upgradeDb)).length,36,'re-running migration verification applies no duplicate migration');
+    assert.equal((await migrateDatabase(upgradeDb)).length,38,'re-running migration verification applies no duplicate migration');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE term_kind IS NOT NULL`)[0].count,0,'migration must not rewrite legacy plan versions');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE plan_id=${legacyPlanId} AND version=1 AND term_kind IS NULL AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NULL AND payment_block IS NULL`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_contract_terms`)[0].count,0,'migration must not fabricate terms for legacy assignments');
+    const legacyAfter=await upgradeDb`SELECT id,assignment_id,client_id,right_id,period_start::text,period_end::text,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash,
+      entitlement_mode,period_index,formula_id,weekdays_in_period,sessions_granted FROM assignment_entitlement_periods WHERE assignment_id=${legacyAssignmentId} ORDER BY period_start`;
+    assert.deepEqual(legacyAfter.map(({entitlement_mode,period_index,formula_id,weekdays_in_period,sessions_granted,...row})=>row),Array.from(legacyBefore.periods),'0037 must preserve every legacy period fact byte-for-byte');
+    for(const row of legacyAfter){assert.equal(row.entitlement_mode,null);assert.equal(row.period_index,null);assert.equal(row.formula_id,null);assert.equal(row.weekdays_in_period,null);assert.equal(row.sessions_granted,null);}
+    assert.deepEqual(await upgradeDb`SELECT period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on::text,sessions_granted,actor_id,reason,idempotency_key,request_hash FROM assignment_entitlement_period_events WHERE period_id=${legacyPeriodId} ORDER BY event_type`,legacyBefore.events);
+    assert.deepEqual(await upgradeDb`SELECT period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on::text,sessions_granted,actor_id,reason,idempotency_key,request_hash FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} ORDER BY event_type`,legacyBefore.pendingEvents);
+    assert.deepEqual(await upgradeDb`SELECT id,client_id,assignment_id,right_key,entry_type,quantity,entitlement_period_id,request_hash FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId}`,legacyBefore.grants);
+    assert.deepEqual(await upgradeDb`SELECT assignment_id,enabled,actor_id,effective_on::text,reason,idempotency_key,request_hash FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId}`,legacyBefore.recurrence);
+    assert.deepEqual(await upgradeDb`SELECT COALESCE(sum(quantity),0)::int AS amount FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId} AND right_key=${legacyRightId}`,legacyBefore.balance);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId} AND right_key=${legacyRightId} AND entry_type='grant'`)[0].count,1,'legacy period replay/grant remains single under new unique index');
+    assert.ok((await upgradeDb`SELECT 1 FROM pg_indexes WHERE indexname='client_entitlement_ledger_period_grant_unique'`).length,'legacy grant unique index is installed with representative history');
+    // Exercise the real 098E payment route after 0037: it records payment,
+    // calls activateSettledEntitlementPeriods, creates one legacy grant, and
+    // preserves idempotent retry behavior under the new grant index.
+    const upgradedApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'migration-flow-test',role:'admin'})});
+    try{
+      await upgradedApp.ready();
+      const paymentKey=randomUUID();
+      const paymentResponse=await upgradedApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':paymentKey},payload:{chargeId:legacyPendingChargeId,splits:[{method:'card',amountCents:8000}]}});
+      assert.equal(paymentResponse.statusCode,201,paymentResponse.body);
+      const [newActivation]=await upgradeDb`SELECT event_type,effective_activation_on::text AS effective_on,sessions_granted FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} AND event_type='payment_validated'`;
+      assert.ok(newActivation,'real payment flow must validate the legacy period');
+      assert.equal(newActivation.effective_on,today);
+      const [activatedPeriod]=await upgradeDb`SELECT sessions_snapshot FROM assignment_entitlement_periods WHERE id=${legacyPendingPeriodId}`;
+      const [newGrant]=await upgradeDb`SELECT quantity,right_key,entitlement_period_id FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND entry_type='grant'`;
+      assert.equal(newGrant.quantity,newActivation.sessions_granted,'legacy grant quantity matches real payment activation');
+      assert.equal(newGrant.right_key,legacyRightId);assert.equal(newGrant.entitlement_period_id,legacyPendingPeriodId);
+      assert.ok(newActivation.sessions_granted>0);
+      const [paymentCountBeforeRetry]=await upgradeDb`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${legacyPendingChargeId}`;
+      const retry=await upgradedApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':paymentKey},payload:{chargeId:legacyPendingChargeId,splits:[{method:'card',amountCents:8000}]}});
+      assert.equal(retry.statusCode,200,retry.body);
+      const directActivationRetry=await upgradeDb.begin(tx=>activateSettledEntitlementPeriods(tx,legacyPendingChargeId,'migration-flow-test'));
+      assert.equal(directActivationRetry,0,'already validated legacy activation is an exact no-op on retry');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${legacyPendingChargeId}`)[0].count,paymentCountBeforeRetry.count);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} AND event_type='payment_validated'`)[0].count,1);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND entry_type='grant'`)[0].count,1,'legacy grant unique index allows the real activation and prevents duplicates');
+      assert.equal((await upgradeDb`SELECT COALESCE(sum(quantity),0)::int AS amount FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND right_key=${legacyRightId}`)[0].amount,newActivation.sessions_granted);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM economic_audit_events WHERE action='entitlement_period.payment_validated' AND details->>'periodId'=${legacyPendingPeriodId}`)[0].count,1);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_entitlement_periods WHERE id=${legacyPendingPeriodId} AND sessions_snapshot=${activatedPeriod.sessions_snapshot} AND entitlement_mode IS NULL AND period_index IS NULL AND formula_id IS NULL AND weekdays_in_period IS NULL AND sessions_granted IS NULL`)[0].count,1,'payment activation retains the legacy period shape and does not fabricate F1-B facts');
+
+      const recurrenceUrl=`/api/clients/${legacyClientId}/plans/${legacyAssignmentId}/recurrence`;
+      const disabled=await upgradedApp.inject({method:'PATCH',url:recurrenceUrl,headers:{'idempotency-key':randomUUID()},payload:{enabled:false,effectiveOn:today,reason:'Pausa legacy tras 0037'}});
+      assert.equal(disabled.statusCode,201,disabled.body);
+      assert.equal((await upgradeDb`SELECT enabled FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId} AND effective_on<=${today}::date ORDER BY effective_on DESC,created_at DESC,id DESC LIMIT 1`)[0].enabled,false);
+      const afterCurrentPeriod=new Date(`${currentPeriodEnd}T00:00:00.000Z`);afterCurrentPeriod.setUTCDate(afterCurrentPeriod.getUTCDate()+1);
+      const offMaterialization=await materializeRecurringEntitlementPeriods(upgradeDb,new Date(`${afterCurrentPeriod.toISOString().slice(0,10)}T12:00:00.000Z`));
+      assert.equal(offMaterialization.created,0,'effective OFF state prevents materialization after the current period ends');
+      const futureDay=new Date(`${afterCurrentPeriod.toISOString().slice(0,10)}T00:00:00.000Z`);futureDay.setUTCDate(futureDay.getUTCDate()+1);
+      const recurrenceResumeDate=futureDay.toISOString().slice(0,10);
+      const enabled=await upgradedApp.inject({method:'PATCH',url:recurrenceUrl,headers:{'idempotency-key':randomUUID()},payload:{enabled:true,effectiveOn:recurrenceResumeDate,reason:'Reanudación legacy tras 0037'}});
+      assert.equal(enabled.statusCode,201,enabled.body);
+      const recurrenceBefore=await upgradeDb`SELECT assignment_id,enabled,actor_id,effective_on::text,reason,idempotency_key,request_hash FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId} ORDER BY effective_on,created_at,id`;
+      assert.equal(recurrenceBefore.at(-1).enabled,true);
+      assert.equal(recurrenceBefore.at(-1).effective_on,recurrenceResumeDate);
+
+      const materializeAt=new Date(`${recurrenceResumeDate}T12:00:00.000Z`);
+      const materialized=await materializeRecurringEntitlementPeriods(upgradeDb,materializeAt);
+      assert.equal(materialized.created,1,JSON.stringify(materialized));
+      const materializedRetry=await materializeRecurringEntitlementPeriods(upgradeDb,materializeAt);
+      assert.equal(materializedRetry.created,0,'legacy next-period materialization is idempotent');
+      const nextPeriods=await upgradeDb`SELECT id,period_start::text AS starts_on,period_end::text AS ends_on,weekly_frequency,sessions_snapshot,snapshot,entitlement_mode,period_index,formula_id,weekdays_in_period,sessions_granted
+        FROM assignment_entitlement_periods WHERE assignment_id=${legacyAssignmentId} AND right_id=${legacyRightId} ORDER BY period_start`;
+      assert.equal(nextPeriods.length,3);
+      const nextPeriod=nextPeriods.at(-1);
+      assert.equal(nextPeriod.entitlement_mode,null);assert.equal(nextPeriod.period_index,null);assert.equal(nextPeriod.formula_id,null);assert.equal(nextPeriod.weekdays_in_period,null);assert.equal(nextPeriod.sessions_granted,null);
+      assert.ok(nextPeriod.sessions_snapshot>0);
+      assert.equal(nextPeriod.snapshot.quantityRule,'weekday_ratio_v1');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${nextPeriod.id} AND entry_type='grant'`)[0].count,0,'098E recurrence materializes a period only; it does not create a grant before payment');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_rights WHERE id=${legacyRightId} AND quantity_rule IS NULL`)[0].count,1,'legacy right stays valid without an F1-B quantity rule');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId} AND entry_type='grant'`)[0].count,1);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND entry_type='grant'`)[0].count,1);
+      assert.equal((await upgradeDb`SELECT COALESCE(sum(quantity),0)::int AS amount FROM client_entitlement_ledger WHERE assignment_id=${legacyAssignmentId} AND right_key=${legacyRightId}`)[0].amount,Number(legacyBefore.balance[0].amount)+newActivation.sessions_granted,'existing and newly activated balances are preserved');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM economic_audit_events WHERE actor_id='migration-flow-test' AND resource_id=${legacyAssignmentId}`)[0].count,3,'payment and both recurrence actions retain their audit trail');
+    }finally{await upgradedApp.close();}
   }finally{
     if(upgradeDb)await upgradeDb.end();
     await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
@@ -397,7 +544,7 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
   for (const index of rightIndexes) assert.match(index.indexdef, /COALESCE\(period, ''(?:::text)?\)/, `${index.indexname} must distinguish quota periods`);
 });
 
-test('0036 migrates a fresh database from zero and verifies the upgrade from current main exactly once', async () => {
+test('0037/0038 migrate a fresh database from zero and verify the upgrade from current main exactly once', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`f1a_fresh_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
   const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});let fresh;
@@ -406,15 +553,49 @@ test('0036 migrates a fresh database from zero and verifies the upgrade from cur
     sourceUrl.pathname=`/${databaseName}`;fresh=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     assert.equal((await fresh`SELECT to_regclass('public.plan_versions') AS table`)[0].table,null,'fresh database starts empty');
     const first=await migrateDatabase(fresh);
-    assert.equal(first.length,36);
-    assert.equal(first.at(-1).name,'0036_contract_terms_dates.sql');
+    assert.equal(first.length,38);
+    assert.equal(first.at(-2).name,'0037_contract_entitlement_periods_v1.sql');
+    assert.equal(first.at(-1).name,'0038_economic_grace_days.sql');
     const second=await migrateDatabase(fresh);
     assert.deepEqual(second.map(row=>[row.name,row.checksum.trim()]),first.map(row=>[row.name,row.checksum.trim()]));
-    assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0036_contract_terms_dates.sql'`)[0].count,1);
+    assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0037_contract_entitlement_periods_v1.sql'`)[0].count,1);
+    assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0038_economic_grace_days.sql'`)[0].count,1);
+    assert.equal((await fresh`SELECT grace_days FROM economic_settings WHERE singleton=true`)[0].grace_days,5);
     assert.equal((await fresh`SELECT to_regprocedure('contract_end_v1(date,integer)') IS NOT NULL AS exists`)[0].exists,true);
     assert.equal((await fresh`SELECT to_regclass('public.assignment_contract_terms') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await fresh`SELECT to_regprocedure('entitlement_weekdays(date,date)') IS NOT NULL AS exists`)[0].exists,true);
   }finally{
     if(fresh)await fresh.end();
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
+  }
+});
+
+test('0038 upgrades the exact current-main schema once and remains checksum-stable on rerun', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`f1c_main_upgrade_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
+  const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});let upgradeDb;
+  try{
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+    sourceUrl.pathname=`/${databaseName}`;upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
+    const directory=new URL('../migrations/',import.meta.url);
+    const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
+    assert.equal(names.length,38);assert.equal(names.at(-2),'0037_contract_entitlement_periods_v1.sql');
+    assert.equal(names.at(-1),'0038_economic_grace_days.sql');
+    await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
+    for(const name of names.slice(0,37)){
+      const contents=await readFile(new URL(name,directory),'utf8');
+      const checksum=createHash('sha256').update(contents).digest('hex');
+      await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
+    }
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,37);
+    const upgraded=await migrateDatabase(upgradeDb);
+    assert.equal(upgraded.length,38);assert.equal(upgraded.at(-1).name,'0038_economic_grace_days.sql');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0038_economic_grace_days.sql'`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT grace_days FROM economic_settings WHERE singleton=true`)[0].grace_days,5);
+    const repeated=await migrateDatabase(upgradeDb);
+    assert.deepEqual(repeated.map(row=>[row.name,row.checksum.trim()]),upgraded.map(row=>[row.name,row.checksum.trim()]));
+  }finally{
+    if(upgradeDb)await upgradeDb.end();
     await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
   }
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addDateDays, calculateContractEnd, isValidDateOnly, validateCustomContractRange, validateNaturalMonthContract } from '../src/contract-terms.ts';
+import { addDateDays, calculateContractEnd, calculateContractPaymentDeadline, isValidDateOnly, validateCustomContractRange, validateNaturalMonthContract } from '../src/contract-terms.ts';
 
 test('calculateContractEnd matches every approved anniversary and end-of-month example', () => {
   const cases = [
@@ -60,4 +60,15 @@ test('natural-month and custom-range validators handle assignment boundaries, le
   assert.deepEqual(validateCustomContractRange('2026-10-15','2026-10-15','2026-10-31',16),{valid:false,error:'custom_range_exceeds_max_span'});
   assert.deepEqual(validateCustomContractRange('2026-02-30','2026-03-01','2026-03-10'),{valid:false,error:'invalid_date'});
   assert.deepEqual(validateCustomContractRange('2026-12-31','2027-01-02','2027-01-01'),{valid:false,error:'custom_range_invalid'});
+});
+
+test('contract payment deadline stays distinct from access-block effective midnight', () => {
+  assert.deepEqual(calculateContractPaymentDeadline({termKind:'natural_month',assignedLocalDate:'2026-10-20',contractStart:'2026-11-01',contractEnd:'2026-11-30',dueDay:10,graceDays:5}),{
+    rule:'monthly_day10_v1',assignedLocalDate:'2026-10-20',inputs:{dueDay:10},dueOn:'2026-11-10',accessBlockEffectiveOn:'2026-11-11',
+  });
+  assert.deepEqual(calculateContractPaymentDeadline({termKind:'custom_range',assignedLocalDate:'2026-10-15',contractStart:'2026-10-15',contractEnd:'2026-10-31',dueDay:10,graceDays:5}),{
+    rule:'grace_from_assignment_v1',assignedLocalDate:'2026-10-15',inputs:{graceDays:5},dueOn:'2026-10-20',accessBlockEffectiveOn:'2026-10-21',
+  });
+  assert.equal(calculateContractPaymentDeadline({termKind:'rolling_months',assignedLocalDate:'2026-10-28',contractStart:'2026-10-28',contractEnd:'2027-01-27',dueDay:10,graceDays:5}).dueOn,'2026-11-02');
+  assert.throws(()=>calculateContractPaymentDeadline({termKind:'natural_month',assignedLocalDate:'2026-11-02',contractStart:'2026-11-01',contractEnd:'2026-11-30',dueDay:10,graceDays:5}),/natural_month_already_started/);
 });
