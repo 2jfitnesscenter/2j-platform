@@ -15,6 +15,11 @@ Nothing here is ticked. Each box is to be completed by the independent reviewer 
 - [ ] RP ID equals the exact Home host; the parent domain cannot be configured; Búnker passkeys/`RP_ID`/`ORIGIN` untouched (`git diff main..` shows no change).
 
 **Authorization**
+- [ ] H1: with a legacy user, compare passkey and Platform-SSO sessions route by route (`ROUTE-MATRIX.md`): identical rights, no Platform call; with an enforced user, identical decisions for both session types.
+- [ ] H2: a suspended enforced account is closed on gated and interactive member routes but keeps recovery, export, deletion, logout, withdrawal actions and news/media/notification reads.
+- [ ] H3: open `/sso#code=<another account's code>` in a browser signed in as someone else: no silent switch, the confirmation page names both accounts, the ticket is single-use and browser-bound; decide the no-session residual.
+- [ ] H6: stop Platform (degrades to baseline, known suspension still blocks), make it answer 401/403/404 or garbage (enforced users fail closed, legacy untouched), and check the alerts.
+- [ ] H10/H11: run `api/scripts/legacy-differential.mjs` against a fresh `main` worktree and read every `[UNEXPECTED]` line (must be none).
 - [ ] Every route that writes member state is accounted for (Búnker `docs/security/2J-INT-CLOSURE-security-closure.md`); re-run `grep -rn "writeState\|mutate(\|saveDirect\|saveTrainer" api` and confirm nothing is missing.
 - [ ] `authorizeStateWrite` cannot be bypassed: sync types, `PUT /api/data`, path variants, non-object bodies, Sync V2 side door.
 - [ ] Free personal routines/workouts/history keep working for a no-fee enforced account; paid subtrees and guided programs are stripped, never erased.
@@ -44,6 +49,8 @@ Nothing here is ticked. Each box is to be completed by the independent reviewer 
 - [ ] Passkey registration/login on real iOS/Android/desktop browsers with the real Home host (only possible after a reviewed change lifts the loopback and dev/test guards).
 - [ ] Provisioning (staging only, flag on): one profile, retry-safe, first sign-in by recovery link.
 - [ ] Proxy tests 1–8 of the runbook from outside the host.
+- [ ] Suspension: measure web (passkey), SSO and kiosk latency with timestamps on the real tablet (p50/p95/max) and the outage case; rehearse the emergency local disable (`docs/runbooks/2J-INT-emergency-suspension.md`).
+- [ ] Q5/Q6 of the architect's plan: login CSRF with a signed-in victim; legacy-linked user entering through Home.
 
 ## C. Acceptance criteria (all must hold)
 
@@ -52,7 +59,8 @@ Nothing here is ticked. Each box is to be completed by the independent reviewer 
 3. QA checklist B passes on staging, including real-device WebAuthn if passkeys are to be enabled.
 4. Historical Búnker users keep access and data (legacy mode verified before and after).
 5. Production plan exists and is separately approved: flags off by default, enforcement per user, rollback path, Caddy/`TRUSTED_PROXIES` configured and tested, secrets in the runtime store.
-6. Residual risks 1–10 in the README are each accepted or closed by the owner.
+6. Residual risks 1–12 and the six owner decisions in the README are each accepted or closed.
+7. `STATUS-H1-H16.md` rows are re-verified by the reviewer (not taken on trust).
 
 ## D. Rejection criteria (any one blocks approval)
 

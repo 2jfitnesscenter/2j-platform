@@ -45,14 +45,15 @@
     ]
   },
   "tests": {
-    "platformApi": "266/266",
-    "platformWorkspace": "all pass",
+    "platformApi": "269/269",
     "typecheck": "11/11",
     "build": "9/9",
-    "bunkerApi": "816 pass, 0 fail, 47 skipped",
-    "bunkerFrontend": "1865/1865",
+    "bunkerApi": "838 pass, 0 fail, 47 skipped (885; same 47 as main)",
+    "bunkerFrontend": "1867/1867",
     "e2eSso": "15/15",
-    "e2eLink": "8/8"
+    "e2eLink": "9/9",
+    "differentialLegacy": "62/63 identical, 1 intentional, 0 unexpected",
+    "kioskLatency": "8/8 blocked, p50 19.2 s, max 39.7 s"
   },
   "notCovered": [
     "real-device WebAuthn",
@@ -99,5 +100,34 @@
       "reviewer package"
     ]
   },
-  "reviewerPackage": "docs/review/2J-INT-CLOSURE/README.md"
+  "reviewerPackage": "docs/review/2J-INT-CLOSURE/README.md",
+  "architectReview": {
+    "verdict": "REQUIERE CORRECCIONES (2026-10-23)",
+    "status": "docs/review/2J-INT-CLOSURE/STATUS-H1-H16.md",
+    "fixed": [
+      "H1",
+      "H2",
+      "H3 (sessions; no-session residual)",
+      "H4",
+      "H5",
+      "H6",
+      "H7",
+      "H10",
+      "H12"
+    ],
+    "documented": [
+      "H8",
+      "H9",
+      "H13",
+      "H14"
+    ],
+    "verified": [
+      "H11",
+      "H15",
+      "H16"
+    ],
+    "newFindings": [
+      "API Dockerfile did not COPY platform-sso/"
+    ]
+  }
 }

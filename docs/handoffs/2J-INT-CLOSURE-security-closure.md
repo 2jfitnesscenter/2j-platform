@@ -87,3 +87,7 @@ Same caveat: implemented and tested by the implementing agent; **not** independe
 | Reviewer package | `docs/review/2J-INT-CLOSURE/` (README with PR order and SHAs, CONTRACTS, MIGRATIONS, ROUTE-MATRIX (generated), CHECKLISTS with acceptance/rejection criteria). | — |
 
 Final results after this pass: Platform API 269/269 (unchanged code); Búnker API 874 tests, 827 pass, 0 fail, 47 skipped; Búnker frontend 1865/1865; E2E 15/15 and 8/8.
+
+## 11. Architect's review pass (H1–H16)
+
+See `docs/review/2J-INT-CLOSURE/STATUS-H1-H16.md` for the table with evidence and tests. Summary of final numbers: Platform API 269/269; Búnker API 885 tests, 838 pass, 0 fail, 47 skipped (the same 47 as `main`); frontend 1867/1867; E2E 15/15 and 9/9; legacy differential 62/63 identical (1 intentional); kiosk suspension latency 8/8 blocked, p50 19.2 s, max 39.7 s. Still the implementer's own pass: **not independent**.
