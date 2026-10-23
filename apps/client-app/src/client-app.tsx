@@ -204,6 +204,38 @@ export function trainingSsoDestination(redirectUrl: unknown, trainingUrl: string
 /** How the page leaves for Training. A same-tab navigation is right in a browser; tests replace `navigate`. */
 export const trainingSsoRuntime = { navigate: (url: string) => window.location.assign(url) };
 
+/**
+ * The flow is browser-bound: it starts at Training, not here. "Abrir Búnker" navigates to Training's start page, which keeps a secret in an
+ * HttpOnly cookie of Training's own origin and sends the browser back here carrying only that secret's SHA-256 (`#sso_challenge=`). Home then asks
+ * Platform for a code for THAT challenge, so only the browser that started the flow can redeem it. Home never sees or stores the secret.
+ */
+export const TRAINING_SSO_START_PATH = '/api/platform/v1/sso/start';
+export function trainingSsoStartUrl(trainingUrl: string): string | null {
+  try {
+    if (!trainingUrl) return null;
+    const url = new URL(trainingUrl);
+    return isHttpsOrLoopback(url) ? `${url.origin}${TRAINING_SSO_START_PATH}` : null;
+  } catch { return null; }
+}
+/** `#sso_challenge=<43 url-safe characters>` and nothing else: what Training puts in the fragment when it sends the browser back here. */
+export function ssoChallengeFromHash(hash: unknown): string | null {
+  const match = typeof hash === 'string' ? /^#sso_challenge=([A-Za-z0-9_-]{43})$/.exec(hash) : null;
+  return match ? match[1]! : null;
+}
+// A challenge can wait for the person to sign in to Home (a few minutes at most). It is public by construction (a hash), never a credential.
+const SSO_CHALLENGE_KEY = '2j.training-sso.challenge', SSO_CHALLENGE_TTL_MS = 10 * 60_000;
+const challengeStore = () => { try { return typeof window === 'undefined' ? null : window.sessionStorage; } catch { return null; } };
+export function rememberSsoChallenge(challenge: string, now = Date.now()) { try { challengeStore()?.setItem(SSO_CHALLENGE_KEY, JSON.stringify({ challenge, at: now })); } catch { /* the in-memory copy still works */ } }
+export function recallSsoChallenge(now = Date.now()): string | null {
+  try {
+    const raw = challengeStore()?.getItem(SSO_CHALLENGE_KEY);
+    if (!raw) return null;
+    const stored = JSON.parse(raw) as { challenge?: unknown; at?: unknown };
+    return typeof stored.challenge === 'string' && /^[A-Za-z0-9_-]{43}$/.test(stored.challenge) && typeof stored.at === 'number' && now - stored.at >= 0 && now - stored.at <= SSO_CHALLENGE_TTL_MS ? stored.challenge : null;
+  } catch { return null; }
+}
+export function forgetSsoChallenge() { try { challengeStore()?.removeItem(SSO_CHALLENGE_KEY); } catch { /* nothing to forget */ } }
+
 /** In the Capacitor shell a same-tab navigation would replace the whole app with the Training site, so the flag stays off there. */
 function isNativeShell(): boolean {
   try { return typeof window !== 'undefined' && Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()); } catch { return false; }
@@ -238,17 +270,27 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const trainingSsoEnabled = !previewMode && !isNativeShell() && (trainingSsoEnabledOverride ?? HUB_TRAINING_SSO_BUILD);
   const [ssoBusy, setSsoBusy] = React.useState(false);
   const [ssoMessage, setSsoMessage] = React.useState('');
-  const openTrainingWithSso = async () => {
+  const [pendingChallenge, setPendingChallenge] = React.useState<string | null>(null);
+  /** Step 1 (the tap): leave for Training's start page. No code exists yet and nothing is minted here, so a second tap cannot mint anything either. */
+  const openTrainingWithSso = () => {
     if (ssoBusy) return;
+    const start = trainingSsoStartUrl(HUB_TRAINING_URL);
+    if (!start) { setSsoMessage(trainingSsoMessage('invalid_destination')); return; }
+    setSsoBusy(true); setSsoMessage('');
+    trainingSsoRuntime.navigate(start);          // stay busy while the page unloads
+  };
+  /** Step 2 (Training sent the browser back with its challenge): ask Platform for a code bound to that challenge and follow only the validated destination. */
+  const continueTrainingSso = async (challenge: string) => {
     setSsoBusy(true); setSsoMessage('');
     try {
-      const result = await api<{ v: number; redirectUrl: string }>('/api/me/training/sso', { method: 'POST', body: '{}' });
+      const result = await api<{ v: number; redirectUrl: string }>('/api/me/training/sso', { method: 'POST', body: JSON.stringify({ challenge }) });
       const destination = trainingSsoDestination(result.redirectUrl, HUB_TRAINING_URL);
-      if (!destination) { setSsoMessage(trainingSsoMessage('invalid_destination')); setSsoBusy(false); return; }
+      if (!destination) { setSsoMessage(trainingSsoMessage('invalid_destination')); setSsoBusy(false); setView('bunker'); return; }
       trainingSsoRuntime.navigate(destination);
-      return;                       // stay busy while the page unloads: a second tap must not mint another code
+      return;                       // stay busy while the page unloads
     } catch (error) {
       setSsoMessage(trainingSsoMessage(error instanceof Error ? error.message : ''));
+      setView('bunker');
     }
     setSsoBusy(false);
   };
@@ -367,6 +409,25 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   };
   const retryPreferenceSave = () => { if (lastPreferencePatch.current) void savePreferences(lastPreferencePatch.current); };
   React.useEffect(() => { void refresh(); }, [refresh]);
+  // Training sent the browser back with the challenge of the flow it started. Read it once, scrub it from the address bar and keep it until the person is signed in.
+  React.useEffect(() => {
+    if (!trainingSsoEnabled || typeof window === 'undefined') return;
+    const arrived = ssoChallengeFromHash(window.location.hash);
+    if (arrived) {
+      try { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); } catch { /* the address bar is cosmetic */ }
+      rememberSsoChallenge(arrived); setPendingChallenge(arrived);
+    } else {
+      const waiting = recallSsoChallenge();
+      if (waiting) setPendingChallenge(waiting);
+    }
+  }, [trainingSsoEnabled]);
+  React.useEffect(() => {
+    if (!pendingChallenge || !profile || !trainingSsoEnabled) return;
+    const challenge = pendingChallenge;
+    setPendingChallenge(null); forgetSsoChallenge();          // single use: a reload must not mint a second code
+    void continueTrainingSso(challenge);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingChallenge, profile, trainingSsoEnabled]);
   React.useEffect(() => {
     if (previewMode && preview) { setSessions(preview.sessions); setBookingServices(preview.services); setScheduleLoading(false); setScheduleError(false); return; }
     let current = true;
@@ -565,6 +626,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   return <div className={`client-app hub-theme${resolvedAppearance === 'light' ? ' hub-theme-light' : ''}`} data-appearance={resolvedAppearance}>
     <header className="client-header" data-view={view}><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><div className="client-header-actions">{previewMode&&<span className="preview-pill">DEMO · DATOS FICTICIOS</span>}{pilotLoginEnabled && profile && <button className="text-button" type="button" onClick={() => void logout()} disabled={busy === 'logout'}>{busy === 'logout' ? 'Saliendo…' : 'Cerrar sesión'}</button>}{profile && <><button className="notification-bell" aria-label={`Notificaciones${unreadNotifications?`, ${unreadNotifications} sin leer`:''}`} onClick={()=>void openNotifications()}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>{unreadNotifications>0&&<span aria-hidden="true">{unreadNotifications>99?'99+':unreadNotifications}</span>}</button><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile.firstName.slice(0,1)}</button></>}</div></header>
     <main className="client-main" id="main-content">
+      {(pendingChallenge || (ssoBusy && view !== 'bunker')) && <p className="inline-message" role="status">Abriendo Búnker con tu cuenta del centro…</p>}
       {loading && <div className="loading-card" role="status"><span className="spinner"/> Cargando tu espacio…</div>}
       {!loading && error === 'client_authentication_required' && pilotLoginEnabled && <section className="state-card error-card" aria-labelledby="member-login-title"><span className="state-icon">2J</span><p className="eyebrow">PILOTO LOCAL</p><h1 id="member-login-title">Tu espacio, a tu manera</h1><p>Introduce el código de acceso de tu piloto para consultar tus reservas y derechos.</p><form className="member-login-form" onSubmit={event => void login(event)}><label className="field-label" htmlFor="member-pilot-code">Código de acceso</label><input id="member-pilot-code" name="code" type="password" autoComplete="one-time-code" value={pilotCode} onChange={event => setPilotCode(event.target.value)} required maxLength={128}/>{loginError && <p role="alert" className="inline-message">{loginError}</p>}<button className="button primary" disabled={busy === 'login' || !pilotCode}>{busy === 'login' ? 'Entrando…' : 'Iniciar sesión'}</button></form></section>}
       {!loading && error && !(error === 'client_authentication_required' && pilotLoginEnabled) && <section className="state-card error-card" role="alert"><span className="state-icon">!</span><h1>Tu espacio no está disponible ahora</h1><p>{error === 'client_authentication_required' ? 'Inicia sesión con tu cuenta para consultar tus reservas y derechos.' : 'Comprueba tu conexión e inténtalo de nuevo.'}</p><button className="button primary" onClick={() => void refresh()}>Intentar de nuevo</button></section>}
