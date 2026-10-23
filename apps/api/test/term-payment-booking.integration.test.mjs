@@ -44,14 +44,37 @@ async function createContractPlan(service,{paymentBlock='enforce',unlimited=fals
   assert.equal((await app.inject({method:'POST',url:`/api/plans/${result.json().id}/activate`})).statusCode,200);
   return result.json();
 }
-async function assign(client,plan,assigned='2026-10-15') {
+const utcDateOffset = (offsetDays, from = new Date()) => {
+  const date = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate() + offsetDays));
+  return date.toISOString().slice(0, 10);
+};
+const addDays = (date, days) => utcDateOffset(days, new Date(`${date}T00:00:00Z`));
+const utcMonthDateFrom = (date, monthOffset, day) => {
+  const [year, month] = date.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1 + monthOffset, day)).toISOString().slice(0, 10);
+};
+const futureSessionStart = (hoursFromNow = 24) => new Date(Date.now() + hoursFromNow * 60 * 60 * 1000).toISOString();
+function canaryMidnight(date) {
+  const [year, month, day] = date.split('-').map(Number);
+  let instant = Date.UTC(year, month - 1, day);
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(instant)).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+    const observed = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    const target = Date.UTC(year, month - 1, day);
+    instant += target - observed;
+  }
+  return new Date(instant);
+}
+
+async function assign(client,plan,assigned=utcDateOffset(-8)) {
   return coordinateContractAssignment(sql,{clientId:client.id,planId:plan.id,idempotencyKey:randomUUID(),contractStart:assigned,amountCents:5000},actor,new Date(`${assigned}T12:00:00Z`));
 }
-async function createSession(service,{capacity=3,startsAt='2026-10-23T12:00:00.000Z'}={}) {
+async function createSession(service,{capacity=3,startsAt=futureSessionStart()}={}) {
   const result=await app.inject({method:'POST',url:'/api/calendar/sessions',payload:{serviceId:service.id,areaId:service.areaId,startsAt,durationMinutes:60,capacity}});
   assert.equal(result.statusCode,201,result.body);return result.json();
 }
-async function evaluate(clientId,serviceId,now=new Date('2026-10-22T12:00:00Z'),startsAt='2026-10-23T12:00:00.000Z') {
+async function evaluate(clientId,serviceId,now=new Date(),startsAt=futureSessionStart()) {
   return sql.begin(tx=>evaluateBookingEligibility({tx,clientId,serviceId,startsAt,now}));
 }
 async function recordPayment(chargeId,amountCents) {
@@ -65,10 +88,11 @@ const [standardArea]=await sql`SELECT id FROM areas WHERE normalized_name='la sa
 if(!standardArea)throw new Error('Expected standard La Sala area in fresh schema.');area=standardArea;
 
 test('F1-C term payment access uses ledger truth; unpaid/partial overdue is denied and full payment reopens automatically',async()=>{
-  const client=await createClient(),service=await createService(),plan=await createContractPlan(service),assignment=await assign(client,plan);
-  assert.equal(assignment.dueOn,'2026-10-20');
-  assert.equal((await evaluate(client.id,service.id,new Date('2026-10-20T22:59:59Z'))).eligible,true,'inclusive due date remains usable');
-  assert.equal((await evaluate(client.id,service.id,new Date('2026-10-20T23:00:00Z'))).reason,'debt_restriction');
+  const client=await createClient(),service=await createService(),plan=await createContractPlan(service),contractStart=utcDateOffset(-8),assignment=await assign(client,plan,contractStart);
+  assert.equal(assignment.dueOn,addDays(contractStart,5));
+  const blockEffectiveAt=canaryMidnight(addDays(assignment.dueOn,1));
+  assert.equal((await evaluate(client.id,service.id,new Date(blockEffectiveAt.getTime()-1000))).eligible,true,'inclusive due date remains usable');
+  assert.equal((await evaluate(client.id,service.id,blockEffectiveAt)).reason,'debt_restriction');
   const session=await createSession(service);
   const denied=await app.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,payload:{clientId:client.id,entitlementAssignmentId:assignment.assignmentId}});
   assert.equal(denied.statusCode,409);assert.equal(denied.json().error,'debt_restriction');
@@ -96,7 +120,7 @@ test('refund re-blocks only the affected assignment, another assignment remains 
   assert.equal(evaluation.availableAlternatives.some(option=>option.assignmentId===independent.assignmentId),true,'payment_block=off independent assignment remains eligible');
   const [before]=await sql`SELECT status FROM calendar_reservations WHERE id=${first.json().id}`;
   assert.equal(before.status,'reserved');
-  const secondSession=await createSession(service,{startsAt:'2026-10-23T15:00:00.000Z'});
+  const secondSession=await createSession(service,{startsAt:futureSessionStart(27)});
   const second=await app.inject({method:'POST',url:`/api/calendar/sessions/${secondSession.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,entitlementAssignmentId:independent.assignmentId}});
   assert.equal(second.statusCode,201,second.body);
   const [afterExisting]=await sql`SELECT status FROM calendar_reservations WHERE id=${first.json().id}`;
@@ -119,23 +143,25 @@ test('overdue term assignment does not block waitlist join, but promotion re-eva
 });
 
 test('term session bags are selected by session date and never borrow from a future month',async()=>{
-  const client=await createClient(),service=await createService(),plan=await createContractPlan(service,{paymentBlock:'off'}),assignment=await assign(client,plan);
+  const client=await createClient(),service=await createService(),plan=await createContractPlan(service,{paymentBlock:'off'}),contractStart=utcDateOffset(-8),assignment=await assign(client,plan,contractStart);
   const [right]=await sql`SELECT id FROM plan_rights WHERE plan_id=${plan.id} AND right_type='sessions_quota'`;
-  const october=await evaluate(client.id,service.id,new Date('2026-10-22T12:00:00Z'),'2026-10-23T12:00:00Z');
-  const november=await evaluate(client.id,service.id,new Date('2026-10-22T12:00:00Z'),'2026-11-10T12:00:00Z');
-  const december=await evaluate(client.id,service.id,new Date('2026-10-22T12:00:00Z'),'2026-12-10T12:00:00Z');
+  const firstPeriodDate=addDays(contractStart,1),secondPeriodDate=utcMonthDateFrom(contractStart,1,10),thirdPeriodDate=utcMonthDateFrom(contractStart,2,10);
+  const evaluationNow=new Date(`${contractStart}T12:00:00Z`);
+  const october=await evaluate(client.id,service.id,evaluationNow,`${firstPeriodDate}T12:00:00Z`);
+  const november=await evaluate(client.id,service.id,evaluationNow,`${secondPeriodDate}T12:00:00Z`);
+  const december=await evaluate(client.id,service.id,evaluationNow,`${thirdPeriodDate}T12:00:00Z`);
   assert.equal(october.eligible,true);assert.equal(november.eligible,true);assert.equal(december.eligible,true);
-  const [octPeriod]=await sql`SELECT id FROM assignment_entitlement_periods WHERE assignment_id=${assignment.assignmentId} AND right_id=${right.id} AND period_start='2026-10-15'`;
-  const [novPeriod]=await sql`SELECT id,sessions_granted AS granted FROM assignment_entitlement_periods WHERE assignment_id=${assignment.assignmentId} AND right_id=${right.id} AND period_start='2026-11-01'`;
-  const [decPeriod]=await sql`SELECT id FROM assignment_entitlement_periods WHERE assignment_id=${assignment.assignmentId} AND right_id=${right.id} AND period_start='2026-12-01'`;
+  const [octPeriod]=await sql`SELECT id FROM assignment_entitlement_periods WHERE assignment_id=${assignment.assignmentId} AND right_id=${right.id} AND period_start=${contractStart}`;
+  const [novPeriod]=await sql`SELECT id,sessions_granted AS granted FROM assignment_entitlement_periods WHERE assignment_id=${assignment.assignmentId} AND right_id=${right.id} AND period_start=${utcMonthDateFrom(contractStart,1,1)}`;
+  const [decPeriod]=await sql`SELECT id FROM assignment_entitlement_periods WHERE assignment_id=${assignment.assignmentId} AND right_id=${right.id} AND period_start=${utcMonthDateFrom(contractStart,2,1)}`;
   assert.equal(october.selectedEntitlement.entitlementPeriodIdsByRightId[right.id],octPeriod.id);
   assert.equal(november.selectedEntitlement.entitlementPeriodIdsByRightId[right.id],novPeriod.id);
   assert.equal(december.selectedEntitlement.entitlementPeriodIdsByRightId[right.id],decPeriod.id);
   await sql`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,actor_id,idempotency_key,request_hash,entitlement_period_id)
     VALUES (${client.id},${assignment.assignmentId},${right.id}::text,'adjustment',${-Number(novPeriod.granted)},'Test de bolsa agotada','f1c2-test-admin',${randomUUID()},${'b'.repeat(64)},${novPeriod.id})`;
-  const exhaustedNovember=await evaluate(client.id,service.id,new Date('2026-10-22T12:00:00Z'),'2026-11-10T12:00:00Z');
+  const exhaustedNovember=await evaluate(client.id,service.id,evaluationNow,`${secondPeriodDate}T12:00:00Z`);
   assert.equal(exhaustedNovember.eligible,false);assert.equal(exhaustedNovember.reason,'entitlement_exhausted');
-  assert.equal((await evaluate(client.id,service.id,new Date('2026-10-22T12:00:00Z'),'2026-12-10T12:00:00Z')).eligible,true,'December remains independently usable');
+  assert.equal((await evaluate(client.id,service.id,evaluationNow,`${thirdPeriodDate}T12:00:00Z`)).eligible,true,'December remains independently usable');
 });
 
 test('unlimited term assignments require no grant but remain behind enforced payment access',async()=>{
@@ -148,10 +174,11 @@ test('unlimited term assignments require no grant but remain behind enforced pay
 });
 
 test('reservation evaluation share-lock serializes with payment writer without a global lock',async()=>{
-  const client=await createClient(),service=await createService(),plan=await createContractPlan(service),assignment=await assign(client,plan);
+  const client=await createClient(),service=await createService(),plan=await createContractPlan(service),assignment=await assign(client,plan,utcDateOffset(-2));
   let lockedResolve,releaseResolve;
   const locked=new Promise(resolve=>{lockedResolve=resolve;});const release=new Promise(resolve=>{releaseResolve=resolve;});
-  const booking=sql.begin(async tx=>{const outcome=await evaluateBookingEligibility({tx,clientId:client.id,serviceId:service.id,startsAt:'2026-10-23T12:00:00Z',now:new Date('2026-10-20T20:00:00Z')});lockedResolve(outcome);await release;return outcome;});
+  const startsAt=futureSessionStart();
+  const booking=sql.begin(async tx=>{const outcome=await evaluateBookingEligibility({tx,clientId:client.id,serviceId:service.id,startsAt,now:new Date()});lockedResolve(outcome);await release;return outcome;});
   const outcome=await locked;assert.equal(outcome.eligible,true);
   const pendingPayment=recordPayment(assignment.chargeId,5000);
   let observedLock=false;
