@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { canaryBusinessDate, resolveTrainingCapabilities, type CapabilityAccessState, type EffectiveMembershipForCapabilities, type TrainingLinkStatus } from '@2j/domain';
+import { canaryBusinessDate, resolveTrainingCapabilities, resolveTrainingCapabilitiesV21, type CapabilityAccessState, type EffectiveMembershipForCapabilities, type TrainingLinkStatus } from '@2j/domain';
 import type { createDatabase } from './db.js';
 import { verifyInternalServiceRequest, type InternalServiceKeys } from './internal-service-auth.js';
 import { resolveEffectiveClientAssignments } from './entitlements.js';
@@ -17,14 +17,20 @@ const responseSchema = z.object({
   effectiveFrom: z.string().date().nullable(), expiresAt: z.string().datetime(), generatedAt: z.string().datetime(), source: z.object({platform:z.literal(true)}).strict(),
 }).strict();
 
-/** Read-only, server-authenticated Platform capability endpoint. */
+const responseSchemaV21 = responseSchema.omit({ contract: true }).extend({ contract: z.literal('2J-CAPABILITIES-V2.1'), revision: z.literal(1) }).strict();
+const CAPABILITY_ROUTES = [
+  { path: (personId: string) => `/api/internal/platform/v2/persons/${personId}/training-capabilities`, pattern: '/api/internal/platform/v2/persons/:personId/training-capabilities', resolve: resolveTrainingCapabilities, schema: responseSchema },
+  { path: (personId: string) => `/api/internal/platform/v2.1/persons/${personId}/training-capabilities`, pattern: '/api/internal/platform/v2.1/persons/:personId/training-capabilities', resolve: resolveTrainingCapabilitiesV21, schema: responseSchemaV21 },
+] as const;
+
+/** Read-only, server-authenticated Platform capability endpoints: V2 (unchanged) and V2.1 (versioned path; V2 consumers keep working). */
 export function registerTrainingCapabilitiesRoute(app: FastifyInstance<any,any,any,any,any>, db: DB, keys: InternalServiceKeys) {
-  app.get('/api/internal/platform/v2/persons/:personId/training-capabilities', async (request, reply) => {
+  for (const version of CAPABILITY_ROUTES) app.get(version.pattern, async (request, reply) => {
     reply.header('Cache-Control','no-store');
     const params = z.object({personId:personIdSchema}).strict().safeParse(request.params);
     if (!params.success) return reply.code(400).send({error:'invalid_person_id'});
     if (Object.keys(keys).length === 0) return reply.code(503).send({error:'service_auth_unavailable'});
-    const verified = await verifyInternalServiceRequest(request, db, keys, { expectedMethod:'GET', expectedPath:`/api/internal/platform/v2/persons/${params.data.personId}/training-capabilities` });
+    const verified = await verifyInternalServiceRequest(request, db, keys, { expectedMethod:'GET', expectedPath:version.path(params.data.personId) });
     if (verified && 'unavailable' in verified) return reply.code(503).send({error:'service_auth_unavailable'});
     if (!verified) return reply.code(401).send({error:'service_auth_rejected'});
 
@@ -56,7 +62,7 @@ export function registerTrainingCapabilitiesRoute(app: FastifyInstance<any,any,a
     }
     const [suspension] = await db`SELECT action FROM platform_training_access_events WHERE person_id=${params.data.personId}::uuid ORDER BY occurred_at DESC,id DESC LIMIT 1`;
     const suspensionStatus = suspension?.action === 'suspended' ? 'suspended' : suspension?.action === 'lifted' ? 'lifted' : 'none';
-    const payload = resolveTrainingCapabilities({
+    const payload = version.resolve({
       personId:params.data.personId,
       link:activeLink,
       memberships,
@@ -64,7 +70,7 @@ export function registerTrainingCapabilitiesRoute(app: FastifyInstance<any,any,a
       nextKnownAccessTransition:effective.nextKnownAccessTransition,
       suspensionStatus,
     });
-    const parsed = responseSchema.safeParse(payload);
+    const parsed = version.schema.safeParse(payload);
     if (!parsed.success) {
       request.log.error({errorCode:'training_capability_contract_invalid'},'capability response failed contract validation');
       return reply.code(500).send({error:'capability_contract_invalid'});
