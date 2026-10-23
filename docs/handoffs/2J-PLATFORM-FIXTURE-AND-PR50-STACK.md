@@ -34,4 +34,3 @@ Otros fixtures de sesiones futuras fijas, sin dependencia del reloj actual y con
 ## Stack de calendario
 
 El rebase del stack de agenda de PR #50 y el commit `4690c9c2` de filtros se está realizando en una rama/worktree separado sobre el `origin/main` actualizado. La rama de este handoff permanece independiente y no contiene esos commits. El stack no se publicará sin autorización.
-
