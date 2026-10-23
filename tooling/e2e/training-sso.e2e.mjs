@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { b64, childEnv, cookieOf, freePort, httpCall, monthRange, passkeyCookieFor, randomSecret, resolveOutDir, sha256hex, signRequest, sleep, startProcess, stopProcess, waitHttp } from './lib.mjs';
+import { activateTrainingLink, b64, childEnv, cookieOf, freePort, httpCall, monthRange, passkeyCookieFor, randomSecret, resolveOutDir, sha256hex, signRequest, sleep, startProcess, stopProcess, waitHttp } from './lib.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
@@ -117,7 +117,7 @@ async function startBunker() {
   state.bunker = startProcess(out, 'bunker', ['server.js'], bunkerApiDir, {
     PORT: String(state.ports.bunker), DATA_DIR: path.join(out, 'bunker-data'), SECRET_FILE: path.join(out, 'bunker-data', 'secret'), RP_ID: 'localhost', ORIGIN: B(),
     PLATFORM_SSO_ENABLED: 'true', PLATFORM_API_BASE_URL: P(), PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
-    PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true',
+    PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true', PLATFORM_LINK_LIFECYCLE_ENABLED: 'true',
     PLATFORM_SERVICE_AUTH_KEYS: JSON.stringify({ [proofKey.id]: b64(proofKey.secret) }),
   });
   await waitHttp(`${B()}/api/health`, 'Búnker', out);
@@ -192,6 +192,10 @@ before(async () => {
     const body = JSON.stringify({ v: 1, code: issued.json.code, ...context });
     const exchanged = await httpCall(B(), 'POST', '/api/platform/v1/link-proofs/exchange', { body, headers: signRequest(proofKey, 'POST', '/api/platform/v1/link-proofs/exchange', Buffer.from(body)) });
     assert.equal(exchanged.status, 200, `proof exchange ${label}: ${exchanged.text}`);
+    if (label === 'forbid') continue;                                   // its confirmation is part of case 06a
+    const [link] = await state.sql`SELECT link_id FROM training_account_links WHERE person_id=${person.personId}`;
+    const acked = await activateTrainingLink(B(), proofKey, { linkId: link.link_id, personId: person.personId, trainingUserId: person.uid });
+    assert.equal(acked.status, 200, `Búnker acknowledgement ${label}: ${acked.text}`);
   }
 });
 
@@ -259,7 +263,9 @@ E2E('06a', 'modos por usuario: legacy sin llamadas a Platform, shadow no bloquea
   assert.deepEqual(await probe(cookie), { history: true, guided: true, premium: true, coach: true, followup: true }, 'legacy keeps today\'s full access');
   assert.equal((await adminSetMode(uid, 'enforced')).json.error, 'transition_not_allowed');
   assert.equal((await adminSetMode(uid, 'shadow')).status, 409, 'a link confirmed by Búnker is required first');
-  await ensureSso('forbid');                                           // establishes Búnker's confirmed link
+  const person = state.people.forbid, [link] = await state.sql`SELECT link_id FROM training_account_links WHERE person_id=${person.personId}`;
+  assert.equal((await activateTrainingLink(B(), proofKey, { linkId: link.link_id, personId: person.personId, trainingUserId: uid })).status, 200);   // Búnker confirms the link
+  await ensureSso('forbid');
   assert.equal((await adminSetMode(uid, 'shadow')).status, 200);
   assert.deepEqual(await probe(cookie), { history: true, guided: true, premium: true, coach: true, followup: true }, 'shadow never blocks');
   assert.equal((await adminSetMode(uid, 'enforced')).status, 200);

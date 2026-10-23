@@ -78,3 +78,10 @@ export const monthRange = offset => {
   const iso = d => d.toISOString().slice(0, 10);
   return { startsOn: iso(start), endsOn: iso(end), dueOn: iso(start) };
 };
+
+/** Búnker's acknowledgement of an existing Platform link (what Platform's link flow asks for after a verified proof). Used to seed already-linked personas. */
+export async function activateTrainingLink(bunkerBase, proofKey, { linkId, personId, trainingUserId, linkVersion = 1 }) {
+  const route = '/api/platform/v1/link/activate';
+  const body = JSON.stringify({ v: 1, linkId, linkVersion, personId, trainingUserId, origin: 'proof' });
+  return httpCall(bunkerBase, 'POST', route, { body, headers: signRequest(proofKey, 'POST', route, Buffer.from(body)) });
+}
