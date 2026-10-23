@@ -160,6 +160,47 @@ test('self-service facade derives the identity server-side and hides another cli
   assert.equal((await sql`SELECT status FROM calendar_reservations WHERE id=${reserved.json().id}`)[0].status, 'reserved');
 });
 
+test('Member session list includes server-computed eligibility states without detail requests', async () => {
+  const otherServiceResponse = await admin.inject({ method: 'POST', url: '/api/services', payload: { name: `Uncovered ${randomUUID()}`, areaId: area.id, status: 'active' } });
+  assert.equal(otherServiceResponse.statusCode, 201, otherServiceResponse.body);
+  const otherService = otherServiceResponse.json();
+  const makeSession = async (dayOffset, sessionServiceId = service.id, capacity = 2) => {
+    const startsAt = new Date(Date.now() + dayOffset * 86_400_000 + 12 * 3_600_000).toISOString();
+    const [row] = await sql`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,created_by)
+      VALUES (${sessionServiceId},${area.id},${startsAt},45,${capacity},'eligibility-list-test') RETURNING id`;
+    return row.id;
+  };
+  const availableId = await makeSession(3);
+  const fullId = await makeSession(4, service.id, 1);
+  const bookedId = await makeSession(5);
+  const notAllowedId = await makeSession(6, otherService.id);
+  const waitlistedId = await makeSession(7);
+  const suspendedId = await makeSession(8, otherService.id);
+  await sql`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,created_by)
+    VALUES (${fullId},${b.id},'synthetic-test','eligibility-list-test'),(${bookedId},${a.id},'synthetic-test','eligibility-list-test')`;
+  await sql`INSERT INTO calendar_waitlist_entries(session_id,client_id,entitlement_reference,created_by)
+    VALUES (${waitlistedId},${a.id},'synthetic-test','eligibility-list-test'),(${suspendedId},${a.id},'synthetic-test','eligibility-list-test')`;
+
+  const from = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const to = new Date(Date.parse(`${from}T12:00:00Z`) + 10 * 86_400_000).toISOString().slice(0, 10);
+  const response = await appA.inject({ method: 'GET', url: `/api/me/sessions?from=${from}&to=${to}` });
+  assert.equal(response.statusCode, 200, response.body);
+  const listed = response.json().sessions;
+  const byId = new Map(listed.map(row => [row.id, row]));
+  assert.equal(byId.get(availableId)?.availability, 'available');
+  assert.equal(byId.get(fullId)?.availability, 'full');
+  assert.equal(byId.get(bookedId)?.availability, 'booked');
+  assert.equal(byId.get(notAllowedId)?.availability, 'not_allowed_by_plan');
+  assert.equal(byId.get(notAllowedId)?.availabilityReason, 'service_not_allowed');
+  assert.equal(byId.get(waitlistedId)?.availability, 'waitlisted');
+  assert.equal(byId.get(suspendedId)?.availability, 'waitlist_suspended');
+  assert.equal(byId.get(suspendedId)?.availabilityReason, 'service_not_allowed');
+  for (const id of [availableId, fullId, bookedId, notAllowedId, waitlistedId, suspendedId]) {
+    assert.equal('myWaitlistEntryId' in byId.get(id), false, 'internal waitlist entry IDs are not exposed');
+    assert.equal(typeof byId.get(id)?.availabilityReason === 'string' || byId.get(id)?.availabilityReason === null, true);
+  }
+});
+
 test('an active Member without any fee can still read Profile, inbox and documents', async () => {
   const client = await makeClient('No fee');
   const member = buildServer(process.env.DATABASE_URL, { clientAuthorizationResolver: async () => ({ clientId: client.id }) });
