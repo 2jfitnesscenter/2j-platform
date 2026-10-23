@@ -67,7 +67,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Release manifest generation failed.' }
     $archive = "$releaseRoot.zip"
     Compress-Archive -Path (Join-Path $releaseRoot '*') -DestinationPath $archive -CompressionLevel Optimal
-    $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = (& node -e 'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); process.stdout.write(createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"));' $archive).Trim()
+    if ($LASTEXITCODE -ne 0 -or $hash -notmatch '^[0-9a-f]{64}$') { throw 'Could not calculate the release SHA-256.' }
     Write-Host "ARTIFACT=$archive"
     Write-Host "SHA256=$hash"
     Write-Host 'DEPLOYED=no'
