@@ -2,7 +2,7 @@
   "task": "2J-HOME-NEWS-NOTICES",
   "repository": "2jfitnesscenter/2j-platform",
   "branch": "agent/codex/2J-HOME-NEWS-NOTICES",
-  "baseSha": "fa7f4e630f4387ac242a276f233ec87a5efffa19",
+  "baseSha": "ad29788c83e671c4d8d989558d60dec2c65eada2",
   "status": "verified-local",
   "changedFiles": [
     "apps/client-app/test/client-app.test.mjs",
@@ -10,7 +10,7 @@
     "docs/handoffs/2J-HOME-NEWS-NOTICES.json"
   ],
   "tests": {
-    "clientApp": { "passed": 18, "failed": 0 },
+    "clientApp": { "passed": 25, "failed": 0, "note": "Full rebased stack suite; API integration test was run earlier on the same API code." },
     "centerNewsApiIntegration": { "passed": 1, "failed": 0, "database": "ephemeral local PostgreSQL" },
     "typecheck": "passed",
     "build": "passed"

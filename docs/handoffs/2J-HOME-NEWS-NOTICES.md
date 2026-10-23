@@ -3,7 +3,7 @@
 ## Estado local
 
 - Rama: `agent/codex/2J-HOME-NEWS-NOTICES`.
-- Base: `fa7f4e630f4387ac242a276f233ec87a5efffa19`.
+- Base rebased: `ad29788c83e671c4d8d989558d60dec2c65eada2` (the rebased Store branch, based on Claude `MEASUREMENTS-CLIENT-rebased` and `PUSH-CLIENT-rebased`).
 - Se añadió una prueba de reintento para lectura de noticias; no se cambió el contrato API ni la lógica de publicación.
 
 ## Real, simulado y pendiente
@@ -16,7 +16,7 @@
 
 ## Verificación
 
-- Cliente: 18/18. La prueba nueva simula una caída temporal de `GET /api/me/news`, usa el reintento de Inicio y comprueba que se renderiza el contenido recuperado sin cuota.
+- Suite completa de cliente, después de apilar sobre las ramas rebased: 25/25. La prueba de noticias simula una caída temporal de `GET /api/me/news`, usa el reintento de Inicio y comprueba que se renderiza el contenido recuperado sin cuota.
 - API `center-news.test.mjs`: 1/1 sobre un contenedor PostgreSQL efímero local, aislado y retirado tras la prueba; verifica permisos editoriales, visibilidad, destacado, retirada y auditoría.
 - Typecheck y build de `@2j/client-app`: correctos.
 - La prueba de Home emplea respuestas de contrato sintéticas; la de API usa PostgreSQL local, no staging ni producción.
