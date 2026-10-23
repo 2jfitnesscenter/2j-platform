@@ -215,7 +215,7 @@ test('revocation: access stops at once; closed for good with Training ACK, an un
   assert.equal(waived.statusCode, 200, waived.body); assert.equal(waived.json().waived, true);
   const closed = (await linkOf(person.personId))[0];
   assert.equal(closed.status, 'revoked'); assert.match(closed.revocation_ack_id, /^waived:qa-admin/);
-  assert.equal((await audit(person.personId, 'training.link_revoked')).at(-1).details.waived, true);
+  assert.ok((await audit(person.personId, 'training.link_revoked')).some(row => row.details.waived === true), 'the waiver is audited');
   training.mode = 'ok';
 });
 

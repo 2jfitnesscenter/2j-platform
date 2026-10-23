@@ -23,6 +23,7 @@ import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
+import { registerPlatformPasskeyRoutes } from './platform-passkeys.js';
 import { createTrainingLinkTransactions, registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
 import { createTrainingLinkFlow, createTrainingServiceClient, registerTrainingLinkFlowRoutes, type TrainingServiceClient } from './training-link-flow.js';
 import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, type TrainingAdapter } from './training-integration.js';
@@ -169,6 +170,11 @@ export type ServerOptions = {
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
   /** Bilateral link lifecycle (finish linking with the owner's proof, activate, revoke). Off by default; needs verified + canonical linking and service calls. */
+  /** Platform-owned WebAuthn passkeys. Off by default; refused outside development/test until a human security review approves a rollout. */
+  platformPasskeysEnabled?: boolean;
+  /** Exact relying-party id, immutable once credentials exist (for example home.2jfitnesscenter.com). */
+  platformPasskeyRpId?: string | null;
+  platformPasskeyMaxRequestsPerMinute?: number;
   trainingLinkLifecycleEnabled?: boolean;
   /** Idempotent provisioning of a minimal Training profile. Off by default. */
   trainingProvisioningEnabled?: boolean;
@@ -182,6 +188,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   if (options.memberPilotAuthEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) {
     throw new Error('Pilot member authentication is restricted to development/test environments.');
   }
+  if (options.platformPasskeysEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Platform passkeys are restricted to development/test environments until a security review approves a rollout.');
   if (options.memberPilotBookingEnabled && (!options.memberPilotAuthEnabled || !['development', 'test'].includes(process.env.NODE_ENV ?? ''))) throw new Error('Member booking pilot mutations require development/test Member pilot authentication.');
   if (options.memberPilotCohortManagementEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Member pilot cohort management is restricted to development/test environments.');
   const app = Fastify({
@@ -203,7 +210,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const { client } = createDatabase(databaseUrl);
   const trainingCapabilitiesKeys = options.trainingCapabilitiesKeys ?? parseInternalServiceKeys(process.env.PLATFORM_INTERNAL_SERVICE_KEYS);
   const authorizationResolver = options.authorizationResolver ?? (async () => null);
-  const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null });
+  const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
   const trainingSummaryAdapter = options.trainingSummaryEnabled === true && options.trainingServiceCallsEnabled === true
     ? options.trainingSummaryAdapter ?? (() => {
@@ -275,6 +282,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter);
   registerMemberBookingCohortRoutes(app, client, authorizationResolver, options.memberPilotCohortManagementEnabled === true);
   memberPilotAuth.register(app);
+  registerPlatformPasskeyRoutes(app, client, { enabled: options.platformPasskeysEnabled === true, rpId: options.platformPasskeyRpId ?? null, origin: options.memberAppOrigin ?? null, startSession: memberPilotAuth.startSession, resolveAuthorization: authorizationResolver, ...(options.platformPasskeyMaxRequestsPerMinute ? { maxRequestsPerMinute: options.platformPasskeyMaxRequestsPerMinute } : {}) });
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
@@ -295,7 +303,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
       fetcher: globalThis.fetch,
     }),
-    resolvePersonAuth: options.resolvePersonAuth ?? (async () => null),
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
   });
   app.decorate('trainingCanonicalLinkLifecycle', createTrainingCanonicalLinkLifecycle(client, {
     trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
@@ -655,6 +663,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     trainingSummaryEnabled: process.env.TRAINING_SUMMARY_ENABLED === 'true',
     trainingVerifiedLinkingEnabled: process.env.TRAINING_VERIFIED_LINKING_ENABLED === 'true',
     trainingCanonicalLinkingEnabled: process.env.TRAINING_CANONICAL_LINKING_ENABLED === 'true',
+    platformPasskeysEnabled: process.env.PLATFORM_PASSKEYS_ENABLED === 'true',
+    platformPasskeyRpId: process.env.PLATFORM_PASSKEY_RP_ID ?? null,
     trainingLinkLifecycleEnabled: process.env.TRAINING_LINK_LIFECYCLE_ENABLED === 'true',
     trainingProvisioningEnabled: process.env.TRAINING_PROVISIONING_ENABLED === 'true',
     trainingServiceAllowInsecureLoopback: process.env.TRAINING_SERVICE_ALLOW_INSECURE_LOOPBACK === 'true',
