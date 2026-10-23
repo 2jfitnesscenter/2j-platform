@@ -1,47 +1,74 @@
 # Handoff 2J-HOME-BOOKING-PARITY
 
-## Estado
+## Estado verificado
 
-- Rama: `agent/codex/2J-HOME-BOOKING-PARITY`
-- Base local: `e8931e239671df0f273e0f9d4c5655b1667bd1f7`
-- Base Platform integrada: `f87818afe474176c6e6ae77cb4d62a7e73fc1adf`
-- Commit de implementación: `e60c399` (`feat(client-app): align booking shortcuts with decisions`).
-- PR remoto: no creado. `AGENTS.md` prohíbe llamadas a proveedores/uso de credenciales; la rama queda preparada para que el operador autorizado cree el Draft PR por el flujo permitido.
-- Sin despliegue, migraciones, Búnker ni cambios de Platform API.
+- Repositorio: `2jfitnesscenter/2j-platform`.
+- Rama local: `agent/codex/2J-HOME-BOOKING-PARITY`.
+- HEAD actual de implementación: `20e8c2e12aab826b943167eac5541fe5d10eae26`.
+- Commits de esta línea: `e60c399` (flujo de reserva y cancelación), `c0c7b71` (handoff anterior), `20e8c2e` (D185–D198).
+- Draft PR: ninguno; la rama queda local para que Claude Code la publique según la instrucción del propietario.
+- Estado del worktree al cerrar: limpio.
+- Sin cambios en Platform API/contratos, capacidades, Búnker, base de datos, producción ni infraestructura.
 
-## Decisiones abordadas
+## D185–D198
 
-- D191: «Mis reservas» está disponible desde Perfil; no se añade una pestaña a la navegación de cinco secciones.
-- D192: la tarjeta de Próxima reserva incluye acceso a Mis reservas y acción Cancelar.
-- D188: Cancelar reutiliza primero `GET /api/me/bookings/:id/cancellation-preview`; el resumen de recuperación/pérdida mostrado al cliente procede de Platform y la mutación sigue siendo server-side.
-- D193: Inicio oculta la tarjeta cuando no hay próxima reserva. El acceso a Mis reservas permanece en Perfil.
+| Decisión | Estado | Verificación / límite |
+|---|---|---|
+| D185 | Parcial | Tarjeta compacta: hora y estado disponible/completa/reservada/en espera, sin aforo ni número de lista. El listado `GET /api/me/sessions` no entrega elegibilidad de cuota; por tanto, “no permitida por tu cuota” solo puede mostrarse al abrir el detalle. Añadir esa elegibilidad al listado requiere trabajo del propietario de Platform y queda fuera de esta rama. |
+| D186 | Implementado | La ventana consulta `GET /api/me/sessions/:sessionId` y presenta servicio, fecha, hora, entrenador, duración y aforo disponible/total, con reservar, cancelar o salir de espera según estado. |
+| D187 | Implementado | `POST /api/me/sessions/:sessionId/reservations`; solo tras respuesta satisfactoria cierra el detalle y anuncia brevemente “Reserva realizada correctamente”. La clave de idempotencia se conserva ante respuesta perdida y se reutiliza al reintentar. |
+| D188 | Implementado previamente | La cancelación consulta `GET /api/me/bookings/:id/cancellation-preview`, confirma el resumen calculado por Platform y muta mediante `PATCH /api/me/bookings/:id/cancel`. |
+| D189 | Implementado | Mis reservas tiene únicamente las pestañas Próximas e Historial. |
+| D190 | Implementado | Listas por fecha/hora; Próximas en orden ascendente e Historial en orden descendente, con servicio, fecha/hora y estado. |
+| D191 | Implementado previamente | Acceso desde Inicio (próxima reserva) y Perfil; no se añade pestaña inferior. |
+| D192 | Implementado previamente | Inicio muestra la próxima reserva, acceso a Mis reservas y cancelación con confirmación. |
+| D193 | Implementado previamente | Inicio oculta la tarjeta si no hay reserva futura; Perfil conserva Mis reservas. |
+| D194 | Implementado con validación del servidor | Una sesión completa muestra “Lista de espera” en la propia tarjeta. La app consulta `GET /api/me/sessions/:sessionId` antes de confirmar; solo continúa si el servidor devuelve `canJoinWaitlist`. La mutación queda protegida por Platform. |
+| D195 | Implementado | Confirmación expresa informa de que la lista no garantiza plaza. Se crea con `POST /api/me/sessions/:sessionId/waitlist`; luego aparece confirmación breve. |
+| D196 | Implementado | Las entradas activas de espera aparecen en Próximas con estado En lista de espera; solo existen dos pestañas. |
+| D197 | Implementado | Salir requiere confirmación; el texto aclara que no es una cancelación de clase y que no tiene penalización. Usa `PATCH /api/me/waitlist/:id/cancel`. |
+| D198 | Implementado | No se expone la posición de cola. |
 
-## Cambios
+## Cambios del último commit
 
-- En Inicio, la tarjeta de próxima reserva se renderiza solo si hay una reserva futura confirmada.
-- La acción Cancelar deshabilita el modo sintético y cuentas fuera del cohort habilitado; cuando está activa reutiliza la vista previa y confirmación existentes.
-- Perfil incluye acceso a próximas reservas, lista de espera e historial.
-- Se conserva la navegación inferior de cinco secciones.
-- La prueba existente de flujo real de reserva/cancelación ahora recorre la cancelación desde Inicio y verifica el acceso desde Perfil.
+- Tarjetas compactas con solo hora y disponibilidad, sin aforo/ocupación o tamaño de cola.
+- Acción individual de reserva y aviso breve tras la persistencia confirmada por Platform.
+- Acción de lista de espera desde la tarjeta completa, con comprobación de elegibilidad del detalle y confirmación previa.
+- Mis reservas combina reservas y lista de espera en Próximas, separa Historial y añade interacción accesible con flechas izquierda/derecha.
+- Pruebas de reserva, reintento idempotente, espera, cancelación, historial y navegación por teclado actualizadas.
 
-## Verificación local
+## Contratos existentes reutilizados
+
+- `GET /api/me/booking-services`
+- `GET /api/me/sessions?from=&to=&serviceId=`
+- `GET /api/me/sessions/:sessionId`
+- `POST /api/me/sessions/:sessionId/reservations`
+- `POST /api/me/sessions/:sessionId/waitlist`
+- `GET /api/me/bookings`
+- `GET /api/me/bookings/:reservationId/cancellation-preview`
+- `PATCH /api/me/bookings/:id/cancel`
+- `PATCH /api/me/waitlist/:id/cancel`
+
+No se utiliza el endpoint HMAC interno. No se modifica el contrato versionado 2J-CAPABILITIES-V2.1 ni el endpoint Platform de capacidades. La rama `agent/codex/2J-CAPABILITIES-D40-D41` permanece solo como referencia independiente.
+
+## Pruebas y calidad
 
 - `pnpm --filter @2j/client-app test`: 15/15.
 - `pnpm --filter @2j/client-app typecheck`: correcto.
 - `pnpm --filter @2j/client-app build`: correcto.
-- Lint: no ejecutado; `apps/client-app/package.json` no define script `lint`.
-- No se ejecutaron migraciones ni se usaron datos reales.
+- `git diff --check`: correcto antes de los commits.
+- Lint: no ejecutado; `apps/client-app/package.json` no tiene script `lint`.
+- Las pruebas de interfaz usan respuestas sintéticas; no son una demostración contra una instancia real de Platform.
 
-## No incluido / siguiente
+## Secuencia siguiente
 
-- D185: simplificar tarjetas a hora + estado y mover ocupación únicamente al detalle.
-- D194–D198: acción de espera directamente en tarjeta, confirmación breve, organización en dos pestañas y estados de espera; revisar D199–D214 y su promoción automática según el contrato vigente.
-- D187: confirmar éxito con aviso breve y cierre de detalle después de que Platform confirme.
-- Perfil de medidas/salud (D01–D36, D47), capacidades V2.1, SSO y push dependen de contratos y consumidores que no se implementan aquí.
-- No calcular derechos en Home. D31 define el acceso Home sin cuota; D40/A23 rigen el baseline autónomo de Búnker y la conservación de usuarios actuales. La política aún requiere que el consumidor verifique capacidades del lado de Búnker.
+1. D31 — Home sin cuota (Home no calculará derechos).
+2. Push del lado cliente, coordinado con el contrato de Claude Code PR #71.
+3. Mediciones, después de confirmar sus contratos de Platform.
+4. Resolver con Platform la elegibilidad por cuota que falta en `GET /api/me/sessions`, necesaria para mostrar en la tarjeta “no permitida por tu cuota”.
 
-## Revisión
+## Revisión y publicación
 
-- Revisión independiente: pendiente.
-- QA independiente: pendiente.
-- Autorización de publicación/merge: no solicitada ni ejecutada.
+- Sin push, merge, Draft PR ni despliegue.
+- Revisión y QA independientes: pendientes.
+- Ninguna operación contra clientes o datos reales.

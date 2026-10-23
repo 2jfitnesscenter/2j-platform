@@ -4,10 +4,29 @@
   "branch": "agent/codex/2J-HOME-BOOKING-PARITY",
   "baseSha": "e8931e239671df0f273e0f9d4c5655b1667bd1f7",
   "platformBaseSha": "f87818afe474176c6e6ae77cb4d62a7e73fc1adf",
-  "implementationCommit": "e60c399",
+  "headSha": "20e8c2e12aab826b943167eac5541fe5d10eae26",
+  "implementationCommits": [
+    "e60c399",
+    "20e8c2e"
+  ],
   "pullRequest": null,
   "status": "local-review-ready",
-  "decisions": ["D188", "D191", "D192", "D193"],
+  "decisions": [
+    "D185",
+    "D186",
+    "D187",
+    "D188",
+    "D189",
+    "D190",
+    "D191",
+    "D192",
+    "D193",
+    "D194",
+    "D195",
+    "D196",
+    "D197",
+    "D198"
+  ],
   "changedFiles": [
     "apps/client-app/src/client-app.tsx",
     "apps/client-app/src/styles.css",
@@ -16,11 +35,17 @@
     "docs/handoffs/2J-HOME-BOOKING-PARITY.json"
   ],
   "verification": {
-    "clientAppTests": { "passed": 15, "failed": 0 },
+    "clientAppTests": {
+      "passed": 15,
+      "failed": 0
+    },
     "clientAppTypecheck": "passed",
     "clientAppBuild": "passed",
+    "diffCheck": "passed",
     "lint": "not-run-no-script-defined"
   },
+  "platformApiChanged": false,
+  "capabilitiesContractChanged": false,
   "productionChanged": false,
   "realDatabaseMigrationRun": false,
   "bunkerChanged": false,
@@ -28,8 +53,13 @@
   "independentReview": "pending",
   "independentQa": "pending",
   "limitations": [
-    "D185 and D194-D198 remain to implement and verify.",
-    "SSO, capabilities V2.1 consumer, measurements/health UI, and push remain separate work with dependencies documented in the handoff.",
-    "Remote Draft PR creation is blocked by repository AGENTS.md provider-call/credential restrictions in this execution workflow."
+    "D185 no puede mostrar elegibilidad por cuota en la tarjeta: GET /api/me/sessions no incluye esa propiedad; detalle sí valida contra Platform. Requiere decisión/cambio de contrato por Platform fuera de esta rama.",
+    "Pruebas ejecutadas contra mocks tipados/sintéticos, no contra Platform real.",
+    "D31, push (Claude Code PR #71) y mediciones siguen en cola."
+  ],
+  "nextSequence": [
+    "D31 Home sin cuota",
+    "Push cliente contra contrato Claude Code PR #71",
+    "Mediciones con contratos Platform confirmados"
   ]
 }
