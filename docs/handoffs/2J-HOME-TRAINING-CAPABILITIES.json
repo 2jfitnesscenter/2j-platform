@@ -1,0 +1,31 @@
+{
+  "task": "2J-HOME-TRAINING-CAPABILITIES",
+  "branch": "agent/codex/2J-HOME-TRAINING-CAPABILITIES",
+  "base": "7074177be0e9db7d42342466813627392f4a6d03",
+  "platformContractReference": {
+    "pullRequest": 73,
+    "commit": "d531caa920b728f7a77dfa023eec62c914500e1d",
+    "endpoint": "GET /api/me/membership",
+    "auth": "client session",
+    "ttlSecondsMax": 60
+  },
+  "implementation": {
+    "changedDomain": "Home client only",
+    "reads": "trainingCapabilities",
+    "refresh": "on Bunker destination entry",
+    "expiry": "discarded from memory at expiresAt",
+    "internalHmacEndpointUsed": false,
+    "businessRulesReimplemented": false,
+    "ssoImplemented": false
+  },
+  "validation": {
+    "clientTests": "25/25",
+    "typecheck": "pass",
+    "build": "pass",
+    "realPlatformRuntimeTest": "not run; PR #73 endpoint not present in the tested runtime"
+  },
+  "remaining": [
+    "Integrate Platform PR #73 in the runtime used by Home and run an authenticated end-to-end contract check",
+    "Implement SSO only from the separately approved shared contract"
+  ]
+}

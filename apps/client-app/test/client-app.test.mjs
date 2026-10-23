@@ -61,7 +61,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
     if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: memberPreferences }), { headers: { 'content-type': 'application/json' } });
     if (url === '/api/me' && loggedIn) return new Response(JSON.stringify({ profile: { id: 'd0700000-0000-4000-8000-000000000001', firstName: 'María', lastName: 'González', email: null, status: 'active' } }), { headers: { 'content-type': 'application/json' } });
     if (url === '/api/me' && !loggedIn) return new Response(JSON.stringify({ error: 'client_authentication_required' }), { status: 401, headers: { 'content-type': 'application/json' } });
-    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary', trainingCapabilities: { contract: '2J-CAPABILITIES-V2.1', revision: 1, version: 2, capabilityLevel: 'baseline', accessState: 'baseline', reasonCode: 'FREE_BASELINE', expiresAt: new Date(Date.now() + 30_000).toISOString(), trainingSubject: { linkStatus: 'not_linked' }, capabilities: { autonomousTraining: true, routineCreation: false, personalRoutineCreation: true, personalRoutineManagement: true, workoutRecording: true, workoutHistory: true, guidedTraining: true, premiumPrograms: true, aiCoach: false, professionalFollowUp: false } } }));
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }));
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }));
     if (String(url).startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [] }));
@@ -87,6 +87,13 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));
   assert.ok(ui.getByText('No tienes documentos pendientes.'));
   fireEvent.click(ui.getByRole('button', { name: 'Búnker', exact: true }));
+  assert.ok(await ui.findByText('Acceso básico'));
+  assert.ok(ui.getByText('Entrena con 2J'));
+  assert.ok(ui.getByText('Programas Premium'));
+  assert.equal(ui.queryByText('IA de entrenamiento'), null);
+  assert.equal(ui.queryByText('Seguimiento profesional'), null);
+  assert.ok(requests.filter(item => item.url === '/api/me/membership').length >= 2, 'Búnker refreshes session-authenticated membership capabilities on entry');
+  assert.equal(requests.some(item => String(item.url).includes('/api/internal/platform/')), false, 'Home never calls the internal HMAC endpoint');
   assert.ok(await ui.findByText('Búnker conectado'));
   assert.ok(ui.getByText('Programa actual: Fuerza base'));
   assert.ok(ui.getByText(/4 entrenos en los últimos 30 días/));
