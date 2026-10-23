@@ -3,7 +3,7 @@
 ## Estado
 
 - Rama local: `agent/codex/2J-HOME-TRAINING-CAPABILITIES`
-- Base: `origin/agent/codex/2J-HOME-MEASUREMENTS-CLIENT-rebased` (`7074177be0e9db7d42342466813627392f4a6d03`), que incorpora las ramas rebased de push y mediciones de Claude.
+- Base: ``3d4c5129c020654d3617482b21e8f27f3e6ee656` (SETTINGS-SECURITY sobre DOCUMENTS-CONSENTS, NEWS-NOTICES y STORE-HISTORY).
 - Contrato de referencia disponible localmente: PR #73, commit `d531caa920b728f7a77dfa023eec62c914500e1d`.
 - Este cambio solo modifica Home. No modifica el endpoint, Platform, SSO ni Búnker.
 
