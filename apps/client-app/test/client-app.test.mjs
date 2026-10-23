@@ -710,6 +710,37 @@ test('Inicio reads Center News independently from notifications and opens a newe
   cleanup();dom.window.close();
 });
 
+test('Noticias remains available without a fee and recovers from a temporary Platform read failure', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage },
+  });
+  let newsRequests = 0;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '11111111-1111-4111-8111-111111111111', firstName: 'Eva', lastName: 'Sin cuota', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
+    if (url === '/api/me/news') { newsRequests++; const featured = { id: '22222222-2222-4222-8222-222222222222', title: 'Horario de apertura', body: 'El sábado abrimos a las nueve.', featured: true, publishedAt: '2026-10-22T09:00:00.000Z' }; return newsRequests === 1 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify({ items: [featured], featured })); }
+    if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    throw new Error(`Unexpected request ${url}`);
+  };
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Eva' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Intentar de nuevo' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Horario de apertura' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Leer noticia' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Horario de apertura', level: 1 }));
+  assert.equal(newsRequests, 2);
+  assert.equal(ui.container.textContent.includes('urgente'), false, 'Home does not invent the priority absent from the endpoint contract');
+  cleanup(); dom.window.close();
+});
+
 test('preview Store uses fictional nutrition and merchandising fixtures without API calls; Profile shows fictional purchase',async()=>{
   const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/?preview=1'});
   Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage}});
