@@ -93,3 +93,7 @@ Run an independent security review before any PR is marked ready, focusing on: (
 ## 8. Pull requests
 
 Draft PRs only, stacked, no merge, no deploy (see JSON handoff for status).
+
+## 9. Security closure (implementer pass)
+
+See `docs/handoffs/2J-INT-CLOSURE-security-closure.md`: state-write inventory with negative tests, exact RP ID, explicit trusted proxies, provisioning guard, Caddy guidance (documentation only). That pass was done by the implementing agent and is **not** an independent review; the human/external security review and device QA remain pending.
