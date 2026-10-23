@@ -13,6 +13,7 @@ import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-s
 import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
 import { registerTrainingSsoRoutes } from './training-sso.js';
 import { registerTrainingSuspensionRoutes } from './training-suspensions.js';
+import { createTrainingSignalDispatcher } from './training-signals.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
@@ -197,6 +198,9 @@ export type ServerOptions = {
   trainingLinkLifecycleEnabled?: boolean;
   /** Idempotent provisioning of a minimal Training profile. Off by default. */
   trainingProvisioningEnabled?: boolean;
+  /** Signed suspension/lift signals to Training (2J-CAPABILITY-SIGNAL-V1). Proof of concept: off by default and refused outside development/test. Needs the signed Training client. */
+  trainingSignalsEnabled?: boolean;
+  trainingSignalsIntervalMs?: number;
   trainingServiceClient?: TrainingServiceClient;
   /** Development/test only: lets the signed Training client talk to a loopback http origin. */
   trainingServiceAllowInsecureLoopback?: boolean;
@@ -208,6 +212,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     throw new Error('Pilot member authentication is restricted to development/test environments.');
   }
   if (options.trainingProvisioningEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training provisioning is restricted to development/test environments until a later, explicitly approved phase.');
+  if (options.trainingSignalsEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training signals are a proof of concept, restricted to development/test environments until a later, explicitly approved phase.');
   if (options.platformPasskeysEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Platform passkeys are restricted to development/test environments until a security review approves a rollout.');
   if (options.memberPilotBookingEnabled && (!options.memberPilotAuthEnabled || !['development', 'test'].includes(process.env.NODE_ENV ?? ''))) throw new Error('Member booking pilot mutations require development/test Member pilot authentication.');
   if (options.memberPilotCohortManagementEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Member pilot cohort management is restricted to development/test environments.');
@@ -280,7 +285,8 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     }
     return payload;
   });
-  app.addHook('onClose', async () => { await client.end(); });
+  let stopTrainingSignals: () => void = () => {};
+  app.addHook('onClose', async () => { stopTrainingSignals(); await client.end(); });
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
@@ -342,7 +348,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       fetcher: globalThis.fetch,
     }),
   }));
-  const lifecycleOn = options.trainingLinkLifecycleEnabled === true || options.trainingProvisioningEnabled === true;
+  const lifecycleOn = options.trainingLinkLifecycleEnabled === true || options.trainingProvisioningEnabled === true || options.trainingSignalsEnabled === true;
   const trainingServiceClient = options.trainingServiceClient ?? createTrainingServiceClient({
     trainingVerifiedLinkingEnabled: lifecycleOn,
     trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
@@ -361,6 +367,10 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     fetcher: globalThis.fetch,
     ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
   });
+  const trainingSignals = createTrainingSignalDispatcher(client, { client: trainingServiceClient, enabled: options.trainingSignalsEnabled === true && options.trainingServiceCallsEnabled === true, ...(options.trainingSignalsIntervalMs ? { intervalMs: options.trainingSignalsIntervalMs } : {}), logger: app.log });
+  (app as unknown as { trainingSignals: typeof trainingSignals }).trainingSignals = trainingSignals;
+  app.addHook('onReady', async () => { trainingSignals.start(); });
+  stopTrainingSignals = () => trainingSignals.stop();
   registerTrainingLinkFlowRoutes(app, client, {
     enabled: options.trainingLinkLifecycleEnabled === true && options.trainingVerifiedLinkingEnabled === true && options.trainingCanonicalLinkingEnabled === true && options.trainingServiceCallsEnabled === true,
     provisioningEnabled: options.trainingProvisioningEnabled === true && options.trainingServiceCallsEnabled === true,
@@ -690,6 +700,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     platformPasskeyRpId: process.env.PLATFORM_PASSKEY_RP_ID ?? null,
     trainingLinkLifecycleEnabled: process.env.TRAINING_LINK_LIFECYCLE_ENABLED === 'true',
     trainingProvisioningEnabled: process.env.TRAINING_PROVISIONING_ENABLED === 'true',
+    trainingSignalsEnabled: process.env.TRAINING_SIGNALS_ENABLED === 'true',
     trainingServiceAllowInsecureLoopback: process.env.TRAINING_SERVICE_ALLOW_INSECURE_LOOPBACK === 'true',
     trainingSsoEnabled: process.env.TRAINING_SSO_ENABLED === 'true',
     trainingSsoRedirectUrl: process.env.TRAINING_SSO_REDIRECT_URL ?? null,

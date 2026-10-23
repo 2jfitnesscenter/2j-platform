@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { activateTrainingLink, b64, childEnv, cookieOf, freePort, httpCall, passkeyCookieFor, randomSecret, resolveOutDir, sha256hex, sleep, startProcess, stopProcess, waitHttp } from './lib.mjs';
+import { activateTrainingLink, b64, beginBrowserFlow, s256, childEnv, cookieOf, freePort, httpCall, passkeyCookieFor, randomSecret, resolveOutDir, sha256hex, sleep, startProcess, stopProcess, waitHttp } from './lib.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const platformApiDir = path.join(repoRoot, 'apps', 'api');
@@ -56,7 +56,7 @@ async function startPlatform() {
 async function startBunker() {
   state.bunker = startProcess(out, 'bunker', ['server.js'], bunkerApiDir, {
     PORT: String(state.ports.bunker), DATA_DIR: path.join(out, 'bunker-data'), SECRET_FILE: path.join(out, 'bunker-data', 'secret'), RP_ID: 'localhost', ORIGIN: B(),
-    PLATFORM_SSO_ENABLED: 'true', PLATFORM_API_BASE_URL: P(), PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
+    PLATFORM_SSO_ENABLED: 'true', PLATFORM_HOME_URL: MEMBER_ORIGIN, PLATFORM_API_BASE_URL: P(), PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
     PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true', PLATFORM_BREAKER_BASE_MS: '200', PLATFORM_PROOF_RECONCILIATION_ENABLED: 'true', PLATFORM_LINK_LIFECYCLE_ENABLED: 'true', PLATFORM_PROVISIONING_ENABLED: 'true',
     PLATFORM_SERVICE_AUTH_KEYS: JSON.stringify({ [proofKey.id]: b64(proofKey.secret) }),
   });
@@ -101,12 +101,16 @@ async function linkViaProof(label, trainingUserId, { proofFor = trainingUserId, 
   return { issued, response: await member(label, 'POST', '/api/me/training/link', { transactionId: transaction.transactionId, challenge, code: issued.json.code }), person, trainingUserId };
 }
 const platformLinks = label => state.sql`SELECT link_id,status,method,training_user_id,training_ack_id,revocation_ack_id FROM training_account_links WHERE person_id=${state.people[label].personId} ORDER BY created_at`;
-async function ssoCookie(label) {
-  const started = await member(label, 'POST', '/api/me/training/sso', {});
-  if (started.status !== 201) return { started };
+/** One run of the browser-bound flow: Búnker's start page (binding cookie + challenge), Home asking Platform for a code for that challenge, the same browser redeeming it. */
+async function ssoCookie(label, { sessionCookie } = {}) {
+  const browser = await beginBrowserFlow(B());
+  assert.equal(browser.status, 302); remember(browser.verifier);
+  const started = await member(label, 'POST', '/api/me/training/sso', { challenge: browser.challenge });
+  if (started.status !== 201) return { started, browser };
   const code = remember(new URL(started.json.redirectUrl).hash.slice('#code='.length));
-  const redeemed = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin: B() } });
-  return { started, redeemed, cookie: remember(cookieOf(redeemed)) };
+  const redeemed = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin: B() }, cookie: [sessionCookie, browser.cookie].filter(Boolean).join('; ') });
+  const session = (redeemed.headers.getSetCookie?.() ?? []).find(item => item.startsWith('gymsid='));
+  return { started, redeemed, browser, cookie: remember(session ? session.split(';')[0] : '') };
 }
 
 before(async () => {
@@ -196,7 +200,8 @@ E2E('L4', 'revocation while Búnker is down: access stops at once (revocation_pe
   const pending = await member('a', 'DELETE', '/api/me/training/link');
   assert.equal(pending.status, 202, pending.text); assert.equal(pending.json.status, 'revocation_pending');
   assert.equal((await platformLinks('a')).at(-1).status, 'revocation_pending');
-  assert.notEqual((await member('a', 'POST', '/api/me/training/sso', {})).status, 201, 'Platform stops issuing SSO immediately');
+  const refusedSso = await member('a', 'POST', '/api/me/training/sso', { challenge: s256('x'.repeat(43)) });
+  assert.equal(refusedSso.status, 409, 'Platform stops issuing SSO immediately'); assert.match(refusedSso.json.reasonCode, /^TRAINING_LINK_(MISSING|REVOKED)$/, 'a pending revocation already counts as no link');
   await startBunker();
   const done = await member('a', 'DELETE', '/api/me/training/link');
   assert.equal(done.status, 200, done.text);
@@ -249,13 +254,19 @@ E2E('L5', 'duplication is refused: a second person cannot claim an account that 
 });
 
 E2E('L6', 'H3: a Platform code never silently replaces the session of another account; only an explicit confirmation does', async () => {
-  const platformCode = async () => { const started = await member('c', 'POST', '/api/me/training/sso', {}); assert.equal(started.status, 201, started.text); return remember(new URL(started.json.redirectUrl).hash.slice('#code='.length)); };
+  // Every code comes from the flow started in THIS browser (its binding cookie is sent with the redemption), which is also signed in as ANOTHER account.
+  const flows = new Map();
+  const platformCode = async () => {
+    const browser = await beginBrowserFlow(B()); remember(browser.verifier);
+    const started = await member('c', 'POST', '/api/me/training/sso', { challenge: browser.challenge }); assert.equal(started.status, 201, started.text);
+    const code = remember(new URL(started.json.redirectUrl).hash.slice('#code='.length)); flows.set(code, browser); return code;
+  };
   const other = bunkerPasskeyCookie('hist-a');                              // this browser is signed in as ANOTHER account
-  const redeem = code => httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin: B() }, cookie: other });
+  const redeem = code => httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin: B() }, cookie: `${other}; ${flows.get(code).cookie}` });
   const confirm = (ticket, cookie) => httpCall(B(), 'POST', '/api/platform/v1/sso/confirm', { body: { ticket }, headers: { origin: B() }, cookie });
   const first = await redeem(await platformCode());
   assert.equal(first.status, 409, first.text); assert.equal(first.json.error, 'session_switch_confirmation_required');
-  assert.equal(first.headers.get('set-cookie'), null, 'no cookie issued: the session was not replaced');
+  assert.ok(!(first.headers.getSetCookie?.() ?? []).some(item => item.startsWith('gymsid=')), 'no session cookie issued: the session was not replaced');
   assert.equal((await httpCall(B(), 'GET', '/api/me', { cookie: other })).status, 200, 'the browser is still signed in as the first account');
   remember(first.json.ticket);
   assert.equal((await confirm(first.json.ticket, bunkerPasskeyCookie('hist-b'))).status, 400, 'another browser session cannot use the ticket (and the attempt burns it)');

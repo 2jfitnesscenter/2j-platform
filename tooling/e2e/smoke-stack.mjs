@@ -52,7 +52,7 @@ fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ users: people.m
 for (const [uid, name] of people) fs.writeFileSync(path.join(dataDir, `state-${uid}.json`), JSON.stringify({ unit: 'kg', lang: 'es', routines: [{ id: 'r1', name: `Rutina histórica de ${name}`, emoji: '💪', ex: [{ id: '0001', sets: 3, reps: 10, mode: 'reps', weight: 20 }] }], week: { 1: 'r1' }, workouts: [{ d: '2026-09-01', routineId: 'r1' }] }));
 start('bunker', ['server.js'], bunkerApiDir, {
   PORT: String(PORTS.bunkerApi), DATA_DIR: dataDir, SECRET_FILE: path.join(dataDir, 'secret'), RP_ID: 'localhost', ORIGIN: BUNKER_ORIGIN,
-  PLATFORM_SSO_ENABLED: 'true', PLATFORM_API_BASE_URL: P, PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
+  PLATFORM_SSO_ENABLED: 'true', PLATFORM_HOME_URL: MEMBER_ORIGIN, PLATFORM_API_BASE_URL: P, PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
   PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true', PLATFORM_LINK_LIFECYCLE_ENABLED: 'true', PLATFORM_SERVICE_AUTH_KEYS: JSON.stringify({ [proofKey.id]: b64(proofKey.secret) }),
 });
 const BA = `http://127.0.0.1:${PORTS.bunkerApi}`;
