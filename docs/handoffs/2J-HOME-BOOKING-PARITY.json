@@ -1,0 +1,35 @@
+{
+  "taskId": "2J-HOME-BOOKING-PARITY",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-BOOKING-PARITY",
+  "baseSha": "e8931e239671df0f273e0f9d4c5655b1667bd1f7",
+  "platformBaseSha": "f87818afe474176c6e6ae77cb4d62a7e73fc1adf",
+  "implementationCommit": "e60c399",
+  "pullRequest": null,
+  "status": "local-review-ready",
+  "decisions": ["D188", "D191", "D192", "D193"],
+  "changedFiles": [
+    "apps/client-app/src/client-app.tsx",
+    "apps/client-app/src/styles.css",
+    "apps/client-app/test/client-app.test.mjs",
+    "docs/handoffs/2J-HOME-BOOKING-PARITY.md",
+    "docs/handoffs/2J-HOME-BOOKING-PARITY.json"
+  ],
+  "verification": {
+    "clientAppTests": { "passed": 15, "failed": 0 },
+    "clientAppTypecheck": "passed",
+    "clientAppBuild": "passed",
+    "lint": "not-run-no-script-defined"
+  },
+  "productionChanged": false,
+  "realDatabaseMigrationRun": false,
+  "bunkerChanged": false,
+  "deploymentPerformed": false,
+  "independentReview": "pending",
+  "independentQa": "pending",
+  "limitations": [
+    "D185 and D194-D198 remain to implement and verify.",
+    "SSO, capabilities V2.1 consumer, measurements/health UI, and push remain separate work with dependencies documented in the handoff.",
+    "Remote Draft PR creation is blocked by repository AGENTS.md provider-call/credential restrictions in this execution workflow."
+  ]
+}
