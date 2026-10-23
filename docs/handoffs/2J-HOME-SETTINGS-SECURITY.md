@@ -3,7 +3,7 @@
 ## Estado
 
 - Rama local: `agent/codex/2J-HOME-SETTINGS-SECURITY`.
-- Base: Claude `MEASUREMENTS-CLIENT-rebased`, `7074177be0e9db7d42342466813627392f4a6d03`; incluye push apilado sobre PR #71.
+- Base apilada: `8df32e0c97fc0308f6b8ab5ffffc940f887e314a` (DOCUMENTS-CONSENTS sobre NEWS-NOTICES/STORE-HISTORY, PR #78).
 - Cambio: prueba de regresión que comprueba ajustes disponibles sin cuota, preferencias persistidas/reintentables y límites honestos de seguridad. No se añadieron endpoints.
 
 ## Real, simulado y pendiente
