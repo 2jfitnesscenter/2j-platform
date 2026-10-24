@@ -285,8 +285,8 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
   const service = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Funcional' };
   const date = '2026-10-13';
   const base = { serviceId: service.id, serviceName: service.name, areaName: 'La Sala', professionalName: 'Alex Rivera', durationMinutes: 45, capacity: 8, waitlistCount: 0, isIndividual: false, status: 'scheduled', myReservationStatus: null, myWaitlistStatus: null };
-  const free = { ...base, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: '2026-10-13T17:00:00.000Z', occupiedCount: 3 };
-  const full = { ...base, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', startsAt: '2026-10-13T19:00:00.000Z', occupiedCount: 8, waitlistCount: 1 };
+  const free = { ...base, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: '2026-10-13T17:00:00.000Z', occupiedCount: 3, availability: 'available', availabilityReason: null };
+  const full = { ...base, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', startsAt: '2026-10-13T19:00:00.000Z', occupiedCount: 8, waitlistCount: 1, availability: 'full', availabilityReason: null };
   const details = { [free.id]: { ...free, eligible: true, canJoinWaitlist: false, availableAlternatives: [] }, [full.id]: { ...full, eligible: false, eligibilityReason: 'session_full', canJoinWaitlist: true, availableAlternatives: [] } };
   const mutations = []; let booked = false; let joinedWaitlist = false; let cancelled = false;
   globalThis.fetch = async (input, init = {}) => {
@@ -308,7 +308,7 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
     if (init.method === 'PATCH' && url.endsWith('/cancel')) { cancelled = true; return new Response(JSON.stringify({ status: 'cancelled' })); }
     throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
   };
-  const ui = render(React.createElement(ClientApp));
+  const ui = render(React.createElement(ClientApp, { sessionEligibilityEnabledOverride: true }));
   await ui.findByRole('heading', { name: 'Hola, Lucía' });
   fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   fireEvent.click(await ui.findByRole('button', { name: /Funcional/ }));
@@ -612,22 +612,22 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   const requests = [];
   globalThis.fetch = async (input, init = {}) => { requests.push({ url: String(input), method: init.method ?? 'GET' }); throw new Error('Preview must not reach fetch.'); };
   const { render, cleanup, fireEvent, within, ClientApp } = await uiHarness();
-  const ui = render(React.createElement(ClientApp, { previewModeOverride: true }));
-  assert.ok(await ui.findByRole('heading', { name: 'Hola, Juan' }));
+  const ui = render(React.createElement(ClientApp, { previewModeOverride: true, trainingLinkEnabledOverride: true, trainingLinkReviewEnabledOverride: true, sessionEligibilityEnabledOverride: true }));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, María' }));
   assert.ok(ui.getByText('DEMO · DATOS FICTICIOS', { selector: '.preview-pill' }));
   assert.ok(ui.getByRole('heading', { name: 'Próxima reserva' }));
   assert.ok(ui.getByText('Bienvenido a tu espacio 2J'));
-  assert.ok(ui.getByText('Funcional'));
+  assert.ok(ui.getByText('Fuerza funcional'));
   assert.ok(ui.getByText('Confirmada'));
 
   const navigation = ui.getByRole('navigation', { name: 'Navegación principal' });
   assert.deepEqual(within(navigation).getAllByRole('button').map(button => button.textContent.trim()), ['Inicio', 'Búnker', 'Tienda', 'Perfil', 'Ajustes']);
   assert.equal(within(navigation).getByRole('button', { name: 'Inicio', exact: true }).getAttribute('aria-current'), 'page');
   fireEvent.click(within(navigation).getByRole('button', { name: 'Perfil' }));
-  assert.ok(await ui.findByText('Plan 2J'));
-  assert.ok(ui.getByText('Funcional'));
+  assert.ok(await ui.findByText('Bono piloto · 12 sesiones'));
+  assert.ok(ui.getByText('Fuerza funcional'));
   assert.ok(ui.getAllByText(/8 disponibles/).length >= 2);
-  assert.ok(ui.getByText('juan.demo@example.test'));
+  assert.ok(ui.getByText('maria.gonzalez@example.test'));
   assert.ok(ui.getByRole('button', { name: /Abrir buzón/ }));
   assert.equal(within(navigation).getByRole('button', { name: 'Perfil' }).getAttribute('aria-current'), 'page');
   fireEvent.click(within(navigation).getByRole('button', { name: 'Inicio' }));
@@ -669,7 +669,7 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Inicio' }));
   fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Reservar' }));
-  fireEvent.click(ui.getByRole('button', { name: /Funcional/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Fuerza funcional/ }));
   fireEvent.click(ui.container.querySelectorAll('.session-card-detail')[0]);
   assert.ok(await ui.findByRole('dialog'));
   assert.ok(ui.getByText('Ya tienes una reserva asociada a esta sesión.'));
@@ -682,17 +682,28 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
 
   fireEvent.click(within(navigation).getByRole('button', { name: 'Perfil' }));
   assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
-  assert.ok(ui.getByText('Plan 2J'));
+  assert.ok(ui.getByText('Bono piloto · 12 sesiones'));
   assert.ok(ui.getByRole('heading', { name: 'Tus cuotas' }));
   assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));
   assert.ok(ui.getByRole('heading', { name: 'Mensajes y avisos' }));
   fireEvent.click(ui.getByRole('button', { name: 'Completar' }));
-  assert.ok(await ui.findByRole('dialog', { name: 'Ficha de bienvenida' }));
+  assert.ok(await ui.findByRole('dialog', { name: 'Seguimiento semanal · demo' }));
   assert.equal(ui.getByRole('button', { name: 'Enviar documento' }).disabled, true);
   fireEvent.click(ui.getByRole('button', { name: 'Cerrar formulario' }));
   fireEvent.click(ui.getByRole('button', { name: 'Consultar' }));
   assert.ok(await ui.findByRole('dialog', { name: 'Normas del centro' }));
   assert.equal(ui.getByRole('button', { name: 'Confirmar aceptación' }).disabled, true);
+  fireEvent.click(ui.getByRole('button', { name: 'Cerrar consentimiento' }));
+  fireEvent.click(ui.getByRole('button', { name: /Abrir Mi evolución/ }));
+  assert.ok(await ui.findByRole('heading', { name: 'Mi evolución' }));
+  for (const label of ['Mediciones','Gráficos','Evaluaciones','Mi salud']) assert.ok(ui.getByRole('button', { name: new RegExp(label) }));
+  fireEvent.click(ui.getByRole('button', { name: /Mediciones/ }));
+  assert.ok(await ui.findByText(/Platform aún no ha publicado el contrato/));
+  fireEvent.click(ui.getByRole('button', { name: '← Mi evolución' }));
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Búnker' }));
+  fireEvent.click(await ui.findByRole('button', { name: /Gestionar vinculación/ }));
+  assert.ok(await ui.findByText('Demo sintética: no consulta ni modifica cuentas reales.'));
+  assert.equal(ui.queryByRole('button', { name: /Iniciar prueba de passkey/ }), null);
   assert.deepEqual(requests, []);
   cleanup(); dom.window.close();
 });
