@@ -1,0 +1,73 @@
+{
+  "startedAt": "2026-10-23T09:51:19.301Z",
+  "mechanism": "signed Platform -> Búnker signal, dispatcher interval 500 ms (proof of concept); pollMs below is the measuring client interval",
+  "pollMs": 100,
+  "trials": [
+    {
+      "trial": 1,
+      "cacheAgeBeforeSuspensionMs": 40983,
+      "blockLatencyMs": 166,
+      "restoreLatencyMs": 489
+    },
+    {
+      "trial": 2,
+      "cacheAgeBeforeSuspensionMs": 36482,
+      "blockLatencyMs": 473,
+      "restoreLatencyMs": 591
+    },
+    {
+      "trial": 3,
+      "cacheAgeBeforeSuspensionMs": 32720,
+      "blockLatencyMs": 268,
+      "restoreLatencyMs": 479
+    },
+    {
+      "trial": 4,
+      "cacheAgeBeforeSuspensionMs": 44746,
+      "blockLatencyMs": 484,
+      "restoreLatencyMs": 846
+    },
+    {
+      "trial": 5,
+      "cacheAgeBeforeSuspensionMs": 39184,
+      "blockLatencyMs": 475,
+      "restoreLatencyMs": 473
+    },
+    {
+      "trial": 6,
+      "cacheAgeBeforeSuspensionMs": 30422,
+      "blockLatencyMs": 469,
+      "restoreLatencyMs": 575
+    }
+  ],
+  "suspension": {
+    "n": 6,
+    "minMs": 166,
+    "p50Ms": 469,
+    "p95Ms": 484,
+    "maxMs": 484,
+    "neverBlocked": 0
+  },
+  "restoration": {
+    "n": 6,
+    "minMs": 473,
+    "p50Ms": 489,
+    "maxMs": 846
+  },
+  "platformStoppedAfterSuspension": {
+    "kioskStatusWhileDown": 200,
+    "blockedAfterMs": 6580,
+    "note": "if the signal left before the process died the kiosk is already blocked while Platform is down (status 403); otherwise it is delivered after the restart"
+  },
+  "bunkerRestartedAfterSuspension": {
+    "blockedAfterBunkerReadyMs": 1179,
+    "note": "the kiosk token is signed (not stored), so it survives the restart; the dispatcher retries with backoff until Búnker answers"
+  },
+  "deliveries": {
+    "delivered": 14,
+    "pending": 1,
+    "superseded": 0,
+    "maxAttempts": 3
+  },
+  "finishedAt": "2026-10-23T09:55:46.908Z"
+}
