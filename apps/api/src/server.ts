@@ -27,6 +27,7 @@ import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
 import { registerPlatformPasskeyRoutes } from './platform-passkeys.js';
 import { createTrainingLinkTransactions, registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
+import { registerTrainingLinkReviewRoutes } from './training-link-review.js';
 import { createTrainingLinkFlow, createTrainingServiceClient, registerTrainingLinkFlowRoutes, type TrainingServiceClient } from './training-link-flow.js';
 import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, type TrainingAdapter } from './training-integration.js';
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
@@ -198,6 +199,8 @@ export type ServerOptions = {
   trainingLinkLifecycleEnabled?: boolean;
   /** Idempotent provisioning of a minimal Training profile. Off by default. */
   trainingProvisioningEnabled?: boolean;
+  /** Manual review queue for Training links that cannot be completed with the owner's passkey proof (A26). Off by default. */
+  trainingLinkReviewEnabled?: boolean;
   /** Signed suspension/lift signals to Training (2J-CAPABILITY-SIGNAL-V1). Proof of concept: off by default and refused outside development/test. Needs the signed Training client. */
   trainingSignalsEnabled?: boolean;
   trainingSignalsIntervalMs?: number;
@@ -377,6 +380,12 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     flow: createTrainingLinkFlow(client, { client: trainingServiceClient }),
     transactions: createTrainingLinkTransactions(client, { enabled: options.trainingVerifiedLinkingEnabled === true, serviceCallsEnabled: options.trainingServiceCallsEnabled === true, verifier: linkVerifier }),
     lifecycle: (app as unknown as { trainingCanonicalLinkLifecycle: ReturnType<typeof createTrainingCanonicalLinkLifecycle> }).trainingCanonicalLinkLifecycle,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    resolveAuthorization: authorizationResolver,
+    allowedOrigin: options.memberAppOrigin ?? null,
+  });
+  registerTrainingLinkReviewRoutes(app, client, {
+    enabled: options.trainingLinkReviewEnabled === true,
     resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
     resolveAuthorization: authorizationResolver,
     allowedOrigin: options.memberAppOrigin ?? null,
