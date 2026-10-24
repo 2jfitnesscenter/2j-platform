@@ -45,6 +45,7 @@ BUNKER_REF="agent/claude/2J-V21-BUNKER-CONSUMER"        # ASSUMED: Búnker with 
 ACCEPT_ADMIN_WITHOUT_STAFF_AUTH="no"                    # must be "yes": Platform has no staff login yet (see runbook, section "Lo que debes saber").
 BACKUP_KEEP_DAYS=7
 [ -f "$CONF" ] && . "$CONF"
+case "$ROOT" in /opt/?*|/tmp/?*) ;; *) echo "ROOT debe estar bajo /opt/ (valor: '$ROOT')" >&2; exit 1;; esac
 
 HOSTS_HOME="home.${DOMAIN}"; HOSTS_APP="app.${DOMAIN}"; HOSTS_ADMIN="admin.${DOMAIN}"
 BUNKER_LOCAL_PORT=18080; PLATFORM_ADMIN_PORT=3100; PLATFORM_MEMBER_PORT=3102
@@ -103,7 +104,7 @@ cmd_base() {
   say "1/8 Actualizando el sistema (puede tardar unos minutos)"
   apt-get update -y
   apt-get -y -o Dpkg::Options::=--force-confold upgrade
-  apt-get install -y ca-certificates curl gnupg git ufw fail2ban unattended-upgrades jq openssl sudo cron dnsutils
+  apt-get install -y ca-certificates curl gnupg git ufw fail2ban unattended-upgrades jq openssl sudo cron dnsutils python3-systemd
   timedatectl set-timezone Atlantic/Canary || true
   systemctl enable --now systemd-timesyncd >/dev/null 2>&1 || true     # service-to-service signatures need a correct clock
 
@@ -159,6 +160,8 @@ EOF
   fi
   systemctl enable caddy
 
+  install -m 755 "$(readlink -f "$0")" /usr/local/sbin/2j-staging      # readable by ${OPS_USER} after SSH is locked (a copy in /root is not)
+
   say "8/8 Estructura de carpetas"
   install -d -m 755 "$ROOT" "$ROOT/src" "$ROOT/build" "$ROOT/compose" "$ROOT/www/home" "$ROOT/www/admin"
   install -d -m 700 "$ROOT/secrets" "$ROOT/backups" "$ROOT/pgdata"
@@ -168,7 +171,7 @@ EOF
 ============================================================================================================
  BASE LISTA. Ahora, SIN cerrar esta sesión:
    1. Abre OTRA ventana y prueba:   ssh ${OPS_USER}@${SERVER_IP}      (debe entrar sin pedirte contraseña)
-   2. Solo si entra, vuelve aquí y ejecuta:   $0 lock-ssh --confirm
+   2. Solo si entra, vuelve aquí y ejecuta:   2j-staging lock-ssh --confirm
    Si no entra, NO cierres esta sesión: avísame.
 ============================================================================================================
 EOF
@@ -176,8 +179,12 @@ EOF
 
 cmd_lock_ssh() {
   need_root
-  [ "${1:-}" = "--confirm" ] || die "Escribe: $0 lock-ssh --confirm   (solo después de comprobar en otra ventana que ssh ${OPS_USER}@${SERVER_IP} entra sin contraseña)."
+  local force=no; [ "${2:-}" = "--force" ] && force=yes
+  [ "${1:-}" = "--confirm" ] || die "Escribe: 2j-staging lock-ssh --confirm   (solo después de comprobar en otra ventana que ssh ${OPS_USER}@${SERVER_IP} entra sin contraseña)."
   [ -s "/home/${OPS_USER}/.ssh/authorized_keys" ] || die "${OPS_USER} no tiene ninguna clave instalada: ejecuta primero 'base'."
+  if [ "$force" != yes ] && ! journalctl -u ssh --no-pager 2>/dev/null | grep -q "Accepted publickey for ${OPS_USER} "; then
+    die "No veo ningún login por CLAVE de ${OPS_USER} en el registro de SSH. Entra primero desde otra ventana con: ssh ${OPS_USER}@${SERVER_IP} y repite. (Solo si estás seguro: lock-ssh --confirm --force. Rescate si te quedas fuera: consola VNC del panel de Contabo.)"
+  fi
   # Ubuntu 24.04 reads /etc/ssh/sshd_config.d/*.conf in alphabetical order and the FIRST value wins, so ours is named 00-.
   cat > /etc/ssh/sshd_config.d/00-2j-hardening.conf <<EOF
 PermitRootLogin no
@@ -216,13 +223,13 @@ $(cat "$ROOT/secrets/deploy_platform.pub")
 --- 2jfitnessapp (repositorio ${BUNKER_REPO}) ---
 $(cat "$ROOT/secrets/deploy_bunker.pub")
 
-Cuando estén añadidas, ejecuta:  $0 deploy
+Cuando estén añadidas, ejecuta:  2j-staging deploy
 EOF
 }
 
 git_sync() {  # name repo ref dest
   local name="$1" repo="$2" ref="$3" dest="$4" key="$ROOT/secrets/deploy_$1"
-  [ -f "$key" ] || die "Faltan las claves de despliegue: ejecuta '$0 deploykeys' y añádelas en GitHub."
+  [ -f "$key" ] || die "Faltan las claves de despliegue: ejecuta '2j-staging deploykeys' y añádelas en GitHub."
   export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$ROOT/secrets/known_hosts"
   git ls-remote --exit-code "$repo" "refs/heads/$ref" >/dev/null 2>&1 || die "No puedo leer ${repo} (rama ${ref}). ¿Añadiste la deploy key de solo lectura? ¿Existe la rama?"
   if [ -d "$dest/.git" ]; then git -C "$dest" fetch --quiet origin "$ref"; else git clone --quiet "$repo" "$dest"; git -C "$dest" fetch --quiet origin "$ref"; fi
@@ -261,12 +268,16 @@ ${HOSTS_HOME} {
 	import guard
 	handle /healthz {
 		rewrite * /health
-		reverse_proxy 127.0.0.1:${PLATFORM_MEMBER_PORT}
+		reverse_proxy 127.0.0.1:${PLATFORM_MEMBER_PORT} {
+			header_up Host 127.0.0.1:${PLATFORM_MEMBER_PORT}
+		}
 	}
 	@homeOrigin header Origin https://${HOSTS_HOME}
 	handle /api/* {
 		request_header @homeOrigin Origin http://127.0.0.1:5173
-		reverse_proxy 127.0.0.1:${PLATFORM_MEMBER_PORT}
+		reverse_proxy 127.0.0.1:${PLATFORM_MEMBER_PORT} {
+			header_up Host 127.0.0.1:${PLATFORM_MEMBER_PORT}
+		}
 	}
 	handle {
 		root * ${ROOT}/www/home
@@ -285,13 +296,19 @@ ${HOSTS_ADMIN} {
 		import guard
 		handle /healthz {
 			rewrite * /health
-			reverse_proxy 127.0.0.1:${PLATFORM_ADMIN_PORT}
+			reverse_proxy 127.0.0.1:${PLATFORM_ADMIN_PORT} {
+				header_up Host 127.0.0.1:${PLATFORM_ADMIN_PORT}
+			}
 		}
 		handle /health {
-			reverse_proxy 127.0.0.1:${PLATFORM_ADMIN_PORT}
+			reverse_proxy 127.0.0.1:${PLATFORM_ADMIN_PORT} {
+				header_up Host 127.0.0.1:${PLATFORM_ADMIN_PORT}
+			}
 		}
 		handle /api/* {
-			reverse_proxy 127.0.0.1:${PLATFORM_ADMIN_PORT}
+			reverse_proxy 127.0.0.1:${PLATFORM_ADMIN_PORT} {
+				header_up Host 127.0.0.1:${PLATFORM_ADMIN_PORT}
+			}
 		}
 		handle {
 			root * ${ROOT}/www/admin
@@ -419,7 +436,7 @@ EOF
 }
 
 cmd_render() {
-  local dir="${1:-}"; [ -n "$dir" ] || die "Uso: $0 render DIR"
+  local dir="${1:-}"; [ -n "$dir" ] || die "Uso: 2j-staging render DIR"
   FAKE_BASIC_HASH='$2a$14$FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAK' render_files "$dir"
   say "Archivos de ejemplo escritos en $dir (con secretos falsos)."
 }
@@ -428,12 +445,18 @@ cmd_render() {
 cmd_deploy() {
   need_root; log_start
   [ "$ACCEPT_ADMIN_WITHOUT_STAFF_AUTH" = "yes" ] || die "Lee la sección «Lo que debes saber» del runbook y pon ACCEPT_ADMIN_WITHOUT_STAFF_AUTH=\"yes\" en $CONF."
-  command -v docker >/dev/null && command -v caddy >/dev/null || die "Falta la base: ejecuta '$0 base' primero."
+  command -v docker >/dev/null && command -v caddy >/dev/null || die "Falta la base: ejecuta '2j-staging base' primero."
+
+  say "0/8 DNS (si no apunta aquí, Let's Encrypt fallaría y limita los reintentos)"
+  for h in "$HOSTS_HOME" "$HOSTS_APP" "$HOSTS_ADMIN"; do
+    ips="$(getent ahostsv4 "$h" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+    case " $ips " in *" $SERVER_IP "*) ok "$h -> $ips";; *) die "$h apunta a '${ips:-nada}' y debería ser $SERVER_IP. Corrige el DNS y espera a que propague.";; esac
+  done
 
   say "1/8 Secretos (se generan aquí, solo si no existen; no se imprimen)"
   secret_file "$ROOT/secrets/postgres.pass"; secret_file "$ROOT/secrets/platform-db.pass"; secret_file "$ROOT/secrets/basic-auth.pass"
   printf 'POSTGRES_PASSWORD=%s\n' "$(cat "$ROOT/secrets/postgres.pass")" > "$ROOT/secrets/postgres.env"
-  printf 'DATABASE_URL=postgres://platform_app:%s@127.0.0.1:5432/platform\n' "$(cat "$ROOT/secrets/platform-db.pass")" > "$ROOT/secrets/platform-db.env"
+  printf 'DATABASE_URL=postgres://platform_app:%s@127.0.0.1:5432/2j_demo\n' "$(cat "$ROOT/secrets/platform-db.pass")" > "$ROOT/secrets/platform-db.env"
   chmod 600 "$ROOT"/secrets/*
 
   say "2/8 Código (solo lectura)"
@@ -466,8 +489,8 @@ cmd_deploy() {
   appw="$(cat "$ROOT/secrets/platform-db.pass")"
   printf "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='platform_app') THEN CREATE ROLE platform_app LOGIN PASSWORD '%s'; ELSE ALTER ROLE platform_app PASSWORD '%s'; END IF; END \$\$;\n" "$appw" "$appw" \
     | docker exec -i 2j-postgres psql -U postgres -v ON_ERROR_STOP=1 -q >/dev/null
-  docker exec 2j-postgres psql -U postgres -Atc "SELECT 1 FROM pg_database WHERE datname='platform'" | grep -q 1 \
-    || docker exec 2j-postgres psql -U postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE platform OWNER platform_app"
+  docker exec 2j-postgres psql -U postgres -Atc "SELECT 1 FROM pg_database WHERE datname='2j_demo'" | grep -q 1 \
+    || docker exec 2j-postgres psql -U postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"2j_demo\" OWNER platform_app"
   unset appw
   say "   migraciones de la base de STAGING (nueva y vacía)"
   docker run --rm --network host --env-file "$ROOT/secrets/platform-db.env" -e NODE_ENV=development -w /repo/apps/api 2j-platform:staging node --import tsx src/migrate.ts
@@ -479,9 +502,9 @@ cmd_deploy() {
   say "7/8 HTTPS (Caddy)"
   [ -f "$ROOT/secrets/basic-auth.txt" ] || printf 'usuario: staging\ncontraseña: %s\n' "$(cat "$ROOT/secrets/basic-auth.pass")" > "$ROOT/secrets/basic-auth.txt"
   chmod 600 "$ROOT/secrets/basic-auth.txt"
+  caddy validate --config "$ROOT/build/generated/Caddyfile" --adapter caddyfile >/dev/null || die "El Caddyfile generado no es válido (NO se ha instalado ni recargado nada)."
   cp "$ROOT/build/generated/Caddyfile" /etc/caddy/Caddyfile
-  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null || die "El Caddyfile generado no es válido (no se ha recargado Caddy)."
-  systemctl restart caddy
+  systemctl reload caddy || systemctl restart caddy
 
   say "8/8 Copia de seguridad diaria"
   install_backup_timer
@@ -489,8 +512,8 @@ cmd_deploy() {
   cat <<EOF
 
 Despliegue terminado. Siguiente:
-  $0 seed        (datos de prueba)
-  $0 selftest    (OK/FAIL por subdominio)
+  2j-staging seed        (datos de prueba)
+  2j-staging selftest    (OK/FAIL por subdominio)
 La contraseña de acceso a las tres webs está en ${ROOT}/secrets/basic-auth.txt  (léela con:  cat ${ROOT}/secrets/basic-auth.txt ).
 EOF
 }
@@ -501,8 +524,11 @@ install_backup_timer() {
 # Daily local backup of the STAGING databases/data. Same disk: it protects against mistakes, NOT against losing the server.
 set -Eeuo pipefail; umask 077
 stamp=\$(date +%F-%H%M)
-docker exec 2j-postgres pg_dump -U postgres -Fc platform > ${ROOT}/backups/platform-\${stamp}.dump
-tar czf ${ROOT}/backups/bunker-data-\${stamp}.tgz -C ${ROOT}/src/bunker data 2>/dev/null || true
+tmp=${ROOT}/backups/.platform-\${stamp}.tmp
+docker exec 2j-postgres pg_dump -U postgres -Fc 2j_demo > "\$tmp"
+docker exec -i 2j-postgres pg_restore -l < "\$tmp" >/dev/null   # a dump that cannot be listed is not kept
+mv "\$tmp" ${ROOT}/backups/platform-\${stamp}.dump
+tar czf ${ROOT}/backups/bunker-data-\${stamp}.tgz -C ${ROOT}/src/bunker data 2>/dev/null || echo "AVISO: copia de datos de Bunker no creada" >&2
 find ${ROOT}/backups -type f \( -name 'platform-*.dump' -o -name 'bunker-data-*.tgz' \) -mtime +${BACKUP_KEEP_DAYS} -delete
 EOF
   chmod 700 /usr/local/sbin/2j-staging-backup
@@ -528,11 +554,14 @@ EOF
 cmd_backup() { need_root; [ -x /usr/local/sbin/2j-staging-backup ] || die "Aún no hay despliegue."; /usr/local/sbin/2j-staging-backup; ls -l "$ROOT/backups" | tail -5; }
 
 cmd_restore_db() {
-  need_root; f="${1:-}"; [ -f "$f" ] || die "Uso: $0 restore-db /opt/2j/backups/platform-AAAA-MM-DD-HHMM.dump"
+  need_root; f="${1:-}"; [ -f "$f" ] || die "Uso: 2j-staging restore-db /opt/2j/backups/platform-AAAA-MM-DD-HHMM.dump"
+  docker exec -i 2j-postgres pg_restore -l < "$f" >/dev/null || die "Ese fichero no es una copia válida (no se ha tocado nada)."
+  printf "Esto REEMPLAZA la base actual por %s. Se guarda antes una copia de seguridad. Escribe RESTAURAR para continuar:\n> " "$f"; read -r phrase; [ "$phrase" = "RESTAURAR" ] || die "Cancelado: no se ha tocado nada."
+  docker exec 2j-postgres pg_dump -U postgres -Fc 2j_demo > "$ROOT/backups/pre-restore-$(date +%F-%H%M).dump"
   say "Parando las APIs, restaurando y volviendo a arrancar"
   docker compose -f "$ROOT/compose/platform.compose.yml" stop platform-admin-api platform-member-api
-  docker exec 2j-postgres psql -U postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS platform WITH (FORCE)" -c "CREATE DATABASE platform OWNER platform_app"
-  docker exec -i 2j-postgres pg_restore -U postgres -d platform --no-owner --role=platform_app < "$f"
+  docker exec 2j-postgres psql -U postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"2j_demo\" WITH (FORCE)" -c "CREATE DATABASE \"2j_demo\" OWNER platform_app"
+  docker exec -i 2j-postgres pg_restore -U postgres -d 2j_demo --no-owner --role=platform_app < "$f"
   docker compose -f "$ROOT/compose/platform.compose.yml" start platform-admin-api platform-member-api
   ok "Restaurado desde $f"
 }
@@ -576,7 +605,7 @@ cmd_selftest() {
   rest="$(for p in $pub; do case "$p" in 22|80|443) ;; *) printf '%s ' "$p";; esac; done)"; [ -z "$rest" ] && ok "Solo escuchan hacia fuera los puertos: ${pub}" || bad "Puertos públicos inesperados: $rest"
   systemctl is-active --quiet fail2ban && ok "fail2ban activo" || bad "fail2ban no está activo"
   systemctl is-enabled --quiet 2j-staging-backup.timer && ok "copia diaria programada" || bad "falta la copia diaria"
-  [ -s /etc/ssh/sshd_config.d/00-2j-hardening.conf ] && ok "SSH endurecido (solo clave)" || warn "SSH aún NO endurecido: ejecuta '$0 lock-ssh --confirm' tras probar el login nuevo"
+  [ -s /etc/ssh/sshd_config.d/00-2j-hardening.conf ] && ok "SSH endurecido (solo clave)" || warn "SSH aún NO endurecido: ejecuta '2j-staging lock-ssh --confirm' tras probar el login nuevo"
   [ "$(stat -c %a "$ROOT/secrets")" = 700 ] && ok "carpeta de secretos 700" || bad "permisos de $ROOT/secrets"
   if [ "$FAILS" -eq 0 ]; then printf '\nRESULTADO: TODO OK\n'; else printf '\nRESULTADO: %s FALLO(S)\n' "$FAILS"; exit 1; fi
 }
@@ -591,7 +620,7 @@ cmd_status() {
 
 cmd_teardown() {
   need_root
-  [ "${1:-}" = "--yes" ] || die "Escribe: $0 teardown --yes   (destruye el staging; no toca el sistema operativo ni el acceso SSH)."
+  [ "${1:-}" = "--yes" ] || die "Escribe: 2j-staging teardown --yes   (destruye el staging; no toca el sistema operativo ni el acceso SSH)."
   printf 'Esto BORRA las bases de datos y datos de STAGING. Para continuar escribe exactamente:  DESTRUIR STAGING\n> '; read -r phrase
   [ "$phrase" = "DESTRUIR STAGING" ] || die "Cancelado: no se ha borrado nada."
   ( cd "$ROOT/src/bunker" 2>/dev/null && docker compose down -v --remove-orphans ) || true
@@ -602,7 +631,7 @@ cmd_teardown() {
   rm -f /etc/systemd/system/2j-staging-backup.* /usr/local/sbin/2j-staging-backup; systemctl daemon-reload
   printf ':80 {\n\trespond "staging apagado" 200\n}\n' > /etc/caddy/Caddyfile; systemctl restart caddy || true
   rm -rf "${ROOT:?}"
-  ok "Staging destruido. Quedan: usuario ${OPS_USER}, cortafuegos, fail2ban, Docker y Caddy (para volver a empezar: $0 base && $0 deploykeys && $0 deploy)."
+  ok "Staging destruido. Quedan: usuario ${OPS_USER}, cortafuegos, fail2ban, Docker y Caddy (para volver a empezar: 2j-staging base && 2j-staging deploykeys && 2j-staging deploy)."
 }
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
