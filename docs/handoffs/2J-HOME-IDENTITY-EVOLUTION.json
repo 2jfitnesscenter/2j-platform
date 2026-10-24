@@ -1,0 +1,74 @@
+{
+  "task": "2J-HOME-IDENTITY-EVOLUTION",
+  "status": "implemented_local_review_pending",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-IDENTITY-EVOLUTION",
+  "base": {
+    "ref": "origin/agent/claude/2J-INTEGRATION-PREVIEW",
+    "sha": "2602953500bff4d1e2eb9ccc372736ca74927eeb"
+  },
+  "pr": null,
+  "published": false,
+  "merged": false,
+  "deployed": false,
+  "protected_pr_86_touched": false,
+  "real_api": {
+    "training_link_flag": "VITE_2J_TRAINING_ACCOUNT_LINKING",
+    "manual_review_flag": "VITE_2J_TRAINING_LINK_REVIEW",
+    "session_eligibility_flag": "VITE_2J_SESSION_ELIGIBILITY",
+    "credentials": "include",
+    "cache": "no-store",
+    "passkey_proof": "performed by Bunker; Home starts transaction and submits its one-time code",
+    "review_approval_creates_link": false,
+    "session_eligibility_authority": "Platform",
+    "platform_server_flags": [
+      "TRAINING_LINK_LIFECYCLE_ENABLED",
+      "TRAINING_VERIFIED_LINKING_ENABLED",
+      "TRAINING_CANONICAL_LINKING_ENABLED",
+      "TRAINING_SERVICE_CALLS_ENABLED"
+    ],
+    "session_identity": "pilot/portal session in this base; central production identity pending",
+    "review_api_implementation_in_base": false
+  },
+  "synthetic_demo": {
+    "seed": "existing local makeHubPreview fixture",
+    "api_calls": false,
+    "real_auth": false,
+    "real_booking_or_payment": false,
+    "external_bunker_navigation": false,
+    "five_sections": ["Inicio", "Búnker", "Tienda", "Perfil", "Ajustes"],
+    "label": "DEMO · DATOS FICTICIOS"
+  },
+  "evolution": {
+    "sections": ["Mediciones", "Gráficos", "Evaluaciones", "Mi salud"],
+    "platform_contract": "pending",
+    "api_calls": false,
+    "fictional_measurement_values": false
+  },
+  "dependencies": {
+    "link_review_contract_ref": "95fa720c569f687dd86ef1a8f809e7a8937b79ce",
+    "session_eligibility_contract_ref": "3ed78d4875a0c10aa078b0e487af366d378584ab",
+    "account_link_reference": "79ffcd47a663b51047944e51ac6eb1283c35d2ca",
+    "external_bunker_passkey_ui": "pending",
+    "central_production_identity": "pending"
+  },
+  "verification": {
+    "client_app_tests": {"passed": 42, "failed": 0},
+    "typecheck": "passed",
+    "production_build": "passed",
+    "synthetic_demo_build": "passed",
+    "diff_check": "passed",
+    "independent_review": "pending",
+    "physical_device": "not_run"
+  },
+  "owner_registry_gaps": [
+    "Measurements, health consent and evaluation Platform contract",
+    "Capabilities V2.1 consumption remains with Platform contract owner; PR #86 untouched",
+    "Trainer messaging and social experience",
+    "Complete economic history, store transaction modes and returns",
+    "Document signing, legal gates, data rights and account deletion workflow",
+    "News priority and urgent acknowledgement fields",
+    "Full backend waitlist, concurrency and absence consequences",
+    "End-to-end retention of existing Bunker UID, passkeys and history"
+  ]
+}
