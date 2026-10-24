@@ -180,10 +180,92 @@ const makeHubPreview = (now = new Date()) => {
     purchases: [{id:'b0000000-0000-4000-8000-000000000001',status:'completed',paymentState:'paid',totalCents:3290,createdAt:now.toISOString(),lines:[{productName:'Proteína 2J',variantLabel:'Chocolate · 900 g',quantity:1,unitPriceCents:3290,lineTotalCents:3290}]}] satisfies MemberPurchase[],
   };
 };
-const HUB_TRAINING_URL = import.meta.env?.VITE_2J_HUB_DEMO === 'true' ? '' : 'https://app.2jfitnesscenter.com';
+/** https, or http only on loopback (local/staging tests); never credentials. Shared by every URL this module will follow or link to. */
+function isHttpsOrLoopback(url: URL): boolean {
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+  return !url.username && !url.password && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback));
+}
+
+/** Training URL for this build: empty in the synthetic demo; a staging/local override must be https (or loopback http); otherwise production. */
+export function resolveTrainingUrl(demoFlag: unknown, configured: unknown): string {
+  if (demoFlag === 'true') return '';
+  if (typeof configured === 'string' && configured) {
+    try {
+      const url = new URL(configured);
+      if (isHttpsOrLoopback(url) && !url.search && !url.hash) return url.origin;
+    } catch { /* fall through to production */ }
+  }
+  return 'https://app.2jfitnesscenter.com';
+}
+const HUB_TRAINING_URL = resolveTrainingUrl(import.meta.env?.VITE_2J_HUB_DEMO, import.meta.env?.VITE_2J_TRAINING_URL);
 const HUB_STAFF_URL = import.meta.env?.VITE_2J_STAFF_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5175' : '');
 const HUB_ADMIN_URL = import.meta.env?.VITE_2J_ADMIN_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5174' : '');
 const HUB_BUILD_ID = import.meta.env?.VITE_2J_BUILD_ID || 'local';
+// Connected Búnker entry through Platform's one-time SSO. Off unless the build explicitly enables it; the synthetic demo never does.
+const HUB_TRAINING_SSO_BUILD = import.meta.env?.VITE_2J_TRAINING_SSO === 'true';
+
+/**
+ * Validates the destination Platform returned for the one-time SSO code. The browser only ever follows a URL whose origin is the
+ * configured Training origin, whose path is exactly `/sso` (the only page that redeems a code), with the code in the fragment
+ * (never in a query string) and no credentials.
+ */
+export const TRAINING_SSO_PATH = '/sso';
+export function trainingSsoDestination(redirectUrl: unknown, trainingUrl: string): string | null {
+  if (typeof redirectUrl !== 'string' || !trainingUrl) return null;
+  try {
+    const target = new URL(redirectUrl), expected = new URL(trainingUrl);
+    if (target.origin !== expected.origin || !isHttpsOrLoopback(target) || target.search || target.pathname !== TRAINING_SSO_PATH) return null;
+    return /^#code=[A-Za-z0-9_-]{43,128}$/.test(target.hash) ? target.toString() : null;
+  } catch { return null; }
+}
+
+/** How the page leaves for Training. A same-tab navigation is right in a browser; tests replace `navigate`. */
+export const trainingSsoRuntime = { navigate: (url: string) => window.location.assign(url) };
+
+/**
+ * The flow is browser-bound: it starts at Training, not here. "Abrir Búnker" navigates to Training's start page, which keeps a secret in an
+ * HttpOnly cookie of Training's own origin and sends the browser back here carrying only that secret's SHA-256 (`#sso_challenge=`). Home then asks
+ * Platform for a code for THAT challenge, so only the browser that started the flow can redeem it. Home never sees or stores the secret.
+ */
+export const TRAINING_SSO_START_PATH = '/api/platform/v1/sso/start';
+export function trainingSsoStartUrl(trainingUrl: string): string | null {
+  try {
+    if (!trainingUrl) return null;
+    const url = new URL(trainingUrl);
+    return isHttpsOrLoopback(url) ? `${url.origin}${TRAINING_SSO_START_PATH}` : null;
+  } catch { return null; }
+}
+/** `#sso_challenge=<43 url-safe characters>` and nothing else: what Training puts in the fragment when it sends the browser back here. */
+export function ssoChallengeFromHash(hash: unknown): string | null {
+  const match = typeof hash === 'string' ? /^#sso_challenge=([A-Za-z0-9_-]{43})$/.exec(hash) : null;
+  return match ? match[1]! : null;
+}
+// A challenge can wait for the person to sign in to Home (a few minutes at most). It is public by construction (a hash), never a credential.
+const SSO_CHALLENGE_KEY = '2j.training-sso.challenge', SSO_CHALLENGE_TTL_MS = 10 * 60_000;
+const challengeStore = () => { try { return typeof window === 'undefined' ? null : window.sessionStorage; } catch { return null; } };
+export function rememberSsoChallenge(challenge: string, now = Date.now()) { try { challengeStore()?.setItem(SSO_CHALLENGE_KEY, JSON.stringify({ challenge, at: now })); } catch { /* the in-memory copy still works */ } }
+export function recallSsoChallenge(now = Date.now()): string | null {
+  try {
+    const raw = challengeStore()?.getItem(SSO_CHALLENGE_KEY);
+    if (!raw) return null;
+    const stored = JSON.parse(raw) as { challenge?: unknown; at?: unknown };
+    return typeof stored.challenge === 'string' && /^[A-Za-z0-9_-]{43}$/.test(stored.challenge) && typeof stored.at === 'number' && now - stored.at >= 0 && now - stored.at <= SSO_CHALLENGE_TTL_MS ? stored.challenge : null;
+  } catch { return null; }
+}
+export function forgetSsoChallenge() { try { challengeStore()?.removeItem(SSO_CHALLENGE_KEY); } catch { /* nothing to forget */ } }
+
+/** In the Capacitor shell a same-tab navigation would replace the whole app with the Training site, so the flag stays off there. */
+function isNativeShell(): boolean {
+  try { return typeof window !== 'undefined' && Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()); } catch { return false; }
+}
+
+const trainingSsoErrors: Record<string, string> = {
+  training_link_required: 'Tu cuenta todavía no está vinculada con Búnker. Puedes entrar con tu acceso habitual y pedir al centro que la vincule.',
+  training_access_suspended: 'El acceso a Búnker está suspendido. Habla con el centro para revisarlo.',
+  training_sso_rate_limited: 'Has pedido varias entradas seguidas. Espera un minuto e inténtalo de nuevo.',
+  authentication_required: 'Tu sesión ha caducado. Vuelve a iniciar sesión.',
+};
+export const trainingSsoMessage = (code: string) => trainingSsoErrors[code] ?? 'Ahora mismo no podemos abrir Búnker con tu cuenta del centro. Puedes entrar con tu acceso habitual.';
 
 export function selectNextConfirmedBooking(bookings: Booking[], now = Date.now()): Booking | null {
   return bookings
@@ -199,10 +281,37 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { previewModeOverride?: boolean; pilotLoginEnabledOverride?: boolean } = {}) {
+export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trainingSsoEnabledOverride }: { previewModeOverride?: boolean; pilotLoginEnabledOverride?: boolean; trainingSsoEnabledOverride?: boolean } = {}) {
   const previewMode = isHubDemoBuild(import.meta.env?.VITE_2J_HUB_DEMO) || (previewModeOverride ?? isHubPreviewEnabled(import.meta.env?.VITE_2J_HUB_PREVIEW, typeof window === 'undefined' ? '' : window.location.search));
   const pilotLoginEnabled = !previewMode && (pilotLoginEnabledOverride ?? import.meta.env?.VITE_2J_PILOT_MEMBER_LOGIN === 'true');
   const pilotToolsEnabled = !previewMode && (import.meta.env?.DEV === true || import.meta.env?.VITE_2J_PILOT_TOOLS === 'true');
+  const trainingSsoEnabled = !previewMode && !isNativeShell() && (trainingSsoEnabledOverride ?? HUB_TRAINING_SSO_BUILD);
+  const [ssoBusy, setSsoBusy] = React.useState(false);
+  const [ssoMessage, setSsoMessage] = React.useState('');
+  const [pendingChallenge, setPendingChallenge] = React.useState<string | null>(null);
+  /** Step 1 (the tap): leave for Training's start page. No code exists yet and nothing is minted here, so a second tap cannot mint anything either. */
+  const openTrainingWithSso = () => {
+    if (ssoBusy) return;
+    const start = trainingSsoStartUrl(HUB_TRAINING_URL);
+    if (!start) { setSsoMessage(trainingSsoMessage('invalid_destination')); return; }
+    setSsoBusy(true); setSsoMessage('');
+    trainingSsoRuntime.navigate(start);          // stay busy while the page unloads
+  };
+  /** Step 2 (Training sent the browser back with its challenge): ask Platform for a code bound to that challenge and follow only the validated destination. */
+  const continueTrainingSso = async (challenge: string) => {
+    setSsoBusy(true); setSsoMessage('');
+    try {
+      const result = await api<{ v: number; redirectUrl: string }>('/api/me/training/sso', { method: 'POST', body: JSON.stringify({ challenge }) });
+      const destination = trainingSsoDestination(result.redirectUrl, HUB_TRAINING_URL);
+      if (!destination) { setSsoMessage(trainingSsoMessage('invalid_destination')); setSsoBusy(false); setView('bunker'); return; }
+      trainingSsoRuntime.navigate(destination);
+      return;                       // stay busy while the page unloads
+    } catch (error) {
+      setSsoMessage(trainingSsoMessage(error instanceof Error ? error.message : ''));
+      setView('bunker');
+    }
+    setSsoBusy(false);
+  };
   const preview = React.useMemo(() => previewMode ? makeHubPreview() : null, [previewMode]);
   const [view, setView] = React.useState<View>('home');
   const [selectedDate, setSelectedDate] = React.useState(() => preview?.sessions[0] ? dateKey(new Date(preview.sessions[0].startsAt)) : dateKey(new Date()));
@@ -326,6 +435,25 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   };
   const retryPreferenceSave = () => { if (lastPreferencePatch.current) void savePreferences(lastPreferencePatch.current); };
   React.useEffect(() => { void refresh(); }, [refresh]);
+  // Training sent the browser back with the challenge of the flow it started. Read it once, scrub it from the address bar and keep it until the person is signed in.
+  React.useEffect(() => {
+    if (!trainingSsoEnabled || typeof window === 'undefined') return;
+    const arrived = ssoChallengeFromHash(window.location.hash);
+    if (arrived) {
+      try { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); } catch { /* the address bar is cosmetic */ }
+      rememberSsoChallenge(arrived); setPendingChallenge(arrived);
+    } else {
+      const waiting = recallSsoChallenge();
+      if (waiting) setPendingChallenge(waiting);
+    }
+  }, [trainingSsoEnabled]);
+  React.useEffect(() => {
+    if (!pendingChallenge || !profile || !trainingSsoEnabled) return;
+    const challenge = pendingChallenge;
+    setPendingChallenge(null); forgetSsoChallenge();          // single use: a reload must not mint a second code
+    void continueTrainingSso(challenge);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingChallenge, profile, trainingSsoEnabled]);
   React.useEffect(() => {
     if (previewMode && preview) { setSessions(preview.sessions); setBookingServices(preview.services); setScheduleLoading(false); setScheduleError(false); return; }
     if (!hasActiveMembership) { setSessions([]); setBookingServices([]); setScheduleLoading(false); setScheduleError(false); return; }
@@ -534,6 +662,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   return <div className={`client-app hub-theme${resolvedAppearance === 'light' ? ' hub-theme-light' : ''}`} data-appearance={resolvedAppearance}>
     <header className="client-header" data-view={view}><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><div className="client-header-actions">{previewMode&&<span className="preview-pill">DEMO · DATOS FICTICIOS</span>}{pilotLoginEnabled && profile && <button className="text-button" type="button" onClick={() => void logout()} disabled={busy === 'logout'}>{busy === 'logout' ? 'Saliendo…' : 'Cerrar sesión'}</button>}{profile && <><button className="notification-bell" aria-label={`Notificaciones${unreadNotifications?`, ${unreadNotifications} sin leer`:''}`} onClick={()=>void openNotifications()}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>{unreadNotifications>0&&<span aria-hidden="true">{unreadNotifications>99?'99+':unreadNotifications}</span>}</button><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile.firstName.slice(0,1)}</button></>}</div></header>
     <main className="client-main" id="main-content">
+      {(pendingChallenge || (ssoBusy && view !== 'bunker')) && <p className="inline-message" role="status">Abriendo Búnker con tu cuenta del centro…</p>}
       {loading && <div className="loading-card" role="status"><span className="spinner"/> Cargando tu espacio…</div>}
       {!loading && error === 'client_authentication_required' && pilotLoginEnabled && <section className="state-card error-card" aria-labelledby="member-login-title"><span className="state-icon">2J</span><p className="eyebrow">PILOTO LOCAL</p><h1 id="member-login-title">Tu espacio, a tu manera</h1><p>Introduce el código de acceso de tu piloto para consultar tus reservas y derechos.</p><form className="member-login-form" onSubmit={event => void login(event)}><label className="field-label" htmlFor="member-pilot-code">Código de acceso</label><input id="member-pilot-code" name="code" type="password" autoComplete="one-time-code" value={pilotCode} onChange={event => setPilotCode(event.target.value)} required maxLength={128}/>{loginError && <p role="alert" className="inline-message">{loginError}</p>}<button className="button primary" disabled={busy === 'login' || !pilotCode}>{busy === 'login' ? 'Entrando…' : 'Iniciar sesión'}</button></form></section>}
       {!loading && error && !(error === 'client_authentication_required' && pilotLoginEnabled) && <section className="state-card error-card" role="alert"><span className="state-icon">!</span><h1>Tu espacio no está disponible ahora</h1><p>{error === 'client_authentication_required' ? 'Inicia sesión con tu cuenta para consultar tus reservas y derechos.' : 'Comprueba tu conexión e inténtalo de nuevo.'}</p><button className="button primary" onClick={() => void refresh()}>Intentar de nuevo</button></section>}
@@ -565,7 +694,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
           </>
         </>}
         {view === 'news' && (selectedNews ? <><button className="text-button contextual-link" onClick={()=>setSelectedNews(null)}>← Volver a noticias</button><article className="center-news-detail"><p className="eyebrow">2J FITNESS CENTER</p>{selectedNews.publishedAt&&<small>{dateLabel(selectedNews.publishedAt)}</small>}<h1>{selectedNews.title}</h1><p>{selectedNews.body}</p><button type="button" className="text-button" onClick={()=>{setSelectedNews(null);setView('home');}}>Volver a Inicio <span aria-hidden="true">→</span></button></article></> : <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Noticias</h1><p>Novedades publicadas por tu centro.</p></div><button className="text-button contextual-link" onClick={()=>setView('home')}>← Volver a Inicio</button>{newsError?<section className="empty-card" role="alert"><h2>No se han podido cargar las noticias</h2><button className="button secondary" onClick={()=>void refresh()}>Intentar de nuevo</button></section>:newsItems.length?<div className="member-news-list">{newsItems.map(item=><article className="member-news-item" key={item.id}><div>{item.featured&&<span className="member-news-featured">Destacada</span>}<h2>{item.title}</h2>{item.publishedAt&&<small>{dateLabel(item.publishedAt)}</small>}</div><p>{item.body.length>260?`${item.body.slice(0,257).trimEnd()}…`:item.body}</p><button className="text-button" onClick={()=>setSelectedNews(item)}>Leer noticia <span aria-hidden="true">→</span></button></article>)}</div>:<section className="empty-card"><h2>No hay noticias publicadas</h2><p>Cuando el centro comparta una novedad, aparecerá aquí.</p></section>}</>)}
-        {view === 'bunker' && <BunkerDestination previewMode={previewMode} trainingCapabilities={trainingCapabilities} trainingSummary={trainingSummary} trainingSummaryLoading={trainingSummaryLoading} trainingSummaryFailed={trainingSummaryFailed} onRetry={() => setTrainingSummaryRetry(value => value + 1)} />}
+        {view === 'bunker' && <BunkerDestination previewMode={previewMode} trainingCapabilities={trainingCapabilities} trainingSummary={trainingSummary} trainingSummaryLoading={trainingSummaryLoading} trainingSummaryFailed={trainingSummaryFailed} trainingSsoEnabled={trainingSsoEnabled} ssoBusy={ssoBusy} ssoMessage={ssoMessage} onOpenSso={openTrainingWithSso} onRetry={() => setTrainingSummaryRetry(value => value + 1)} />}
         {view === 'store' && <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Tienda</h1><p>Consulta los productos disponibles en el centro.</p></div><div className="store-filter" role="group" aria-label="Filtrar productos por categoría"><button type="button" aria-pressed={storeCategory==='nutrition'} className={storeCategory==='nutrition'?'active':''} onClick={()=>setStoreCategory('nutrition')}>Nutrición</button><button type="button" aria-pressed={storeCategory==='merchandising'} className={storeCategory==='merchandising'?'active':''} onClick={()=>setStoreCategory('merchandising')}>Merchandising</button></div>{storeFailed&&<p className="inline-message" role="alert">No se ha podido actualizar el catálogo o el historial. <button className="text-button" onClick={()=>void refresh()}>Reintentar</button></p>}<div className="member-store-grid">{storeProducts.filter(item=>item.category===storeCategory).map(product=><article className="member-store-card" key={product.id}><span className="store-category-icon" aria-hidden="true">{product.category==='nutrition'?'✦':'◈'}</span><div><h2>{product.name}</h2>{product.description&&<p>{product.description}</p>}</div>{product.variants.map(variant=><div className="member-store-variant" key={variant.id}><span>{variant.label}</span><strong>{new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(variant.priceCents/100)}</strong><small className={`availability ${variant.availability}`}>{variant.availability==='disponible'?'Disponible':variant.availability==='pocas_unidades'?'Pocas unidades':'Agotado'}</small></div>)}</article>)}{storeProducts.filter(item=>item.category===storeCategory).length===0&&!storeFailed&&<section className="empty-card profile-empty"><h2>Aún no hay productos en esta categoría.</h2><p>Vuelve a consultar más adelante.</p></section>}</div><p className="store-notice">Consulta los productos disponibles. Las compras se gestionan directamente en el centro.</p></>}
         {view === 'bookings' && !hasActiveMembership && <section className="empty-card membership-required" aria-labelledby="bookings-membership-title"><p className="eyebrow">CUOTA NECESARIA</p><h1 id="bookings-membership-title">Mis reservas</h1><p>El acceso a reservas requiere una cuota vigente. Puedes seguir consultando tu perfil, avisos, documentos y compras.</p>{message&&<p className="inline-message" role="status">{message}</p>}<button className="button secondary" onClick={()=>setView('profile')}>Consultar mis cuotas</button></section>}
         {view === 'bookings' && hasActiveMembership && <><div className="page-intro"><p className="eyebrow">TU ACTIVIDAD</p><h1>Mis reservas</h1><p>Consulta próximas sesiones y tu historial.</p></div><button className="text-button contextual-link" onClick={() => setView('book')}>Volver a Reservar <span aria-hidden="true">→</span></button>{message && <p className="inline-message" role="status">{message}</p>}<div className="booking-tabs" role="tablist" aria-label="Mis reservas">{([['upcoming','Próximas'],['history','Historial']] as const).map(([id,label])=><button key={id} type="button" role="tab" id={`booking-tab-${id}`} tabIndex={bookingTab===id?0:-1} aria-selected={bookingTab===id} aria-controls={`booking-panel-${id}`} onClick={()=>setBookingTab(id)} onKeyDown={event=>{if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;event.preventDefault();const next=bookingTab==='upcoming'?'history':'upcoming';setBookingTab(next);document.getElementById(`booking-tab-${next}`)?.focus();}}>{label}</button>)}</div>{bookingTab==='upcoming'?<section role="tabpanel" id="booking-panel-upcoming" aria-labelledby="booking-tab-upcoming"><h2 className="visually-hidden">Próximas</h2>{upcomingAgenda.length ? <div className="booking-stack">{upcomingAgenda.map(({booking,waiting}) => <BookingCard key={`${waiting?'waitlist':'reservation'}-${booking.id}`} booking={booking} waiting={waiting} busy={busy===booking.id} actionDisabled={previewMode||!bookingEnabled} onCancel={() => waiting ? void leaveWaitlist(booking) : void cancelBooking(booking)}/>)}</div> : <p className="muted">No tienes reservas ni listas de espera próximas.</p>}</section>:<section role="tabpanel" id="booking-panel-history" aria-labelledby="booking-tab-history"><h2 className="visually-hidden">Historial</h2>{historyAgenda.length ? <div className="booking-stack">{historyAgenda.map(({booking,waiting})=><BookingCard key={`${waiting?'waitlist':'reservation'}-${booking.id}`} booking={booking} waiting={waiting} compact/>)}</div>:<p className="muted">Todavía no tienes actividad en tu historial.</p>}</section>}</>}
@@ -679,12 +808,16 @@ function DocumentField({ field, value, onChange }: { field: FormField; value: un
   if (field.type === 'single_choice' || field.type === 'scale') return <label className="form-field" htmlFor={id}>{field.label}{field.required ? ' · Obligatorio' : ''}<select id={id} value={value == null ? '' : String(value)} required={field.required} onChange={event => onChange(field.type === 'scale' ? Number(event.target.value) : event.target.value)}><option value="">Selecciona una opción</option>{(field.type === 'scale' ? Array.from({length:10},(_,index) => String(index+1)) : field.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}</select></label>;
   return <label className="form-field" htmlFor={id}>{field.label}{field.required ? ' · Obligatorio' : ''}<input id={id} type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} value={value == null ? '' : String(value)} onChange={event => onChange(field.type === 'number' ? event.target.value === '' ? undefined : Number(event.target.value) : event.target.value)} required={field.required} maxLength={field.type === 'number' || field.type === 'date' ? undefined : 5000}/></label>;
 }
-function BunkerDestination({ previewMode, trainingCapabilities, trainingSummary, trainingSummaryLoading, trainingSummaryFailed, onRetry }: {
+function BunkerDestination({ previewMode, trainingCapabilities, trainingSummary, trainingSummaryLoading, trainingSummaryFailed, trainingSsoEnabled, ssoBusy, ssoMessage, onOpenSso, onRetry }: {
   previewMode: boolean;
   trainingCapabilities: TrainingCapabilities | null;
   trainingSummary: MemberTrainingSummary | null;
   trainingSummaryLoading: boolean;
   trainingSummaryFailed: boolean;
+  trainingSsoEnabled: boolean;
+  ssoBusy: boolean;
+  ssoMessage: string;
+  onOpenSso: () => void;
   onRetry: () => void;
 }) {
   const level = trainingCapabilities?.capabilityLevel;
@@ -700,8 +833,8 @@ function BunkerDestination({ previewMode, trainingCapabilities, trainingSummary,
       </>}
     </div>}
     {!previewMode && (trainingSummaryLoading ? <p role="status">Consultando tu espacio de entrenamiento…</p> : trainingSummaryFailed || (trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'unavailable') ? <div role="status"><p>Información de entrenamiento temporalmente no disponible.</p><button className="text-button" onClick={onRetry}>Intentar de nuevo</button></div> : trainingSummary?.status === 'not_linked' ? <p role="status">Búnker aún no vinculado.</p> : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'available' ? <div className="hub-training-summary" role="status"><strong>Búnker conectado</strong>{trainingSummary.summary.currentProgram && <p>Programa actual: {trainingSummary.summary.currentProgram.name}</p>}{trainingSummary.summary.recentActivity && <p>{trainingSummary.summary.recentActivity.lastTrainingAt ? `Última actividad: ${dateLabel(`${trainingSummary.summary.recentActivity.lastTrainingAt}T12:00:00.000Z`)}` : 'Todavía no hay actividad reciente.'} · {trainingSummary.summary.recentActivity.sessionsLast30Days} {trainingSummary.summary.recentActivity.sessionsLast30Days === 1 ? 'entreno' : 'entrenos'} en los últimos 30 días</p>}</div> : null)}
-    {previewMode ? <button className="button primary" type="button" disabled>Abrir Búnker</button> : <a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a>}
-    <small>{previewMode ? 'La demo no abre aplicaciones ni servicios externos.' : 'Se abrirá el espacio de entrenamiento en una nueva pestaña.'}</small>
+    {previewMode ? <button className="button primary" type="button" disabled>Abrir Búnker</button> : trainingSsoEnabled && trainingSummary?.status !== 'not_linked' ? <><button className="button primary" type="button" disabled={ssoBusy} onClick={onOpenSso}>{ssoBusy ? 'Abriendo Búnker…' : 'Abrir Búnker'}</button>{ssoMessage && <p className="inline-message" role="alert">{ssoMessage}</p>}<a className="text-button" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir con tu acceso habitual <span aria-hidden="true">↗</span></a></> : <a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a>}
+    <small>{previewMode ? 'La demo no abre aplicaciones ni servicios externos.' : trainingSsoEnabled && trainingSummary?.status !== 'not_linked' ? 'Entrarás en Búnker con tu cuenta del centro.' : 'Se abrirá el espacio de entrenamiento en una nueva pestaña.'}</small>
   </section>;
 }
 
