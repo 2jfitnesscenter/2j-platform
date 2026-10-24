@@ -61,3 +61,17 @@ export async function disablePush(env: PushEnv): Promise<void> {
   const subscription = await registration?.pushManager.getSubscription();
   if (subscription) await subscription.unsubscribe();
 }
+
+/** Remove only this browser from the signed-in person before logout; consent on other devices stays intact. */
+export async function removePushDevice(env: PushEnv): Promise<void> {
+  const registration = await env.serviceWorker?.ready;
+  const subscription = await registration?.pushManager.getSubscription();
+  if (!subscription) return;
+  const endpoint = subscription.toJSON().endpoint ?? subscription.endpoint;
+  try { await call(env, 'DELETE', '/api/me/push/subscriptions', { endpoint }); }
+  catch (error) {
+    // When the Platform flag is off, it rejects all push routes. Unsubscribe locally so this device stops receiving pushes.
+    if ((error as { status?: number }).status !== 423) throw error;
+  }
+  await subscription.unsubscribe();
+}

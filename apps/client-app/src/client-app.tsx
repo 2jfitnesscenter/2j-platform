@@ -1,4 +1,5 @@
 import React from 'react';
+import { usePushSubscription } from './push/use-push-subscription.js';
 
 type View = 'home' | 'book' | 'bookings' | 'bunker' | 'store' | 'profile' | 'settings' | 'notifications' | 'news';
 type NotificationItem = {id:string;type:string;title:string;body:string;deeplink:string|null;createdAt:string;readAt:string|null};
@@ -303,6 +304,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const [scheduleError, setScheduleError] = React.useState(false);
   const [scheduleVersion, setScheduleVersion] = React.useState(0);
   const [profile, setProfile] = React.useState<ClientProfile | null>(() => preview?.profile ?? null);
+  const push = usePushSubscription(Boolean(profile && !previewMode));
   const [preferences, setPreferences] = React.useState<MemberPreferences>(() => ({ ...defaultPreferences, appearance: readAppearanceHint(previewMode) }));
   const [preferenceSaving, setPreferenceSaving] = React.useState(false);
   const [preferenceError, setPreferenceError] = React.useState('');
@@ -394,6 +396,8 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   };
   const logout = async () => {
     setBusy('logout');
+    const pushDeviceRemoved = await push.removeDevice();
+    if (!pushDeviceRemoved) { setMessage('No se ha podido desconectar este dispositivo de las notificaciones. La sesión sigue abierta; inténtalo de nuevo.'); setBusy(null); return; }
     try { await api('/api/pilot/member/logout', { method: 'POST', body: '{}' }); }
     catch { setMessage('No se pudo cerrar la sesión; vuelve a intentarlo.'); return setBusy(null); }
     setProfile(null); setMembership([]); setActiveMembership([]); setReservations([]); setWaitlist([]); setSessions([]); setBookingServices([]); setForms([]); setConsents([]); setNotifications([]); setNewsItems([]); setFeaturedNews(null); setNewsError(false); setSelectedNews(null); setMessage(''); setError('client_authentication_required'); setLoading(false); setView('home'); setBusy(null);
@@ -681,6 +685,23 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
           </section>
           <section className="settings-card" aria-labelledby="language-title"><div><p className="eyebrow">IDIOMA</p><h2 id="language-title">Idioma</h2><p>El idioma disponible actualmente en el espacio 2J.</p></div><div className="settings-value"><span>Español</span><span className="settings-value-note">Actual</span></div></section>
           <section className="settings-card" aria-labelledby="notifications-title"><div><p className="eyebrow">AVISOS</p><h2 id="notifications-title">Notificaciones</h2><p>Los avisos operativos de reservas, cuenta y documentos se mantienen activos para que no te pierdas información importante.</p></div><div className="settings-note"><strong>Buzón personal</strong><span>Los avisos personales están en Perfil. Las noticias del centro se muestran en Inicio.</span><button type="button" className="text-button" onClick={()=>void openNotifications()}>Abrir buzón <span aria-hidden="true">→</span></button></div></section>
+          <section className="settings-card" aria-labelledby="push-title">
+            <div><p className="eyebrow">EN ESTE DISPOSITIVO</p><h2 id="push-title">Notificaciones push</h2><p>El buzón de Home sigue disponible aunque las notificaciones del navegador estén apagadas.</p></div>
+            {previewMode ? <p className="settings-note" role="status">Las notificaciones push no están conectadas en la demo sintética.</p>
+              : push.loading ? <p className="settings-note" role="status">Consultando disponibilidad…</p>
+              : push.support === 'needs-install' ? <p className="settings-note" role="status">Para recibir notificaciones en iPhone, añade primero 2J a la pantalla de inicio.</p>
+              : push.support === 'unsupported' ? <p className="settings-note" role="status">Este navegador no admite notificaciones push web.</p>
+              : push.support === 'denied' ? <p className="settings-note" role="status">El permiso está bloqueado en el navegador. Cámbialo en los ajustes del sitio para activar las notificaciones.</p>
+              : push.error ? <div className="settings-note" role="alert"><span>No se ha podido consultar o actualizar el estado de las notificaciones.</span><button type="button" className="text-button" onClick={()=>void push.refresh()}>Reintentar</button></div>
+              : push.config?.enabled === false ? <p className="settings-note" role="status">El centro todavía no ha habilitado las notificaciones push.</p>
+              : push.available && push.config?.enabled ? <div className="settings-note">
+                <strong>{push.config.consent === 'granted' ? 'Consentimiento activado' : 'Consentimiento no activado'}</strong>
+                <span>{push.config.activeDevices} {push.config.activeDevices === 1 ? 'dispositivo activo' : 'dispositivos activos'} en tu cuenta.</span>
+                <span>Registrar este dispositivo no activa otros. Al retirar el consentimiento, se desactivan todos los dispositivos de la cuenta.</span>
+                <button type="button" className="button primary" disabled={push.busy} onClick={()=>void push.enable()}>{push.busy ? 'Activando…' : 'Activar en este dispositivo'}</button>
+                {push.config.consent === 'granted' && <button type="button" className="button secondary" disabled={push.busy} onClick={()=>void push.disable()}>{push.busy ? 'Desactivando…' : 'Desactivar en todos los dispositivos'}</button>}
+              </div> : <p className="settings-note" role="status">Las notificaciones push no están disponibles en este momento.</p>}
+          </section>
           <section className="settings-card" aria-labelledby="account-security-title"><div><p className="eyebrow">ACCESO</p><h2 id="account-security-title">Cuenta y seguridad</h2><p>Información disponible para tu cuenta actual.</p></div><dl className="settings-facts"><div><dt>Correo</dt><dd>{profile.email ?? 'No registrado'}</dd></div><div><dt>Estado de la cuenta</dt><dd>{profile.status==='active'?'Activa':'En revisión'}</dd></div><div><dt>Sesión</dt><dd>Sesión de miembro activa</dd></div></dl>{pilotLoginEnabled&&<button className="button secondary" type="button" onClick={()=>void logout()} disabled={busy==='logout'}>{busy==='logout'?'Cerrando sesión…':'Cerrar sesión'}</button>}<p className="settings-caption">La recuperación de cuenta y los métodos de acceso avanzados aún no están disponibles aquí.</p></section>
           <section className="settings-card" aria-labelledby="privacy-title"><div><p className="eyebrow">TUS DATOS</p><h2 id="privacy-title">Privacidad</h2><p>Consulta la documentación y los consentimientos registrados por tu centro.</p></div><button type="button" className="profile-link-card settings-action" onClick={()=>setView('profile')}><span><strong>Documentos y consentimientos</strong><small>Disponible en Perfil</small></span><span aria-hidden="true">→</span></button><p className="settings-caption">Desde aquí no se solicita la eliminación de la cuenta ni de datos.</p></section>
           <section className="settings-card" aria-labelledby="bunker-settings-title"><div><p className="eyebrow">ENTRENAMIENTO</p><h2 id="bunker-settings-title">Preferencias de entrenamiento</h2><p>Las opciones que afectan únicamente a tus entrenamientos se gestionan dentro de Búnker.</p></div><p className="settings-caption">Incluye temporizadores, progresión, ejercicios y dispositivos. No se duplican en los ajustes generales.</p></section>

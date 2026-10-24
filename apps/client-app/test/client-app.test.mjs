@@ -406,6 +406,55 @@ test('D31 keeps Home, Profile, Store and Búnker entry available without a fee a
   cleanup(); dom.window.close();
 });
 
+test('push settings require a gesture, register the session-owned device and withdraw account consent', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document }, navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage },
+    Notification: { configurable: true, value: { permission: 'default', requestPermission: async () => { globalThis.Notification.permission = 'granted'; return 'granted'; } } },
+  });
+  Object.defineProperty(window, 'PushManager', { configurable: true, value: class PushManager {} });
+  const calls = [];
+  let consent = 'unset'; let subscribed = false;
+  const subscription = { endpoint: 'https://push.example.test/device', toJSON: () => ({ endpoint: 'https://push.example.test/device', keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } }), unsubscribe: async () => { subscribed = false; return true; } };
+  const pushManager = { getSubscription: async () => subscribed ? subscription : null, subscribe: async () => { subscribed = true; return subscription; } };
+  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { ready: Promise.resolve({ pushManager }) } });
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input); calls.push({ url, init });
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '18111111-1111-4111-8111-111111111112', firstName: 'Iria', lastName: 'Avisos', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
+    if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
+    if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    if (url === '/api/me/push/config') return new Response(JSON.stringify({ enabled: true, vapidPublicKey: Buffer.alloc(65, 4).toString('base64url'), consent, activeDevices: subscribed ? 1 : 0 }));
+    if (url === '/api/me/push/consent' && init.method === 'PUT') { assert.equal(init.credentials, 'include'); consent = JSON.parse(init.body).granted ? 'granted' : 'revoked'; return new Response(JSON.stringify({ consent })); }
+    if (url === '/api/me/push/subscriptions' && init.method === 'POST') { assert.equal(init.credentials, 'include'); return new Response(JSON.stringify({ id: 'push-device-1' }), { status: 201 }); }
+    if (url === '/api/me/training-summary') return new Response(JSON.stringify({ status: 'not_linked' }));
+    throw new Error(`Unexpected request ${url}`);
+  };
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  await ui.findByRole('heading', { name: 'Hola, Iria' });
+  fireEvent.click(ui.getByRole('button', { name: 'Ajustes' }));
+  const enable = await ui.findByRole('button', { name: 'Activar en este dispositivo' });
+  assert.equal(calls.some(call => call.url === '/api/me/push/consent'), false, 'no consent before the member presses the button');
+  fireEvent.click(enable);
+  await ui.findByRole('button', { name: 'Desactivar en todos los dispositivos' });
+  assert.equal(consent, 'granted');
+  assert.equal(subscribed, true);
+  const subscribe = calls.find(call => call.url === '/api/me/push/subscriptions');
+  assert.ok(subscribe);
+  assert.equal(JSON.parse(subscribe.init.body).endpoint, subscription.endpoint);
+  fireEvent.click(ui.getByRole('button', { name: 'Desactivar en todos los dispositivos' }));
+  await ui.findByRole('button', { name: 'Activar en este dispositivo' });
+  assert.equal(consent, 'revoked');
+  assert.equal(subscribed, false);
+  assert.equal(calls.filter(call => call.url === '/api/me/push/consent').length, 2);
+  cleanup(); dom.window.close();
+});
+
 test('profile completes only the signed-in client’s form and records an explicit consent acceptance', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, {

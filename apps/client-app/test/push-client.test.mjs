@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { disablePush, enablePush, pushSupport, urlBase64ToUint8Array } from '../src/push/push-client.ts';
+import { disablePush, enablePush, pushSupport, removePushDevice, urlBase64ToUint8Array } from '../src/push/push-client.ts';
 
 const KEY = Buffer.alloc(65, 4).toString('base64url');          // a fake 65-byte point, built at run time
 const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
@@ -51,6 +51,21 @@ test('disable: withdraws consent on the server and drops this browser subscripti
   await disablePush(e);
   assert.deepEqual(calls.filter(call => call[0] === 'PUT').at(-1)[2], { granted: false });
   assert.equal(state.unsubscribed, true);
+});
+
+test('logout removes only the current device; if the push flag is off it still clears the local subscription', async () => {
+  const { e, calls, state } = env();
+  await enablePush(e);
+  await removePushDevice(e);
+  assert.equal(calls.some(call => call[0] === 'DELETE' && call[1] === '/api/me/push/subscriptions'), true);
+  assert.equal(calls.filter(call => call[0] === 'PUT').length, 1, 'logout does not revoke consent for other devices');
+  assert.equal(state.unsubscribed, true);
+
+  const disabled = env();
+  await enablePush(disabled.e);
+  disabled.e.fetch = async (path, init) => path.endsWith('/subscriptions') && init.method === 'DELETE' ? json(423, { error: 'push_disabled' }) : json(200, {});
+  await removePushDevice(disabled.e);
+  assert.equal(disabled.state.unsubscribed, true, 'local device is removed even while the server flag is off');
 });
 
 test('base64url VAPID keys decode to the 65 bytes of an uncompressed P-256 point', () => {
