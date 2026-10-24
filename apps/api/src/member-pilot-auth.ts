@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { createDatabase } from './db.js';
 import type { ClientAuthorizationContext } from './communications.js';
+import type { ResolvedPersonAuth } from './training-link-protocol.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const COOKIE = '2j_member_pilot';
@@ -29,24 +30,37 @@ export function createMemberPilotAuth(database: DB, options: { enabled: boolean;
   const origin = options.memberOrigin;
   const enabled = options.enabled && origin !== null;
 
-  async function resolve(request: FastifyRequest): Promise<ClientAuthorizationContext | null> {
+  /** One lookup for every resolver: the live session, its active auth subject/credential, the person, and (when present and active) the client facet. */
+  async function lookupSession(request: FastifyRequest) {
     if (!enabled) return null;
     const raw = cookieValue(request);
     if (!raw || !/^[A-Za-z0-9_-]{40,64}$/.test(raw)) return null;
     const digest = hash(raw);
     const rows = await database.begin(async tx => {
-      const matches = await tx`SELECT s.person_id AS "personId",s.auth_subject_link_id AS "subjectId",f.client_id AS "clientId"
+      const matches = await tx`SELECT s.person_id AS "personId",a.auth_subject AS "authSubject",a.provider,a.provider_version AS "providerVersion",c.id AS "clientId"
         FROM platform_member_sessions s
         JOIN platform_person_auth_subjects a ON a.id=s.auth_subject_link_id AND a.person_id=s.person_id AND a.status='active' AND a.provider='platform-pilot'
         JOIN platform_persons p ON p.id=s.person_id AND p.status='active'
-        JOIN platform_person_clients f ON f.person_id=p.id
-        JOIN clients c ON c.id=f.client_id AND c.status='active'
         JOIN platform_member_pilot_credentials credential ON credential.auth_subject_link_id=a.id AND credential.status='active'
+        LEFT JOIN platform_person_clients f ON f.person_id=p.id
+        LEFT JOIN clients c ON c.id=f.client_id AND c.status='active'
         WHERE s.session_hash=${digest} AND s.revoked_at IS NULL AND s.expires_at>now() LIMIT 1`;
       if (matches[0]) await tx`UPDATE platform_member_sessions SET last_seen_at=now() WHERE session_hash=${digest} AND revoked_at IS NULL`;
       return matches;
     });
-    return rows[0] ? { clientId: rows[0].clientId, personId: rows[0].personId } : null;
+    return rows[0] ?? null;
+  }
+
+  /** Client-facet identity (self-service routes): requires an active client facet. */
+  async function resolve(request: FastifyRequest): Promise<ClientAuthorizationContext | null> {
+    const session = await lookupSession(request);
+    return session?.clientId ? { clientId: session.clientId, personId: session.personId } : null;
+  }
+
+  /** Person-level identity from the same session; does not require a client facet (external persons). */
+  async function resolvePerson(request: FastifyRequest): Promise<ResolvedPersonAuth | null> {
+    const session = await lookupSession(request);
+    return session ? { personId: String(session.personId), authSubject: String(session.authSubject), provider: String(session.provider), providerVersion: Number(session.providerVersion) } : null;
   }
 
   function setCookie(reply: any, value: string, request: FastifyRequest, maxAge: number) {
@@ -112,5 +126,5 @@ export function createMemberPilotAuth(database: DB, options: { enabled: boolean;
     });
   }
 
-  return { enabled, resolve, register, csrfAllowed, cookieName: COOKIE };
+  return { enabled, resolve, resolvePerson, register, csrfAllowed, cookieName: COOKIE };
 }
