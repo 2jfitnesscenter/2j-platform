@@ -104,7 +104,7 @@ cmd_base() {
   say "1/8 Actualizando el sistema (puede tardar unos minutos)"
   apt-get update -y
   apt-get -y -o Dpkg::Options::=--force-confold upgrade
-  apt-get install -y ca-certificates curl gnupg git ufw fail2ban unattended-upgrades jq openssl sudo cron dnsutils python3-systemd
+  apt-get install -y ca-certificates curl gnupg git ufw fail2ban unattended-upgrades jq openssl sudo cron dnsutils python3-systemd apache2-utils
   timedatectl set-timezone Atlantic/Canary || true
   systemctl enable --now systemd-timesyncd >/dev/null 2>&1 || true     # service-to-service signatures need a correct clock
 
@@ -120,7 +120,10 @@ cmd_base() {
 
   say "3/8 Cortafuegos (UFW): solo 22, 80 y 443"
   ufw default deny incoming; ufw default allow outgoing
-  ufw allow 22/tcp; ufw allow 80/tcp; ufw allow 443/tcp
+  # Allow the port sshd REALLY listens on (and 22) BEFORE enabling the firewall: enabling it first on a non-standard port would cut this very session.
+  ssh_ports="22 $(sshd -T 2>/dev/null | awk '$1=="port"{print $2}') $(ss -ltnH 2>/dev/null | awk '/sshd/{n=split($4,a,":"); print a[n]}')"
+  for p in $(printf '%s\n' $ssh_ports | sort -un); do case "$p" in ''|*[!0-9]*) continue;; esac; ufw allow "${p}/tcp" >/dev/null; ok "SSH permitido en el puerto ${p}"; done
+  ufw allow 80/tcp; ufw allow 443/tcp
   ufw --force enable
 
   say "4/8 fail2ban"
@@ -241,7 +244,7 @@ git_sync() {  # name repo ref dest
 render_files() {  # DIR  — generated config; reads secrets from $ROOT/secrets unless RENDER_FAKE=1
   local dir="$1"; mkdir -p "$dir"
   local ba_hash="${FAKE_BASIC_HASH:-}"
-  [ -n "$ba_hash" ] || ba_hash="$(caddy hash-password --plaintext "$(cat "$ROOT/secrets/basic-auth.pass")")"
+  [ -n "$ba_hash" ] || ba_hash="$(htpasswd -niB staging < "$ROOT/secrets/basic-auth.pass" | cut -d: -f2)"   # password read from stdin: never in ps
   local allow="127.0.0.1 ::1 ${ADMIN_ALLOW_IPS}"
   local email_block=""; [ -n "$ACME_EMAIL" ] && email_block="	email ${ACME_EMAIL}"
 
@@ -445,6 +448,7 @@ cmd_render() {
 cmd_deploy() {
   need_root; log_start
   [ "$ACCEPT_ADMIN_WITHOUT_STAFF_AUTH" = "yes" ] || die "Lee la sección «Lo que debes saber» del runbook y pon ACCEPT_ADMIN_WITHOUT_STAFF_AUTH=\"yes\" en $CONF."
+  validate_conf
   command -v docker >/dev/null && command -v caddy >/dev/null || die "Falta la base: ejecuta '2j-staging base' primero."
 
   say "0/8 DNS (si no apunta aquí, Let's Encrypt fallaría y limita los reintentos)"
@@ -514,7 +518,7 @@ cmd_deploy() {
 Despliegue terminado. Siguiente:
   2j-staging seed        (datos de prueba)
   2j-staging selftest    (OK/FAIL por subdominio)
-La contraseña de acceso a las tres webs está en ${ROOT}/secrets/basic-auth.txt  (léela con:  cat ${ROOT}/secrets/basic-auth.txt ).
+La contraseña de acceso a las tres webs está guardada en ${ROOT}/secrets/basic-auth.txt (solo root). No se muestra aquí.
 EOF
 }
 
@@ -586,10 +590,10 @@ cmd_selftest() {
   say "HTTPS y salud (certificado real, sin saltarse la comprobación)"
   for h in "$HOSTS_HOME" "$HOSTS_APP"; do
     code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://$h/" 2>/dev/null || true)"; [ "$code" = 401 ] && ok "$h sin contraseña -> 401 (protegida)" || bad "$h sin contraseña -> ${code:-sin respuesta} (esperado 401)"
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -u "$user:$pass" "https://$h/" 2>/dev/null || true)"; [ "$code" = 200 ] && ok "$h con contraseña -> 200" || bad "$h con contraseña -> ${code:-sin respuesta} (esperado 200)"
-    body="$(curl -sS --max-time 20 -u "$user:$pass" "https://$h/healthz" 2>/dev/null || true)"; case "$body" in *'"ok"'*) ok "$h /healthz -> ok";; *) bad "$h /healthz -> ${body:0:80}";; esac
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -K <(printf 'user = "%s:%s"\n' "$user" "$pass") "https://$h/" 2>/dev/null || true)"; [ "$code" = 200 ] && ok "$h con contraseña -> 200" || bad "$h con contraseña -> ${code:-sin respuesta} (esperado 200)"
+    body="$(curl -sS --max-time 20 -K <(printf 'user = "%s:%s"\n' "$user" "$pass") "https://$h/healthz" 2>/dev/null || true)"; case "$body" in *'"ok"'*) ok "$h /healthz -> ok";; *) bad "$h /healthz -> ${body:0:80}";; esac
   done
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 --resolve "${HOSTS_ADMIN}:443:127.0.0.1" -u "$user:$pass" "https://${HOSTS_ADMIN}/healthz" 2>/dev/null || true)"
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 --resolve "${HOSTS_ADMIN}:443:127.0.0.1" -K <(printf 'user = "%s:%s"\n' "$user" "$pass") "https://${HOSTS_ADMIN}/healthz" 2>/dev/null || true)"
   [ "$code" = 200 ] && ok "$HOSTS_ADMIN (desde el propio servidor) /healthz -> 200" || bad "$HOSTS_ADMIN /healthz -> ${code:-sin respuesta} (esperado 200)"
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://${HOSTS_ADMIN}/" 2>/dev/null || true)"
   if [ -z "$ADMIN_ALLOW_IPS" ]; then [ "$code" = 403 ] && ok "$HOSTS_ADMIN cerrado al exterior (403): ADMIN_ALLOW_IPS vacío" || bad "$HOSTS_ADMIN desde fuera -> ${code:-sin respuesta} (esperado 403)"
@@ -620,8 +624,10 @@ cmd_status() {
 
 cmd_teardown() {
   need_root
+  [ "$ROOT" = "/opt/2j" ] || die "teardown solo funciona sobre /opt/2j (valor actual: $ROOT). Nada borrado."
+  [ -f "$ROOT/last-platform-commit" ] || [ -d "$ROOT/secrets" ] || die "$ROOT no parece un staging de 2J. Nada borrado."
   [ "${1:-}" = "--yes" ] || die "Escribe: 2j-staging teardown --yes   (destruye el staging; no toca el sistema operativo ni el acceso SSH)."
-  printf 'Esto BORRA las bases de datos y datos de STAGING. Para continuar escribe exactamente:  DESTRUIR STAGING\n> '; read -r phrase
+  printf 'Esto BORRA TODO el contenido de %s (bases de datos, secretos y copias de STAGING). Para continuar escribe exactamente:  DESTRUIR STAGING\n> ' "$ROOT"; read -r phrase
   [ "$phrase" = "DESTRUIR STAGING" ] || die "Cancelado: no se ha borrado nada."
   ( cd "$ROOT/src/bunker" 2>/dev/null && docker compose down -v --remove-orphans ) || true
   docker compose -f "$ROOT/compose/platform.compose.yml" down -v --remove-orphans 2>/dev/null || true
@@ -635,6 +641,24 @@ cmd_teardown() {
 }
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
+validate_conf() {
+  local ip n
+  for ip in $ADMIN_ALLOW_IPS; do
+    case "$ip" in
+      */*) n="${ip#*/}"; ip="${ip%/*}";;
+      *) n="";;
+    esac
+    if [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+      for o in "${BASH_REMATCH[@]:1}"; do [ "$o" -le 255 ] || die "ADMIN_ALLOW_IPS: IP no válida: $ip"; done
+      [ -z "$n" ] || { [[ "$n" =~ ^[0-9]{1,2}$ ]] && [ "$n" -ge 24 ] && [ "$n" -le 32 ]; } || die "ADMIN_ALLOW_IPS: máscara /$n demasiado ancha (mínimo /24): $ip/$n"
+    elif [[ "$ip" =~ ^[0-9a-fA-F:]+$ ]] && [[ "$ip" == *:* ]]; then
+      [ -z "$n" ] || { [[ "$n" =~ ^[0-9]{1,3}$ ]] && [ "$n" -ge 64 ] && [ "$n" -le 128 ]; } || die "ADMIN_ALLOW_IPS: prefijo IPv6 /$n demasiado ancho (mínimo /64)"
+    else
+      die "ADMIN_ALLOW_IPS: valor no válido: '$ip' (usa IPs como 83.57.105.60 o 83.57.105.0/24; nunca 0.0.0.0/0)"
+    fi
+  done
+}
+
 main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
