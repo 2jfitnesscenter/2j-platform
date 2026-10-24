@@ -26,6 +26,18 @@ const adminApp = buildServer(process.env.DATABASE_URL, { logger: false, authoriz
 after(async () => { await Promise.all([app.close(), disabledApp.close(), unconfiguredApp.close(), adminApp.close()]); await sql.end(); });
 
 const hash = value => createHash('sha256').update(value, 'utf8').digest('hex');
+// Browser binding: the verifier belongs to the browser that started the flow at Training; Platform only ever sees its S256 challenge until redemption.
+const verifiers = new Map();
+const newVerifier = () => randomBytes(32).toString('base64url');
+const challengeFor = verifier => createHash('sha256').update(verifier, 'ascii').digest('base64url');
+const startFlow = () => { const verifier = newVerifier(); return { verifier, challenge: challengeFor(verifier) }; };
+const issueHeaders = { 'content-type': 'application/json', origin: memberOrigin };
+async function insertCode(person, code, interval) {
+  const { verifier, challenge } = startFlow();
+  verifiers.set(code, verifier);
+  await sql`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,binding_challenge,expires_at)
+    VALUES (${hash(code)},${person.personId},${person.subjectId},${person.trainingUserId},'2j-training-sso','training-session',${challenge},now()+${interval}::interval)`;
+}
 
 async function createPerson({ link = true } = {}) {
   const personId = randomUUID(), subjectId = randomUUID(), authSubject = `sso-test-${randomUUID()}`, trainingUserId = `training-${randomUUID()}`;
@@ -37,16 +49,18 @@ async function createPerson({ link = true } = {}) {
 
 async function issue(person, server = app) {
   currentAuth = person.auth;
-  const response = await server.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} });
+  const { verifier, challenge } = startFlow();
+  const response = await server.inject({ method: 'POST', url: '/api/me/training/sso', headers: issueHeaders, payload: { challenge } });
   const code = response.statusCode === 201 ? new URL(response.json().redirectUrl).hash.slice('#code='.length) : null;
-  return { response, code };
+  if (code) verifiers.set(code, verifier);
+  return { response, code, verifier };
 }
 
 function redeemRequest(code, overrides = {}) {
   const requestId = overrides.requestId ?? randomUUID();
   const timestamp = overrides.timestamp ?? new Date().toISOString();
   const key = overrides.key ?? bunkerKey;
-  const body = Buffer.from(JSON.stringify({ v: 1, code, audience: '2j-training-sso', purpose: 'training-session', ...overrides.body }), 'utf8');
+  const body = Buffer.from(JSON.stringify({ v: 2, code, verifier: verifiers.get(code) ?? newVerifier(), audience: '2j-training-sso', purpose: 'training-session', ...overrides.body }), 'utf8');
   const signature = overrides.signature ?? signedRequestSignature(key.secret, { keyId: key.id, timestamp, requestId, method: 'POST', path: REDEEM, body });
   return { method: 'POST', url: REDEEM, headers: { 'content-type': 'application/json', 'x-2j-key-id': key.id, 'x-2j-timestamp': timestamp, 'x-2j-request-id': requestId, 'x-2j-signature': signature }, payload: body };
 }
@@ -54,14 +68,15 @@ function redeemRequest(code, overrides = {}) {
 test('issuance is off by default, needs configuration and an authenticated person, and never persists the raw code', async () => {
   const person = await createPerson();
   currentAuth = person.auth;
-  const off = await disabledApp.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} });
+  const body = () => ({ challenge: startFlow().challenge });
+  const off = await disabledApp.inject({ method: 'POST', url: '/api/me/training/sso', headers: issueHeaders, payload: body() });
   assert.equal(off.statusCode, 423); assert.equal(off.json().error, 'training_sso_disabled');
-  const unconfigured = await unconfiguredApp.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} });
+  const unconfigured = await unconfiguredApp.inject({ method: 'POST', url: '/api/me/training/sso', headers: issueHeaders, payload: body() });
   assert.equal(unconfigured.statusCode, 503);
   currentAuth = null;
-  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: issueHeaders, payload: body() })).statusCode, 401);
   currentAuth = { ...person.auth, authSubject: 'someone-else' };
-  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} })).statusCode, 401, 'a subject that is not bound to the person is rejected');
+  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: issueHeaders, payload: body() })).statusCode, 401, 'a subject that is not bound to the person is rejected');
 
   const { response, code } = await issue(person);
   assert.equal(response.statusCode, 201, response.body);
@@ -116,8 +131,7 @@ test('concurrent redemption has exactly one winner', async () => {
 test('expired codes are rejected and finalised; a stored code cannot be extended or reused', async () => {
   const person = await createPerson();
   const code = randomBytes(32).toString('base64url');
-  await sql`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,expires_at)
-    VALUES (${hash(code)},${person.personId},${person.subjectId},${person.trainingUserId},'2j-training-sso','training-session',now()+interval '1 second')`;
+  await insertCode(person, code, '1 second');
   await new Promise(resolve => setTimeout(resolve, 1300));
   const expired = await app.inject(redeemRequest(code));
   assert.equal(expired.statusCode, 410); assert.equal(expired.json().error, 'sso_code_expired');
@@ -126,8 +140,7 @@ test('expired codes are rejected and finalised; a stored code cannot be extended
   await assert.rejects(sql`UPDATE platform_training_sso_codes SET expires_at=now()+interval '30 seconds' WHERE code_hash=${hash(code)}`, { code: '55000' });
   await assert.rejects(sql`UPDATE platform_training_sso_codes SET state='pending' WHERE code_hash=${hash(code)}`, { code: '55000' });
   await assert.rejects(sql`DELETE FROM platform_training_sso_codes WHERE code_hash=${hash(code)}`, { code: '55000' });
-  await assert.rejects(sql`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,expires_at)
-    VALUES (${hash(randomUUID())},${person.personId},${person.subjectId},${person.trainingUserId},'2j-training-sso','training-session',now()+interval '5 minutes')`, { code: '23514' });
+  await assert.rejects(insertCode(person, randomBytes(32).toString('base64url'), '5 minutes'), { code: '23514' });
 });
 
 test('issuance and redemption fail closed for a missing, revoked or changed Training link', async () => {
@@ -191,7 +204,7 @@ test('a person has at most one live code: a new one supersedes the previous, and
 test('issuance requires the member-app origin for every authentication provider (CSRF), not only the pilot', async () => {
   const person = await createPerson();
   currentAuth = person.auth;
-  const attempt = headers => app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', ...headers }, payload: {} });
+  const attempt = headers => app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', ...headers }, payload: { challenge: startFlow().challenge } });
   assert.equal((await attempt({})).statusCode, 403, 'no Origin');
   assert.equal((await attempt({ origin: 'https://attacker.example' })).statusCode, 403, 'foreign Origin');
   assert.equal((await attempt({ origin: `${memberOrigin}.attacker.example` })).statusCode, 403, 'lookalike Origin');
@@ -199,7 +212,7 @@ test('issuance requires the member-app origin for every authentication provider 
   assert.equal((await sql`SELECT count(*)::int AS n FROM platform_training_sso_codes WHERE person_id=${person.personId}`)[0].n, 0, 'nothing is issued for a rejected request');
   assert.equal((await attempt({ origin: memberOrigin, 'sec-fetch-site': 'same-site' })).statusCode, 201);
   const noOriginConfigured = buildServer(process.env.DATABASE_URL, { ...base, memberAppOrigin: undefined, logger: false, trainingSsoEnabled: true });
-  try { assert.equal((await noOriginConfigured.inject({ method: 'POST', url: '/api/me/training/sso', headers: { 'content-type': 'application/json', origin: memberOrigin }, payload: {} })).statusCode, 503, 'without a configured member origin it fails closed'); }
+  try { assert.equal((await noOriginConfigured.inject({ method: 'POST', url: '/api/me/training/sso', headers: issueHeaders, payload: { challenge: startFlow().challenge } })).statusCode, 503, 'without a configured member origin it fails closed'); }
   finally { await noOriginConfigured.close(); }
 });
 
@@ -231,10 +244,95 @@ test('replays of a dead code stay rejected but leave bounded evidence', async ()
   const [{ n }] = await sql`SELECT count(*)::int AS n FROM platform_identity_audit_events WHERE person_id=${person.personId} AND action='training.sso_rejected'`;
   assert.equal(n, 5, 'rejection evidence is capped per code');
   const expiredCode = randomBytes(32).toString('base64url');
-  await sql`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,expires_at)
-    VALUES (${hash(expiredCode)},${person.personId},${person.subjectId},${person.trainingUserId},'2j-training-sso','training-session',now()+interval '1 second')`;
+  await insertCode(person, expiredCode, '1 second');
   await new Promise(resolve => setTimeout(resolve, 1300));
   for (let index = 0; index < 8; index += 1) assert.equal((await app.inject(redeemRequest(expiredCode))).statusCode, 410);
   const [{ expiredAudits }] = await sql`SELECT count(*)::int AS "expiredAudits" FROM platform_identity_audit_events r JOIN platform_training_sso_codes c ON c.id=r.resource_id WHERE c.code_hash=${hash(expiredCode)} AND r.action='training.sso_rejected'`;
   assert.ok(expiredAudits <= 5);
+});
+
+// ---- Browser binding (PKCE S256): a code works only for the browser that started the flow at Training ----
+
+test('issuance requires the challenge of the starting browser, and stores only that challenge', async () => {
+  const person = await createPerson();
+  currentAuth = person.auth;
+  const post = payload => app.inject({ method: 'POST', url: '/api/me/training/sso', headers: issueHeaders, payload });
+  const { verifier, challenge } = startFlow();
+  for (const bad of [{}, { challenge: '' }, { challenge: 'short' }, { challenge: `${challenge}x` }, { challenge: `${challenge.slice(1)}!` }, { challenge: 42 }, { challenge, extra: 1 }, { verifier }, { challenge: verifier + verifier }]) {
+    const rejected = await post(bad);
+    assert.equal(rejected.statusCode, 400, JSON.stringify(bad)); assert.equal(rejected.json().error, 'binding_challenge_required');
+  }
+  assert.equal((await app.inject({ method: 'POST', url: '/api/me/training/sso', headers: { origin: memberOrigin } })).statusCode, 400, 'no body at all');
+  assert.equal((await sql`SELECT count(*)::int AS n FROM platform_training_sso_codes WHERE person_id=${person.personId}`)[0].n, 0, 'nothing is issued without a challenge');
+
+  const issued = await post({ challenge });
+  assert.equal(issued.statusCode, 201, issued.body);
+  const [row] = await sql`SELECT binding_challenge FROM platform_training_sso_codes WHERE person_id=${person.personId}`;
+  assert.equal(row.binding_challenge.trim(), challenge);
+  const everything = JSON.stringify([await sql`SELECT * FROM platform_training_sso_codes`, await sql`SELECT * FROM platform_identity_audit_events WHERE person_id=${person.personId}`]);
+  assert.ok(!everything.includes(verifier), 'the verifier never reaches Platform before redemption, so it can never be stored');
+  assert.ok(!issued.body.includes(challenge), 'the response does not echo the challenge');
+});
+
+test('redemption needs the verifier of the starting browser: a wrong, missing or foreign verifier never succeeds and never burns the code', async () => {
+  const person = await createPerson(), stranger = await createPerson();
+  const { code, verifier } = await issue(person);
+  const other = await issue(stranger);
+  const bodyWith = verifierValue => ({ body: { verifier: verifierValue } });
+  for (const [label, attempt] of [
+    ['random verifier', redeemRequest(code, bodyWith(newVerifier()))],
+    ['the verifier of another person\'s flow', redeemRequest(code, bodyWith(other.verifier))],
+    ['the challenge used as if it were the verifier', redeemRequest(code, bodyWith(challengeFor(verifier)))],
+  ]) {
+    const result = await app.inject(attempt);
+    assert.equal(result.statusCode, 403, `${label}: ${result.body}`); assert.equal(result.json().error, 'sso_binding_mismatch');
+  }
+  const missing = redeemRequest(code); const parsed = JSON.parse(missing.payload.toString('utf8')); delete parsed.verifier;
+  const payload = Buffer.from(JSON.stringify(parsed), 'utf8');
+  const requestId = randomUUID(), timestamp = new Date().toISOString();
+  const signature = signedRequestSignature(bunkerKey.secret, { keyId: bunkerKey.id, timestamp, requestId, method: 'POST', path: REDEEM, body: payload });
+  assert.equal((await app.inject({ method: 'POST', url: REDEEM, headers: { ...missing.headers, 'x-2j-timestamp': timestamp, 'x-2j-request-id': requestId, 'x-2j-signature': signature }, payload })).statusCode, 400, 'no verifier at all');
+  assert.equal((await app.inject(redeemRequest(code, { body: { v: 1 } }))).statusCode, 400, 'the previous request version is not accepted');
+  assert.equal((await app.inject(redeemRequest(code, { body: { verifier: 'short' } }))).statusCode, 400);
+
+  assert.equal((await sql`SELECT state FROM platform_training_sso_codes WHERE code_hash=${hash(code)}`)[0].state, 'pending', 'wrong verifiers do not consume the code (a leaked code cannot be burned by its holder)');
+  const [{ audited }] = await sql`SELECT count(*)::int AS audited FROM platform_identity_audit_events WHERE person_id=${person.personId} AND action='training.sso_rejected'`;
+  assert.ok(audited >= 1 && audited <= 5, 'mismatches are audited, boundedly');
+  const ok = await app.inject(redeemRequest(code));
+  assert.equal(ok.statusCode, 200, ok.body);
+  assert.equal(ok.json().trainingUserId, person.trainingUserId, 'the starting browser redeems it normally');
+  assert.equal((await app.inject(redeemRequest(code))).statusCode, 409, 'and only once');
+});
+
+test('login CSRF: a code minted for the attacker\'s browser cannot be redeemed with anything a victim\'s browser holds', async () => {
+  const attacker = await createPerson(), victim = await createPerson();
+  const attackerFlow = await issue(attacker);                 // the attacker runs the flow in their own browser and keeps the code
+  const victimFlow = startFlow();                             // the victim's browser holds its own, unrelated verifier
+  const forged = await app.inject(redeemRequest(attackerFlow.code, { body: { verifier: victimFlow.verifier } }));
+  assert.equal(forged.statusCode, 403); assert.equal(forged.json().error, 'sso_binding_mismatch');
+  const noCookie = await app.inject(redeemRequest(attackerFlow.code, { body: { verifier: newVerifier() } }));
+  assert.equal(noCookie.statusCode, 403, 'a browser without the starting cookie cannot do it either');
+  const real = await app.inject(redeemRequest(attackerFlow.code));
+  assert.equal(real.statusCode, 200); assert.equal(real.json().trainingUserId, attacker.trainingUserId, 'only the attacker\'s own browser signs into the attacker\'s account');
+  assert.notEqual(real.json().trainingUserId, victim.trainingUserId);
+});
+
+test('the binding is immutable and every stored code carries one', async () => {
+  const person = await createPerson();
+  const { code } = await issue(person);
+  await assert.rejects(sql`UPDATE platform_training_sso_codes SET binding_challenge=${startFlow().challenge},version=version+1 WHERE code_hash=${hash(code)}`, { code: '55000' });
+  await assert.rejects(sql`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,expires_at)
+    VALUES (${hash(randomUUID())},${person.personId},${person.subjectId},${person.trainingUserId},'2j-training-sso','training-session',now()+interval '30 seconds')`, { code: '23514' });
+  await assert.rejects(sql`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,binding_challenge,expires_at)
+    VALUES (${hash(randomUUID())},${person.personId},${person.subjectId},${person.trainingUserId},'2j-training-sso','training-session','not-a-challenge',now()+interval '30 seconds')`, { code: '23514' });
+});
+
+test('concurrent redemption: exactly one winner, and a wrong verifier never wins', async () => {
+  const person = await createPerson();
+  const { code } = await issue(person);
+  const results = await Promise.all([app.inject(redeemRequest(code)), app.inject(redeemRequest(code)), app.inject(redeemRequest(code, { body: { verifier: newVerifier() } }))]);
+  const statuses = results.map(item => item.statusCode).sort();
+  assert.equal(statuses.filter(status => status === 200).length, 1, `one winner: ${statuses}`);
+  assert.ok([403, 409].includes(results[2].statusCode), `the wrong verifier was refused (mismatch, or already used if it came last): ${results[2].statusCode}`);
+  assert.ok(results.every(item => item.statusCode !== 200 || item.json().trainingUserId === person.trainingUserId));
 });

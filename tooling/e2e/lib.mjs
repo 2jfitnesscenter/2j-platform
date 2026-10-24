@@ -78,3 +78,23 @@ export const monthRange = offset => {
   const iso = d => d.toISOString().slice(0, 10);
   return { startsOn: iso(start), endsOn: iso(end), dueOn: iso(start) };
 };
+
+/** Búnker's acknowledgement of an existing Platform link (what Platform's link flow asks for after a verified proof). Used to seed already-linked personas. */
+export async function activateTrainingLink(bunkerBase, proofKey, { linkId, personId, trainingUserId, linkVersion = 1 }) {
+  const route = '/api/platform/v1/link/activate';
+  const body = JSON.stringify({ v: 1, linkId, linkVersion, personId, trainingUserId, origin: 'proof' });
+  return httpCall(bunkerBase, 'POST', route, { body, headers: signRequest(proofKey, 'POST', route, Buffer.from(body)) });
+}
+
+/**
+ * The first step of the browser-bound SSO flow, as a browser performs it: a top-level GET to Búnker's start page that is NOT followed. Returns what that browser now
+ * holds (the HttpOnly binding cookie) and what it carries to Home (the S256 challenge in the fragment). `headers` can pin a client IP (X-Forwarded-For) for rate limits.
+ */
+export async function beginBrowserFlow(bunkerBase, headers = {}) {
+  const response = await fetch(`${bunkerBase}/api/platform/v1/sso/start`, { redirect: 'manual', headers });
+  const bind = (response.headers.getSetCookie?.() ?? []).find(item => item.startsWith('j2ssob='));
+  const location = response.headers.get('location') || '';
+  const cookie = bind ? bind.split(';')[0] : null;
+  return { status: response.status, location, cookie, verifier: cookie ? cookie.slice('j2ssob='.length) : null, challenge: /#sso_challenge=([A-Za-z0-9_-]{43})$/.exec(location)?.[1] ?? null, setCookie: response.headers.getSetCookie?.() ?? [] };
+}
+export const s256 = verifier => createHash('sha256').update(verifier, 'ascii').digest('base64url');

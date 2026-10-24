@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { b64, childEnv, cookieOf, freePort, httpCall, monthRange, passkeyCookieFor, randomSecret, resolveOutDir, sha256hex, signRequest, sleep, startProcess, stopProcess, waitHttp } from './lib.mjs';
+import { activateTrainingLink, b64, beginBrowserFlow, s256, childEnv, cookieOf, freePort, httpCall, monthRange, passkeyCookieFor, randomSecret, resolveOutDir, sha256hex, signRequest, sleep, startProcess, stopProcess, waitHttp } from './lib.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
@@ -36,7 +36,7 @@ const MEMBER_ORIGIN = 'http://127.0.0.1:5173';
 const BUNKER_SECRET_TEXT = randomSecret();
 const platformKey = { id: 'e2e-bunker-v1', secret: randomBytes(32) };      // Búnker -> Platform
 const proofKey = { id: 'e2e-platform-v1', secret: randomBytes(32) };        // Platform -> Búnker (link proofs)
-const state = { platform: null, bunker: null, sql: null, dbName: null, dbUrl: null, ports: {}, people: {}, cases: [], notes: {}, secretsSeen: new Set() };
+const state = { browsers: new Map(), platform: null, bunker: null, sql: null, dbName: null, dbUrl: null, ports: {}, people: {}, cases: [], notes: {}, secretsSeen: new Set() };
 const bunkerPasskeyCookie = passkeyCookieFor(BUNKER_SECRET_TEXT);
 
 /* ------------------------------------------------------------------ helpers */
@@ -72,16 +72,31 @@ async function loginMember(label) {
   person.memberCookie = remember(cookieOf(response));
   return person.memberCookie;
 }
-async function startSso(label) {
+/**
+ * The browser-bound flow, as a browser does it. Step 1 happens at Búnker (start page: the secret stays in an HttpOnly cookie, Home gets only its S256 challenge).
+ * Step 2 is Home asking Platform for a code for THAT challenge. Step 3 is the same browser redeeming it at Búnker. `browser` is that browser's state.
+ */
+async function newBrowser() {
+  const browser = await beginBrowserFlow(B());
+  assert.equal(browser.status, 302, 'the start page redirects'); assert.ok(browser.cookie && browser.challenge, 'and sets the binding cookie');
+  remember(browser.verifier);
+  return browser;
+}
+async function startSso(label, browser) {
   const person = state.people[label];
   const cookie = person.memberCookie || await loginMember(label);
-  const response = await httpCall(P(), 'POST', '/api/me/training/sso', { body: {}, cookie, headers: { origin: MEMBER_ORIGIN } });
+  browser ??= await newBrowser();
+  const response = await httpCall(P(), 'POST', '/api/me/training/sso', { body: { challenge: browser.challenge }, cookie, headers: { origin: MEMBER_ORIGIN } });
   const code = response.status === 201 ? remember(new URL(response.json.redirectUrl).hash.slice('#code='.length)) : null;
-  return { response, code };
+  if (code) state.browsers.set(code, browser);
+  return { response, code, browser };
 }
-async function redeem(code, origin = B()) {
-  const response = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin } });
-  return { response, cookie: remember(cookieOf(response)) };
+/** Redeems with the browser that started the flow for this code (default), or with another one: `as` is a browser state, or null for a browser that never started it. */
+async function redeem(code, origin = B(), as) {
+  const browser = as === undefined ? state.browsers.get(code) ?? await newBrowser() : as;
+  const response = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code }, headers: { origin }, ...(browser?.cookie ? { cookie: browser.cookie } : {}) });
+  const session = (response.headers.getSetCookie?.() ?? []).find(item => item.startsWith('gymsid='));
+  return { response, cookie: remember(session ? session.split(';')[0] : ''), setCookie: response.headers.getSetCookie?.() ?? [] };
 }
 async function ssoSession(label) {
   const { response, code } = await startSso(label);
@@ -116,8 +131,8 @@ async function startPlatform() {
 async function startBunker() {
   state.bunker = startProcess(out, 'bunker', ['server.js'], bunkerApiDir, {
     PORT: String(state.ports.bunker), DATA_DIR: path.join(out, 'bunker-data'), SECRET_FILE: path.join(out, 'bunker-data', 'secret'), RP_ID: 'localhost', ORIGIN: B(),
-    PLATFORM_SSO_ENABLED: 'true', PLATFORM_API_BASE_URL: P(), PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
-    PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true',
+    PLATFORM_SSO_ENABLED: 'true', PLATFORM_HOME_URL: MEMBER_ORIGIN, PLATFORM_API_BASE_URL: P(), PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
+    PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true', PLATFORM_BREAKER_BASE_MS: '200', PLATFORM_LINK_LIFECYCLE_ENABLED: 'true',
     PLATFORM_SERVICE_AUTH_KEYS: JSON.stringify({ [proofKey.id]: b64(proofKey.secret) }),
   });
   await waitHttp(`${B()}/api/health`, 'Búnker', out);
@@ -192,6 +207,13 @@ before(async () => {
     const body = JSON.stringify({ v: 1, code: issued.json.code, ...context });
     const exchanged = await httpCall(B(), 'POST', '/api/platform/v1/link-proofs/exchange', { body, headers: signRequest(proofKey, 'POST', '/api/platform/v1/link-proofs/exchange', Buffer.from(body)) });
     assert.equal(exchanged.status, 200, `proof exchange ${label}: ${exchanged.text}`);
+    if (label === 'forbid') continue;                                   // its confirmation is part of case 06a
+    const [link] = await state.sql`SELECT link_id FROM training_account_links WHERE person_id=${person.personId}`;
+    const acked = await activateTrainingLink(B(), proofKey, { linkId: link.link_id, personId: person.personId, trainingUserId: person.uid });
+    assert.equal(acked.status, 200, `Búnker acknowledgement ${label}: ${acked.text}`);
+    // Sessions follow the mode of the user (H1): these personas are opted in to enforcement, exactly like an administrator would do one by one.
+    assert.equal((await adminSetMode(person.uid, 'shadow')).status, 200, `shadow ${label}`);
+    assert.equal((await adminSetMode(person.uid, 'enforced')).status, 200, `enforced ${label}`);
   }
 });
 
@@ -212,9 +234,13 @@ const E2E = (id, title, fn) => test(`E2E ${id} — ${title}`, async () => {
 
 /* ------------------------------------------------------------------ cases, in the order they must run */
 E2E('00', 'link bilateral: Home SSO → Platform → Búnker opens a member-level session for a linked person', async () => {
-  const { response, code } = await startSso('free');
+  const { response, code, browser } = await startSso('free');
   assert.equal(response.status, 201);
   assert.match(code, /^[A-Za-z0-9_-]{43}$/);
+  // Step 1 of the bound flow: Búnker's start page sent the browser to Home carrying only the S256 of the secret that stays in its cookie.
+  const toHome = new URL(browser.location);
+  assert.equal(toHome.origin, MEMBER_ORIGIN); assert.equal(toHome.search, ''); assert.equal(browser.challenge, s256(browser.verifier)); assert.ok(!browser.location.includes(browser.verifier));
+  assert.match(browser.setCookie.find(item => item.startsWith('j2ssob=')), /HttpOnly/);
   const url = new URL(response.json.redirectUrl);
   assert.equal(url.origin, B()); assert.equal(url.pathname, '/sso'); assert.equal(url.search, '');
   // Home's own destination validation accepts exactly this URL (the Home client follows only that). It must run: skipping needs an explicit opt-out.
@@ -224,6 +250,8 @@ E2E('00', 'link bilateral: Home SSO → Platform → Búnker opens a member-leve
     assert.equal(home.trainingSsoDestination(response.json.redirectUrl, B()), response.json.redirectUrl);
     assert.equal(home.trainingSsoDestination(response.json.redirectUrl, 'https://app.2jfitnesscenter.com'), null);
     assert.equal(home.trainingSsoDestination(`${B()}/other#code=${code}`, B()), null, 'only /sso is followed');
+    assert.equal(home.ssoChallengeFromHash(toHome.hash), browser.challenge, 'Home reads exactly the challenge Búnker sent');
+    assert.equal(home.trainingSsoStartUrl(B()), `${B()}/api/platform/v1/sso/start`, 'and Home\'s "Abrir Búnker" leaves for exactly that start page');
     state.notes.homeValidation = 'executed';
   }
   const redeemed = await redeem(code);
@@ -259,7 +287,9 @@ E2E('06a', 'modos por usuario: legacy sin llamadas a Platform, shadow no bloquea
   assert.deepEqual(await probe(cookie), { history: true, guided: true, premium: true, coach: true, followup: true }, 'legacy keeps today\'s full access');
   assert.equal((await adminSetMode(uid, 'enforced')).json.error, 'transition_not_allowed');
   assert.equal((await adminSetMode(uid, 'shadow')).status, 409, 'a link confirmed by Búnker is required first');
-  await ensureSso('forbid');                                           // establishes Búnker's confirmed link
+  const person = state.people.forbid, [link] = await state.sql`SELECT link_id FROM training_account_links WHERE person_id=${person.personId}`;
+  assert.equal((await activateTrainingLink(B(), proofKey, { linkId: link.link_id, personId: person.personId, trainingUserId: uid })).status, 200);   // Búnker confirms the link
+  await ensureSso('forbid');
   assert.equal((await adminSetMode(uid, 'shadow')).status, 200);
   assert.deepEqual(await probe(cookie), { history: true, guided: true, premium: true, coach: true, followup: true }, 'shadow never blocks');
   assert.equal((await adminSetMode(uid, 'enforced')).status, 200);
@@ -282,12 +312,15 @@ E2E('13', 'acceso directo al API sin autorización', async () => {
   assert.equal((await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code: randomBytes(32).toString('base64url') }, headers: { origin: 'https://evil.example' } })).status, 403);
   assert.equal((await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code: 'x' }, headers: { origin: B() } })).status, 400);
   // Platform: no member session, forged member cookie, wrong/missing origin (CSRF), internal endpoints without or with the wrong service signature.
-  assert.equal((await httpCall(P(), 'POST', '/api/me/training/sso', { body: {}, headers: { origin: MEMBER_ORIGIN } })).status, 401);
-  assert.equal((await httpCall(P(), 'POST', '/api/me/training/sso', { body: {}, cookie: `2j_member_pilot=${'A'.repeat(43)}`, headers: { origin: MEMBER_ORIGIN } })).status, 401);
+  const anyChallenge = () => ({ challenge: s256(randomBytes(32).toString('base64url')) });
+  assert.equal((await httpCall(P(), 'POST', '/api/me/training/sso', { body: anyChallenge(), headers: { origin: MEMBER_ORIGIN } })).status, 401);
+  assert.equal((await httpCall(P(), 'POST', '/api/me/training/sso', { body: anyChallenge(), cookie: `2j_member_pilot=${'A'.repeat(43)}`, headers: { origin: MEMBER_ORIGIN } })).status, 401);
   const cookie = state.people.free.memberCookie || await loginMember('free');
-  assert.equal((await httpCall(P(), 'POST', '/api/me/training/sso', { body: {}, cookie, headers: { origin: 'https://evil.example' } })).status, 403, 'Platform rejects a cross-site request');
-  assert.equal((await httpCall(P(), 'POST', '/api/me/training/sso', { body: {}, cookie })).status, 403, 'and a request with no Origin at all');
-  const redeemPath = '/api/internal/platform/v2/sso/redeem', body = JSON.stringify({ v: 1, code: randomBytes(32).toString('base64url'), audience: '2j-training-sso', purpose: 'training-session' });
+  assert.equal((await httpCall(P(), 'POST', '/api/me/training/sso', { body: anyChallenge(), cookie, headers: { origin: 'https://evil.example' } })).status, 403, 'Platform rejects a cross-site request');
+  assert.equal((await httpCall(P(), 'POST', '/api/me/training/sso', { body: anyChallenge(), cookie })).status, 403, 'and a request with no Origin at all');
+  const noChallenge = await httpCall(P(), 'POST', '/api/me/training/sso', { body: {}, cookie, headers: { origin: MEMBER_ORIGIN } });
+  assert.equal(noChallenge.status, 400); assert.equal(noChallenge.json.error, 'binding_challenge_required', 'a code is never issued without the challenge of the browser that started the flow');
+  const redeemPath = '/api/internal/platform/v2/sso/redeem', body = JSON.stringify({ v: 2, code: randomBytes(32).toString('base64url'), verifier: randomBytes(32).toString('base64url'), audience: '2j-training-sso', purpose: 'training-session' });
   assert.equal((await httpCall(P(), 'POST', redeemPath, { body })).status, 401, 'unsigned');
   const wrong = { id: platformKey.id, secret: randomBytes(32) };
   assert.equal((await httpCall(P(), 'POST', redeemPath, { body, headers: signRequest(wrong, 'POST', redeemPath, Buffer.from(body)) })).status, 401, 'wrong secret');
@@ -311,6 +344,31 @@ E2E('10', 'código SSO reutilizado: el segundo canje falla (también en paralelo
   assert.equal((await redeem(older.code)).response.status, 400, 'the superseded code is dead');
   const winner = await redeem(newer.code); assert.equal(winner.response.status, 200);
   state.people.codes.ssoCookie = winner.cookie;
+});
+
+E2E('10b', 'login CSRF y enlaces reenviados: un código solo se canjea desde el navegador que inició el flujo', async () => {
+  // The attacker (a linked account) runs the flow in THEIR browser and keeps the code. They send the victim to /sso#code=<that code>.
+  const attacker = await startSso('codes');
+  assert.equal(attacker.response.status, 201);
+  const victim = await newBrowser();                                              // the victim's browser holds its own, unrelated binding cookie
+  const cold = await redeem(attacker.code, B(), null);                           // a victim who never started a flow: no cookie at all
+  assert.equal(cold.response.status, 400); assert.equal(cold.response.json.error, 'sso_binding_missing'); assert.equal(cold.cookie, '');
+  const warm = await redeem(attacker.code, B(), victim);                          // a victim who did start one (their own)
+  assert.equal(warm.response.status, 400); assert.equal(warm.response.json.error, 'sso_binding_mismatch'); assert.equal(warm.cookie, '', 'no session for the victim');
+  const [pending] = await state.sql`SELECT state FROM platform_training_sso_codes WHERE code_hash=${sha256hex(attacker.code)}`;
+  assert.equal(pending.state, 'pending', 'the wrong browsers did not burn the attacker\'s code, and did not use it');
+  // The victim signed in as someone else is not offered a switch either: the ticket exists only after a VALID redemption.
+  const someone = await ensureSso('free');
+  const withSession = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code: attacker.code }, headers: { origin: B() }, cookie: `${someone}; ${victim.cookie}` });
+  assert.equal(withSession.status, 400); assert.equal(withSession.json.error, 'sso_binding_mismatch'); assert.equal(withSession.json.ticket, undefined);
+  assert.equal((await httpCall(B(), 'GET', '/api/me', { cookie: someone })).json.user.id, 'e2e-free', 'the victim is still themselves');
+  // The legitimate flow is unharmed: the attacker's own browser signs in to the attacker\'s own account.
+  const own = await redeem(attacker.code);
+  assert.equal(own.response.status, 200); assert.equal(own.response.json.user.id, 'e2e-codes');
+  assert.ok(own.setCookie.some(item => /^j2ssob=;.*Max-Age=0/i.test(item)), 'and the binding cookie is spent');
+  const [audit] = await state.sql`SELECT count(*)::int AS n FROM platform_identity_audit_events e JOIN platform_training_sso_codes c ON c.id=e.resource_id WHERE c.code_hash=${sha256hex(attacker.code)} AND e.action='training.sso_rejected'`;
+  assert.ok(audit.n >= 1 && audit.n <= 5, 'Platform audited the refused attempts, boundedly');
+  state.people.codes.ssoCookie = own.cookie;
 });
 
 E2E('14a', 'datos históricos intactos tras todos los casos anteriores', async () => {
@@ -382,7 +440,8 @@ E2E('11-12', 'caída de Platform y caché vencida: baseline conservado, derechos
   assert.deepEqual(await probe(state.people.outsusp.ssoCookie), BLOCKED);
   assert.deepEqual(await probe(state.people.susp.ssoCookie), BLOCKED, 'an unverified lift is not assumed');
   // New sign-ins cannot happen without Platform; the passkey login keeps working.
-  const noPlatform = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code: randomBytes(32).toString('base64url') }, headers: { origin: B() } });
+  const outageBrowser = await newBrowser();                              // starting the flow needs no Platform
+  const noPlatform = await httpCall(B(), 'POST', '/api/platform/v1/sso/redeem', { body: { v: 1, code: randomBytes(32).toString('base64url') }, headers: { origin: B() }, cookie: outageBrowser.cookie });
   assert.equal(noPlatform.status, 503);
   assert.equal((await httpCall(B(), 'GET', '/api/me', { cookie: bunkerPasskeyCookie(state.people.outfull.uid) })).status, 200);
   state.notes.outageSeconds = Math.round((Date.now() - downSince) / 1000);

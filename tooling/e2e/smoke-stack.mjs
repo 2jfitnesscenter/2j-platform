@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { b64, childEnv, httpCall, monthRange, passkeyCookieFor, randomSecret, resolveOutDir, sha256hex, signRequest, sleep, startProcess, waitHttp } from './lib.mjs';
+import { activateTrainingLink, b64, childEnv, httpCall, monthRange, passkeyCookieFor, randomSecret, resolveOutDir, sha256hex, signRequest, sleep, startProcess, waitHttp } from './lib.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const platformApiDir = path.join(repoRoot, 'apps', 'api');
@@ -52,8 +52,8 @@ fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ users: people.m
 for (const [uid, name] of people) fs.writeFileSync(path.join(dataDir, `state-${uid}.json`), JSON.stringify({ unit: 'kg', lang: 'es', routines: [{ id: 'r1', name: `Rutina histórica de ${name}`, emoji: '💪', ex: [{ id: '0001', sets: 3, reps: 10, mode: 'reps', weight: 20 }] }], week: { 1: 'r1' }, workouts: [{ d: '2026-09-01', routineId: 'r1' }] }));
 start('bunker', ['server.js'], bunkerApiDir, {
   PORT: String(PORTS.bunkerApi), DATA_DIR: dataDir, SECRET_FILE: path.join(dataDir, 'secret'), RP_ID: 'localhost', ORIGIN: BUNKER_ORIGIN,
-  PLATFORM_SSO_ENABLED: 'true', PLATFORM_API_BASE_URL: P, PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
-  PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true', PLATFORM_SERVICE_AUTH_KEYS: JSON.stringify({ [proofKey.id]: b64(proofKey.secret) }),
+  PLATFORM_SSO_ENABLED: 'true', PLATFORM_HOME_URL: MEMBER_ORIGIN, PLATFORM_API_BASE_URL: P, PLATFORM_API_KEY_ID: platformKey.id, PLATFORM_API_KEY_SECRET: b64(platformKey.secret),
+  PLATFORM_PROOF_ISSUANCE_ENABLED: 'true', PLATFORM_PROOF_EXCHANGE_ENABLED: 'true', PLATFORM_LINK_LIFECYCLE_ENABLED: 'true', PLATFORM_SERVICE_AUTH_KEYS: JSON.stringify({ [proofKey.id]: b64(proofKey.secret) }),
 });
 const BA = `http://127.0.0.1:${PORTS.bunkerApi}`;
 await waitHttp(`${BA}/api/health`, 'Búnker', out);
@@ -80,6 +80,9 @@ for (const [uid, name, level] of people) {
   const body = JSON.stringify({ v: 1, code: issued.json.code, ...ctx });
   const ex = await httpCall(BA, 'POST', '/api/platform/v1/link-proofs/exchange', { body, headers: signRequest(proofKey, 'POST', '/api/platform/v1/link-proofs/exchange', Buffer.from(body)) });
   if (ex.status !== 200) throw new Error(`link proof failed for ${uid}: ${ex.text}`);
+  const [link] = await sql`SELECT link_id FROM training_account_links WHERE person_id=${personId}`;
+  const acked = await activateTrainingLink(BA, proofKey, { linkId: link.link_id, personId, trainingUserId: uid });
+  if (acked.status !== 200) throw new Error(`Búnker acknowledgement failed for ${uid}: ${acked.text}`);
   codes[uid] = code;
 }
 const stopFile = path.join(out, 'stop');

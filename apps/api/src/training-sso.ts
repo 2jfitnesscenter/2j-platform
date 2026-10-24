@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { createDatabase } from './db.js';
@@ -16,9 +16,16 @@ export const TRAINING_SSO_MAX_ISSUES_PER_MINUTE = 10;
 export const TRAINING_SSO_MAX_REJECTION_AUDITS_PER_CODE = 5;
 export const TRAINING_SSO_REDEEM_PATH = '/api/internal/platform/v2/sso/redeem';
 const hash = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
+/** PKCE S256: the challenge a browser derives from its secret verifier. Both sides of the contract use exactly this. */
+export const bindingChallengeFor = (verifier: string) => createHash('sha256').update(verifier, 'ascii').digest('base64url');
+const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+/** What Home sends to ask for a code: the challenge created by the browser at Training (never the verifier). */
+const issueBody = z.object({ challenge: z.string().regex(CHALLENGE) }).strict();
+/** v2 of the redeem request adds the verifier Training read from the HttpOnly cookie of the browser that started the flow. */
 const redeemBody = z.object({
-  v: z.literal(1),
+  v: z.literal(2),
   code: z.string().min(43).max(128).regex(/^[A-Za-z0-9_-]+$/),
+  verifier: z.string().min(43).max(128).regex(/^[A-Za-z0-9_-]+$/),
   audience: z.string().min(1).max(120),
   purpose: z.string().min(1).max(120),
 }).strict();
@@ -63,6 +70,9 @@ export function registerTrainingSsoRoutes(app: FastifyInstance<any, any, any, an
     // Cookie-authenticated, state-changing: the browser must say it comes from the member app, whoever authenticated it.
     const fetchSite = request.headers['sec-fetch-site'];
     if (request.headers.origin !== allowedOrigin || fetchSite === 'cross-site') return reply.code(403).send({ error: 'origin_rejected' });
+    // The code is bound to the browser that started the flow at Training: without its challenge there is nothing to bind to.
+    const asked = issueBody.safeParse(request.body);
+    if (!asked.success) return reply.code(400).send({ error: 'binding_challenge_required' });
     const auth = await options.resolvePersonAuth(request);
     if (!auth) return reply.code(401).send({ error: 'authentication_required' });
     const [subject] = await db`SELECT s.id FROM platform_person_auth_subjects s JOIN platform_persons p ON p.id=s.person_id
@@ -87,8 +97,8 @@ export function registerTrainingSsoRoutes(app: FastifyInstance<any, any, any, an
         // One live code per person: issuing a new one retires the previous (it can no longer be redeemed).
         await tx`UPDATE platform_training_sso_codes SET state='revoked',terminal_reason='superseded',version=version+1
           WHERE person_id=${auth.personId}::uuid AND state='pending' AND expires_at>now()`;
-        const [row] = await tx`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,expires_at)
-          VALUES (${hash(code)},${auth.personId}::uuid,${subject.id},${caps.trainingSubject.trainingUserId!},${TRAINING_SSO_AUDIENCE},${TRAINING_SSO_PURPOSE},now()+(${TRAINING_SSO_TTL_SECONDS} * interval '1 second'))
+        const [row] = await tx`INSERT INTO platform_training_sso_codes(code_hash,person_id,auth_subject_link_id,training_user_id,audience,purpose,binding_challenge,expires_at)
+          VALUES (${hash(code)},${auth.personId}::uuid,${subject.id},${caps.trainingSubject.trainingUserId!},${TRAINING_SSO_AUDIENCE},${TRAINING_SSO_PURPOSE},${asked.data.challenge},now()+(${TRAINING_SSO_TTL_SECONDS} * interval '1 second'))
           RETURNING id,expires_at AS "expiresAt"`;
         await tx`INSERT INTO platform_identity_audit_events(person_id,actor_id,action,resource_id,details)
           VALUES (${auth.personId}::uuid,${String(subject.id)},'training.sso_issued',${row!.id},(${JSON.stringify({ audience: TRAINING_SSO_AUDIENCE, capabilityLevel: caps.capabilityLevel })}::text)::jsonb)`;
@@ -126,7 +136,7 @@ export function registerTrainingSsoRoutes(app: FastifyInstance<any, any, any, an
 
       try {
         const outcome = await db.begin(async (tx) => {
-          const [row] = await tx`SELECT id,person_id AS "personId",auth_subject_link_id AS "subjectId",training_user_id AS "trainingUserId",state,expires_at<=now() AS "isExpired"
+          const [row] = await tx`SELECT id,person_id AS "personId",auth_subject_link_id AS "subjectId",training_user_id AS "trainingUserId",binding_challenge AS "bindingChallenge",state,expires_at<=now() AS "isExpired"
             FROM platform_training_sso_codes WHERE code_hash=${codeHash} FOR UPDATE`;
           if (!row) return { http: 404, error: 'sso_code_not_found' } as const;
           // Replays of a dead code stay rejected, but the evidence they leave is bounded (no unbounded append-only growth).
@@ -141,6 +151,14 @@ export function registerTrainingSsoRoutes(app: FastifyInstance<any, any, any, an
             if (row.state === 'pending') await tx`UPDATE platform_training_sso_codes SET state='expired',terminal_reason='ttl_elapsed',version=version+1 WHERE id=${row.id}`;
             await reject('expired');
             return { http: 410, error: 'sso_code_expired' } as const;
+          }
+          // Browser binding: only the browser that started the flow at Training holds the verifier. A mismatch does NOT consume the code
+          // (a forwarded or leaked code must not be burnable by whoever holds it), but it is audited and never succeeds.
+          const expectedChallenge = typeof row.bindingChallenge === 'string' ? Buffer.from(row.bindingChallenge, 'utf8') : null;
+          const presentedChallenge = Buffer.from(bindingChallengeFor(parsed.data.verifier), 'utf8');
+          if (!expectedChallenge || expectedChallenge.length !== presentedChallenge.length || !timingSafeEqual(expectedChallenge, presentedChallenge)) {
+            await reject('binding_mismatch');
+            return { http: 403, error: 'sso_binding_mismatch' } as const;
           }
           // Serialise with suspension/lifting (they take FOR UPDATE on the person): whatever they commit before this lock is visible to
           // the capability read below, and anything committed after it applies from the next verification. A stale snapshot cannot win.
