@@ -32,9 +32,10 @@ chmod +x setup-staging.sh
 nano /etc/2j-staging.conf      # pega SSH_PUBKEY, ADMIN_ALLOW_IPS, ACME_EMAIL; guarda: Ctrl+O, Enter, Ctrl+X
 ./setup-staging.sh base
 ```
-`base` también copia el script a `/usr/local/sbin/2j-staging`: **a partir de aquí se usa `sudo 2j-staging …`** (la copia de `/root` deja de ser accesible cuando SSH queda solo para `ops`). Al terminar `base`, si se actualizó el kernel, reinicia (`reboot`) y vuelve a entrar. `base` actualiza el sistema, crea el usuario `ops` con sudo, firewall (solo 22/80/443), fail2ban, actualizaciones de seguridad automáticas, Docker + Compose, Caddy. **SSH por contraseña/root sigue abierto a propósito.**
+`base` también copia el script a `/usr/local/sbin/2j-staging`: **a partir de aquí se usa `sudo 2j-staging …`** (la copia de `/root` deja de ser accesible cuando SSH queda solo para `ops`). Al terminar `base`, si se actualizó el kernel, reinicia (`reboot`) y vuelve a entrar. `base`: antes de activar el cortafuegos detecta el puerto SSH que realmente usa el servidor y lo permite (además del 22). Actualiza el sistema, crea el usuario `ops` con sudo, firewall (solo 22/80/443), fail2ban, actualizaciones de seguridad automáticas, Docker + Compose, Caddy. **SSH por contraseña/root sigue abierto a propósito.**
 
 ## 3. Cerrar SSH (solo si el login nuevo funciona)
+0. **Ten abierta la consola VNC del panel de Contabo en una pestaña mientras cierras SSH** (es tu salida de emergencia si algo falla).
 1. **Sin cerrar** la sesión, abre OTRA ventana: `ssh ops@169.58.20.25` → debe entrar **sin pedir contraseña**.
 2. Si entra, en la primera ventana: `2j-staging lock-ssh --confirm` (comprueba por sí mismo que ya hubo un login real por clave de `ops`; si no lo ve, se niega). Si no entra, no sigas: avísame.
 3. Si te quedas fuera: usa la **consola VNC** del panel de Contabo (entra como root con la contraseña del panel) y revierte con el comando de abajo.
@@ -55,7 +56,7 @@ sudo 2j-staging selftest
 ```
 `selftest` imprime OK/FAIL por subdominio (DNS, HTTPS, salud), contenedores y seguridad, y termina en `RESULTADO: TODO OK` o `N FALLO(S)`.
 
-**Acceso a las webs:** usuario `staging`, contraseña en `/opt/2j/secrets/basic-auth.txt` (`sudo cat /opt/2j/secrets/basic-auth.txt`). Las contraseñas de las bases se generan en el servidor (`chmod 600`) y no se imprimen ni se guardan en Git.
+**Acceso a las webs:** usuario `staging`; la contraseña está en `/opt/2j/secrets/basic-auth.txt` (solo root). El script **no la imprime**. Para leerla cuando la necesites, abre el fichero con `sudo less /opt/2j/secrets/basic-auth.txt` (sal con `q`), cópiala al gestor de contraseñas y no la pegues en chats ni correos. Las contraseñas de las bases se generan en el servidor (`chmod 600`) y no se imprimen ni se guardan en Git.
 
 ## 5b. Cambiar la IP permitida de `admin.`
 Tu IP doméstica puede cambiar. Si `admin.2jfit.es` te da 403: mira tu IP nueva (busca «mi ip»), edita `sudo nano /etc/2j-staging.conf`, cambia `ADMIN_ALLOW_IPS="x.x.x.x"` (varias, separadas por espacio) y ejecuta `sudo 2j-staging deploy` (es repetible pero tarda unos minutos (reconstruye); regenera y valida el Caddyfile y solo lo instala y recarga si es válido). Si te quedas fuera por completo, entra por SSH y haz lo mismo. Vacío = admin cerrado a todos.
@@ -69,6 +70,11 @@ Personas sintéticas `@example.test` (miembros de prueba `member-a` y `member-b`
 - Restaurar Platform: `sudo 2j-staging restore-db /opt/2j/backups/<fichero>.dump`
 - Actualizar código: cambia `PLATFORM_REF`/`BUNKER_REF` y `sudo 2j-staging deploy`
 - **Rollback/borrado total:** `sudo 2j-staging teardown --yes` (te pide escribir `DESTRUIR STAGING`; no toca SSH/firewall/usuario).
+
+## Comprobaciones que hace el script por ti
+- `ADMIN_ALLOW_IPS` se valida: solo IPs correctas; rechaza `0.0.0.0/0`, `::/0` y máscaras muy anchas (mínimo /24 en IPv4, /64 en IPv6).
+- `teardown` solo actúa sobre `/opt/2j` y te muestra la ruta exacta antes de pedir la frase.
+- Las contraseñas no se pasan como argumentos de procesos (se leen por entrada estándar).
 
 ## Lo que debes saber (riesgos y límites)
 1. **Platform aún no tiene login de personal.** El admin de staging usa un rol de demostración (`NODE_ENV=development`); lo único que lo protege es la contraseña básica + la lista de IP. Por eso `ADMIN_ALLOW_IPS` y la aceptación explícita. **No metas datos reales aquí.**
