@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { canaryBusinessDate, resolveTrainingCapabilities, type CapabilityAccessState, type EffectiveMembershipForCapabilities, type TrainingLinkStatus } from '@2j/domain';
+import { canaryBusinessDate, resolveTrainingCapabilities, resolveTrainingCapabilitiesV21, type ResolveTrainingCapabilitiesInput, type CapabilityAccessState, type EffectiveMembershipForCapabilities, type TrainingLinkStatus } from '@2j/domain';
 import type { createDatabase } from './db.js';
 import { verifyInternalServiceRequest, type InternalServiceKeys } from './internal-service-auth.js';
 import { resolveEffectiveClientAssignments } from './entitlements.js';
@@ -28,10 +28,24 @@ export type ComputedTrainingCapabilities =
  * one-time SSO redemption so both always return the same Platform-authoritative answer.
  */
 export async function computeTrainingCapabilities(db: DB, personId: string, now: Date = new Date()): Promise<ComputedTrainingCapabilities> {
+  const input = await loadTrainingCapabilityInput(db, personId, now);
+  if (!input) return { status: 'not_found' };
+  const parsed = trainingCapabilitiesResponseSchema.safeParse(resolveTrainingCapabilities({ ...input, generatedAt: now.toISOString() }));
+  return parsed.success ? { status: 'ok', payload: parsed.data } : { status: 'invalid' };
+}
+
+const responseSchemaV21 = trainingCapabilitiesResponseSchema.omit({ contract: true }).extend({ contract: z.literal('2J-CAPABILITIES-V2.1'), revision: z.literal(1) }).strict();
+const CAPABILITY_ROUTES = [
+  { path: (personId: string) => `/api/internal/platform/v2/persons/${personId}/training-capabilities`, pattern: '/api/internal/platform/v2/persons/:personId/training-capabilities', resolve: resolveTrainingCapabilities, schema: trainingCapabilitiesResponseSchema },
+  { path: (personId: string) => `/api/internal/platform/v2.1/persons/${personId}/training-capabilities`, pattern: '/api/internal/platform/v2.1/persons/:personId/training-capabilities', resolve: resolveTrainingCapabilitiesV21, schema: responseSchemaV21 },
+] as const;
+
+/** Everything the resolvers need about one person, read from the database. `null` when the person does not exist or is not active. */
+export async function loadTrainingCapabilityInput(db: DB, personId: string, now: Date = new Date()): Promise<ResolveTrainingCapabilitiesInput | null> {
   const [person] = await db`SELECT p.status,pc.client_id AS "clientId",c.status AS "clientStatus"
     FROM platform_persons p LEFT JOIN platform_person_clients pc ON pc.person_id=p.id
     LEFT JOIN clients c ON c.id=pc.client_id WHERE p.id=${personId}::uuid`;
-  if (!person || person.status !== 'active') return { status: 'not_found' };
+  if (!person || person.status !== 'active') return null;
 
   const [link] = await db`SELECT status,training_user_id AS "trainingUserId" FROM training_account_links
     WHERE person_id=${personId}::uuid ORDER BY updated_at DESC,created_at DESC,link_id DESC LIMIT 1`;
@@ -55,35 +69,47 @@ export async function computeTrainingCapabilities(db: DB, personId: string, now:
   }
   const [suspension] = await db`SELECT action FROM platform_training_access_events WHERE person_id=${personId}::uuid ORDER BY occurred_at DESC,id DESC LIMIT 1`;
   const suspensionStatus = suspension?.action === 'suspended' ? 'suspended' : suspension?.action === 'lifted' ? 'lifted' : 'none';
-  const payload = resolveTrainingCapabilities({
+  return {
     personId,
     link:activeLink,
     memberships,
     generatedAt:now.toISOString(),
     nextKnownAccessTransition:effective.nextKnownAccessTransition,
     suspensionStatus,
-  });
-  const parsed = trainingCapabilitiesResponseSchema.safeParse(payload);
-  return parsed.success ? { status: 'ok', payload: parsed.data } : { status: 'invalid' };
+  } as ResolveTrainingCapabilitiesInput;
 }
 
-/** Read-only, server-authenticated Platform capability endpoint. */
+/**
+ * The V2.1 capabilities of the AUTHENTICATED member, for Home (decision: Home never signs requests and never calls the internal endpoint).
+ * Shaped for a client: the Training user id stays server-side, and the window (`expiresAt`) tells Home how long it may reuse it (at most 60 s).
+ */
+export async function memberTrainingCapabilities(db: DB, personId: string, now = new Date()) {
+  const input = await loadTrainingCapabilityInput(db, personId);
+  if (!input) return null;
+  const payload = resolveTrainingCapabilitiesV21({ ...input, generatedAt: now.toISOString() });
+  const { trainingSubject, ...rest } = payload;
+  return { ...rest, trainingSubject: { linkStatus: trainingSubject.linkStatus } };
+}
+
+/** Read-only, server-authenticated Platform capability endpoints: V2 (unchanged) and V2.1 (versioned path; V2 consumers keep working). */
 export function registerTrainingCapabilitiesRoute(app: FastifyInstance<any,any,any,any,any>, db: DB, keys: InternalServiceKeys) {
-  app.get('/api/internal/platform/v2/persons/:personId/training-capabilities', async (request, reply) => {
+  for (const version of CAPABILITY_ROUTES) app.get(version.pattern, async (request, reply) => {
     reply.header('Cache-Control','no-store');
     const params = z.object({personId:personIdSchema}).strict().safeParse(request.params);
     if (!params.success) return reply.code(400).send({error:'invalid_person_id'});
     if (Object.keys(keys).length === 0) return reply.code(503).send({error:'service_auth_unavailable'});
-    const verified = await verifyInternalServiceRequest(request, db, keys, { expectedMethod:'GET', expectedPath:`/api/internal/platform/v2/persons/${params.data.personId}/training-capabilities` });
+    const verified = await verifyInternalServiceRequest(request, db, keys, { expectedMethod:'GET', expectedPath:version.path(params.data.personId) });
     if (verified && 'unavailable' in verified) return reply.code(503).send({error:'service_auth_unavailable'});
     if (!verified) return reply.code(401).send({error:'service_auth_rejected'});
 
-    const computed = await computeTrainingCapabilities(db, params.data.personId);
-    if (computed.status === 'not_found') return reply.code(404).send({error:'person_not_found'});
-    if (computed.status === 'invalid') {
+    const input = await loadTrainingCapabilityInput(db, params.data.personId);
+    if (!input) return reply.code(404).send({error:'person_not_found'});
+    const payload = version.resolve(input);
+    const parsed = version.schema.safeParse(payload);
+    if (!parsed.success) {
       request.log.error({errorCode:'training_capability_contract_invalid'},'capability response failed contract validation');
       return reply.code(500).send({error:'capability_contract_invalid'});
     }
-    return reply.code(200).send(computed.payload);
+    return reply.code(200).send(parsed.data);
   });
 }
