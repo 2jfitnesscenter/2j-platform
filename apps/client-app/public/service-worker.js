@@ -1,3 +1,5 @@
+importScripts('/push-sw-handlers.js');
+
 self.addEventListener('install', event => event.waitUntil((async () => {
   const cache = await caches.open('2j-hub-static-v2');
   await cache.addAll(['/', '/manifest.webmanifest', '/icon.svg']);
