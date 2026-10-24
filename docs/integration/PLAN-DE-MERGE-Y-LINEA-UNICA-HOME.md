@@ -65,3 +65,18 @@ Sin acceso a producción. El guardia existente **falla cerrado** y compara por b
 
 ## 8. Comprobaciones de solo lectura para el propietario en producción (de la revisión de #59)
 `cd /opt/2jfitness && sha256sum Caddyfile caddy-config/Caddyfile docker-compose.prod.yml; ls -la caddy-config` · comparar con `git show origin/fix/production-config-guard-reconciliation:caddy-config/Caddyfile | sha256sum` · `docker network ls | grep -E '2j-home-staging-proxy|2j-pwa-demo-edge'` · `docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q` · `docker exec <caddy> caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` · `docker exec <caddy> sha256sum /etc/caddy/Caddyfile` · `curl -sI https://app.2jfitnesscenter.com/` (y home., staging-home.) · `curl -s -o /dev/null -w '%{http_code}\n' -X POST https://app.2jfitnesscenter.com/api/platform/v1/link-proofs` (esperado 401/403, nunca 2xx) · `ls -la /root/backups | tail` · `stat -c '%U:%G %a %y' /opt/2jfitness/{.env,data,Caddyfile,caddy-config/Caddyfile,docker-compose.prod.yml}`.
+
+## 9. Actualización (misma jornada, tras #88 y #91)
+**Estado de CI:** con #88 (gitleaks) y #91 (undici 8.12.3, aviso high que rompía `pnpm audit` en `main` y en todos los PR) fusionados y `main` propagado por merge commit, las 14 ramas **#64, #65, #66, #67, #81, #74, #76, #77, #78, #82, #83, #84, #85, #86 quedan totalmente verdes** (`quality` con `pnpm audit` y `secret scan`). Siguen sin fusionarse: cada merge lo autoriza el propietario en ese momento, en el orden de §1.
+
+**Nuevos PR del integrador (todos borrador, sin fusionar):** #89 staging 2jfit.es (script + runbook; tiene dos revisiones independientes, texto íntegro en `docs/review/`; **no se ejecuta nada en el servidor** hasta una tercera revisión limitada al último commit si el propietario la pide), #90 workflow E2E (apilado sobre #67; necesita el secreto `BUNKER_REPO_READ_TOKEN`), Búnker #63 H13 asistida (permiso `platform_link_issue` para el propietario y el gerente, desactivada por defecto).
+
+**Vigilancia de solapes (tareas nuevas de los Works).** El integrador resuelve con commits de merge, sin force-push, y propone cada merge solo con CI verde:
+| Fichero | Quién lo toca | Riesgo |
+|---|---|---|
+| `apps/api/package.json` (+ `pnpm-lock.yaml`) | login de personal y permisos (Platform), #80, `web-push`/zod/undici | conflictos de una línea JSON: unión de dependencias y lockfile regenerado (receta en `PROPUESTAS-…`/scripts de merge) |
+| `apps/client-app/src/client-app.tsx` | pantallas de vínculo, modo demo y flags (Home) frente a SSO (#64–#67) y #86 | el conflicto conocido; receta en §3 |
+| `apps/api/src/server.ts`, `.env.example`, migraciones | login de personal, perfiles de permisos, `reviewId` de H13 (Platform) | numeración de migraciones (test de prefijo único, #69) |
+| `docker-compose`/Caddy de Búnker | #59 (red/validación), perfil de staging | #59 sigue sin autorización; ver §6 |
+
+**Backlog posterior al lanzamiento (decisión del propietario):** hacer que `pnpm audit` bloquee solo por dependencias de **producción** y no por las de desarrollo/pruebas (hoy un aviso de `jsdom`→`undici`, que solo existe en pruebas, bloqueó 14 PR). Hasta entonces se sigue con el override de #91.
