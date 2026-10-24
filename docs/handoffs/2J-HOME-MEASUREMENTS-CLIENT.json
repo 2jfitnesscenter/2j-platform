@@ -1,0 +1,43 @@
+{
+  "taskId": "2J-HOME-MEASUREMENTS-CLIENT",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-MEASUREMENTS-CLIENT",
+  "baseSha": "8de8cb193395ef4817138cf00616d29fa80565d0",
+  "status": "blocked-awaiting-platform-measurement-contract",
+  "pullRequest": null,
+  "registry": "C:/Users/juanj/Desktop/REGISTRO-DECISIONES-2J.md",
+  "decisions": ["D01", "D05", "D08", "D10", "D11", "D12", "D13", "D14", "D16", "D17", "D18", "D23", "D28", "D33", "D35", "D43", "D47"],
+  "verifiedFindings": {
+    "clientMeasurementRoutesFound": false,
+    "clientMeasurementModelFound": false,
+    "genericAssignedFormsExist": true,
+    "genericFormsExposeMeasurementHistory": false,
+    "platformAuditConflict": "#19"
+  },
+  "unresolvedRegistryConflicts": [
+    "D01 versus D08 and D28: measurement write eligibility for clients without an active fee; no specific resolution A entry found.",
+    "Conflict #8 (D12 versus D35): correction audit old/new values versus permanent deletion of erroneous values; no specific resolution A entry found."
+  ],
+  "pushBranchCoordination": {
+    "claudeBranch": "origin/agent/claude/2J-PUSH-INFRA",
+    "claudeHead": "fc3b3ae51f3e03f7df977a10690ef8b6b940a27f",
+    "mergeBase": "f87818afe474176c6e6ae77cb4d62a7e73fc1adf",
+    "risk": "Home and Claude branches add overlapping client push file paths.",
+    "safeNextStep": "Stack/rebase the Home draft on Claude's published head and reconcile client files once; do not merge both independent heads directly into main."
+  },
+  "changedFiles": [
+    "docs/handoffs/2J-HOME-MEASUREMENTS-CLIENT.md",
+    "docs/handoffs/2J-HOME-MEASUREMENTS-CLIENT.json"
+  ],
+  "verification": {
+    "codeTests": "not-applicable-no-executable-changes",
+    "apiRouteSearch": "passed-no-client-measurement-or-health-routes-found",
+    "gitDiffCheck": "passed"
+  },
+  "platformChanged": false,
+  "bunkerChanged": false,
+  "productionChanged": false,
+  "deploymentPerformed": false,
+  "dataAccessed": false,
+  "nextAction": "Platform owns the authoritative measurement and consent contract; implement the Home screens only after that contract and the two access/data-retention conflicts are resolved."
+}

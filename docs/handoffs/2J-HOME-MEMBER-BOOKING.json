@@ -1,0 +1,48 @@
+{
+  "taskId": "2J-HOME-MEMBER-BOOKING",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-MEMBER-BOOKING",
+  "verifiedPlatformMain": "f87818afe474176c6e6ae77cb4d62a7e73fc1adf",
+  "verifiedIntegrationHead": "7ac5afe8222a34699913ad9d278bddf363842ce6",
+  "previousHomeVisualImplementation": "88b71635ffe3e39c79906a25362312cb34dcb9f3",
+  "status": "local-verified-no-push-no-deploy",
+  "scope": "Existing member booking and permitted cancellation flow; preserve prior Home visual implementation.",
+  "features": [
+    "Browse published member sessions",
+    "Read authoritative eligibility from Platform",
+    "Explicit idempotent reservation",
+    "Read own reservations from Platform",
+    "Preview and confirm permitted cancellation",
+    "Refresh persisted booking state"
+  ],
+  "requiredContracts": [
+    "GET /api/me/booking-access",
+    "GET /api/me/booking-services",
+    "GET /api/me/sessions?from&to",
+    "GET /api/me/sessions/:sessionId",
+    "POST /api/me/sessions/:sessionId/reservations",
+    "GET /api/me/bookings",
+    "GET /api/me/bookings/:reservationId/cancellation-preview",
+    "PATCH /api/me/bookings/:reservationId/cancel"
+  ],
+  "tests": {
+    "client": "15/15",
+    "syntheticPostgresMemberPilotAcceptance": "1/1",
+    "termPaymentAccessUnit": "6/6",
+    "termPaymentBookingIntegration": "3/6; three tests fail because their fixed 2026-10-23T12:00:00Z session is already started at review time; three pass",
+    "buildTasks": "9/9",
+    "typecheckTasks": "11/11",
+    "browser": "Synthetic local login, session browsing, booking, reservation list, cancellation preview, cancellation, refresh persistence"
+  },
+  "previewUrl": "http://127.0.0.1:5189/",
+  "apiUrl": "http://127.0.0.1:8819",
+  "productionDataUsed": false,
+  "productionChanges": false,
+  "ssOActivated": false,
+  "externalProviderStatus": "Not queried; repository AGENTS.md prohibits provider calls",
+  "blockers": [
+    "Production identity/session and authorization rollout remain separate prerequisites for real member access.",
+    "Work Platform should make the session timestamp future/dynamic in apps/api/test/term-payment-booking.integration.test.mjs; three fixed-date assertions now receive session_started.",
+    "The preserved old local pilot volume has a checksum mismatch in migration 0029; use a clean disposable test database rather than changing the migration."
+  ]
+}

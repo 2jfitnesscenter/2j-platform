@@ -1,0 +1,23 @@
+{
+  "task": "2J-HOME-NEWS-NOTICES",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-NEWS-NOTICES",
+  "baseSha": "13cb5094b52411dfbcb6b8d2f089d4030b4ca56d",
+  "status": "verified-local",
+  "changedFiles": [
+    "apps/client-app/test/client-app.test.mjs",
+    "docs/handoffs/2J-HOME-NEWS-NOTICES.md",
+    "docs/handoffs/2J-HOME-NEWS-NOTICES.json"
+  ],
+  "tests": {
+    "clientApp": { "passed": 27, "failed": 0, "note": "Full rebased stack suite; API integration test was run earlier on the same API code." },
+    "centerNewsApiIntegration": { "passed": 1, "failed": 0, "database": "ephemeral local PostgreSQL" },
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "blockers": [
+    "D67 needs target/audience, scheduled publication, expiry and configurable editorial access fields in the Platform contract.",
+    "D68 needs normal/important/urgent priority and optional urgent read acknowledgement fields in Platform."
+  ],
+  "safety": { "providerCalls": false, "push": false, "merge": false, "deployment": false, "productionData": false }
+}
