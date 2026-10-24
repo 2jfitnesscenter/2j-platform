@@ -67,8 +67,9 @@ test('member account link screen uses the #67/#81 session contracts and can requ
   fireEvent.change(ui.getByLabelText('Código de un solo uso de Búnker'), { target: { value: 'y'.repeat(43) } });
   fireEvent.click(ui.getByRole('button', { name: 'Completar vinculación' }));
   await ui.findByText('Cuenta de Búnker vinculada.');
-  fireEvent.click(ui.getByRole('button', { name: 'Revocar vinculación' }));
-  fireEvent.click(ui.getByRole('button', { name: 'Confirmar revocación' }));
+  // The button appears when the refreshed summary says linked; that can land after the success message, so wait for it.
+  fireEvent.click(await ui.findByRole('button', { name: 'Revocar vinculación' }));
+  fireEvent.click(await ui.findByRole('button', { name: 'Confirmar revocación' }));
   await ui.findByText('Vinculación revocada.');
 
   const create = requests.find(row => row.url === '/api/platform/v1/training-link-transactions');
