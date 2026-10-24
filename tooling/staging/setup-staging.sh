@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # 2J STAGING — one idempotent setup script for a NEW Ubuntu 24.04 server (home. / app. / admin. under one staging domain).
 #
+#   HARD RULE: this server may hold ONLY SYNTHETIC test data (no real clients, no real people, no real payments). Its admin has no staff login yet, so it is
+#   acceptable ONLY because of that. The day any real person's data would enter, STOP: the admin must be behind real authentication first.
 #   THIS SERVER IS NOT PRODUCTION. It must never hold production data, secrets, databases or tokens. Everything it uses is generated here, on the server.
 #   Nobody but the person who runs this script ever sees the server or its secrets (no secret is passed in, printed, logged or committed).
 #

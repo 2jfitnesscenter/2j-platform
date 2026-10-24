@@ -2,6 +2,8 @@
 
 **Esto NO es producción.** Solo datos de prueba, sin secretos reales, sin dinero real, sin push real, puerta fiscal cerrada, modo piloto. Nadie (ni yo, ni ningún agente) tiene acceso al servidor: lo ejecutas tú.
 
+> **REGLA DURA:** este staging solo puede contener **datos sintéticos** (ningún cliente real, ninguna persona real, ningún pago real). El admin no tiene login de personal y solo es aceptable por eso. Si alguna vez fueran a entrar datos reales: PARAR; antes hace falta autenticación real de personal.
+
 Servidor: `169.58.20.25` · Dominios: `home.2jfit.es`, `app.2jfit.es`, `admin.2jfit.es` · Script: `tooling/staging/setup-staging.sh` (se puede ejecutar de nuevo sin romper nada).
 
 ## 0. Antes de empezar (lo que necesito de ti)
@@ -17,7 +19,7 @@ En tu PC (PowerShell), desde la carpeta del repo:
 ```
 scp tooling/staging/setup-staging.sh root@169.58.20.25:/root/
 ```
-Comprueba que es el que revisaste: en el servidor `sha256sum /root/setup-staging.sh` debe dar el hash que figura en el PR.
+**Verifica el hash ANTES de ejecutarlo.** En el servidor: `sha256sum /root/setup-staging.sh`. Debe ser idéntico al que te di en el PR/mensaje (se calcula sobre el fichero con saltos de línea LF). Compáralo también con el de GitHub: en tu PC `git show origin/agent/claude/2J-STAGING-SETUP:tooling/staging/setup-staging.sh | sha256sum` (o en PowerShell: `Get-FileHash -Algorithm SHA256 .	oolingstagingsetup-staging.sh`). Si **no coincide, no lo ejecutes**. Además, el PR #89 debe tener su revisión independiente hecha antes de ejecutar nada.
 
 ## 2. Preparar y base (como root)
 ```
@@ -50,6 +52,9 @@ sudo ./setup-staging.sh selftest
 `selftest` imprime OK/FAIL por subdominio (DNS, HTTPS, salud), contenedores y seguridad, y termina en `RESULTADO: TODO OK` o `N FALLO(S)`.
 
 **Acceso a las webs:** usuario `staging`, contraseña en `/opt/2j/secrets/basic-auth.txt` (`sudo cat /opt/2j/secrets/basic-auth.txt`). Las contraseñas de las bases se generan en el servidor (`chmod 600`) y no se imprimen ni se guardan en Git.
+
+## 5b. Cambiar la IP permitida de `admin.`
+Tu IP doméstica puede cambiar. Si `admin.2jfit.es` te da 403: mira tu IP nueva (busca «mi ip»), edita `sudo nano /etc/2j-staging.conf`, cambia `ADMIN_ALLOW_IPS="x.x.x.x"` (varias, separadas por espacio) y ejecuta `sudo ./setup-staging.sh deploy` (es repetible; regenera y valida el Caddyfile y lo recarga; si no es válido no lo recarga). Si te quedas fuera por completo, entra por SSH y haz lo mismo. Vacío = admin cerrado a todos.
 
 ## 6. Datos de prueba
 Personas sintéticas `@example.test` (miembros de prueba `member-a` y `member-b` con códigos piloto fijos de `seed-demo.ts`, solo válidos en este staging). Nada de datos reales.
