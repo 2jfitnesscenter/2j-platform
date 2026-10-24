@@ -16,7 +16,8 @@
 #   setup-staging.sh selftest      OK / FAIL per subdomain and per safety check
 #   setup-staging.sh status        what is running
 #   setup-staging.sh backup        one backup now (a daily one is installed by `deploy`)
-#   setup-staging.sh restore-db FILE   restore the Platform database from a backup file
+#   setup-staging.sh restore-db FILE   restore the Platform database from a backup THIS script made in /opt/2j/backups (provenance checked; automatic way back)
+#   setup-staging.sh rollback      go back to the previous deployed version (code, sites, image); the database is NOT rolled back
 #   setup-staging.sh teardown --yes    destroy the staging stack (asks you to type a phrase)
 #   setup-staging.sh render DIR    write the generated config files to DIR with fake secrets (used by tests; touches nothing else)
 #
@@ -61,6 +62,44 @@ log_start() { mkdir -p "$(dirname "$LOG")"; touch "$LOG"; chmod 600 "$LOG"; exec
 
 gen_secret() { openssl rand -hex 24; }                       # 48 hex chars; used for passwords (hex => safe inside URLs)
 secret_file() { [ -f "$1" ] || { gen_secret > "$1"; chmod 600 "$1"; }; }
+
+# Provenance of a backup: a .manifest next to it holds name, sha256, date and an HMAC made with a key that only exists on this server (secrets/backup-mac.key).
+# restore-db accepts nothing without a matching manifest, so an arbitrary file placed in the backups folder (or anywhere else) cannot be restored.
+mac_of() { python3 - "$ROOT/secrets/backup-mac.key" "$1" <<'PY'
+import hmac, hashlib, sys
+key = open(sys.argv[1], 'rb').read().strip()
+print(hmac.new(key, sys.argv[2].encode(), hashlib.sha256).hexdigest())
+PY
+}
+manifest_write() {
+  local f="$1" sum created name
+  [ -f "$f" ] && [ ! -L "$f" ] || die "manifest: $f no es un fichero normal."
+  name="$(basename "$f")"; sum="$(sha256sum "$f" | awk '{print $1}')"; created="$(date -u +%FT%TZ)"
+  printf '%s\n%s\n%s\n%s\n' "$name" "$sum" "$created" "$(mac_of "${sum}|${name}|${created}")" > "$f.manifest"; chmod 600 "$f.manifest"
+}
+manifest_verify() {   # 0 only for a regular file directly inside $ROOT/backups, platform-*.dump or pre-restore-*.dump, whose manifest matches
+  local f="$1" real name m_name m_sum m_created m_mac
+  [ -f "$f" ] && [ ! -L "$f" ] || return 1
+  real="$(readlink -f -- "$f")"; name="$(basename "$real")"
+  [ "$(dirname "$real")" = "$ROOT/backups" ] || return 1
+  case "$name" in platform-*.dump|pre-restore-*.dump) ;; *) return 1;; esac
+  [ -f "$real.manifest" ] && [ ! -L "$real.manifest" ] || return 1
+  { read -r m_name; read -r m_sum; read -r m_created; read -r m_mac; } < "$real.manifest"
+  [ "$m_name" = "$name" ] || return 1
+  [ "$(sha256sum "$real" | awk '{print $1}')" = "$m_sum" ] || return 1
+  [ "$(mac_of "${m_sum}|${m_name}|${m_created}")" = "$m_mac" ] || return 1
+}
+
+# Sites are served through a symlink that is swapped with ONE rename(2): Caddy sees the old site or the new one, never a half-copied folder.
+switch_site() {   # name release_dir
+  local name="$1" rel="$2" link="$ROOT/www/$1" tmp
+  if [ -e "$link" ] && [ ! -L "$link" ]; then mv "$link" "$ROOT/www/releases/${name}-legacy-$(date +%s)"; fi
+  tmp="$ROOT/www/.${name}.link.$$"; ln -s "$rel" "$tmp"; mv -T "$tmp" "$link"
+}
+prune_releases() {   # keep the 3 newest releases of each site
+  local name
+  for name in home admin; do ls -1dt "$ROOT"/www/releases/"${name}"-* 2>/dev/null | tail -n +4 | while read -r old; do rm -rf -- "$old"; done; done
+}
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 cmd_init() {
@@ -185,9 +224,15 @@ cmd_lock_ssh() {
   local force=no; [ "${2:-}" = "--force" ] && force=yes
   [ "${1:-}" = "--confirm" ] || die "Escribe: 2j-staging lock-ssh --confirm   (solo después de comprobar en otra ventana que ssh ${OPS_USER}@${SERVER_IP} entra sin contraseña)."
   [ -s "/home/${OPS_USER}/.ssh/authorized_keys" ] || die "${OPS_USER} no tiene ninguna clave instalada: ejecuta primero 'base'."
-  local ssh_log; ssh_log="$(journalctl -u ssh --no-pager 2>/dev/null || true)"
-  if [ "$force" != yes ] && ! grep -q "Accepted publickey for ${OPS_USER} " <<<"$ssh_log"; then
-    die "No veo ningún login por CLAVE de ${OPS_USER} en el registro de SSH. Entra primero desde otra ventana con: ssh ${OPS_USER}@${SERVER_IP} y repite. (Solo si estás seguro: lock-ssh --confirm --force. Rescate si te quedas fuera: consola VNC del panel de Contabo.)"
+  local window="${LOCK_SSH_WINDOW_MIN:-30}" ssh_log
+  ssh_log="$(journalctl -u ssh --since "${window} minutes ago" --no-pager 2>/dev/null || true)"
+  if ! grep -q "Accepted publickey for ${OPS_USER} " <<<"$ssh_log"; then
+    if [ "$force" = yes ]; then
+      printf 'AVISO: no hay ningún login por clave de %s en los últimos %s minutos. Si la clave no funciona te quedarás SIN acceso por SSH y solo te quedará la consola VNC de Contabo.\nPara continuar igualmente escribe exactamente:  ASUMO EL RIESGO\n> ' "${OPS_USER}" "$window"
+      read -r phrase; [ "$phrase" = "ASUMO EL RIESGO" ] || die "Cancelado: SSH no se ha tocado."
+    else
+      die "No veo ningún login por CLAVE de ${OPS_USER} en los últimos ${window} minutos. Entra ahora desde otra ventana con: ssh ${OPS_USER}@${SERVER_IP} y repite en menos de ${window} minutos. (Rescate si te quedas fuera: consola VNC del panel de Contabo. Saltarse esta comprobación: lock-ssh --confirm --force, con aviso.)"
+    fi
   fi
   # Ubuntu 24.04 reads /etc/ssh/sshd_config.d/*.conf in alphabetical order and the FIRST value wins, so ours is named 00-.
   cat > /etc/ssh/sshd_config.d/00-2j-hardening.conf <<EOF
@@ -459,7 +504,7 @@ cmd_deploy() {
   done
 
   say "1/8 Secretos (se generan aquí, solo si no existen; no se imprimen)"
-  secret_file "$ROOT/secrets/postgres.pass"; secret_file "$ROOT/secrets/platform-db.pass"; secret_file "$ROOT/secrets/basic-auth.pass"
+  secret_file "$ROOT/secrets/postgres.pass"; secret_file "$ROOT/secrets/platform-db.pass"; secret_file "$ROOT/secrets/basic-auth.pass"; secret_file "$ROOT/secrets/backup-mac.key"
   printf 'POSTGRES_PASSWORD=%s\n' "$(cat "$ROOT/secrets/postgres.pass")" > "$ROOT/secrets/postgres.env"
   printf 'DATABASE_URL=postgres://platform_app:%s@127.0.0.1:5432/2j_demo\n' "$(cat "$ROOT/secrets/platform-db.pass")" > "$ROOT/secrets/platform-db.env"
   chmod 600 "$ROOT"/secrets/*
@@ -477,15 +522,22 @@ cmd_deploy() {
   cp "$ROOT/build/generated/bunker.env" "$ROOT/src/bunker/.env"; chmod 600 "$ROOT/src/bunker/.env"
 
   say "4/8 Construyendo Platform (API + Admin + Home); tarda varios minutos"
+  docker image inspect 2j-platform:staging >/dev/null 2>&1 && docker tag 2j-platform:staging 2j-platform:previous   # kept for 2j-staging rollback
   docker build -f "$ROOT/build/Dockerfile.platform" -t 2j-platform:staging \
     --build-arg "ADMIN_ORIGIN=https://${HOSTS_ADMIN}" --build-arg "HOME_ORIGIN=https://${HOSTS_HOME}" --build-arg "BUNKER_ORIGIN=https://${HOSTS_APP}" \
     "$ROOT/src/platform"
+  install -d -m 755 "$ROOT/www/releases"
+  local rel_stamp pc_short rel_home="" rel_admin=""
+  rel_stamp="$(date +%Y%m%d-%H%M%S)"; pc_short="$(git -C "$ROOT/src/platform" rev-parse --short=12 HEAD)"
   for pair in "admin:apps/admin-web/dist" "home:apps/client-app/dist"; do
     name="${pair%%:*}"; path="${pair#*:}"; cid="$(docker create 2j-platform:staging)"
-    rm -rf "${ROOT:?}/www/${name}.new"; docker cp "${cid}:/repo/${path}" "$ROOT/www/${name}.new"; docker rm "$cid" >/dev/null
-    rm -rf "${ROOT:?}/www/${name}"; mv "$ROOT/www/${name}.new" "$ROOT/www/${name}"; chmod -R a+rX "$ROOT/www/${name}"
+    rel="$ROOT/www/releases/${name}-${pc_short}-${rel_stamp}"
+    docker cp "${cid}:/repo/${path}" "$rel"; docker rm "$cid" >/dev/null; chmod -R a+rX "$rel"
+    switch_site "$name" "$rel"
+    [ "$name" = home ] && rel_home="$rel" || rel_admin="$rel"
   done
-  chmod a+rx "$ROOT" "$ROOT/www"
+  prune_releases
+  chmod a+rx "$ROOT" "$ROOT/www" "$ROOT/www/releases"
 
   say "5/8 Base de datos de Platform (aislada, sin puerto público)"
   docker compose -f "$ROOT/compose/platform.compose.yml" up -d postgres
@@ -508,8 +560,22 @@ cmd_deploy() {
   [ -f "$ROOT/secrets/basic-auth.txt" ] || printf 'usuario: staging\ncontraseña: %s\n' "$(cat "$ROOT/secrets/basic-auth.pass")" > "$ROOT/secrets/basic-auth.txt"
   chmod 600 "$ROOT/secrets/basic-auth.txt"
   caddy validate --config "$ROOT/build/generated/Caddyfile" --adapter caddyfile >/dev/null || die "El Caddyfile generado no es válido (NO se ha instalado ni recargado nada)."
-  cp "$ROOT/build/generated/Caddyfile" /etc/caddy/Caddyfile
-  systemctl reload caddy || systemctl restart caddy
+  local cf=/etc/caddy/Caddyfile cstamp cur_sha marker_sha="" prev="-" before="-"
+  cstamp="$(date +%F-%H%M%S)"; cur_sha="$(sha256sum "$cf" 2>/dev/null | awk '{print $1}' || true)"
+  [ -f "$ROOT/caddy.installed" ] && read -r marker_sha prev < "$ROOT/caddy.installed" || true
+  # The Caddyfile that was there before this script ever touched it (or that somebody else changed since) is kept, so teardown can give it back.
+  if [ -f "$cf" ] && [ "$cur_sha" != "$marker_sha" ]; then prev="$ROOT/backups/Caddyfile.original-${cstamp}"; cp -p "$cf" "$prev"; fi
+  [ -n "$prev" ] || prev="-"
+  if [ -f "$cf" ]; then before="$ROOT/backups/Caddyfile.before-deploy-${cstamp}"; cp -p "$cf" "$before"; fi
+  cp "$ROOT/build/generated/Caddyfile" "$cf"
+  if ! systemctl reload caddy; then
+    warn "Caddy no aceptó la configuración nueva: restauro la anterior"
+    if [ "$before" != "-" ]; then cp -p "$before" "$cf"; else rm -f "$cf"; fi
+    systemctl reload caddy || systemctl restart caddy || true
+    die "El reload de Caddy falló; la configuración anterior quedó restaurada ($before)."
+  fi
+  printf '%s %s\n' "$(sha256sum "$cf" | awk '{print $1}')" "$prev" > "$ROOT/caddy.installed"
+  printf '%s %s %s %s %s\n' "$(date -u +%FT%TZ)" "$(cat "$ROOT/last-platform-commit")" "$(cat "$ROOT/last-bunker-commit")" "$rel_home" "$rel_admin" >> "$ROOT/releases.log"
 
   say "8/8 Copia de seguridad diaria"
   install_backup_timer
@@ -533,8 +599,9 @@ tmp=${ROOT}/backups/.platform-\${stamp}.tmp
 docker exec 2j-postgres pg_dump -U postgres -Fc 2j_demo > "\$tmp"
 docker exec -i 2j-postgres pg_restore -l < "\$tmp" >/dev/null   # a dump that cannot be listed is not kept
 mv "\$tmp" ${ROOT}/backups/platform-\${stamp}.dump
+/usr/local/sbin/2j-staging manifest ${ROOT}/backups/platform-\${stamp}.dump
 tar czf ${ROOT}/backups/bunker-data-\${stamp}.tgz -C ${ROOT}/src/bunker data 2>/dev/null || echo "AVISO: copia de datos de Bunker no creada" >&2
-find ${ROOT}/backups -type f \( -name 'platform-*.dump' -o -name 'bunker-data-*.tgz' \) -mtime +${BACKUP_KEEP_DAYS} -delete
+find ${ROOT}/backups -type f \( -name 'platform-*.dump*' -o -name 'pre-restore-*.dump*' -o -name 'bunker-data-*.tgz' \) -mtime +${BACKUP_KEEP_DAYS} -delete
 EOF
   chmod 700 /usr/local/sbin/2j-staging-backup
   cat > /etc/systemd/system/2j-staging-backup.service <<'EOF'
@@ -558,17 +625,57 @@ EOF
 
 cmd_backup() { need_root; [ -x /usr/local/sbin/2j-staging-backup ] || die "Aún no hay despliegue."; /usr/local/sbin/2j-staging-backup; ls -l "$ROOT/backups" | tail -5; }
 
+replace_db() {   # DUMP — recreates 2j_demo from the dump; non-zero on ANY error
+  docker exec 2j-postgres psql -U postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"2j_demo\" WITH (FORCE)" -c "CREATE DATABASE \"2j_demo\" OWNER platform_app" \
+    && docker exec -i 2j-postgres pg_restore -U postgres -d 2j_demo --no-owner --role=platform_app --exit-on-error < "$1"
+}
 cmd_restore_db() {
-  need_root; f="${1:-}"; [ -f "$f" ] || die "Uso: 2j-staging restore-db /opt/2j/backups/platform-AAAA-MM-DD-HHMM.dump"
+  need_root; local f="${1:-}" pre phrase
+  [ -n "$f" ] || die "Uso: 2j-staging restore-db ${ROOT}/backups/platform-AAAA-MM-DD-HHMM.dump"
+  manifest_verify "$f" || die "Rechazado: solo se restauran copias que hizo ESTE script en ${ROOT}/backups (con su marca de procedencia válida). Ese fichero no lo es. No se ha tocado nada."
+  f="$(readlink -f -- "$f")"
   docker exec -i 2j-postgres pg_restore -l < "$f" >/dev/null || die "Ese fichero no es una copia válida (no se ha tocado nada)."
-  printf "Esto REEMPLAZA la base actual por %s. Se guarda antes una copia de seguridad. Escribe RESTAURAR para continuar:\n> " "$f"; read -r phrase; [ "$phrase" = "RESTAURAR" ] || die "Cancelado: no se ha tocado nada."
-  docker exec 2j-postgres pg_dump -U postgres -Fc 2j_demo > "$ROOT/backups/pre-restore-$(date +%F-%H%M).dump"
+  printf "Esto REEMPLAZA la base actual por %s. Antes se guarda una copia y, si algo falla, se devuelve sola. Escribe RESTAURAR para continuar:\n> " "$f"; read -r phrase
+  [ "$phrase" = "RESTAURAR" ] || die "Cancelado: no se ha tocado nada."
+  pre="$ROOT/backups/pre-restore-$(date +%F-%H%M%S).dump"
+  docker exec 2j-postgres pg_dump -U postgres -Fc 2j_demo > "$pre" || { rm -f "$pre"; die "No se pudo hacer la copia previa; no se ha tocado nada."; }
+  docker exec -i 2j-postgres pg_restore -l < "$pre" >/dev/null || { rm -f "$pre"; die "La copia previa no es legible; no se ha tocado nada."; }
+  manifest_write "$pre"
   say "Parando las APIs, restaurando y volviendo a arrancar"
   docker compose -f "$ROOT/compose/platform.compose.yml" stop platform-admin-api platform-member-api
-  docker exec 2j-postgres psql -U postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"2j_demo\" WITH (FORCE)" -c "CREATE DATABASE \"2j_demo\" OWNER platform_app"
-  docker exec -i 2j-postgres pg_restore -U postgres -d 2j_demo --no-owner --role=platform_app < "$f"
-  docker compose -f "$ROOT/compose/platform.compose.yml" start platform-admin-api platform-member-api
-  ok "Restaurado desde $f"
+  if replace_db "$f"; then
+    docker compose -f "$ROOT/compose/platform.compose.yml" start platform-admin-api platform-member-api
+    ok "Restaurado desde $f (copia previa: $pre)"
+  else
+    warn "La restauración falló: devuelvo la base a su estado anterior ($pre)"
+    if replace_db "$pre"; then
+      docker compose -f "$ROOT/compose/platform.compose.yml" start platform-admin-api platform-member-api
+      die "La restauración falló. La base se ha devuelto a su estado anterior y las APIs están en marcha."
+    fi
+    docker compose -f "$ROOT/compose/platform.compose.yml" start platform-admin-api platform-member-api || true
+    die "ERROR GRAVE: ni la restauración ni la vuelta atrás funcionaron. Tu copia previa está en $pre; no la borres y avísame."
+  fi
+}
+
+cmd_rollback() {
+  need_root
+  [ -f "$ROOT/releases.log" ] && [ "$(wc -l < "$ROOT/releases.log")" -ge 2 ] || die "No hay una versión anterior registrada. Nada tocado."
+  local prev_line phrase pc bc hrel arel
+  prev_line="$(tail -n 2 "$ROOT/releases.log" | head -n 1)"
+  read -r _ pc bc hrel arel <<<"$prev_line"
+  [ -d "$hrel" ] && [ -d "$arel" ] || die "Los ficheros de la versión anterior ya no existen. Nada tocado."
+  docker image inspect 2j-platform:previous >/dev/null 2>&1 || die "No queda la imagen anterior. Nada tocado."
+  git -C "$ROOT/src/bunker" cat-file -e "${bc}^{commit}" 2>/dev/null || die "El código anterior de Búnker no está en el servidor. Nada tocado."
+  printf 'Vuelves a la versión anterior: Platform %s, Búnker %s. La base de datos NO se deshace (si el código antiguo no encaja con ella, usa restore-db). Escribe VOLVER para continuar:\n> ' "${pc:0:12}" "${bc:0:12}"; read -r phrase
+  [ "$phrase" = "VOLVER" ] || die "Cancelado: no se ha tocado nada."
+  docker tag 2j-platform:staging 2j-platform:swap; docker tag 2j-platform:previous 2j-platform:staging; docker tag 2j-platform:swap 2j-platform:previous; docker rmi 2j-platform:swap >/dev/null
+  switch_site home "$hrel"; switch_site admin "$arel"
+  docker compose -f "$ROOT/compose/platform.compose.yml" up -d --force-recreate platform-admin-api platform-member-api
+  ( cd "$ROOT/src/bunker" && git checkout --quiet --detach "$bc" && docker compose up -d --build )
+  printf '%s\n%s\n' "$pc" "$bc" > /dev/null
+  printf '%s' "$pc" > "$ROOT/last-platform-commit"; printf '%s' "$bc" > "$ROOT/last-bunker-commit"
+  printf '%s %s %s %s %s\n' "$(date -u +%FT%TZ)" "$pc" "$bc" "$hrel" "$arel" >> "$ROOT/releases.log"
+  ok "Versión anterior en marcha. Otro 'rollback' vuelve a la versión que acabas de dejar."
 }
 
 cmd_seed() {
@@ -624,21 +731,38 @@ cmd_status() {
 }
 
 cmd_teardown() {
-  need_root
+  need_root; local phrase cf=/etc/caddy/Caddyfile marker_sha="" prev="-" cur_sha=""
   [ "$ROOT" = "/opt/2j" ] || die "teardown solo funciona sobre /opt/2j (valor actual: $ROOT). Nada borrado."
   [ -f "$ROOT/last-platform-commit" ] || [ -d "$ROOT/secrets" ] || die "$ROOT no parece un staging de 2J. Nada borrado."
-  [ "${1:-}" = "--yes" ] || die "Escribe: 2j-staging teardown --yes   (destruye el staging; no toca el sistema operativo ni el acceso SSH)."
-  printf 'Esto BORRA TODO el contenido de %s (bases de datos, secretos y copias de STAGING). Para continuar escribe exactamente:  DESTRUIR STAGING\n> ' "$ROOT"; read -r phrase
+  [ "${1:-}" = "--yes" ] || die "Escribe: 2j-staging teardown --yes   (la lista exacta de lo que borra está en el runbook y se muestra antes de confirmar)."
+  cat <<EOF
+Esto borra EXACTAMENTE lo que creó este script, y nada más:
+  - contenedores: 2j-postgres, 2j-platform-admin-api, 2j-platform-member-api, y los del docker compose de ${ROOT}/src/bunker
+  - imágenes: 2j-platform:staging y 2j-platform:previous
+  - servicios de systemd: 2j-staging-backup.service y 2j-staging-backup.timer, y /usr/local/sbin/2j-staging-backup
+  - la carpeta ${ROOT} ENTERA: bases de datos, secretos, copias de seguridad, código y webs
+  - Caddy: solo si el Caddyfile actual es el que instaló este script se devuelve el anterior; si no, NO se toca (ni se reinicia Caddy)
+NO se toca: usuario ${OPS_USER}, SSH, cortafuegos, fail2ban, Docker, el programa Caddy, ni /usr/local/sbin/2j-staging.
+EOF
+  printf 'Para continuar escribe exactamente:  DESTRUIR STAGING\n> '; read -r phrase
   [ "$phrase" = "DESTRUIR STAGING" ] || die "Cancelado: no se ha borrado nada."
   ( cd "$ROOT/src/bunker" 2>/dev/null && docker compose down -v --remove-orphans ) || true
   docker compose -f "$ROOT/compose/platform.compose.yml" down -v --remove-orphans 2>/dev/null || true
   docker rm -f 2j-postgres 2j-platform-admin-api 2j-platform-member-api >/dev/null 2>&1 || true
-  docker image rm 2j-platform:staging >/dev/null 2>&1 || true
+  docker image rm 2j-platform:staging 2j-platform:previous >/dev/null 2>&1 || true
   systemctl disable --now 2j-staging-backup.timer >/dev/null 2>&1 || true
-  rm -f /etc/systemd/system/2j-staging-backup.* /usr/local/sbin/2j-staging-backup; systemctl daemon-reload
-  printf ':80 {\n\trespond "staging apagado" 200\n}\n' > /etc/caddy/Caddyfile; systemctl restart caddy || true
+  rm -f /etc/systemd/system/2j-staging-backup.service /etc/systemd/system/2j-staging-backup.timer /usr/local/sbin/2j-staging-backup; systemctl daemon-reload
+  # Caddy: give the previous file back only if the one in place is still exactly the one this script installed.
+  [ -f "$ROOT/caddy.installed" ] && read -r marker_sha prev < "$ROOT/caddy.installed" || true
+  cur_sha="$(sha256sum "$cf" 2>/dev/null | awk '{print $1}' || true)"
+  if [ -n "$marker_sha" ] && [ "$cur_sha" = "$marker_sha" ]; then
+    if [ "$prev" != "-" ] && [ -f "$prev" ]; then cp -p "$prev" "$cf"; else printf ':80 {\n\trespond "staging apagado" 200\n}\n' > "$cf"; fi
+    if caddy validate --config "$cf" --adapter caddyfile >/dev/null 2>&1; then systemctl reload caddy || warn "Caddy no recargó; revísalo a mano."; else warn "El Caddyfile devuelto no valida; Caddy sigue con el que tenía cargado."; fi
+  else
+    warn "El Caddyfile no es el que instaló este script (o no lo instaló): no se toca y Caddy no se reinicia."
+  fi
   rm -rf "${ROOT:?}"
-  ok "Staging destruido. Quedan: usuario ${OPS_USER}, cortafuegos, fail2ban, Docker y Caddy (para volver a empezar: 2j-staging base && 2j-staging deploykeys && 2j-staging deploy)."
+  ok "Staging destruido. Quedan: usuario ${OPS_USER}, cortafuegos, fail2ban, Docker y Caddy (para volver a empezar: 2j-staging deploykeys && 2j-staging deploy)."
 }
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -664,8 +788,8 @@ main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
     init) cmd_init;; base) cmd_base;; lock-ssh) cmd_lock_ssh "$@";; deploykeys) cmd_deploykeys;; deploy) cmd_deploy;; seed) cmd_seed;;
-    selftest) cmd_selftest;; status) cmd_status;; backup) cmd_backup;; restore-db) cmd_restore_db "$@";; teardown) cmd_teardown "$@";; render) cmd_render "$@";;
-    *) sed -n '2,25p' "$0";;
+    selftest) cmd_selftest;; status) cmd_status;; backup) cmd_backup;; restore-db) cmd_restore_db "$@";; rollback) cmd_rollback;; manifest) need_root; manifest_write "${1:?uso: manifest FICHERO}";; teardown) cmd_teardown "$@";; render) cmd_render "$@";;
+    *) sed -n '2,26p' "$0";;
   esac
 }
 main "$@"

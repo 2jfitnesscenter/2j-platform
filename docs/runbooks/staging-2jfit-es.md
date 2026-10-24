@@ -4,6 +4,8 @@
 
 > **REGLA DURA:** este staging solo puede contener **datos sintéticos** (ningún cliente real, ninguna persona real, ningún pago real). El admin no tiene login de personal y solo es aceptable por eso. Si alguna vez fueran a entrar datos reales: PARAR; antes hace falta autenticación real de personal.
 
+> **REGLA PARA EL PROPIETARIO — versión `06dd2594…` del script:** puedes usar `init`, `base`, `lock-ssh`, `deploykeys`, `deploy`, `seed` y `selftest`. **NO uses `restore-db` ni `teardown` con esa versión.** Las correcciones de esos dos comandos (y del rollback y del Caddyfile) están en la versión nueva del script (el SHA-256 nuevo te lo da quien te entregó este fichero); hasta que la tengas en el servidor, no los ejecutes.
+
 Antes de `deploy`: los 3 registros DNS deben apuntar ya a `169.58.20.25` (el script lo comprueba y se detiene si no).
 
 Servidor: `169.58.20.25` · Dominios: `home.2jfit.es`, `app.2jfit.es`, `admin.2jfit.es` · Script: `tooling/staging/setup-staging.sh` (se puede ejecutar de nuevo sin romper nada).
@@ -37,7 +39,7 @@ nano /etc/2j-staging.conf      # pega SSH_PUBKEY, ADMIN_ALLOW_IPS, ACME_EMAIL; g
 ## 3. Cerrar SSH (solo si el login nuevo funciona)
 0. **Ten abierta la consola VNC del panel de Contabo en una pestaña mientras cierras SSH** (es tu salida de emergencia si algo falla).
 1. **Sin cerrar** la sesión, abre OTRA ventana: `ssh ops@169.58.20.25` → debe entrar **sin pedir contraseña**.
-2. Si entra, en la primera ventana: `2j-staging lock-ssh --confirm` (comprueba por sí mismo que ya hubo un login real por clave de `ops`; si no lo ve, se niega). Si no entra, no sigas: avísame.
+2. Si entra, **en los 30 minutos siguientes**, en la primera ventana: `2j-staging lock-ssh --confirm`. El script comprueba en el registro de SSH que hubo un login real por clave de `ops` en los últimos 30 minutos; si no lo ve, se niega (vuelve a entrar con `ssh ops@…` y repite). `--force` existe, pero te hace un aviso y te obliga a escribir `ASUMO EL RIESGO`; no lo uses. Si no entra, no sigas: avísame.
 3. Si te quedas fuera: usa la **consola VNC** del panel de Contabo (entra como root con la contraseña del panel) y revierte con el comando de abajo.
 4. Revertir si hace falta: `rm /etc/ssh/sshd_config.d/00-2j-hardening.conf && systemctl reload ssh`.
 
@@ -67,13 +69,15 @@ Personas sintéticas `@example.test` (miembros de prueba `member-a` y `member-b`
 ## 7. Día a día
 - Estado: `sudo 2j-staging status`
 - Copia ahora: `sudo 2j-staging backup` (diaria automática, 7 días; en `/opt/2j/backups`)
-- Restaurar Platform: `sudo 2j-staging restore-db /opt/2j/backups/<fichero>.dump`
+- Restaurar Platform: `sudo 2j-staging restore-db /opt/2j/backups/platform-AAAA-MM-DD-HHMM.dump`. **Solo acepta copias hechas por este mismo script** en `/opt/2j/backups` (cada copia lleva una marca `.manifest` firmada con una clave que solo existe en el servidor; cualquier otro fichero se rechaza). Guarda antes una copia `pre-restore-…` y pide escribir `RESTAURAR`. **Si la restauración falla, devuelve sola la base a como estaba y arranca de nuevo las APIs.**
+- **Volver a la versión anterior del código:** `sudo 2j-staging rollback` (pide escribir `VOLVER`). Deja el sitio de Home y Admin, la imagen de Platform y el código de Búnker en la versión anterior de `/opt/2j/releases.log`. **La base de datos NO se deshace**: si el código antiguo no encaja con ella, usa `restore-db`. Un segundo `rollback` vuelve a la versión que acabas de dejar.
 - Actualizar código: cambia `PLATFORM_REF`/`BUNKER_REF` y `sudo 2j-staging deploy`
-- **Rollback/borrado total:** `sudo 2j-staging teardown --yes` (te pide escribir `DESTRUIR STAGING`; no toca SSH/firewall/usuario).
+- **Borrado total:** `sudo 2j-staging teardown --yes` (te enseña la lista exacta y te pide escribir `DESTRUIR STAGING`). Borra **solo** lo que creó este script: los contenedores `2j-postgres`, `2j-platform-admin-api`, `2j-platform-member-api` y los del docker compose de `/opt/2j/src/bunker`; las imágenes `2j-platform:staging` y `2j-platform:previous`; los servicios `2j-staging-backup.service` y `.timer` y `/usr/local/sbin/2j-staging-backup`; y **la carpeta `/opt/2j` entera** (bases de datos, secretos, **copias de seguridad**, código y webs). Del Caddyfile: solo si el que está puesto es todavía el que instaló este script, te devuelve el anterior y recarga Caddy; si no, **no lo toca y no reinicia Caddy**. No toca el usuario `ops`, SSH, el cortafuegos, fail2ban, Docker, el programa Caddy ni `/usr/local/sbin/2j-staging`.
 
 ## Comprobaciones que hace el script por ti
 - `ADMIN_ALLOW_IPS` se valida: solo IPs correctas; rechaza `0.0.0.0/0`, `::/0` y máscaras muy anchas (mínimo /24 en IPv4, /64 en IPv6).
-- `teardown` solo actúa sobre `/opt/2j` y te muestra la ruta exacta antes de pedir la frase.
+- `teardown` solo funciona sobre `/opt/2j`, te muestra la lista exacta de lo que borra antes de pedir la frase, y no sustituye ni reinicia Caddy si el Caddyfile no es el que instaló el script.
+- `deploy` guarda el Caddyfile anterior antes de cambiarlo y, si Caddy no acepta el nuevo, restaura el anterior. Las webs de Home y Admin se publican con un cambio atómico (enlace simbólico): nunca se sirve una carpeta a medio copiar; se conservan las 3 últimas versiones.
 - Las contraseñas no se pasan como argumentos de procesos (se leen por entrada estándar).
 
 ## Lo que debes saber (riesgos y límites)
