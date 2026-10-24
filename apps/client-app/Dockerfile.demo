@@ -1,0 +1,10 @@
+FROM nginx@sha256:c59d1f8b1e0e42da75be973424cd72e23f7f8adfb54e982f4d1cd0216a5a5576
+
+RUN rm -rf /usr/share/nginx/html/*
+COPY staging/nginx.conf /etc/nginx/nginx.conf
+COPY dist-demo/index.html dist-demo/manifest.webmanifest dist-demo/service-worker.js dist-demo/icon.svg /usr/share/nginx/html/
+COPY dist-demo/assets/ /usr/share/nginx/html/assets/
+
+USER 101:101
+ENTRYPOINT ["nginx"]
+CMD ["-g", "daemon off;"]

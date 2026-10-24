@@ -1,0 +1,25 @@
+name: 2j-home-synthetic-demo
+
+services:
+  home-demo:
+    build:
+      context: ..
+      dockerfile: Dockerfile.demo
+    image: 2j-home-synthetic-demo:local
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.50
+    restart: unless-stopped
+    networks:
+      - demo
+
+networks:
+  demo:
+    internal: true
