@@ -37,7 +37,7 @@ export async function verifyInternalServiceRequest(
   request: FastifyRequest,
   db: DB,
   keys: InternalServiceKeys,
-  options: { now?: Date; expectedMethod: 'GET'; expectedPath: string } ,
+  options: { now?: Date; expectedMethod: 'GET' | 'POST'; expectedPath: string; /** Exact request bytes; required for POST so the body digest is part of the signature. */ body?: Uint8Array } ,
 ): Promise<VerifiedInternalServiceRequest | { readonly unavailable: true } | null> {
   try {
     const keyId = singleHeader(request.headers['x-2j-key-id']);
@@ -48,12 +48,14 @@ export async function verifyInternalServiceRequest(
     const key = keys[keyId];
     if (!key) return null;
     if (request.method !== options.expectedMethod || request.raw.url !== options.expectedPath) return null;
-    const contentLength = request.headers['content-length'];
-    if ((contentLength !== undefined && contentLength !== '0') || request.headers['transfer-encoding'] !== undefined) return null;
+    if (options.expectedMethod === 'GET') {
+      const contentLength = request.headers['content-length'];
+      if ((contentLength !== undefined && contentLength !== '0') || request.headers['transfer-encoding'] !== undefined) return null;
+    } else if (!options.body || request.headers['transfer-encoding'] !== undefined) return null;
     const now = options.now ?? new Date();
     const parsedTimestamp = new Date(timestamp);
     if (!Number.isFinite(parsedTimestamp.getTime()) || parsedTimestamp.toISOString() !== timestamp || Math.abs(now.getTime() - parsedTimestamp.getTime()) > INTERNAL_SERVICE_AUTH_CLOCK_SKEW_SECONDS * 1000) return null;
-    const canonical = canonicalizeTrainingServiceRequest({ keyId, timestamp, requestId, method: request.method, path: options.expectedPath, body: new Uint8Array() });
+    const canonical = canonicalizeTrainingServiceRequest({ keyId, timestamp, requestId, method: request.method, path: options.expectedPath, body: options.expectedMethod === 'POST' ? options.body! : new Uint8Array() });
     const expected = createHmac('sha256', Buffer.from(key.secret, 'base64url')).update(Buffer.from(canonical, 'utf8')).digest();
     const supplied = Buffer.from(signature, 'base64url');
     if (supplied.length !== expected.length || !timingSafeEqual(expected, supplied)) return null;

@@ -5,6 +5,7 @@ import type { ClientAuthorizationContext } from './communications.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { materializeCalendarTemplates } from './calendar-materializer.js';
 import type { TrainingAdapter } from './training-integration.js';
+import { memberTrainingCapabilities } from './training-capabilities-api.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -128,7 +129,12 @@ export function registerClientAppRoutes(
       WHERE a.client_id=${actor.clientId} ORDER BY a.starts_on DESC,a.created_at DESC,a.id DESC LIMIT 100`;
     const derivedAssignments = assignments.map((item: any) => ({ ...item, status: item.lastEvent === 'paused' ? 'paused' : item.lastEvent === 'cancelled' || item.lastEvent === 'changed' ? 'cancelled' : item.startsOn > localDate ? 'scheduled' : item.endsOn && item.endsOn < localDate ? 'expired' : item.status }));
     const active = derivedAssignments.filter((item: any) => item.status === 'active');
-    return { asOf: localDate, timezone: 'Atlantic/Canary', assignments: derivedAssignments, active };
+    // V2.1 capabilities computed here from the member's own session: Home gets them without any service signature. Absent when the member has no active person yet.
+    const [personRow] = await db`
+      SELECT p.id FROM platform_person_clients pc JOIN platform_persons p ON p.id=pc.person_id AND p.status='active'
+      WHERE pc.client_id=${actor.clientId}::uuid AND (${actor.personId ?? null}::uuid IS NULL OR pc.person_id=${actor.personId ?? null}::uuid) LIMIT 1`;
+    const trainingCapabilities = personRow ? await memberTrainingCapabilities(db, String(personRow.id)) : null;
+    return { asOf: localDate, timezone: 'Atlantic/Canary', assignments: derivedAssignments, active, trainingCapabilities };
   });
 
   app.get('/api/me/bookings', async (request, reply) => {

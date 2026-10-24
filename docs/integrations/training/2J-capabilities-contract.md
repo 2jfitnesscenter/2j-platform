@@ -26,6 +26,6 @@ The endpoint uses the existing `2J-SERVICE-AUTH-V1` HMAC format, exact canonical
 
 ## Invitation and enrollment boundaries
 
-There is no public unauthenticated self-registration. A Búnker identity must originate from an authorized unified-identity registration path. D278/D279/D280 invitation creation and Home registration are pending E2E integration; PR #59 does not fabricate invitation proof. D281 requires future enrollment to attach the client facet to the same canonical person and preserve the existing Training link and Training-owned history. The current Platform schema and linking contract preserve this identity boundary, but end-to-end enrollment is pending.
+There is no public unauthenticated self-registration. A Búnker identity must originate from an authorized unified-identity registration path. INT-V2-03/INT-V2-04/INT-V2-05 invitation creation and Home registration are pending E2E integration; PR #59 does not fabricate invitation proof. INT-V2-06 requires future enrollment to attach the client facet to the same canonical person and preserve the existing Training link and Training-owned history. The current Platform schema and linking contract preserve this identity boundary, but end-to-end enrollment is pending.
 
 No SSO, user-session handoff, Training changes, membership/payment changes, or consumer calls are part of PR #59.

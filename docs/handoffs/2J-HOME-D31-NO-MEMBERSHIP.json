@@ -1,0 +1,54 @@
+{
+  "taskId": "2J-HOME-D31-NO-MEMBERSHIP",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-D31-no-membership",
+  "baseSha": "3303500272408c246ba9cd6017727af319146588",
+  "implementationSha": "f112842eb94b6dc6c28dd91408d4533cd44a1db4",
+  "status": "local-review-ready",
+  "pullRequest": null,
+  "decisions": ["D31", "D40", "D41", "A23"],
+  "changedFiles": [
+    "apps/client-app/src/client-app.tsx",
+    "apps/client-app/test/client-app.test.mjs",
+    "docs/handoffs/2J-HOME-D31-NO-MEMBERSHIP.md",
+    "docs/handoffs/2J-HOME-D31-NO-MEMBERSHIP.json"
+  ],
+  "membershipSource": {
+    "method": "GET",
+    "path": "/api/me/membership",
+    "authentication": "existing session-authenticated client API",
+    "activeGate": "Platform response active array",
+    "capabilitiesShape": "modules[].capabilities typed; V2.1 semantics not redefined"
+  },
+  "verification": {
+    "clientAppTests": { "passed": 16, "failed": 0 },
+    "clientAppTypecheck": "passed",
+    "clientAppBuild": "passed",
+    "diffCheck": "passed",
+    "lint": "not-run-no-script-defined"
+  },
+  "platformApiChanged": false,
+  "capabilitiesEndpointChanged": false,
+  "capabilitiesContractChanged": false,
+  "hmacEndpointUsed": false,
+  "bunkerChanged": false,
+  "realDataAccessed": false,
+  "productionChanged": false,
+  "deploymentPerformed": false,
+  "independentReview": "pending",
+  "independentQa": "pending",
+  "limitations": [
+    "No end-to-end verification against a deployed Platform API; tests use synthetic fixtures.",
+    "V2.1 capability policy for Bunker remains Claude Code-owned and awaits its published contract.",
+    "Payment ledger display requires an existing Platform client API contract; this task adds no payment behavior."
+  ],
+  "nextSequence": [
+    "Client-side push against Claude Code PR #71 after contract review",
+    "Measurements against confirmed Platform contracts"
+  ],
+  "referenceBranch": {
+    "branch": "agent/codex/2J-CAPABILITIES-D40-D41",
+    "sha": "374c5599fa16621f79929f1a632b82113cf11994",
+    "modified": false
+  }
+}
