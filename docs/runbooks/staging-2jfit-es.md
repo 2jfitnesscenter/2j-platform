@@ -63,6 +63,13 @@ sudo 2j-staging selftest
 ## 5b. Cambiar la IP permitida de `admin.`
 Tu IP doméstica puede cambiar. Si `admin.2jfit.es` te da 403: mira tu IP nueva (busca «mi ip»), edita `sudo nano /etc/2j-staging.conf`, cambia `ADMIN_ALLOW_IPS="x.x.x.x"` (varias, separadas por espacio) y ejecuta `sudo 2j-staging deploy` (es repetible pero tarda unos minutos (reconstruye); regenera y valida el Caddyfile y solo lo instala y recarga si es válido). Si te quedas fuera por completo, entra por SSH y haz lo mismo. Vacío = admin cerrado a todos.
 
+## 5c. Qué muestra home.2jfit.es: modo `real` o `demo`
+En `/etc/2j-staging.conf` hay una línea `STAGING_HOME_MODE`:
+- `real` (por defecto): Home conectada a la API de staging (acceso de miembro de prueba con los datos del `seed`).
+- `demo`: una versión estática con **datos ficticios**, marcada «DEMO · DATOS FICTICIOS». **No hace ninguna llamada a la API**, no enseña enlaces de personal/admin y no abre la app Búnker de producción. Sirve para revisar el aspecto con calma.
+
+Para cambiar: `sudo nano /etc/2j-staging.conf`, pon `STAGING_HOME_MODE="demo"` (o `"real"`) y ejecuta `sudo 2j-staging deploy` (reconstruye; unos minutos; el cambio de web es atómico). Al terminar, el mensaje final dice en qué modo quedó. `admin.` y `app.` no cambian. Importante: la demo que se ve es la que lleve **la rama desplegada** (`PLATFORM_REF`); las pantallas más nuevas de Work Home (p. ej. «Cuenta de Búnker / Mi evolución») solo aparecerán cuando esa rama se publique y la pongas en `PLATFORM_REF`. Producción no se toca en ningún caso.
+
 ## 6. Datos de prueba
 Personas sintéticas `@example.test` (miembros de prueba `member-a` y `member-b` con códigos piloto fijos de `seed-demo.ts`, solo válidos en este staging). Nada de datos reales.
 

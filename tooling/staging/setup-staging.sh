@@ -45,6 +45,7 @@ PLATFORM_REF="agent/claude/2J-INTEGRATION-PREVIEW"      # ASSUMED: Home+SSO+push
 BUNKER_REF="agent/claude/2J-V21-BUNKER-CONSUMER"        # ASSUMED: Búnker with the Platform consumer (SSO/V2.1 off by default).
 ACCEPT_ADMIN_WITHOUT_STAFF_AUTH="no"                    # must be "yes": Platform has no staff login yet (see runbook, section "Lo que debes saber").
 BACKUP_KEEP_DAYS=7
+STAGING_HOME_MODE="real"             # real = Home against the staging API (pilot login, seed data). demo = static build with synthetic fixtures, no API calls (for visual review).
 [ -f "$CONF" ] && . "$CONF"
 case "$ROOT" in /opt/?*|/tmp/?*) ;; *) echo "ROOT debe estar bajo /opt/ (valor: '$ROOT')" >&2; exit 1;; esac
 
@@ -127,6 +128,10 @@ BUNKER_REF="${BUNKER_REF}"
 # Platform has no staff login yet: its admin runs with a built-in demo role, protected only by the password + IP list below.
 # Write yes ONLY after reading section "Lo que debes saber" of the runbook.
 ACCEPT_ADMIN_WITHOUT_STAFF_AUTH="no"
+
+# What home.${DOMAIN} shows: "real" (Home connected to the staging API) or "demo" (static build with synthetic fixtures, makes no API calls, marked DEMO).
+# Change it and run "2j-staging deploy" again (it rebuilds, a few minutes).
+STAGING_HOME_MODE="${STAGING_HOME_MODE}"
 EOF
   chmod 600 "$CONF"
   say "Creado $CONF. Ábrelo con: nano $CONF   (rellena SSH_PUBKEY; guarda con Ctrl+O, Enter, Ctrl+X)"
@@ -391,7 +396,9 @@ ARG ADMIN_ORIGIN
 ARG HOME_ORIGIN
 ARG BUNKER_ORIGIN
 RUN VITE_API_URL="${ADMIN_ORIGIN}" pnpm --filter "@2j/admin-web..." build
-RUN VITE_2J_PILOT_MEMBER_LOGIN=true VITE_2J_ADMIN_URL="${ADMIN_ORIGIN}" VITE_2J_TRAINING_URL="${BUNKER_ORIGIN}" pnpm --filter "@2j/client-app..." build
+ARG HOME_MODE=real
+RUN if [ "${HOME_MODE}" = "demo" ]; then pnpm --filter "@2j/client-app..." build:demo; \
+    else VITE_2J_PILOT_MEMBER_LOGIN=true VITE_2J_ADMIN_URL="${ADMIN_ORIGIN}" VITE_2J_TRAINING_URL="${BUNKER_ORIGIN}" pnpm --filter "@2j/client-app..." build; fi
 EOF
   cat > "$dir/Dockerfile.platform.dockerignore" <<'EOF'
 .git
@@ -524,12 +531,13 @@ cmd_deploy() {
   say "4/8 Construyendo Platform (API + Admin + Home); tarda varios minutos"
   docker image inspect 2j-platform:staging >/dev/null 2>&1 && docker tag 2j-platform:staging 2j-platform:previous   # kept for 2j-staging rollback
   docker build -f "$ROOT/build/Dockerfile.platform" -t 2j-platform:staging \
-    --build-arg "ADMIN_ORIGIN=https://${HOSTS_ADMIN}" --build-arg "HOME_ORIGIN=https://${HOSTS_HOME}" --build-arg "BUNKER_ORIGIN=https://${HOSTS_APP}" \
+    --build-arg "ADMIN_ORIGIN=https://${HOSTS_ADMIN}" --build-arg "HOME_ORIGIN=https://${HOSTS_HOME}" --build-arg "BUNKER_ORIGIN=https://${HOSTS_APP}" --build-arg "HOME_MODE=${STAGING_HOME_MODE}" \
     "$ROOT/src/platform"
   install -d -m 755 "$ROOT/www/releases"
   local rel_stamp pc_short rel_home="" rel_admin=""
   rel_stamp="$(date +%Y%m%d-%H%M%S)"; pc_short="$(git -C "$ROOT/src/platform" rev-parse --short=12 HEAD)"
-  for pair in "admin:apps/admin-web/dist" "home:apps/client-app/dist"; do
+  local home_dist=apps/client-app/dist; [ "$STAGING_HOME_MODE" = demo ] && home_dist=apps/client-app/dist-demo
+  for pair in "admin:apps/admin-web/dist" "home:${home_dist}"; do
     name="${pair%%:*}"; path="${pair#*:}"; cid="$(docker create 2j-platform:staging)"
     rel="$ROOT/www/releases/${name}-${pc_short}-${rel_stamp}"
     docker cp "${cid}:/repo/${path}" "$rel"; docker rm "$cid" >/dev/null; chmod -R a+rX "$rel"
@@ -582,7 +590,8 @@ cmd_deploy() {
 
   cat <<EOF
 
-Despliegue terminado. Siguiente:
+Despliegue terminado. Home se sirve en modo: ${STAGING_HOME_MODE}  (real = conectada a la API de staging; demo = datos ficticios, sin API).
+Siguiente:
   2j-staging seed        (datos de prueba)
   2j-staging selftest    (OK/FAIL por subdominio)
 La contraseña de acceso a las tres webs está guardada en ${ROOT}/secrets/basic-auth.txt (solo root). No se muestra aquí.
@@ -767,6 +776,7 @@ EOF
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 validate_conf() {
+  case "$STAGING_HOME_MODE" in real|demo) ;; *) die "STAGING_HOME_MODE debe ser real o demo (valor actual: '$STAGING_HOME_MODE')";; esac
   local ip n
   for ip in $ADMIN_ALLOW_IPS; do
     case "$ip" in
