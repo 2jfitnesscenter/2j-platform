@@ -266,7 +266,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   assert.deepEqual(first.map((item) => item.name), names);
   for (const name of names) {
     const contents = await readFile(new URL(name, directory), 'utf8');
-    assert.equal(first.find((item) => item.name === name)?.checksum.trim(), createHash('sha256').update(contents).digest('hex'));
+    assert.equal(first.find((item) => item.name === name)?.checksum.trim(), createHash('sha256').update(contents.replace(/\r\n/g, '\n')).digest('hex'), 'new rows store the checksum of the LF form, whatever the checkout line endings');
   }
   const migration = names[0];
   const originalChecksum = first.find((item) => item.name === migration).checksum.trim();
@@ -289,7 +289,7 @@ test('0037 upgrades the checksummed current-main schema once and preserves legac
     const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
     const contract='0037_contract_entitlement_periods_v1.sql';
     assert.ok(names.includes(contract));
-    assert.equal(names.at(-1),'0038_economic_grace_days.sql');
+    assert.ok(names.includes('0038_economic_grace_days.sql'));
     const prior=names.filter(name=>name<contract);
     await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
     for(const name of prior){
@@ -378,16 +378,15 @@ test('0037 upgrades the checksummed current-main schema once and preserves legac
     };
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,36);
     const upgraded=await migrateDatabase(upgradeDb);
-    assert.equal(upgraded.length,38);
-    assert.deepEqual(upgraded.slice(-2).map(row=>row.name),[contract,'0038_economic_grace_days.sql']);
-    assert.deepEqual(upgraded.slice(-3).map(row=>row.name),['0036_contract_terms_dates.sql',contract,'0038_economic_grace_days.sql']);
+    assert.equal(upgraded.length,names.length);
+    assert.deepEqual(upgraded.slice(35,38).map(row=>row.name),['0036_contract_terms_dates.sql',contract,'0038_economic_grace_days.sql'],'later migrations are appended after 0038');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${contract}`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='quantity_rule'`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='assignment_entitlement_periods' AND column_name IN ('period_index','entitlement_mode','formula_id','weekdays_in_period','sessions_granted')`)[0].count,5);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_training_access_events') IS NOT NULL AS exists`)[0].exists,true);
-    assert.equal((await migrateDatabase(upgradeDb)).length,38,'re-running migration verification applies no duplicate migration');
+    assert.equal((await migrateDatabase(upgradeDb)).length,names.length,'re-running migration verification applies no duplicate migration');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE term_kind IS NOT NULL`)[0].count,0,'migration must not rewrite legacy plan versions');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE plan_id=${legacyPlanId} AND version=1 AND term_kind IS NULL AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NULL AND payment_block IS NULL`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_contract_terms`)[0].count,0,'migration must not fabricate terms for legacy assignments');
@@ -553,9 +552,10 @@ test('0037/0038 migrate a fresh database from zero and verify the upgrade from c
     sourceUrl.pathname=`/${databaseName}`;fresh=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     assert.equal((await fresh`SELECT to_regclass('public.plan_versions') AS table`)[0].table,null,'fresh database starts empty');
     const first=await migrateDatabase(fresh);
-    assert.equal(first.length,38);
-    assert.equal(first.at(-2).name,'0037_contract_entitlement_periods_v1.sql');
-    assert.equal(first.at(-1).name,'0038_economic_grace_days.sql');
+    const listing=(await readdir(new URL('../migrations/',import.meta.url))).filter(name=>name.endsWith('.sql')).sort();
+    assert.deepEqual(first.map(row=>row.name),listing,'every migration file is applied exactly once, in order, and nothing else is recorded');
+    assert.equal(first[36].name,'0037_contract_entitlement_periods_v1.sql','released history keeps its position');
+    assert.equal(first[37].name,'0038_economic_grace_days.sql','released history keeps its position');
     const second=await migrateDatabase(fresh);
     assert.deepEqual(second.map(row=>[row.name,row.checksum.trim()]),first.map(row=>[row.name,row.checksum.trim()]));
     assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0037_contract_entitlement_periods_v1.sql'`)[0].count,1);
@@ -570,7 +570,7 @@ test('0037/0038 migrate a fresh database from zero and verify the upgrade from c
   }
 });
 
-test('0038 upgrades the exact current-main schema once and remains checksum-stable on rerun', async () => {
+test('the latest migration upgrades the previous schema once and remains checksum-stable on rerun', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`f1c_main_upgrade_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
   const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});let upgradeDb;
@@ -579,18 +579,19 @@ test('0038 upgrades the exact current-main schema once and remains checksum-stab
     sourceUrl.pathname=`/${databaseName}`;upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     const directory=new URL('../migrations/',import.meta.url);
     const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
-    assert.equal(names.length,38);assert.equal(names.at(-2),'0037_contract_entitlement_periods_v1.sql');
-    assert.equal(names.at(-1),'0038_economic_grace_days.sql');
+    assert.ok(names.length>=39);assert.equal(names[36],'0037_contract_entitlement_periods_v1.sql');
+    assert.equal(names[37],'0038_economic_grace_days.sql');
+    const latest=names.at(-1);
     await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
-    for(const name of names.slice(0,37)){
+    for(const name of names.slice(0,-1)){
       const contents=await readFile(new URL(name,directory),'utf8');
       const checksum=createHash('sha256').update(contents).digest('hex');
       await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
     }
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,37);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,names.length-1);
     const upgraded=await migrateDatabase(upgradeDb);
-    assert.equal(upgraded.length,38);assert.equal(upgraded.at(-1).name,'0038_economic_grace_days.sql');
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0038_economic_grace_days.sql'`)[0].count,1);
+    assert.equal(upgraded.length,names.length);assert.equal(upgraded.at(-1).name,latest);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${latest}`)[0].count,1,'the new migration is applied exactly once');
     assert.equal((await upgradeDb`SELECT grace_days FROM economic_settings WHERE singleton=true`)[0].grace_days,5);
     const repeated=await migrateDatabase(upgradeDb);
     assert.deepEqual(repeated.map(row=>[row.name,row.checksum.trim()]),upgraded.map(row=>[row.name,row.checksum.trim()]));

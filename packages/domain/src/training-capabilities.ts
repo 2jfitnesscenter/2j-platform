@@ -130,3 +130,35 @@ function canonicalInstant(value: string) {
   if (!Number.isFinite(timestamp)) throw new RangeError('generatedAt must be an ISO timestamp');
   return new Date(timestamp).toISOString();
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// 2J-CAPABILITIES-V2.1 (owner decisions D40, D41, A23). Same wire shape as V2 plus `revision: 1`; a NEW contract id so V2 consumers (which validate the
+// free baseline exactly) keep working untouched and keep getting V2.
+//   - free baseline for every REGISTERED person now also includes guidedTraining ("Entrena con 2J") and premiumPrograms (Premium and Oposiciones are free).
+//     Still NOT free: aiCoach, professionalFollowUp, routineCreation (informational, ADR-2J-INT-001).
+//   - "registered" does NOT require an active Training link: a person with no link gets the baseline (link status stays "not_linked").
+//   - A revoked link stays blocked (the link was withdrawn on purpose); an administrative suspension blocks whatever the link status.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+export const TRAINING_CAPABILITIES_CONTRACT_V21 = '2J-CAPABILITIES-V2.1' as const;
+export type TrainingCapabilityContractV21 = Omit<TrainingCapabilityContract, 'contract'> & { readonly contract: typeof TRAINING_CAPABILITIES_CONTRACT_V21; readonly revision: 1 };
+
+const baselineCapabilitiesV21 = {
+  autonomousTraining: true, routineCreation: false, personalRoutineCreation: true, personalRoutineManagement: true, workoutRecording: true, workoutHistory: true,
+  guidedTraining: true, premiumPrograms: true, aiCoach: false, professionalFollowUp: false,
+} as const;
+
+export function resolveTrainingCapabilitiesV21(input: ResolveTrainingCapabilitiesInput): TrainingCapabilityContractV21 {
+  const base = resolveTrainingCapabilities(input);                     // validates the input, computes the window and the paid levels exactly as V2
+  const v21 = (value: Omit<TrainingCapabilityContract, 'contract'>): TrainingCapabilityContractV21 => ({ ...value, contract: TRAINING_CAPABILITIES_CONTRACT_V21, revision: 1 });
+  const suspensionStatus = input.suspensionStatus ?? 'none';
+  if (base.reasonCode === 'TRAINING_LINK_REVOKED') return v21(base);
+  if (suspensionStatus === 'suspended') {
+    const linked = input.link.status === 'active' && typeof input.link.trainingUserId === 'string' && input.link.trainingUserId.length > 0;
+    return v21({ ...base, trainingSubject: linked ? { linkStatus: 'active', trainingUserId: input.link.trainingUserId as string } : { linkStatus: 'not_linked' },
+      capabilityLevel: 'blocked', accessState: 'suspended', capabilities: blockedCapabilities, reasonCode: 'ADMIN_SUSPENDED', effectiveFrom: null });
+  }
+  if (base.reasonCode === 'TRAINING_LINK_MISSING' || base.reasonCode === 'FREE_BASELINE') {
+    return v21({ ...base, capabilityLevel: 'baseline', accessState: 'baseline', capabilities: baselineCapabilitiesV21, reasonCode: 'FREE_BASELINE', effectiveFrom: null });
+  }
+  return v21(base);
+}

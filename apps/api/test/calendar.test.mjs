@@ -632,6 +632,32 @@ test('reservation and waitlist revalidate service and area status at write time'
   assert.equal(waitlist.statusCode, 409); assert.equal(waitlist.json().error, 'area_archived');
 });
 
+test('booking preview of a started session reports session_started only, never a phantom session_full', async () => {
+  const service=await createService();const session=await createSession({service,capacity:8});
+  await sql`UPDATE calendar_sessions SET starts_at=now()-interval '2 hours' WHERE id=${session.id}`;
+  const client=await createClient('Started session');
+  const preview=await engineAdmin.inject({method:'GET',url:`/api/calendar/sessions/${session.id}/booking-eligibility?clientId=${client.id}`});
+  assert.equal(preview.statusCode,200,preview.body);
+  const body=preview.json();
+  assert.equal(body.allowed,false);
+  assert.ok(body.blockingReasons.includes('session_started'),JSON.stringify(body.blockingReasons));
+  assert.ok(!body.blockingReasons.includes('session_full'),'an empty session (0 of 8) must not be reported as full: '+JSON.stringify(body.blockingReasons));
+  assert.equal(body.waitlistAllowed,false);assert.equal(body.overridePossible.capacity,false);
+  assert.equal(body.decision,'blocked');
+});
+
+test('booking preview of a future session at capacity still reports session_full with its capacity', async () => {
+  const service=await createService();const session=await createSession({service,capacity:1});
+  const {client}=await createEntitledClient(service,{rightType:'sessions_quota',quantity:2});
+  const first=await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id}});
+  assert.equal(first.statusCode,201,first.body);
+  const {client:second}=await createEntitledClient(service,{rightType:'sessions_quota',quantity:2});
+  const preview=await engineAdmin.inject({method:'GET',url:`/api/calendar/sessions/${session.id}/booking-eligibility?clientId=${second.id}`});
+  assert.equal(preview.statusCode,200,preview.body);
+  assert.ok(preview.json().blockingReasons.includes('session_full'));
+  assert.deepEqual(preview.json().capacity,{occupied:1,limit:1,available:0});
+});
+
 test('central engine consumes one bonus session atomically, retries idempotently and restores on valid cancellation', async () => {
   const service=await createService();const session=await createSession({service,capacity:2});
   const {client,assignment,rightId}=await createEntitledClient(service,{rightType:'sessions_quota',quantity:1});
