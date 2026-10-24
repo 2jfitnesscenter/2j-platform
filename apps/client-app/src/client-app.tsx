@@ -1,7 +1,8 @@
 import React from 'react';
 import { usePushSubscription } from './push/use-push-subscription.js';
+import { evolutionSections, isMemberIntegrationEnabled, sessionAvailabilityLabel, trainingLinkEndpoints, type EvolutionSection, type TrainingLinkReviewReason } from './member-integrations.js';
 
-type View = 'home' | 'book' | 'bookings' | 'bunker' | 'store' | 'profile' | 'settings' | 'notifications' | 'news';
+type View = 'home' | 'book' | 'bookings' | 'bunker' | 'training-link' | 'evolution' | 'store' | 'profile' | 'settings' | 'notifications' | 'news';
 type NotificationItem = {id:string;type:string;title:string;body:string;deeplink:string|null;createdAt:string;readAt:string|null};
 type CenterNews = {id:string;title:string;body:string;featured:boolean;publishedAt:string|null};
 type ClientNotificationTarget = { view: 'bookings' | 'profile' | 'book' };
@@ -26,7 +27,7 @@ type TrainingCapabilities = {
   trainingSubject: { linkStatus: 'active' | 'not_linked' | 'revoked' };
   capabilities: { autonomousTraining: boolean; routineCreation: boolean; personalRoutineCreation: boolean; personalRoutineManagement: boolean; workoutRecording: boolean; workoutHistory: boolean; guidedTraining: boolean; premiumPrograms: boolean; aiCoach: boolean; professionalFollowUp: boolean };
 };
-type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; eligible?: boolean; eligibilityReason?: string | null; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
+type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; eligible?: boolean; eligibilityReason?: string | null; availability?: string; availabilityReason?: string | null; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
 type MemberBookingService = { id: string; name: string };
 type MemberCancellation = { kind: 'booking' | 'waitlist'; booking: Booking; summary?: string };
 type Booking = { id: string; status: string; sessionId: string; startsAt: string; durationMinutes: number; serviceName: string; areaName: string; sessionStatus: string; isIndividual: boolean };
@@ -139,43 +140,43 @@ const previewDateTime = (date: Date, hour: number, minute = 0) => {
 const addCanaryDays = (date: Date, days: number) => shiftDateKey(dateKey(date), days);
 const makeHubPreview = (now = new Date()) => {
   const currentCanaryTime = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
-  const startsToday = timeLabel(previewDateTime(now, 18)).localeCompare(currentCanaryTime) > 0;
+  const startsToday = timeLabel(previewDateTime(now, 17)).localeCompare(currentCanaryTime) > 0;
   const bookingDay = startsToday ? dateKey(now) : addCanaryDays(now, 1);
-  const startsAt = previewDateTime(new Date(`${bookingDay}T12:00:00Z`), 18);
+  const startsAt = previewDateTime(new Date(`${bookingDay}T12:00:00Z`), 17);
   const tomorrow = addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 1);
   const ids = {
-    client: '10000000-0000-4000-8000-000000000001', service: '20000000-0000-4000-8000-000000000001', strength: '20000000-0000-4000-8000-000000000002', pilates: '20000000-0000-4000-8000-000000000003',
-    session: '30000000-0000-4000-8000-000000000001', reservation: '40000000-0000-4000-8000-000000000001',
-    plan: '50000000-0000-4000-8000-000000000001', form: '60000000-0000-4000-8000-000000000001',
+    client: 'd0700000-0000-4000-8000-000000000001', service: 'd0700000-0000-4000-8000-000000000801', strength: 'd0700000-0000-4000-8000-000000000802', pilates: 'd0700000-0000-4000-8000-000000000803',
+    session: 'd0700000-0000-4000-8000-000000000201', reservation: 'd0700000-0000-4000-8000-000000000301',
+    plan: 'd0840000-0000-4000-8000-000000000105', form: 'd0700000-0000-4000-8000-000000000903',
     notification: '70000000-0000-4000-8000-000000000001',
   };
   const session: ClientSession = {
-    id: ids.session, serviceId: ids.service, serviceName: 'Funcional', areaName: 'La Sala', professionalName: 'Alex',
+    id: ids.session, serviceId: ids.service, serviceName: 'Fuerza funcional', areaName: 'La Sala', professionalName: 'Alex Rivera',
     startsAt, durationMinutes: 45, capacity: 12, occupiedCount: 8, waitlistCount: 0, status: 'scheduled', isIndividual: false,
     myReservationStatus: 'reserved', myWaitlistStatus: null, eligible: true, eligibilityReason: null, canJoinWaitlist: false,
   };
   return {
-    profile: { id: ids.client, firstName: 'Juan', lastName: 'Demo', email: 'juan.demo@example.test', phone: '+34 600 000 001', status: 'active' } satisfies ClientProfile,
-    services: [{ id: ids.service, name: 'Funcional' }, { id: ids.strength, name: 'Fuerza' }, { id: ids.pilates, name: 'Pilates' }] satisfies MemberBookingService[],
-    membership: [{ id: ids.plan, planName: 'Plan 2J', kind: 'monthly', status: 'active', startsOn: dateKey(now), endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', serviceId: ids.service, serviceName: 'Funcional', serviceStatus: 'active', quantity: 12, balance: 8 }], modules: [{ module: 'training', accessLevel: 'read' }] }] satisfies Assignment[],
-    reservations: [{ id: ids.reservation, status: 'reserved', sessionId: ids.session, startsAt, durationMinutes: 45, serviceName: 'Funcional', areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] satisfies Booking[],
+    profile: { id: ids.client, firstName: 'María', lastName: 'González', email: 'maria.gonzalez@example.test', phone: null, status: 'active' } satisfies ClientProfile,
+    services: [{ id: ids.service, name: 'Fuerza funcional' }, { id: ids.strength, name: 'Acondicionamiento' }, { id: ids.pilates, name: 'Pilates' }] satisfies MemberBookingService[],
+    membership: [{ id: ids.plan, planName: 'Bono piloto · 12 sesiones', kind: 'session_pack', status: 'active', startsOn: dateKey(now), endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', serviceId: ids.service, serviceName: 'Fuerza funcional', serviceStatus: 'active', quantity: 12, balance: 8 }], modules: [{ module: 'training', accessLevel: 'read' }] }] satisfies Assignment[],
+    reservations: [{ id: ids.reservation, status: 'reserved', sessionId: ids.session, startsAt, durationMinutes: 45, serviceName: 'Fuerza funcional', areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] satisfies Booking[],
     waitlist: [] as Booking[],
     sessions: [
       session,
-      { ...session, id: '30000000-0000-4000-8000-000000000002', serviceId: ids.strength, startsAt: previewDateTime(new Date(`${tomorrow}T12:00:00Z`), 19), serviceName: 'Fuerza', areaName: 'El Búnker', myReservationStatus: null },
-      { ...session, id: '30000000-0000-4000-8000-000000000003', startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 2)}T12:00:00Z`), 18), occupiedCount: 11, myReservationStatus: null },
-      { ...session, id: '30000000-0000-4000-8000-000000000004', serviceId: ids.strength, startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 3)}T12:00:00Z`), 19), serviceName: 'Fuerza', areaName: 'El Búnker', capacity: 8, occupiedCount: 8, waitlistCount: 3, myReservationStatus: null, canJoinWaitlist: true },
-      { ...session, id: '30000000-0000-4000-8000-000000000005', serviceId: ids.pilates, startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 4)}T12:00:00Z`), 10), serviceName: 'Pilates', areaName: 'Sala Estudio', capacity: 10, occupiedCount: 10, waitlistCount: 2, myReservationStatus: null, myWaitlistStatus: 'waiting' },
+      { ...session, id: 'd0700000-0000-4000-8000-000000000202', serviceId: ids.strength, startsAt: previewDateTime(new Date(`${tomorrow}T12:00:00Z`), 19), serviceName: 'Acondicionamiento', areaName: 'El Búnker', myReservationStatus: null },
+      { ...session, id: 'd0700000-0000-4000-8000-000000000203', startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 2)}T12:00:00Z`), 18), occupiedCount: 11, myReservationStatus: null },
+      { ...session, id: 'd0700000-0000-4000-8000-000000000204', serviceId: ids.strength, startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 3)}T12:00:00Z`), 19), serviceName: 'Acondicionamiento', areaName: 'El Búnker', capacity: 8, occupiedCount: 8, waitlistCount: 3, myReservationStatus: null, canJoinWaitlist: true },
+      { ...session, id: 'd0700000-0000-4000-8000-000000000205', serviceId: ids.pilates, startsAt: previewDateTime(new Date(`${addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 4)}T12:00:00Z`), 10), serviceName: 'Pilates', areaName: 'El Estudio', capacity: 10, occupiedCount: 10, waitlistCount: 2, myReservationStatus: null, myWaitlistStatus: 'waiting' },
     ],
-    forms: [{ id: ids.form, name: 'Ficha de bienvenida', status: 'assigned', required: true, dueAt: null, category: 'onboarding', version: 1 }] satisfies FormAssignment[],
+    forms: [{ id: ids.form, name: 'Seguimiento semanal · demo', status: 'assigned', required: true, dueAt: null, category: 'check_in', version: 1 }] satisfies FormAssignment[],
     consents: [{ consentId: '80000000-0000-4000-8000-000000000001', versionId: '80000000-0000-4000-8000-000000000002', title: 'Normas del centro', body: 'Contenido ficticio de vista previa.', version: 1, required: true, accepted: false }] satisfies Consent[],
     notifications: [{ id: ids.notification, type: 'center_notice', title: 'Nuevo horario del sábado', body: 'Consulta en el centro las novedades de esta semana.', deeplink: null, createdAt: now.toISOString(), readAt: null }] satisfies NotificationItem[],
     news: [{ id: '90000000-0000-4000-8000-000000000001', title: 'Bienvenido a tu espacio 2J', body: 'Aquí encontrarás las novedades importantes de tu centro.', featured: true, publishedAt: now.toISOString() }] satisfies CenterNews[],
     store: [
-      { id:'a0000000-0000-4000-8000-000000000001',category:'nutrition',name:'Proteína 2J',description:'Formato 900 g · chocolate',variants:[{id:'a1000000-0000-4000-8000-000000000001',label:'Chocolate · 900 g',size:'900 g',flavor:'Chocolate',priceCents:3290,availability:'disponible'}]},
-      { id:'a0000000-0000-4000-8000-000000000002',category:'nutrition',name:'Creatina',description:'Monohidrato · 300 g',variants:[{id:'a1000000-0000-4000-8000-000000000002',label:'Neutra · 300 g',size:'300 g',flavor:null,priceCents:1890,availability:'pocas_unidades'}]},
-      { id:'a0000000-0000-4000-8000-000000000003',category:'merchandising',name:'Camiseta 2J',description:'Corte deportivo',variants:[{id:'a1000000-0000-4000-8000-000000000003',label:'Talla M',size:'M',flavor:null,priceCents:2200,availability:'disponible'}]},
-      { id:'a0000000-0000-4000-8000-000000000004',category:'merchandising',name:'Sudadera 2J',description:'Edición del centro',variants:[{id:'a1000000-0000-4000-8000-000000000004',label:'Talla L',size:'L',flavor:null,priceCents:4200,availability:'agotado'}]},
+      { id:'d0700000-0000-4000-8000-000000001001',category:'nutrition',name:'Proteína 2J',description:'Formato 900 g · chocolate',variants:[{id:'d0700000-0000-4000-8000-000000001101',label:'Chocolate · 900 g',size:'900 g',flavor:'Chocolate',priceCents:3290,availability:'disponible'}]},
+      { id:'a0000000-0000-4000-8000-000000000002',category:'nutrition',name:'Creatina',description:'Monohidrato · 300 g · fixture visual',variants:[{id:'a1000000-0000-4000-8000-000000000002',label:'Neutra · 300 g',size:'300 g',flavor:null,priceCents:1890,availability:'pocas_unidades'}]},
+      { id:'d0700000-0000-4000-8000-000000001002',category:'merchandising',name:'Camiseta 2J',description:'Colección del centro',variants:[{id:'d0700000-0000-4000-8000-000000001102',label:'Talla M',size:'M',flavor:null,priceCents:1800,availability:'disponible'}]},
+      { id:'a0000000-0000-4000-8000-000000000004',category:'merchandising',name:'Sudadera 2J',description:'Fixture visual · no es un producto del seed Platform',variants:[{id:'a1000000-0000-4000-8000-000000000004',label:'Talla L',size:'L',flavor:null,priceCents:4200,availability:'agotado'}]},
     ] satisfies MemberStoreProduct[],
     purchases: [{id:'b0000000-0000-4000-8000-000000000001',status:'completed',paymentState:'paid',totalCents:3290,createdAt:now.toISOString(),lines:[{productName:'Proteína 2J',variantLabel:'Chocolate · 900 g',quantity:1,unitPriceCents:3290,lineTotalCents:3290}]}] satisfies MemberPurchase[],
   };
@@ -184,6 +185,80 @@ const HUB_TRAINING_URL = import.meta.env?.VITE_2J_HUB_DEMO === 'true' ? '' : 'ht
 const HUB_STAFF_URL = import.meta.env?.VITE_2J_STAFF_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5175' : '');
 const HUB_ADMIN_URL = import.meta.env?.VITE_2J_ADMIN_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5174' : '');
 const HUB_BUILD_ID = import.meta.env?.VITE_2J_BUILD_ID || 'local';
+// Connected Búnker entry through Platform's one-time SSO. Off unless the build explicitly enables it; the synthetic demo never does.
+const HUB_TRAINING_SSO_BUILD = import.meta.env?.VITE_2J_TRAINING_SSO === 'true';
+const HUB_TRAINING_LINK_BUILD = import.meta.env?.VITE_2J_TRAINING_ACCOUNT_LINKING;
+const HUB_TRAINING_LINK_REVIEW_BUILD = import.meta.env?.VITE_2J_TRAINING_LINK_REVIEW;
+const HUB_SESSION_ELIGIBILITY_BUILD = import.meta.env?.VITE_2J_SESSION_ELIGIBILITY;
+
+/** Permit HTTPS, plus HTTP on loopback for isolated local tests; reject credentials in destinations. */
+function isHttpsOrLoopback(url: URL): boolean {
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+  return !url.username && !url.password && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback));
+}
+
+/**
+ * Validates the destination Platform returned for the one-time SSO code. The browser only ever follows a URL whose origin is the
+ * configured Training origin, whose path is exactly `/sso` (the only page that redeems a code), with the code in the fragment
+ * (never in a query string) and no credentials.
+ */
+export const TRAINING_SSO_PATH = '/sso';
+export function trainingSsoDestination(redirectUrl: unknown, trainingUrl: string): string | null {
+  if (typeof redirectUrl !== 'string' || !trainingUrl) return null;
+  try {
+    const target = new URL(redirectUrl), expected = new URL(trainingUrl);
+    if (target.origin !== expected.origin || !isHttpsOrLoopback(target) || target.search || target.pathname !== TRAINING_SSO_PATH) return null;
+    return /^#code=[A-Za-z0-9_-]{43,128}$/.test(target.hash) ? target.toString() : null;
+  } catch { return null; }
+}
+
+/** How the page leaves for Training. A same-tab navigation is right in a browser; tests replace `navigate`. */
+export const trainingSsoRuntime = { navigate: (url: string) => window.location.assign(url) };
+
+/**
+ * The flow is browser-bound: it starts at Training, not here. "Abrir Búnker" navigates to Training's start page, which keeps a secret in an
+ * HttpOnly cookie of Training's own origin and sends the browser back here carrying only that secret's SHA-256 (`#sso_challenge=`). Home then asks
+ * Platform for a code for THAT challenge, so only the browser that started the flow can redeem it. Home never sees or stores the secret.
+ */
+export const TRAINING_SSO_START_PATH = '/api/platform/v1/sso/start';
+export function trainingSsoStartUrl(trainingUrl: string): string | null {
+  try {
+    if (!trainingUrl) return null;
+    const url = new URL(trainingUrl);
+    return isHttpsOrLoopback(url) ? `${url.origin}${TRAINING_SSO_START_PATH}` : null;
+  } catch { return null; }
+}
+/** `#sso_challenge=<43 url-safe characters>` and nothing else: what Training puts in the fragment when it sends the browser back here. */
+export function ssoChallengeFromHash(hash: unknown): string | null {
+  const match = typeof hash === 'string' ? /^#sso_challenge=([A-Za-z0-9_-]{43})$/.exec(hash) : null;
+  return match ? match[1]! : null;
+}
+// A challenge can wait for the person to sign in to Home (a few minutes at most). It is public by construction (a hash), never a credential.
+const SSO_CHALLENGE_KEY = '2j.training-sso.challenge', SSO_CHALLENGE_TTL_MS = 10 * 60_000;
+const challengeStore = () => { try { return typeof window === 'undefined' ? null : window.sessionStorage; } catch { return null; } };
+export function rememberSsoChallenge(challenge: string, now = Date.now()) { try { challengeStore()?.setItem(SSO_CHALLENGE_KEY, JSON.stringify({ challenge, at: now })); } catch { /* the in-memory copy still works */ } }
+export function recallSsoChallenge(now = Date.now()): string | null {
+  try {
+    const raw = challengeStore()?.getItem(SSO_CHALLENGE_KEY);
+    if (!raw) return null;
+    const stored = JSON.parse(raw) as { challenge?: unknown; at?: unknown };
+    return typeof stored.challenge === 'string' && /^[A-Za-z0-9_-]{43}$/.test(stored.challenge) && typeof stored.at === 'number' && now - stored.at >= 0 && now - stored.at <= SSO_CHALLENGE_TTL_MS ? stored.challenge : null;
+  } catch { return null; }
+}
+export function forgetSsoChallenge() { try { challengeStore()?.removeItem(SSO_CHALLENGE_KEY); } catch { /* nothing to forget */ } }
+
+/** In the Capacitor shell a same-tab navigation would replace the whole app with the Training site, so the flag stays off there. */
+function isNativeShell(): boolean {
+  try { return typeof window !== 'undefined' && Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()); } catch { return false; }
+}
+
+const trainingSsoErrors: Record<string, string> = {
+  training_link_required: 'Tu cuenta todavía no está vinculada con Búnker. Puedes entrar con tu acceso habitual y pedir al centro que la vincule.',
+  training_access_suspended: 'El acceso a Búnker está suspendido. Habla con el centro para revisarlo.',
+  training_sso_rate_limited: 'Has pedido varias entradas seguidas. Espera un minuto e inténtalo de nuevo.',
+  authentication_required: 'Tu sesión ha caducado. Vuelve a iniciar sesión.',
+};
+export const trainingSsoMessage = (code: string) => trainingSsoErrors[code] ?? 'Ahora mismo no podemos abrir Búnker con tu cuenta del centro. Puedes entrar con tu acceso habitual.';
 
 export function selectNextConfirmedBooking(bookings: Booking[], now = Date.now()): Booking | null {
   return bookings
@@ -199,10 +274,40 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { previewModeOverride?: boolean; pilotLoginEnabledOverride?: boolean } = {}) {
+export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trainingSsoEnabledOverride, trainingLinkEnabledOverride, trainingLinkReviewEnabledOverride, sessionEligibilityEnabledOverride }: { previewModeOverride?: boolean; pilotLoginEnabledOverride?: boolean; trainingSsoEnabledOverride?: boolean; trainingLinkEnabledOverride?: boolean; trainingLinkReviewEnabledOverride?: boolean; sessionEligibilityEnabledOverride?: boolean } = {}) {
   const previewMode = isHubDemoBuild(import.meta.env?.VITE_2J_HUB_DEMO) || (previewModeOverride ?? isHubPreviewEnabled(import.meta.env?.VITE_2J_HUB_PREVIEW, typeof window === 'undefined' ? '' : window.location.search));
   const pilotLoginEnabled = !previewMode && (pilotLoginEnabledOverride ?? import.meta.env?.VITE_2J_PILOT_MEMBER_LOGIN === 'true');
   const pilotToolsEnabled = !previewMode && (import.meta.env?.DEV === true || import.meta.env?.VITE_2J_PILOT_TOOLS === 'true');
+  const trainingSsoEnabled = !previewMode && !isNativeShell() && (trainingSsoEnabledOverride ?? HUB_TRAINING_SSO_BUILD);
+  const trainingLinkEnabled = isMemberIntegrationEnabled(trainingLinkEnabledOverride ?? HUB_TRAINING_LINK_BUILD, previewMode);
+  const trainingLinkReviewEnabled = isMemberIntegrationEnabled(trainingLinkReviewEnabledOverride ?? HUB_TRAINING_LINK_REVIEW_BUILD, previewMode);
+  const sessionEligibilityEnabled = isMemberIntegrationEnabled(sessionEligibilityEnabledOverride ?? HUB_SESSION_ELIGIBILITY_BUILD, previewMode);
+  const [ssoBusy, setSsoBusy] = React.useState(false);
+  const [ssoMessage, setSsoMessage] = React.useState('');
+  const [pendingChallenge, setPendingChallenge] = React.useState<string | null>(null);
+  /** Step 1 (the tap): leave for Training's start page. No code exists yet and nothing is minted here, so a second tap cannot mint anything either. */
+  const openTrainingWithSso = () => {
+    if (ssoBusy) return;
+    const start = trainingSsoStartUrl(HUB_TRAINING_URL);
+    if (!start) { setSsoMessage(trainingSsoMessage('invalid_destination')); return; }
+    setSsoBusy(true); setSsoMessage('');
+    trainingSsoRuntime.navigate(start);          // stay busy while the page unloads
+  };
+  /** Step 2 (Training sent the browser back with its challenge): ask Platform for a code bound to that challenge and follow only the validated destination. */
+  const continueTrainingSso = async (challenge: string) => {
+    setSsoBusy(true); setSsoMessage('');
+    try {
+      const result = await api<{ v: number; redirectUrl: string }>('/api/me/training/sso', { method: 'POST', body: JSON.stringify({ challenge }) });
+      const destination = trainingSsoDestination(result.redirectUrl, HUB_TRAINING_URL);
+      if (!destination) { setSsoMessage(trainingSsoMessage('invalid_destination')); setSsoBusy(false); setView('bunker'); return; }
+      trainingSsoRuntime.navigate(destination);
+      return;                       // stay busy while the page unloads
+    } catch (error) {
+      setSsoMessage(trainingSsoMessage(error instanceof Error ? error.message : ''));
+      setView('bunker');
+    }
+    setSsoBusy(false);
+  };
   const preview = React.useMemo(() => previewMode ? makeHubPreview() : null, [previewMode]);
   const [view, setView] = React.useState<View>('home');
   const [selectedDate, setSelectedDate] = React.useState(() => preview?.sessions[0] ? dateKey(new Date(preview.sessions[0].startsAt)) : dateKey(new Date()));
@@ -240,6 +345,18 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   const [trainingSummaryLoading, setTrainingSummaryLoading] = React.useState(false);
   const [trainingSummaryFailed, setTrainingSummaryFailed] = React.useState(false);
   const [trainingSummaryRetry, setTrainingSummaryRetry] = React.useState(0);
+  const [trainingLinkTransaction, setTrainingLinkTransaction] = React.useState<{ transactionId: string; challenge: string; expiresAt: string } | null>(null);
+  const [trainingLinkCode, setTrainingLinkCode] = React.useState('');
+  const [trainingLinkBusy, setTrainingLinkBusy] = React.useState(false);
+  const [trainingLinkMessage, setTrainingLinkMessage] = React.useState('');
+  const [trainingLinkError, setTrainingLinkError] = React.useState('');
+  const [trainingLinkRevokeConfirm, setTrainingLinkRevokeConfirm] = React.useState(false);
+  const [trainingLinkReview, setTrainingLinkReview] = React.useState<{ id: string; status: string; reason: TrainingLinkReviewReason; createdAt: string } | null>(null);
+  const [trainingLinkReviewReason, setTrainingLinkReviewReason] = React.useState<TrainingLinkReviewReason>('lost_passkey');
+  const [trainingLinkReviewNote, setTrainingLinkReviewNote] = React.useState('');
+  const [trainingLinkReviewBusy, setTrainingLinkReviewBusy] = React.useState(false);
+  const [trainingLinkOutcome, setTrainingLinkOutcome] = React.useState<string | null>(null);
+  const [evolutionSection, setEvolutionSection] = React.useState<EvolutionSection | null>(null);
   const [newsError, setNewsError] = React.useState(false);
   const [selectedNews, setSelectedNews] = React.useState<CenterNews|null>(null);
   const [unreadNotifications, setUnreadNotifications] = React.useState(() => preview?.notifications.filter(item => !item.readAt).length ?? 0);
@@ -326,6 +443,25 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   };
   const retryPreferenceSave = () => { if (lastPreferencePatch.current) void savePreferences(lastPreferencePatch.current); };
   React.useEffect(() => { void refresh(); }, [refresh]);
+  // Training returns to Home with a browser-bound challenge; scrub it from the URL before it is used.
+  React.useEffect(() => {
+    if (!trainingSsoEnabled || typeof window === 'undefined') return;
+    const arrived = ssoChallengeFromHash(window.location.hash);
+    if (arrived) {
+      try { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); } catch { /* cosmetic only */ }
+      rememberSsoChallenge(arrived); setPendingChallenge(arrived);
+    } else {
+      const waiting = recallSsoChallenge();
+      if (waiting) setPendingChallenge(waiting);
+    }
+  }, [trainingSsoEnabled]);
+  React.useEffect(() => {
+    if (!pendingChallenge || !profile || !trainingSsoEnabled) return;
+    const challenge = pendingChallenge;
+    setPendingChallenge(null); forgetSsoChallenge();
+    void continueTrainingSso(challenge);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingChallenge, profile, trainingSsoEnabled]);
   React.useEffect(() => {
     if (previewMode && preview) { setSessions(preview.sessions); setBookingServices(preview.services); setScheduleLoading(false); setScheduleError(false); return; }
     if (!hasActiveMembership) { setSessions([]); setBookingServices([]); setScheduleLoading(false); setScheduleError(false); return; }
@@ -342,7 +478,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     return () => { current = false; };
   }, [preview, previewMode, hasActiveMembership, selectedDate.slice(0, 7), scheduleVersion]);
   React.useEffect(() => {
-    if (view !== 'bunker' || previewMode || !profile) return;
+    if ((view !== 'bunker' && view !== 'training-link') || previewMode || !profile) return;
     let current = true;
     setTrainingSummaryLoading(true); setTrainingSummaryFailed(false); setTrainingSummary(null);
     void api<MembershipResponse>('/api/me/membership').then(result => { if (current) setTrainingCapabilities(result.trainingCapabilities ?? null); }).catch(() => { if (current) setTrainingCapabilities(null); });
@@ -359,6 +495,14 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     const timer = window.setTimeout(() => setTrainingCapabilities(null), remaining);
     return () => window.clearTimeout(timer);
   }, [trainingCapabilities]);
+  React.useEffect(() => {
+    if (view !== 'training-link' || previewMode || !profile || !trainingLinkReviewEnabled) return;
+    let current = true;
+    void api<{ v: number; case: { id: string; status: string; reason: TrainingLinkReviewReason; createdAt: string } | null }>(trainingLinkEndpoints.review)
+      .then(result => { if (current) setTrainingLinkReview(result.case); })
+      .catch(() => { if (current) setTrainingLinkError('No se ha podido consultar la solicitud de revisión.'); });
+    return () => { current = false; };
+  }, [view, previewMode, profile?.id, trainingLinkReviewEnabled]);
   React.useEffect(() => {
     if (!selectedSession && !waitlistPending && !selectedForm && !selectedConsent && !cancellationPending) return;
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
@@ -391,6 +535,56 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     if (previewMode) { setSelectedForm({ ...form, description: 'Contenido de ejemplo para mostrar el aspecto de la documentación del centro.', sensitivity: 'operational', fields: [{ id: 'goal', label: '¿Qué te gustaría conseguir?', type: 'short_text', required: true }] }); return; }
     try { setSelectedForm(await api<FormDetail>(`/api/client-portal/form-assignments/${form.id}`)); }
     catch { setDialogError('No se ha podido abrir el documento. Inténtalo de nuevo.'); }
+  };
+  const startTrainingLink = async () => {
+    if (!trainingLinkEnabled || previewMode || trainingLinkBusy) return;
+    setTrainingLinkBusy(true); setTrainingLinkError(''); setTrainingLinkMessage('');
+    try {
+      const result = await api<{ v: 1; status: 'created' | 'replay'; transaction: { transactionId: string; expiresAt: string }; challenge: string | null }>(trainingLinkEndpoints.createTransaction, { method: 'POST', body: JSON.stringify({ requestId: crypto.randomUUID() }) });
+      if (!result.challenge) throw new Error('transaction_replayed');
+      setTrainingLinkTransaction({ transactionId: result.transaction.transactionId, challenge: result.challenge, expiresAt: result.transaction.expiresAt });
+      setTrainingLinkCode('');
+      setTrainingLinkMessage('Transacción creada. Continúa en Búnker con tu cuenta actual y passkey.');
+    } catch (cause) {
+      setTrainingLinkError(cause instanceof Error && cause.message === 'training_verified_linking_disabled' ? 'Platform todavía no ha activado la vinculación con prueba verificada.' : 'No se ha podido iniciar la vinculación. Comprueba tu sesión e inténtalo de nuevo.');
+    } finally { setTrainingLinkBusy(false); }
+  };
+  const finishTrainingLink = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!trainingLinkEnabled || previewMode || !trainingLinkTransaction || trainingLinkBusy) return;
+    setTrainingLinkBusy(true); setTrainingLinkError(''); setTrainingLinkMessage('');
+    try {
+      const result = await api<{ v: 1; status: 'active' | 'pending'; retry?: boolean }>(trainingLinkEndpoints.finishLink, { method: 'POST', body: JSON.stringify({ transactionId: trainingLinkTransaction.transactionId, challenge: trainingLinkTransaction.challenge, code: trainingLinkCode.trim() }) });
+      setTrainingLinkOutcome(result.status);
+      if (result.status === 'active') setTrainingSummary({ status: 'linked', summaryStatus: 'unavailable' });
+      setTrainingLinkMessage(result.status === 'active' ? 'Cuenta de Búnker vinculada.' : 'Prueba recibida. Platform está esperando la confirmación de Búnker.');
+      setTrainingLinkTransaction(null); setTrainingLinkCode(''); setTrainingSummaryRetry(value => value + 1);
+    } catch {
+      setTrainingLinkError('No se ha podido completar la prueba. El código puede haber caducado o la cuenta puede necesitar revisión.');
+    } finally { setTrainingLinkBusy(false); }
+  };
+  const revokeTrainingLink = async () => {
+    if (!trainingLinkEnabled || previewMode || trainingLinkBusy) return;
+    setTrainingLinkBusy(true); setTrainingLinkError(''); setTrainingLinkMessage('');
+    try {
+      const result = await api<{ v: 1; status: string }>(trainingLinkEndpoints.revokeLink, { method: 'DELETE' });
+      setTrainingLinkOutcome(result.status);
+      setTrainingLinkMessage(result.status === 'revocation_pending' ? 'La revocación está pendiente de confirmación de Búnker. El acceso SSO queda suspendido desde ahora.' : 'Vinculación revocada.');
+      setTrainingLinkRevokeConfirm(false); setTrainingSummaryRetry(value => value + 1);
+    } catch { setTrainingLinkError('No se ha podido revocar la vinculación. El acceso no se ha cambiado desde Home.'); }
+    finally { setTrainingLinkBusy(false); }
+  };
+  const requestTrainingLinkReview = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!trainingLinkReviewEnabled || previewMode || trainingLinkReviewBusy) return;
+    setTrainingLinkReviewBusy(true); setTrainingLinkError(''); setTrainingLinkMessage('');
+    try {
+      await api(trainingLinkEndpoints.review, { method: 'POST', body: JSON.stringify({ reason: trainingLinkReviewReason, ...(trainingLinkReviewNote.trim() ? { note: trainingLinkReviewNote.trim() } : {}) }) });
+      const result = await api<{ v: number; case: { id: string; status: string; reason: TrainingLinkReviewReason; createdAt: string } | null }>(trainingLinkEndpoints.review);
+      setTrainingLinkReview(result.case); setTrainingLinkReviewNote(''); setTrainingLinkMessage('Solicitud enviada al equipo para revisión manual.');
+    } catch {
+      setTrainingLinkError('No se ha podido enviar la solicitud. Puede existir ya una vinculación o una revisión abierta.');
+    } finally { setTrainingLinkReviewBusy(false); }
   };
   const submitForm = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); if (!selectedForm) return;
@@ -559,13 +753,36 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
                 <div className="month-grid" role="group" aria-label={`Días de ${monthName}`}>{monthGridDays(selectedDate).map((day,index)=>day ? <button key={day.date} type="button" aria-label={`${day.day}${daysWithSessions.has(day.date) ? ', hay sesiones' : ''}`} aria-pressed={selectedDate===day.date} aria-current={day.today?'date':undefined} className={`month-day${day.today?' today':''}${selectedDate===day.date?' selected':''}${daysWithSessions.has(day.date)?' has-sessions':''}`} onClick={()=>setSelectedDate(day.date)}><span>{day.day}</span>{daysWithSessions.has(day.date)&&<i aria-hidden="true"/>}</button> : <span key={`empty-${index}`} aria-hidden="true" className="month-day-empty"/>)}</div>
               </section>
               <section className="member-day-sessions" aria-live="polite"><div className="section-heading compact"><div><p className="eyebrow">{serviceOptions.find(item=>item.id===selectedServiceId)?.name}</p><h2>{dateLabel(`${selectedDate}T12:00:00Z`)}</h2></div><span className="session-count">{sessionsForSelectedDay.length} {sessionsForSelectedDay.length===1?'sesión':'sesiones'}</span></div>
-                {scheduleLoading ? <div className="loading-card" role="status"><span className="spinner"/> Actualizando horarios…</div> : scheduleError ? <section className="empty-card" role="alert"><h3>No se han podido cargar los horarios.</h3><button className="text-button" onClick={() => setScheduleVersion(value => value + 1)}>Reintentar</button></section> : sessionsForSelectedDay.length ? <div className="session-list">{sessionsForSelectedDay.map(session=><SessionCard key={session.id} session={session} onSelect={()=>void openSession(session)} onWaitlist={()=>void requestWaitlist(session)} disabled={previewMode||!bookingEnabled}/>)}</div> : <section className="empty-card"><h3>No hay sesiones este día.</h3><p>Elige otro día marcado en el calendario.</p></section>}
+                {scheduleLoading ? <div className="loading-card" role="status"><span className="spinner"/> Actualizando horarios…</div> : scheduleError ? <section className="empty-card" role="alert"><h3>No se han podido cargar los horarios.</h3><button className="text-button" onClick={() => setScheduleVersion(value => value + 1)}>Reintentar</button></section> : sessionsForSelectedDay.length ? <div className="session-list">{sessionsForSelectedDay.map(session=><SessionCard key={session.id} session={session} onSelect={()=>void openSession(session)} onWaitlist={()=>void requestWaitlist(session)} disabled={previewMode||!bookingEnabled} eligibilityEnabled={sessionEligibilityEnabled}/>)}</div> : <section className="empty-card"><h3>No hay sesiones este día.</h3><p>Elige otro día marcado en el calendario.</p></section>}
               </section>
             </>}
           </>
         </>}
         {view === 'news' && (selectedNews ? <><button className="text-button contextual-link" onClick={()=>setSelectedNews(null)}>← Volver a noticias</button><article className="center-news-detail"><p className="eyebrow">2J FITNESS CENTER</p>{selectedNews.publishedAt&&<small>{dateLabel(selectedNews.publishedAt)}</small>}<h1>{selectedNews.title}</h1><p>{selectedNews.body}</p><button type="button" className="text-button" onClick={()=>{setSelectedNews(null);setView('home');}}>Volver a Inicio <span aria-hidden="true">→</span></button></article></> : <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Noticias</h1><p>Novedades publicadas por tu centro.</p></div><button className="text-button contextual-link" onClick={()=>setView('home')}>← Volver a Inicio</button>{newsError?<section className="empty-card" role="alert"><h2>No se han podido cargar las noticias</h2><button className="button secondary" onClick={()=>void refresh()}>Intentar de nuevo</button></section>:newsItems.length?<div className="member-news-list">{newsItems.map(item=><article className="member-news-item" key={item.id}><div>{item.featured&&<span className="member-news-featured">Destacada</span>}<h2>{item.title}</h2>{item.publishedAt&&<small>{dateLabel(item.publishedAt)}</small>}</div><p>{item.body.length>260?`${item.body.slice(0,257).trimEnd()}…`:item.body}</p><button className="text-button" onClick={()=>setSelectedNews(item)}>Leer noticia <span aria-hidden="true">→</span></button></article>)}</div>:<section className="empty-card"><h2>No hay noticias publicadas</h2><p>Cuando el centro comparta una novedad, aparecerá aquí.</p></section>}</>)}
-        {view === 'bunker' && <BunkerDestination previewMode={previewMode} trainingCapabilities={trainingCapabilities} trainingSummary={trainingSummary} trainingSummaryLoading={trainingSummaryLoading} trainingSummaryFailed={trainingSummaryFailed} onRetry={() => setTrainingSummaryRetry(value => value + 1)} />}
+        {view === 'bunker' && <BunkerDestination previewMode={previewMode} trainingCapabilities={trainingCapabilities} trainingSummary={trainingSummary} trainingSummaryLoading={trainingSummaryLoading} trainingSummaryFailed={trainingSummaryFailed} trainingSsoEnabled={trainingSsoEnabled} ssoBusy={ssoBusy} ssoMessage={ssoMessage} onOpenSso={openTrainingWithSso} onRetry={() => setTrainingSummaryRetry(value => value + 1)} />}
+        {view === 'bunker' && <section className="settings-card link-entry-card"><div><p className="eyebrow">CUENTA</p><h2>Vincular Búnker</h2><p>Consulta la vinculación de tu cuenta existente o inicia la prueba de titularidad.</p></div><button className="button secondary" type="button" onClick={() => { setTrainingLinkError(''); setTrainingLinkMessage(''); setView('training-link'); }}>Gestionar vinculación <span aria-hidden="true">→</span></button></section>}
+        {view === 'training-link' && <>
+          <div className="page-intro"><p className="eyebrow">IDENTIDAD 2J</p><h1>Cuenta de Búnker</h1><p>Vincula tu cuenta existente demostrando que puedes acceder a ella.</p></div>
+          <button className="text-button contextual-link" onClick={() => setView('bunker')}>← Volver a Búnker</button>
+          <section className="settings-card integration-card" aria-labelledby="training-link-status-title"><div><p className="eyebrow">ESTADO DE CUENTA</p><h2 id="training-link-status-title">Vinculación</h2><p>{previewMode ? 'Este estado no se consulta en la demo.' : trainingSummaryLoading ? 'Consultando el estado en Platform…' : trainingSummaryFailed ? 'No se pudo consultar el estado de la cuenta.' : trainingLinkOutcome === 'revocation_pending' ? 'Revocación pendiente de confirmación en Búnker.' : trainingLinkOutcome === 'active' || trainingSummary?.status === 'linked' ? 'Cuenta vinculada.' : trainingLinkOutcome === 'revoked' ? 'Vinculación revocada.' : 'No hay una vinculación activa.'}</p></div>
+            {trainingSummaryFailed && !previewMode && <button className="text-button" type="button" onClick={() => setTrainingSummaryRetry(value => value + 1)}>Consultar de nuevo</button>}
+            {trainingSummary?.status === 'linked' && trainingLinkEnabled && !previewMode && <>{!trainingLinkRevokeConfirm ? <button className="button secondary" type="button" onClick={() => setTrainingLinkRevokeConfirm(true)}>Revocar vinculación</button> : <div className="inline-confirm"><p>La revocación suspende inmediatamente el acceso SSO. Búnker confirmará el cierre de la vinculación.</p><button className="button secondary" type="button" onClick={() => setTrainingLinkRevokeConfirm(false)}>Mantener vinculada</button><button className="button primary" type="button" disabled={trainingLinkBusy} onClick={() => void revokeTrainingLink()}>{trainingLinkBusy ? 'Revocando…' : 'Confirmar revocación'}</button></div>}</>}
+            {previewMode && <p className="settings-note" role="status">Demo sintética: no consulta ni modifica cuentas reales.</p>}
+            {!previewMode && !trainingLinkEnabled && <p className="settings-note" role="status">La vinculación con cuenta existente todavía no está activada para este entorno.</p>}
+          </section>
+          {trainingLinkEnabled && !previewMode && !trainingSummaryLoading && !trainingSummaryFailed && trainingSummary?.status === 'not_linked' && <section className="settings-card integration-card" aria-labelledby="training-link-proof-title"><div><p className="eyebrow">PRUEBA DE TITULARIDAD</p><h2 id="training-link-proof-title">Tu cuenta actual de Búnker</h2><p>Home crea una transacción de cinco minutos. Después, inicia sesión en Búnker con la cuenta que ya utilizas y confirma allí la operación con su passkey. Vuelve aquí e introduce el código de un solo uso que te entregue Búnker.</p></div>
+            {!trainingLinkTransaction ? <button className="button primary" type="button" disabled={trainingLinkBusy} onClick={() => void startTrainingLink()}>{trainingLinkBusy ? 'Iniciando…' : 'Iniciar prueba de passkey en Búnker'}</button> : <><div className="transaction-summary"><strong>Transacción iniciada</strong><span>Caduca: {new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',dateStyle:'short',timeStyle:'short'}).format(new Date(trainingLinkTransaction.expiresAt))}</span><code>{trainingLinkTransaction.transactionId}</code><p>La pantalla de Búnker debe mostrar esta transacción al confirmar la vinculación. Home no solicita ni copia tu passkey.</p></div><form className="link-code-form" onSubmit={event => void finishTrainingLink(event)}><label className="field-label" htmlFor="training-link-one-time-code">Código de un solo uso de Búnker</label><input id="training-link-one-time-code" inputMode="text" autoComplete="one-time-code" value={trainingLinkCode} onChange={event => setTrainingLinkCode(event.target.value)} required minLength={43} maxLength={128} pattern="[A-Za-z0-9_-]+"/><button className="button primary" disabled={trainingLinkBusy || trainingLinkCode.trim().length < 43}>{trainingLinkBusy ? 'Verificando…' : 'Completar vinculación'}</button><button className="text-button" type="button" onClick={() => { setTrainingLinkTransaction(null); setTrainingLinkCode(''); }}>Descartar transacción</button></form></>}
+            <p className="settings-caption">La prueba y la asociación se verifican en Platform y Búnker. No se empareja por correo, nombre ni teléfono.</p>
+          </section>}
+          {trainingLinkReviewEnabled && !previewMode && !trainingSummaryLoading && !trainingSummaryFailed && trainingSummary?.status === 'not_linked' && <section className="settings-card integration-card" aria-labelledby="training-link-review-title"><div><p className="eyebrow">AYUDA</p><h2 id="training-link-review-title">Revisión manual</h2><p>Si ya no puedes demostrar acceso con tu passkey, el equipo autorizado puede revisar tu solicitud.</p></div>
+            {trainingLinkReview ? <p className="settings-note" role="status">{trainingLinkReview.status === 'open' ? 'Solicitud en revisión' : trainingLinkReview.status === 'approved' ? 'Solicitud aprobada. La vinculación debe completarse por el procedimiento autorizado del centro.' : trainingLinkReview.status === 'rejected' ? 'Solicitud no aprobada. Contacta con el centro para conocer los siguientes pasos.' : 'Solicitud cerrada.'} · {new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',dateStyle:'medium'}).format(new Date(trainingLinkReview.createdAt))}.</p> : <form className="link-code-form" onSubmit={event => void requestTrainingLinkReview(event)}><label className="field-label" htmlFor="training-link-review-reason">Motivo</label><select id="training-link-review-reason" value={trainingLinkReviewReason} onChange={event => setTrainingLinkReviewReason(event.target.value as TrainingLinkReviewReason)}><option value="lost_passkey">He perdido mi passkey</option><option value="no_access_to_training_account">No puedo acceder a mi cuenta de Búnker</option><option value="proof_failed">La prueba no ha funcionado</option><option value="other">Otro motivo</option></select><label className="field-label" htmlFor="training-link-review-note">Nota para el equipo (opcional)</label><textarea id="training-link-review-note" value={trainingLinkReviewNote} onChange={event => setTrainingLinkReviewNote(event.target.value)} maxLength={500}/><button className="button secondary" type="submit" disabled={trainingLinkReviewBusy}>{trainingLinkReviewBusy ? 'Enviando…' : 'Solicitar revisión'}</button></form>}
+          </section>}
+          {trainingLinkError && <p className="inline-message" role="alert">{trainingLinkError}</p>}{trainingLinkMessage && <p className="inline-message" role="status">{trainingLinkMessage}</p>}
+        </>}
+        {view === 'evolution' && <>
+          <div className="page-intro"><p className="eyebrow">PERFIL</p><h1>Mi evolución</h1><p>Tu progreso del centro, en un solo lugar.</p></div><button className="text-button contextual-link" onClick={() => setView('profile')}>← Volver al perfil</button>
+          {!evolutionSection ? <section className="evolution-list" aria-label="Secciones de Mi evolución">{evolutionSections.map(item => <button key={item.id} className="profile-link-card" type="button" onClick={() => setEvolutionSection(item.id)}><span><strong>{item.label}</strong><small>{item.description}</small></span><span aria-hidden="true">→</span></button>)}</section> : <section className="settings-card evolution-detail" aria-labelledby="evolution-detail-title"><button className="text-button" type="button" onClick={() => setEvolutionSection(null)}>← Mi evolución</button><p className="eyebrow">{evolutionSections.find(item => item.id === evolutionSection)?.label}</p><h2 id="evolution-detail-title">{evolutionSections.find(item => item.id === evolutionSection)?.label}</h2><p>{evolutionSection === 'health' ? 'Los datos de salud requieren consentimiento expreso y permisos verificados por Platform.' : evolutionSections.find(item => item.id === evolutionSection)?.description}</p><div className="settings-note" role="status">La interfaz está preparada. Platform aún no ha publicado el contrato de mediciones y evaluaciones para Home; no se consulta ni se muestra información simulada.</div></section>}
+        </>}
         {view === 'store' && <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Tienda</h1><p>Consulta los productos disponibles en el centro.</p></div><div className="store-filter" role="group" aria-label="Filtrar productos por categoría"><button type="button" aria-pressed={storeCategory==='nutrition'} className={storeCategory==='nutrition'?'active':''} onClick={()=>setStoreCategory('nutrition')}>Nutrición</button><button type="button" aria-pressed={storeCategory==='merchandising'} className={storeCategory==='merchandising'?'active':''} onClick={()=>setStoreCategory('merchandising')}>Merchandising</button></div>{storeFailed&&<p className="inline-message" role="alert">No se ha podido actualizar el catálogo o el historial. <button className="text-button" onClick={()=>void refresh()}>Reintentar</button></p>}<div className="member-store-grid">{storeProducts.filter(item=>item.category===storeCategory).map(product=><article className="member-store-card" key={product.id}><span className="store-category-icon" aria-hidden="true">{product.category==='nutrition'?'✦':'◈'}</span><div><h2>{product.name}</h2>{product.description&&<p>{product.description}</p>}</div>{product.variants.map(variant=><div className="member-store-variant" key={variant.id}><span>{variant.label}</span><strong>{new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(variant.priceCents/100)}</strong><small className={`availability ${variant.availability}`}>{variant.availability==='disponible'?'Disponible':variant.availability==='pocas_unidades'?'Pocas unidades':'Agotado'}</small></div>)}</article>)}{storeProducts.filter(item=>item.category===storeCategory).length===0&&!storeFailed&&<section className="empty-card profile-empty"><h2>Aún no hay productos en esta categoría.</h2><p>Vuelve a consultar más adelante.</p></section>}</div><p className="store-notice">Consulta los productos disponibles. Las compras se gestionan directamente en el centro.</p></>}
         {view === 'bookings' && !hasActiveMembership && <section className="empty-card membership-required" aria-labelledby="bookings-membership-title"><p className="eyebrow">CUOTA NECESARIA</p><h1 id="bookings-membership-title">Mis reservas</h1><p>El acceso a reservas requiere una cuota vigente. Puedes seguir consultando tu perfil, avisos, documentos y compras.</p>{message&&<p className="inline-message" role="status">{message}</p>}<button className="button secondary" onClick={()=>setView('profile')}>Consultar mis cuotas</button></section>}
         {view === 'bookings' && hasActiveMembership && <><div className="page-intro"><p className="eyebrow">TU ACTIVIDAD</p><h1>Mis reservas</h1><p>Consulta próximas sesiones y tu historial.</p></div><button className="text-button contextual-link" onClick={() => setView('book')}>Volver a Reservar <span aria-hidden="true">→</span></button>{message && <p className="inline-message" role="status">{message}</p>}<div className="booking-tabs" role="tablist" aria-label="Mis reservas">{([['upcoming','Próximas'],['history','Historial']] as const).map(([id,label])=><button key={id} type="button" role="tab" id={`booking-tab-${id}`} tabIndex={bookingTab===id?0:-1} aria-selected={bookingTab===id} aria-controls={`booking-panel-${id}`} onClick={()=>setBookingTab(id)} onKeyDown={event=>{if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;event.preventDefault();const next=bookingTab==='upcoming'?'history':'upcoming';setBookingTab(next);document.getElementById(`booking-tab-${next}`)?.focus();}}>{label}</button>)}</div>{bookingTab==='upcoming'?<section role="tabpanel" id="booking-panel-upcoming" aria-labelledby="booking-tab-upcoming"><h2 className="visually-hidden">Próximas</h2>{upcomingAgenda.length ? <div className="booking-stack">{upcomingAgenda.map(({booking,waiting}) => <BookingCard key={`${waiting?'waitlist':'reservation'}-${booking.id}`} booking={booking} waiting={waiting} busy={busy===booking.id} actionDisabled={previewMode||!bookingEnabled} onCancel={() => waiting ? void leaveWaitlist(booking) : void cancelBooking(booking)}/>)}</div> : <p className="muted">No tienes reservas ni listas de espera próximas.</p>}</section>:<section role="tabpanel" id="booking-panel-history" aria-labelledby="booking-tab-history"><h2 className="visually-hidden">Historial</h2>{historyAgenda.length ? <div className="booking-stack">{historyAgenda.map(({booking,waiting})=><BookingCard key={`${waiting?'waitlist':'reservation'}-${booking.id}`} booking={booking} waiting={waiting} compact/>)}</div>:<p className="muted">Todavía no tienes actividad en tu historial.</p>}</section>}</>}
@@ -634,11 +851,13 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
           {consents.filter(consent => consent.accepted).map(consent => <article className="plan-row document-row" key={consent.versionId}><div><strong>{consent.title}</strong><span>Aceptado</span></div></article>)}
           {completedForms.length === 0 && consents.every(consent => !consent.accepted) && <p className="muted profile-doc-empty">Todavía no hay documentos completados o enviados.</p>}
           <p className="profile-caption">Las aceptaciones se muestran según el estado registrado por el centro.</p></section>
+          <section className="profile-section" aria-labelledby="profile-evolution-title"><div className="section-heading"><div><p className="eyebrow">PROGRESO</p><h2 id="profile-evolution-title">Mi evolución</h2></div></div><p className="profile-caption">Mediciones, gráficos y evaluaciones en Home. La información de salud se mantiene separada.</p><button className="profile-link-card" type="button" onClick={() => { setEvolutionSection(null); setView('evolution'); }}><span><strong>Abrir Mi evolución</strong><small>Mediciones · Gráficos · Evaluaciones · Mi salud</small></span><span aria-hidden="true">→</span></button></section>
+          <section className="profile-section" aria-labelledby="profile-training-link-title"><div className="section-heading"><div><p className="eyebrow">BÚNKER</p><h2 id="profile-training-link-title">Cuenta de entrenamiento</h2></div></div><p className="profile-caption">Vincula tu cuenta existente de Búnker con una prueba de titularidad.</p><button className="profile-link-card" type="button" onClick={() => setView('training-link')}><span><strong>Estado y vinculación</strong><small>Prueba con passkey o solicitud de revisión manual</small></span><span aria-hidden="true">→</span></button></section>
         </>}
       </>}
     </main>
     {pilotToolsEnabled&&<footer className="pilot-footer"><span>Vista piloto · {HUB_BUILD_ID}</span><button type="button" className="text-button" onClick={() => void copyDiagnostics()}>Copiar información de diagnóstico</button></footer>}
-    {!loading && !error && profile && <nav className="bottom-nav" aria-label="Navegación principal">{([['home','Inicio','home'],['bunker','Búnker','bunker'],['store','Tienda','store'],['profile','Perfil','profile'],['settings','Ajustes','settings']] as const).map(([id,label,icon]) => {const active=view===id||(view==='book'&&id==='home')||(view==='bookings'&&id==='home')||(view==='news'&&id==='home')||(view==='notifications'&&id==='profile');return <button key={id} className={active?'nav-button active':'nav-button'} aria-current={active?'page':undefined} onClick={()=>{setView(id);setMessage('');setSelectedNews(null);}}><span aria-hidden="true"><NavIcon name={icon}/></span><small>{label}</small></button>;})}</nav>}
+    {!loading && !error && profile && <nav className="bottom-nav" aria-label="Navegación principal">{([['home','Inicio','home'],['bunker','Búnker','bunker'],['store','Tienda','store'],['profile','Perfil','profile'],['settings','Ajustes','settings']] as const).map(([id,label,icon]) => {const active=view===id||(view==='book'&&id==='home')||(view==='bookings'&&id==='home')||(view==='news'&&id==='home')||(view==='notifications'&&id==='profile')||(view==='training-link'&&id==='bunker')||(view==='evolution'&&id==='profile');return <button key={id} className={active?'nav-button active':'nav-button'} aria-current={active?'page':undefined} onClick={()=>{setView(id);setMessage('');setSelectedNews(null);}}><span aria-hidden="true"><NavIcon name={icon}/></span><small>{label}</small></button>;})}</nav>}
     {selectedSession && <div className="sheet-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedSession(null); }}><section className="session-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><button className="sheet-close" aria-label="Cerrar detalle" onClick={() => setSelectedSession(null)}>×</button><p className="eyebrow">DETALLE DE SESIÓN</p><h2 id="sheet-title">{selectedSession.serviceName}</h2><p className="sheet-subtitle">{dateLabel(selectedSession.startsAt)} · {timeLabel(selectedSession.startsAt)}–{timeLabel(new Date(Date.parse(selectedSession.startsAt)+selectedSession.durationMinutes*60_000).toISOString())} · {selectedSession.areaName}{selectedSession.professionalName?` · ${selectedSession.professionalName}`:''} · {selectedSession.durationMinutes} min</p><div className="sheet-capacity"><span>Plazas disponibles</span><strong>{Math.max(0, selectedSession.capacity - selectedSession.occupiedCount)} de {selectedSession.capacity}</strong></div>{Math.max(0,selectedSession.capacity-selectedSession.occupiedCount)===0&&<p className="eligibility-note">Sesión completa. La lista de espera no garantiza una plaza.</p>}{alternatives.length > 1 && <label className="field-label">Usar derecho<select value={selectedAssignment} onChange={event => setSelectedAssignment(event.target.value)}><option value="">Elige un plan o bono</option>{alternatives.map(item => <option key={item.assignmentId} value={item.assignmentId}>{item.planName ?? 'Plan activo'}</option>)}</select></label>}{message && <p className="inline-message" role="status">{message}</p>}{selectedSession.myReservationStatus && <p className="eligibility-note">Ya tienes una reserva asociada a esta sesión.</p>}{selectedSession.myWaitlistStatus==='waiting'&&<p className="eligibility-note">Ya estás en la lista de espera de esta sesión.</p>}{selectedSession.eligibilityReason&&<p className="eligibility-note">{labels[selectedSession.eligibilityReason]??'Esta sesión no está disponible para tu cuenta.'}</p>}{selectedSession.eligible && !selectedSession.myReservationStatus && !selectedSession.myWaitlistStatus && <button className="button primary full" disabled={previewMode||!bookingEnabled||busy===`session:${selectedSession.id}`||(alternatives.length>1&&!selectedAssignment)} onClick={()=>void submitSessionAction(selectedSession,'reserve')}>{busy===`session:${selectedSession.id}`?'Reservando…':'Reservar'}</button>}{selectedSession.canJoinWaitlist&&!selectedSession.myWaitlistStatus&&!selectedSession.myReservationStatus&&<button className="button secondary full" disabled={previewMode||!bookingEnabled||busy===`session:${selectedSession.id}`} onClick={()=>{setSelectedSession(null);setWaitlistPending(selectedSession);}}>Lista de espera</button>}{selectedSession.myReservationStatus&&(()=>{const booking=reservations.find(row=>row.sessionId===selectedSession.id&&row.status==='reserved');return booking?<button className="button secondary full" disabled={previewMode||!bookingEnabled} onClick={()=>{setSelectedSession(null);void cancelBooking(booking);}}>Cancelar reserva</button>:null})()}{selectedSession.myWaitlistStatus==='waiting'&&(()=>{const entry=waitlist.find(row=>row.sessionId===selectedSession.id&&row.status==='waiting');return entry?<button className="button secondary full" disabled={previewMode||!bookingEnabled} onClick={()=>{setSelectedSession(null);void leaveWaitlist(entry);}}>Salir de la lista de espera</button>:null})()}{previewMode && !selectedSession.myReservationStatus&&!selectedSession.myWaitlistStatus && <p className="preview-action-note">Vista previa: las acciones no se envían.</p>}{!bookingEnabled && !previewMode && <p className="eligibility-note">{selectedSession.eligibilityReason==='no_active_entitlement'?'Necesitas una cuota activa para reservar este servicio.':'Las reservas desde la app todavía no están activadas para esta cuenta.'}</p>}</section></div>}
     {waitlistPending && <div className="sheet-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setWaitlistPending(null);}}><section className="session-sheet cancellation-sheet" role="dialog" aria-modal="true" aria-labelledby="waitlist-title"><p className="eyebrow">LISTA DE ESPERA</p><h2 id="waitlist-title">¿Quieres apuntarte?</h2><p className="sheet-subtitle">{waitlistPending.serviceName} · {dateLabel(waitlistPending.startsAt)} · {timeLabel(waitlistPending.startsAt)}</p><p>La lista de espera no garantiza una plaza. Te mostraremos el estado en Próximas.</p>{message&&<p className="inline-message" role="alert">{message}</p>}<div className="member-confirm-actions"><button className="button secondary" onClick={()=>setWaitlistPending(null)}>Volver</button><button className="button primary" disabled={busy===`session:${waitlistPending.id}`} onClick={()=>void submitSessionAction(waitlistPending,'waitlist')}>{busy===`session:${waitlistPending.id}`?'Enviando…':'Confirmar solicitud'}</button></div></section></div>}
     {cancellationPending && <div className="sheet-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setCancellationPending(null);}}><section className="session-sheet cancellation-sheet" role="dialog" aria-modal="true" aria-labelledby="cancel-title"><p className="eyebrow">{cancellationPending.kind==='booking'?'GESTIONAR RESERVA':'LISTA DE ESPERA'}</p><h2 id="cancel-title">{cancellationPending.kind==='booking'?'¿Cancelar esta reserva?':'¿Salir de la lista de espera?'}</h2><p className="sheet-subtitle">{cancellationPending.booking.serviceName} · {dateLabel(cancellationPending.booking.startsAt)} · {timeLabel(cancellationPending.booking.startsAt)}</p><p>{cancellationPending.kind==='booking'?cancellationPending.summary:'Esto no es una cancelación de clase y no tiene penalización. Dejarás de figurar en la lista de espera.'}</p><div className="member-confirm-actions"><button className="button secondary" onClick={()=>setCancellationPending(null)}>Volver</button><button className="button primary" disabled={busy===cancellationPending.booking.id} onClick={()=>void confirmCancellation()}>{busy===cancellationPending.booking.id?'Actualizando…':cancellationPending.kind==='booking'?'Cancelar reserva':'Salir de la lista'}</button></div></section></div>}
@@ -659,11 +878,12 @@ function NavIcon({ name }: { name: 'home' | 'calendar' | 'bunker' | 'store' | 's
   return <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" focusable="false" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function SessionCard({ session, onSelect, onWaitlist, disabled = false }: { session: ClientSession; onSelect: () => void; onWaitlist: () => void; disabled?: boolean }) {
+function SessionCard({ session, onSelect, onWaitlist, disabled = false, eligibilityEnabled = false }: { session: ClientSession; onSelect: () => void; onWaitlist: () => void; disabled?: boolean; eligibilityEnabled?: boolean }) {
   const free = Math.max(0, session.capacity - session.occupiedCount);
   const ownStatus = session.myReservationStatus ? 'Reservada' : session.myWaitlistStatus === 'waiting' ? 'En espera' : session.myWaitlistStatus === 'promoted' ? 'Reservada' : null;
   const notEntitled = session.eligible === false && session.eligibilityReason === 'no_active_entitlement';
-  const availability = ownStatus ?? (notEntitled ? 'No permitida por tu cuota' : free > 0 ? 'Disponible' : 'Completa');
+  const contractAvailability = eligibilityEnabled ? sessionAvailabilityLabel(session.availability) : null;
+  const availability = ownStatus ?? contractAvailability ?? (notEntitled ? 'No permitida por tu cuota' : free > 0 ? 'Disponible' : 'Completa');
   const canRequestWaitlist = free === 0 && !ownStatus;
   return <article className={`session-card${free===0?' is-full':''}`}><button type="button" className="session-card-detail" onClick={onSelect} aria-label={`${timeLabel(session.startsAt)} · ${availability}. Ver detalles`}><strong className="session-card-time">{timeLabel(session.startsAt)}</strong><span className={`session-meta${free===0?' full':''}`}>{availability}</span><span className="session-arrow" aria-hidden="true">→</span></button>{canRequestWaitlist&&<button type="button" className="session-waitlist-button" onClick={onWaitlist} disabled={disabled}>Lista de espera</button>}</article>;
 }
@@ -679,12 +899,16 @@ function DocumentField({ field, value, onChange }: { field: FormField; value: un
   if (field.type === 'single_choice' || field.type === 'scale') return <label className="form-field" htmlFor={id}>{field.label}{field.required ? ' · Obligatorio' : ''}<select id={id} value={value == null ? '' : String(value)} required={field.required} onChange={event => onChange(field.type === 'scale' ? Number(event.target.value) : event.target.value)}><option value="">Selecciona una opción</option>{(field.type === 'scale' ? Array.from({length:10},(_,index) => String(index+1)) : field.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}</select></label>;
   return <label className="form-field" htmlFor={id}>{field.label}{field.required ? ' · Obligatorio' : ''}<input id={id} type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} value={value == null ? '' : String(value)} onChange={event => onChange(field.type === 'number' ? event.target.value === '' ? undefined : Number(event.target.value) : event.target.value)} required={field.required} maxLength={field.type === 'number' || field.type === 'date' ? undefined : 5000}/></label>;
 }
-function BunkerDestination({ previewMode, trainingCapabilities, trainingSummary, trainingSummaryLoading, trainingSummaryFailed, onRetry }: {
+function BunkerDestination({ previewMode, trainingCapabilities, trainingSummary, trainingSummaryLoading, trainingSummaryFailed, trainingSsoEnabled, ssoBusy, ssoMessage, onOpenSso, onRetry }: {
   previewMode: boolean;
   trainingCapabilities: TrainingCapabilities | null;
   trainingSummary: MemberTrainingSummary | null;
   trainingSummaryLoading: boolean;
   trainingSummaryFailed: boolean;
+  trainingSsoEnabled: boolean;
+  ssoBusy: boolean;
+  ssoMessage: string;
+  onOpenSso: () => void;
   onRetry: () => void;
 }) {
   const level = trainingCapabilities?.capabilityLevel;
@@ -700,8 +924,8 @@ function BunkerDestination({ previewMode, trainingCapabilities, trainingSummary,
       </>}
     </div>}
     {!previewMode && (trainingSummaryLoading ? <p role="status">Consultando tu espacio de entrenamiento…</p> : trainingSummaryFailed || (trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'unavailable') ? <div role="status"><p>Información de entrenamiento temporalmente no disponible.</p><button className="text-button" onClick={onRetry}>Intentar de nuevo</button></div> : trainingSummary?.status === 'not_linked' ? <p role="status">Búnker aún no vinculado.</p> : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'available' ? <div className="hub-training-summary" role="status"><strong>Búnker conectado</strong>{trainingSummary.summary.currentProgram && <p>Programa actual: {trainingSummary.summary.currentProgram.name}</p>}{trainingSummary.summary.recentActivity && <p>{trainingSummary.summary.recentActivity.lastTrainingAt ? `Última actividad: ${dateLabel(`${trainingSummary.summary.recentActivity.lastTrainingAt}T12:00:00.000Z`)}` : 'Todavía no hay actividad reciente.'} · {trainingSummary.summary.recentActivity.sessionsLast30Days} {trainingSummary.summary.recentActivity.sessionsLast30Days === 1 ? 'entreno' : 'entrenos'} en los últimos 30 días</p>}</div> : null)}
-    {previewMode ? <button className="button primary" type="button" disabled>Abrir Búnker</button> : <a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a>}
-    <small>{previewMode ? 'La demo no abre aplicaciones ni servicios externos.' : 'Se abrirá el espacio de entrenamiento en una nueva pestaña.'}</small>
+    {previewMode ? <button className="button primary" type="button" disabled>Abrir Búnker</button> : trainingSsoEnabled && trainingSummary?.status !== 'not_linked' ? <><button className="button primary" type="button" disabled={ssoBusy} onClick={onOpenSso}>{ssoBusy ? 'Abriendo Búnker…' : 'Abrir Búnker'}</button>{ssoMessage && <p className="inline-message" role="alert">{ssoMessage}</p>}<a className="text-button" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir con tu acceso habitual <span aria-hidden="true">↗</span></a></> : <a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a>}
+    <small>{previewMode ? 'La demo no abre aplicaciones ni servicios externos.' : trainingSsoEnabled && trainingSummary?.status !== 'not_linked' ? 'Entrarás en Búnker con tu cuenta del centro.' : 'Se abrirá el espacio de entrenamiento en una nueva pestaña.'}</small>
   </section>;
 }
 
@@ -710,4 +934,4 @@ function weekRangeDays(selected = dateKey(new Date())) {
   return Array.from({length:7},(_,index)=>{const key=shiftDateKey(start,index);const date=new Date(`${key}T12:00:00Z`);return {date:key,label:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',weekday:'short'}).format(date),number:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',day:'numeric'}).format(date),today:key===todayKey};});
 }
 
-export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, isHubDemoBuild, selectNextConfirmedBooking, trainingCapabilityLabels, HUB_TRAINING_URL };
+export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, isHubDemoBuild, selectNextConfirmedBooking, trainingCapabilityLabels, HUB_TRAINING_URL, sessionAvailabilityLabel, isMemberIntegrationEnabled };

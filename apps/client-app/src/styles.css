@@ -735,3 +735,25 @@ html[data-2j-appearance="light"] body:has(.client-app.hub-theme) { background:#F
   .hub-theme .client-brand small { display:none; }
   .hub-theme .preview-pill { min-height:26px; padding:0 7px; font-size:9px; letter-spacing:-.02em; }
 }
+.integration-card,.link-entry-card,.evolution-detail { gap:16px; border-color:var(--hub-glass-border); background:var(--hub-glass); box-shadow:var(--hub-glass-shadow); backdrop-filter:blur(24px) saturate(145%); }
+.integration-card>div:first-child,.evolution-detail { display:grid; gap:8px; }
+.integration-card h2,.evolution-detail h2 { margin:0; font-size:19px; }
+.integration-card p,.evolution-detail p { color:var(--2j-color-text-secondary); font-size:13px; line-height:1.55; }
+.link-code-form { display:grid; gap:10px; }
+.link-code-form input,.link-code-form select,.link-code-form textarea { width:100%; min-height:46px; padding:10px 12px; border:1px solid var(--2j-color-border-strong); border-radius:13px; background:var(--2j-color-surface); color:var(--2j-color-text-primary); }
+.link-code-form textarea { min-height:92px; resize:vertical; }
+.transaction-summary { display:grid; gap:8px; padding:14px; border:1px solid var(--hub-glass-border); border-radius:16px; background:var(--hub-glass-strong); }
+.transaction-summary code { display:block; overflow-wrap:anywhere; color:var(--2j-color-brand); font-size:12px; }
+.transaction-summary span,.settings-caption { color:var(--2j-color-text-secondary); font-size:12px; line-height:1.5; }
+.inline-confirm { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px; border:1px solid var(--2j-color-border); border-radius:16px; }
+.inline-confirm p { flex:1 1 100%; margin:0; color:var(--2j-color-text-secondary); font-size:13px; line-height:1.5; }
+.evolution-list { display:grid; gap:10px; }
+.evolution-list .profile-link-card { min-height:72px; }
+.evolution-detail .settings-note { color:var(--2j-color-text-secondary); }
+.session-meta.contract-availability { color:var(--2j-color-brand); }
+.hub-theme-light .integration-card,.hub-theme-light .link-entry-card,.hub-theme-light .evolution-detail { background:var(--hub-glass-strong); }
+.hub-theme-light .transaction-summary { background:#EEF4E6; }
+@media (min-width:700px) {
+  .integration-card,.link-entry-card,.evolution-detail { border-radius:22px; }
+  .evolution-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
