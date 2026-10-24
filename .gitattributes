@@ -1,0 +1,4 @@
+apps/api/migrations/*.sql text eol=lf
+# Compared byte for byte as LF by `generate-css.mjs --check` (the design-tokens build): a CRLF checkout would report it stale.
+packages/design-tokens/tokens.json text eol=lf
+packages/design-tokens/src/tokens.css text eol=lf
