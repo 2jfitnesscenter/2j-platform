@@ -18,6 +18,14 @@ type MemberTrainingSummary =
   | { status: 'not_linked' }
   | { status: 'linked'; summaryStatus: 'unavailable' }
   | { status: 'linked'; summaryStatus: 'available'; summary: { trainingStatus: 'active'; asOf: string; currentProgram?: { name: string }; recentActivity?: { lastTrainingAt: string | null; sessionsLast30Days: number } } };
+type TrainingCapabilities = {
+  contract: '2J-CAPABILITIES-V2.1'; revision: 1; version: 2;
+  capabilityLevel: 'full' | 'autonomous' | 'baseline' | 'blocked';
+  accessState: 'active' | 'provisional' | 'blocked_unpaid' | 'ended' | 'baseline' | 'suspended';
+  reasonCode: string; expiresAt: string;
+  trainingSubject: { linkStatus: 'active' | 'not_linked' | 'revoked' };
+  capabilities: { autonomousTraining: boolean; routineCreation: boolean; personalRoutineCreation: boolean; personalRoutineManagement: boolean; workoutRecording: boolean; workoutHistory: boolean; guidedTraining: boolean; premiumPrograms: boolean; aiCoach: boolean; professionalFollowUp: boolean };
+};
 type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; eligible?: boolean; eligibilityReason?: string | null; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
 type MemberBookingService = { id: string; name: string };
 type MemberCancellation = { kind: 'booking' | 'waitlist'; booking: Booking; summary?: string };
@@ -27,7 +35,7 @@ type FormField = { id: string; label: string; type: string; required: boolean; o
 type FormDetail = FormAssignment & { description: string; sensitivity: string; fields: FormField[] };
 type Consent = { consentId: string; versionId: string; title: string; body: string; version: number; required: boolean; accepted: boolean };
 type Assignment = { id: string; planName: string; kind: string; status: string; startsOn: string; endsOn: string | null; lastEvent: string; rights: Array<{ rightType: string; serviceId?: string | null; serviceName?: string | null; serviceStatus?: string | null; quantity: number | null; balance: number | null }>; modules?: Array<{ module: string; accessLevel: string; capabilities?: string[] }> };
-type MembershipResponse = { asOf: string; timezone: string; assignments: Assignment[]; active: Assignment[] };
+type MembershipResponse = { asOf: string; timezone: string; assignments: Assignment[]; active: Assignment[]; trainingCapabilities?: TrainingCapabilities | null };
 type ApiState = { profile: ClientProfile; membership: { assignments: Assignment[]; active: Assignment[] }; bookings: { reservations: Booking[]; waitlist: Booking[] }; sessions: ClientSession[] };
 type MemberStoreVariant = { id:string; label:string; size:string|null; flavor:string|null; priceCents:number; availability:'disponible'|'pocas_unidades'|'agotado' };
 type MemberStoreProduct = { id:string; category:'nutrition'|'merchandising'; name:string; description:string; variants:MemberStoreVariant[] };
@@ -49,6 +57,16 @@ export function isHubPreviewEnabled(buildFlag: unknown, search: string): boolean
 
 export function isHubDemoBuild(buildFlag: unknown): boolean {
   return buildFlag === true || buildFlag === 'true';
+}
+
+function trainingCapabilityLabels(capabilities: TrainingCapabilities['capabilities']) {
+  return ([
+    ['autonomousTraining', 'Entrenamiento autónomo'], ['personalRoutineCreation', 'Crear rutinas propias'],
+    ['personalRoutineManagement', 'Gestionar rutinas propias'], ['workoutRecording', 'Registrar entrenamientos'],
+    ['workoutHistory', 'Historial de entrenamientos'], ['guidedTraining', 'Entrena con 2J'],
+    ['premiumPrograms', 'Programas Premium'], ['aiCoach', 'IA de entrenamiento'],
+    ['professionalFollowUp', 'Seguimiento profesional'],
+  ] as const).filter(([key]) => capabilities[key]).map(([, label]) => label);
 }
 
 const labels: Record<string, string> = {
@@ -203,6 +221,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   const lastPreferencePatch = React.useRef<Partial<MemberPreferences> | null>(null);
   const [membership, setMembership] = React.useState<Assignment[]>(() => preview?.membership ?? []);
   const [activeMembership, setActiveMembership] = React.useState<Assignment[]>(() => preview?.membership.filter(item => item.status === 'active') ?? []);
+  const [trainingCapabilities, setTrainingCapabilities] = React.useState<TrainingCapabilities | null>(null);
   const hasActiveMembership = activeMembership.length > 0;
   const [reservations, setReservations] = React.useState<Booking[]>(() => preview?.reservations ?? []);
   const [waitlist, setWaitlist] = React.useState<Booking[]>(() => preview?.waitlist ?? []);
@@ -269,7 +288,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
         api<{items:MemberStoreProduct[]}>('/api/me/store/catalog').then(value=>({value,failed:false})).catch(()=>({value:{items:[]},failed:true})),
         api<{items:MemberPurchase[]}>('/api/me/store/purchases').then(value=>({value,failed:false})).catch(()=>({value:{items:[]},failed:true})),
       ]);
-      setProfile(me.profile); setMembership(plans.assignments); setActiveMembership(plans.active); setReservations(mine.reservations); setWaitlist(mine.waitlist); setForms(documents); setConsents(consentItems); setBookingEnabled(bookingAccess.enabled);
+      setProfile(me.profile); setMembership(plans.assignments); setActiveMembership(plans.active); setTrainingCapabilities(plans.trainingCapabilities ?? null); setReservations(mine.reservations); setWaitlist(mine.waitlist); setForms(documents); setConsents(consentItems); setBookingEnabled(bookingAccess.enabled);
       const loadedPreferences = preferencesResult.value.preferences ?? defaultPreferences;
       setPreferences(loadedPreferences);
       if (!preferencesResult.failed) { try { window.localStorage.setItem(appearanceStorageKey, loadedPreferences.appearance); } catch { /* appearance remains available for this session */ } }
@@ -291,7 +310,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     if (!pushDeviceRemoved) { setMessage('No se ha podido desconectar este dispositivo de las notificaciones. La sesión sigue abierta; inténtalo de nuevo.'); setBusy(null); return; }
     try { await api('/api/pilot/member/logout', { method: 'POST', body: '{}' }); }
     catch { setMessage('No se pudo cerrar la sesión; vuelve a intentarlo.'); return setBusy(null); }
-    setProfile(null); setMembership([]); setActiveMembership([]); setReservations([]); setWaitlist([]); setSessions([]); setBookingServices([]); setForms([]); setConsents([]); setNotifications([]); setNewsItems([]); setFeaturedNews(null); setNewsError(false); setSelectedNews(null); setMessage(''); setError('client_authentication_required'); setLoading(false); setView('home'); setBusy(null);
+    setProfile(null); setMembership([]); setActiveMembership([]); setTrainingCapabilities(null); setReservations([]); setWaitlist([]); setSessions([]); setBookingServices([]); setForms([]); setConsents([]); setNotifications([]); setNewsItems([]); setFeaturedNews(null); setNewsError(false); setSelectedNews(null); setMessage(''); setError('client_authentication_required'); setLoading(false); setView('home'); setBusy(null);
   };
   const savePreferences = async (patch: Partial<MemberPreferences>) => {
     const next = { ...preferences, ...patch };
@@ -326,12 +345,20 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
     if (view !== 'bunker' || previewMode || !profile) return;
     let current = true;
     setTrainingSummaryLoading(true); setTrainingSummaryFailed(false); setTrainingSummary(null);
+    void api<MembershipResponse>('/api/me/membership').then(result => { if (current) setTrainingCapabilities(result.trainingCapabilities ?? null); }).catch(() => { if (current) setTrainingCapabilities(null); });
     void api<MemberTrainingSummary>('/api/me/training-summary')
       .then(result => { if (current) setTrainingSummary(result); })
       .catch(() => { if (current) setTrainingSummaryFailed(true); })
       .finally(() => { if (current) setTrainingSummaryLoading(false); });
     return () => { current = false; };
   }, [view, previewMode, profile?.id, trainingSummaryRetry]);
+  React.useEffect(() => {
+    if (!trainingCapabilities) return;
+    const remaining = Date.parse(trainingCapabilities.expiresAt) - Date.now();
+    if (!Number.isFinite(remaining) || remaining <= 0) { setTrainingCapabilities(null); return; }
+    const timer = window.setTimeout(() => setTrainingCapabilities(null), remaining);
+    return () => window.clearTimeout(timer);
+  }, [trainingCapabilities]);
   React.useEffect(() => {
     if (!selectedSession && !waitlistPending && !selectedForm && !selectedConsent && !cancellationPending) return;
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
@@ -538,7 +565,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
           </>
         </>}
         {view === 'news' && (selectedNews ? <><button className="text-button contextual-link" onClick={()=>setSelectedNews(null)}>← Volver a noticias</button><article className="center-news-detail"><p className="eyebrow">2J FITNESS CENTER</p>{selectedNews.publishedAt&&<small>{dateLabel(selectedNews.publishedAt)}</small>}<h1>{selectedNews.title}</h1><p>{selectedNews.body}</p><button type="button" className="text-button" onClick={()=>{setSelectedNews(null);setView('home');}}>Volver a Inicio <span aria-hidden="true">→</span></button></article></> : <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Noticias</h1><p>Novedades publicadas por tu centro.</p></div><button className="text-button contextual-link" onClick={()=>setView('home')}>← Volver a Inicio</button>{newsError?<section className="empty-card" role="alert"><h2>No se han podido cargar las noticias</h2><button className="button secondary" onClick={()=>void refresh()}>Intentar de nuevo</button></section>:newsItems.length?<div className="member-news-list">{newsItems.map(item=><article className="member-news-item" key={item.id}><div>{item.featured&&<span className="member-news-featured">Destacada</span>}<h2>{item.title}</h2>{item.publishedAt&&<small>{dateLabel(item.publishedAt)}</small>}</div><p>{item.body.length>260?`${item.body.slice(0,257).trimEnd()}…`:item.body}</p><button className="text-button" onClick={()=>setSelectedNews(item)}>Leer noticia <span aria-hidden="true">→</span></button></article>)}</div>:<section className="empty-card"><h2>No hay noticias publicadas</h2><p>Cuando el centro comparta una novedad, aparecerá aquí.</p></section>}</>)}
-        {view === 'bunker' && <section className="hub-destination"><div className="destination-mark"><NavIcon name="bunker"/></div><p className="eyebrow">ENTRENAMIENTO</p><h1>Búnker</h1><p>Tu espacio de rutinas, seguimiento y progreso.</p>{previewMode ? <p role="status">La conexión con Búnker no está activa en esta demo sintética.</p> : trainingSummaryLoading ? <p role="status">Consultando tu espacio de entrenamiento…</p> : trainingSummaryFailed || (trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'unavailable') ? <div role="status"><p>Información de entrenamiento temporalmente no disponible.</p><button className="text-button" onClick={() => setTrainingSummaryRetry(value => value + 1)}>Intentar de nuevo</button></div> : trainingSummary?.status === 'not_linked' ? <p role="status">Búnker aún no vinculado.</p> : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'available' ? <div className="hub-training-summary" role="status"><strong>Búnker conectado</strong>{trainingSummary.summary.currentProgram && <p>Programa actual: {trainingSummary.summary.currentProgram.name}</p>}{trainingSummary.summary.recentActivity && <p>{trainingSummary.summary.recentActivity.lastTrainingAt ? `Última actividad: ${dateLabel(`${trainingSummary.summary.recentActivity.lastTrainingAt}T12:00:00.000Z`)}` : 'Todavía no hay actividad reciente.'} · {trainingSummary.summary.recentActivity.sessionsLast30Days} {trainingSummary.summary.recentActivity.sessionsLast30Days === 1 ? 'entreno' : 'entrenos'} en los últimos 30 días</p>}</div> : null}{previewMode ? <button className="button primary" type="button" disabled>Abrir Búnker</button> : <a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a>}<small>{previewMode ? 'La demo no abre aplicaciones ni servicios externos.' : 'Se abrirá el espacio de entrenamiento en una nueva pestaña.'}</small></section>}
+        {view === 'bunker' && <BunkerDestination previewMode={previewMode} trainingCapabilities={trainingCapabilities} trainingSummary={trainingSummary} trainingSummaryLoading={trainingSummaryLoading} trainingSummaryFailed={trainingSummaryFailed} onRetry={() => setTrainingSummaryRetry(value => value + 1)} />}
         {view === 'store' && <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Tienda</h1><p>Consulta los productos disponibles en el centro.</p></div><div className="store-filter" role="group" aria-label="Filtrar productos por categoría"><button type="button" aria-pressed={storeCategory==='nutrition'} className={storeCategory==='nutrition'?'active':''} onClick={()=>setStoreCategory('nutrition')}>Nutrición</button><button type="button" aria-pressed={storeCategory==='merchandising'} className={storeCategory==='merchandising'?'active':''} onClick={()=>setStoreCategory('merchandising')}>Merchandising</button></div>{storeFailed&&<p className="inline-message" role="alert">No se ha podido actualizar el catálogo o el historial. <button className="text-button" onClick={()=>void refresh()}>Reintentar</button></p>}<div className="member-store-grid">{storeProducts.filter(item=>item.category===storeCategory).map(product=><article className="member-store-card" key={product.id}><span className="store-category-icon" aria-hidden="true">{product.category==='nutrition'?'✦':'◈'}</span><div><h2>{product.name}</h2>{product.description&&<p>{product.description}</p>}</div>{product.variants.map(variant=><div className="member-store-variant" key={variant.id}><span>{variant.label}</span><strong>{new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(variant.priceCents/100)}</strong><small className={`availability ${variant.availability}`}>{variant.availability==='disponible'?'Disponible':variant.availability==='pocas_unidades'?'Pocas unidades':'Agotado'}</small></div>)}</article>)}{storeProducts.filter(item=>item.category===storeCategory).length===0&&!storeFailed&&<section className="empty-card profile-empty"><h2>Aún no hay productos en esta categoría.</h2><p>Vuelve a consultar más adelante.</p></section>}</div><p className="store-notice">Consulta los productos disponibles. Las compras se gestionan directamente en el centro.</p></>}
         {view === 'bookings' && !hasActiveMembership && <section className="empty-card membership-required" aria-labelledby="bookings-membership-title"><p className="eyebrow">CUOTA NECESARIA</p><h1 id="bookings-membership-title">Mis reservas</h1><p>El acceso a reservas requiere una cuota vigente. Puedes seguir consultando tu perfil, avisos, documentos y compras.</p>{message&&<p className="inline-message" role="status">{message}</p>}<button className="button secondary" onClick={()=>setView('profile')}>Consultar mis cuotas</button></section>}
         {view === 'bookings' && hasActiveMembership && <><div className="page-intro"><p className="eyebrow">TU ACTIVIDAD</p><h1>Mis reservas</h1><p>Consulta próximas sesiones y tu historial.</p></div><button className="text-button contextual-link" onClick={() => setView('book')}>Volver a Reservar <span aria-hidden="true">→</span></button>{message && <p className="inline-message" role="status">{message}</p>}<div className="booking-tabs" role="tablist" aria-label="Mis reservas">{([['upcoming','Próximas'],['history','Historial']] as const).map(([id,label])=><button key={id} type="button" role="tab" id={`booking-tab-${id}`} tabIndex={bookingTab===id?0:-1} aria-selected={bookingTab===id} aria-controls={`booking-panel-${id}`} onClick={()=>setBookingTab(id)} onKeyDown={event=>{if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;event.preventDefault();const next=bookingTab==='upcoming'?'history':'upcoming';setBookingTab(next);document.getElementById(`booking-tab-${next}`)?.focus();}}>{label}</button>)}</div>{bookingTab==='upcoming'?<section role="tabpanel" id="booking-panel-upcoming" aria-labelledby="booking-tab-upcoming"><h2 className="visually-hidden">Próximas</h2>{upcomingAgenda.length ? <div className="booking-stack">{upcomingAgenda.map(({booking,waiting}) => <BookingCard key={`${waiting?'waitlist':'reservation'}-${booking.id}`} booking={booking} waiting={waiting} busy={busy===booking.id} actionDisabled={previewMode||!bookingEnabled} onCancel={() => waiting ? void leaveWaitlist(booking) : void cancelBooking(booking)}/>)}</div> : <p className="muted">No tienes reservas ni listas de espera próximas.</p>}</section>:<section role="tabpanel" id="booking-panel-history" aria-labelledby="booking-tab-history"><h2 className="visually-hidden">Historial</h2>{historyAgenda.length ? <div className="booking-stack">{historyAgenda.map(({booking,waiting})=><BookingCard key={`${waiting?'waitlist':'reservation'}-${booking.id}`} booking={booking} waiting={waiting} compact/>)}</div>:<p className="muted">Todavía no tienes actividad en tu historial.</p>}</section>}</>}
@@ -652,9 +679,35 @@ function DocumentField({ field, value, onChange }: { field: FormField; value: un
   if (field.type === 'single_choice' || field.type === 'scale') return <label className="form-field" htmlFor={id}>{field.label}{field.required ? ' · Obligatorio' : ''}<select id={id} value={value == null ? '' : String(value)} required={field.required} onChange={event => onChange(field.type === 'scale' ? Number(event.target.value) : event.target.value)}><option value="">Selecciona una opción</option>{(field.type === 'scale' ? Array.from({length:10},(_,index) => String(index+1)) : field.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}</select></label>;
   return <label className="form-field" htmlFor={id}>{field.label}{field.required ? ' · Obligatorio' : ''}<input id={id} type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} value={value == null ? '' : String(value)} onChange={event => onChange(field.type === 'number' ? event.target.value === '' ? undefined : Number(event.target.value) : event.target.value)} required={field.required} maxLength={field.type === 'number' || field.type === 'date' ? undefined : 5000}/></label>;
 }
+function BunkerDestination({ previewMode, trainingCapabilities, trainingSummary, trainingSummaryLoading, trainingSummaryFailed, onRetry }: {
+  previewMode: boolean;
+  trainingCapabilities: TrainingCapabilities | null;
+  trainingSummary: MemberTrainingSummary | null;
+  trainingSummaryLoading: boolean;
+  trainingSummaryFailed: boolean;
+  onRetry: () => void;
+}) {
+  const level = trainingCapabilities?.capabilityLevel;
+  const capabilityNames = trainingCapabilities ? trainingCapabilityLabels(trainingCapabilities.capabilities) : [];
+  return <section className="hub-destination">
+    <div className="destination-mark"><NavIcon name="bunker"/></div><p className="eyebrow">ENTRENAMIENTO</p><h1>Búnker</h1>
+    <p>Tu espacio de rutinas, seguimiento y progreso.</p>
+    {previewMode ? <p role="status">La conexión con Búnker no está activa en esta demo sintética.</p> : <div className="hub-training-summary" aria-label="Capacidades de entrenamiento">
+      <strong>{trainingCapabilities ? `Acceso ${level === 'full' ? 'completo' : level === 'autonomous' ? 'autónomo' : level === 'baseline' ? 'básico' : 'bloqueado'}` : 'Capacidades de entrenamiento no disponibles'}</strong>
+      {trainingCapabilities && <>
+        <p>{trainingCapabilities.reasonCode === 'ADMIN_SUSPENDED' ? 'El acceso está suspendido por el centro.' : trainingCapabilities.reasonCode === 'TRAINING_LINK_REVOKED' ? 'El vínculo con Búnker está revocado.' : trainingCapabilities.reasonCode === 'TRAINING_LINK_MISSING' ? 'El perfil de Búnker aún no está vinculado.' : 'Opciones calculadas por Platform para tu cuenta.'}</p>
+        {capabilityNames.length ? <ul>{capabilityNames.map(label => <li key={label}>{label}</li>)}</ul> : <p>No hay funciones de entrenamiento disponibles en este momento.</p>}
+      </>}
+    </div>}
+    {!previewMode && (trainingSummaryLoading ? <p role="status">Consultando tu espacio de entrenamiento…</p> : trainingSummaryFailed || (trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'unavailable') ? <div role="status"><p>Información de entrenamiento temporalmente no disponible.</p><button className="text-button" onClick={onRetry}>Intentar de nuevo</button></div> : trainingSummary?.status === 'not_linked' ? <p role="status">Búnker aún no vinculado.</p> : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'available' ? <div className="hub-training-summary" role="status"><strong>Búnker conectado</strong>{trainingSummary.summary.currentProgram && <p>Programa actual: {trainingSummary.summary.currentProgram.name}</p>}{trainingSummary.summary.recentActivity && <p>{trainingSummary.summary.recentActivity.lastTrainingAt ? `Última actividad: ${dateLabel(`${trainingSummary.summary.recentActivity.lastTrainingAt}T12:00:00.000Z`)}` : 'Todavía no hay actividad reciente.'} · {trainingSummary.summary.recentActivity.sessionsLast30Days} {trainingSummary.summary.recentActivity.sessionsLast30Days === 1 ? 'entreno' : 'entrenos'} en los últimos 30 días</p>}</div> : null)}
+    {previewMode ? <button className="button primary" type="button" disabled>Abrir Búnker</button> : <a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a>}
+    <small>{previewMode ? 'La demo no abre aplicaciones ni servicios externos.' : 'Se abrirá el espacio de entrenamiento en una nueva pestaña.'}</small>
+  </section>;
+}
+
 function weekRangeDays(selected = dateKey(new Date())) {
   const start = weekRange(selected).from; const todayKey = dateKey(new Date());
   return Array.from({length:7},(_,index)=>{const key=shiftDateKey(start,index);const date=new Date(`${key}T12:00:00Z`);return {date:key,label:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',weekday:'short'}).format(date),number:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',day:'numeric'}).format(date),today:key===todayKey};});
 }
 
-export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, isHubDemoBuild, selectNextConfirmedBooking, HUB_TRAINING_URL };
+export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, isHubDemoBuild, selectNextConfirmedBooking, trainingCapabilityLabels, HUB_TRAINING_URL };
