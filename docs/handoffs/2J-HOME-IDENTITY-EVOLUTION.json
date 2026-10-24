@@ -1,12 +1,12 @@
 {
   "task": "2J-HOME-IDENTITY-EVOLUTION",
-  "status": "implemented_local_review_pending",
+  "status": "restacked_ready_for_draft_pr",
   "repository": "2jfitnesscenter/2j-platform",
   "branch": "agent/codex/2J-HOME-IDENTITY-EVOLUTION",
   "implementation_commit": "9eabe41a14909e985ca790f0ca63e03ad4d1dbad",
   "base": {
-    "ref": "origin/agent/claude/2J-INTEGRATION-PREVIEW",
-    "sha": "2602953500bff4d1e2eb9ccc372736ca74927eeb"
+    "ref": "PR #86 head (agent/codex/2J-HOME-TRAINING-CAPABILITIES)",
+    "sha": "3384bd15797567647aebb0840e4f8a04048973f8"
   },
   "pr": null,
   "published": false,
@@ -37,11 +37,22 @@
     "real_auth": false,
     "real_booking_or_payment": false,
     "external_bunker_navigation": false,
-    "five_sections": ["Inicio", "Búnker", "Tienda", "Perfil", "Ajustes"],
+    "five_sections": [
+      "Inicio",
+      "Búnker",
+      "Tienda",
+      "Perfil",
+      "Ajustes"
+    ],
     "label": "DEMO · DATOS FICTICIOS"
   },
   "evolution": {
-    "sections": ["Mediciones", "Gráficos", "Evaluaciones", "Mi salud"],
+    "sections": [
+      "Mediciones",
+      "Gráficos",
+      "Evaluaciones",
+      "Mi salud"
+    ],
     "platform_contract": "pending",
     "api_calls": false,
     "fictional_measurement_values": false
@@ -54,10 +65,13 @@
     "central_production_identity": "pending"
   },
   "verification": {
-    "client_app_tests": {"passed": 42, "failed": 0},
+    "client_app_tests": {
+      "passed": 31,
+      "failed": 0
+    },
     "typecheck": "passed",
     "production_build": "passed",
-    "synthetic_demo_build": "passed",
+    "synthetic_demo_build": "passed_on_pr86_restack",
     "diff_check": "passed",
     "independent_review": "pending",
     "physical_device": "not_run"

@@ -1,11 +1,11 @@
 # 2J-HOME-IDENTITY-EVOLUTION — handoff Home
 
-**Estado:** implementación local para revisión; sin push, PR, merge ni despliegue.  
-**Rama:** `agent/codex/2J-HOME-IDENTITY-EVOLUTION`  
-**Base:** `origin/agent/claude/2J-INTEGRATION-PREVIEW` (`2602953500bff4d1e2eb9ccc372736ca74927eeb`).  
-**Commit de implementación:** `9eabe41a14909e985ca790f0ca63e03ad4d1dbad`.  
-**PR:** no creado; la tarea permanece local según `AGENTS.md`.  
-**PR #86:** no modificado.  
+**Estado:** reconstruida sobre PR #86 y lista para publicar como Draft PR; sin merge ni despliegue.
+**Rama:** `agent/codex/2J-HOME-IDENTITY-EVOLUTION`
+**Base:** PR #86, HEAD `3384bd15797567647aebb0840e4f8a04048973f8`; contiene exactamente los tres commits propios reaplicados sobre esta base, sin el merge de preview `2602953`.
+**Commit de implementación:** `9eabe41a14909e985ca790f0ca63e03ad4d1dbad`.
+**PR:** pendiente de creación como Draft sobre la pila indicada por Claude Code; la rama local ya está restackeada.
+**PR #86:** no modificado.
 **Diseño:** cinco destinos existentes; grafito y lima `#A4D65E`; demo con la marca `DEMO · DATOS FICTICIOS`.
 
 ## Hecho en Home
@@ -55,9 +55,9 @@ Fuente consultada: `REGISTRO-DECISIONES-2J.md` del escritorio. Se listan brechas
 
 ## Verificación
 
-- `pnpm --filter @2j/client-app test`: **42/42 pasaron**, incluye los cinco destinos, cero llamadas de red en demo, prueba de payloads de link/review con sesión, revocación, gating por flag y estados de elegibilidad.
+- `pnpm --filter @2j/client-app test`: **31/31 pasaron sobre PR #86 restackeado**, incluye los cinco destinos, cero llamadas de red en demo, prueba de payloads de link/review con sesión, revocación, gating por flag y estados de elegibilidad.
 - `pnpm --filter @2j/client-app typecheck`: **pasó**.
 - `pnpm --filter @2j/client-app build`: **pasó**.
-- `pnpm --filter @2j/client-app build:demo`: **pasó**; artefacto local `apps/client-app/dist-demo`, con las banderas `VITE_*` retiradas por el script de demo.
+- `pnpm --filter @2j/client-app build:demo`: **pasó sobre PR #86 restackeado**; artefacto local `apps/client-app/dist-demo`, con las banderas `VITE_*` retiradas por el script de demo.
 - `git diff --check`: **pasó**.
 - Revisión independiente/QA: pendiente.
