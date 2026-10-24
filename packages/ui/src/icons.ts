@@ -13,6 +13,7 @@ export {
   CalendarClock,
   CalendarDays,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleAlert,
   CircleCheck,

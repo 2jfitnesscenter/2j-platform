@@ -120,7 +120,7 @@ export function createRemoteTrainingReceiptReconciler(options: RemoteTrainingRec
   };
 }
 
-function parseRemoteTrainingConfig(options: RemoteTrainingLinkVerifierOptions) {
+export function parseRemoteTrainingConfig(options: RemoteTrainingLinkVerifierOptions) {
   try {
     if (options.trainingVerifiedLinkingEnabled !== true || options.trainingServiceCallsEnabled !== true || !options.fetcher || !options.keyId || !options.secret || !/^[A-Za-z0-9._-]{1,80}$/.test(options.keyId)) return null;
     const key = Buffer.from(options.secret, 'base64url');
