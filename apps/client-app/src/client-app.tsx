@@ -181,7 +181,24 @@ const makeHubPreview = (now = new Date()) => {
     purchases: [{id:'b0000000-0000-4000-8000-000000000001',status:'completed',paymentState:'paid',totalCents:3290,createdAt:now.toISOString(),lines:[{productName:'Proteína 2J',variantLabel:'Chocolate · 900 g',quantity:1,unitPriceCents:3290,lineTotalCents:3290}]}] satisfies MemberPurchase[],
   };
 };
-const HUB_TRAINING_URL = import.meta.env?.VITE_2J_HUB_DEMO === 'true' ? '' : 'https://app.2jfitnesscenter.com';
+/** https, or http only on loopback (local/staging tests); never credentials. Shared by every URL this module will follow or link to. */
+function isHttpsOrLoopback(url: URL): boolean {
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+  return !url.username && !url.password && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback));
+}
+
+/** Training URL for this build: empty in the synthetic demo; a staging/local override must be https (or loopback http); otherwise production. */
+export function resolveTrainingUrl(demoFlag: unknown, configured: unknown): string {
+  if (demoFlag === 'true') return '';
+  if (typeof configured === 'string' && configured) {
+    try {
+      const url = new URL(configured);
+      if (isHttpsOrLoopback(url) && !url.search && !url.hash) return url.origin;
+    } catch { /* fall through to production */ }
+  }
+  return 'https://app.2jfitnesscenter.com';
+}
+const HUB_TRAINING_URL = resolveTrainingUrl(import.meta.env?.VITE_2J_HUB_DEMO, import.meta.env?.VITE_2J_TRAINING_URL);
 const HUB_STAFF_URL = import.meta.env?.VITE_2J_STAFF_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5175' : '');
 const HUB_ADMIN_URL = import.meta.env?.VITE_2J_ADMIN_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5174' : '');
 const HUB_BUILD_ID = import.meta.env?.VITE_2J_BUILD_ID || 'local';
@@ -190,12 +207,6 @@ const HUB_TRAINING_SSO_BUILD = import.meta.env?.VITE_2J_TRAINING_SSO === 'true';
 const HUB_TRAINING_LINK_BUILD = import.meta.env?.VITE_2J_TRAINING_ACCOUNT_LINKING;
 const HUB_TRAINING_LINK_REVIEW_BUILD = import.meta.env?.VITE_2J_TRAINING_LINK_REVIEW;
 const HUB_SESSION_ELIGIBILITY_BUILD = import.meta.env?.VITE_2J_SESSION_ELIGIBILITY;
-
-/** Permit HTTPS, plus HTTP on loopback for isolated local tests; reject credentials in destinations. */
-function isHttpsOrLoopback(url: URL): boolean {
-  const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
-  return !url.username && !url.password && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback));
-}
 
 /**
  * Validates the destination Platform returned for the one-time SSO code. The browser only ever follows a URL whose origin is the
@@ -728,6 +739,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   return <div className={`client-app hub-theme${resolvedAppearance === 'light' ? ' hub-theme-light' : ''}`} data-appearance={resolvedAppearance}>
     <header className="client-header" data-view={view}><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><div className="client-header-actions">{previewMode&&<span className="preview-pill">DEMO · DATOS FICTICIOS</span>}{pilotLoginEnabled && profile && <button className="text-button" type="button" onClick={() => void logout()} disabled={busy === 'logout'}>{busy === 'logout' ? 'Saliendo…' : 'Cerrar sesión'}</button>}{profile && <><button className="notification-bell" aria-label={`Notificaciones${unreadNotifications?`, ${unreadNotifications} sin leer`:''}`} onClick={()=>void openNotifications()}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>{unreadNotifications>0&&<span aria-hidden="true">{unreadNotifications>99?'99+':unreadNotifications}</span>}</button><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile.firstName.slice(0,1)}</button></>}</div></header>
     <main className="client-main" id="main-content">
+      {(pendingChallenge || (ssoBusy && view !== 'bunker')) && <p className="inline-message" role="status">Abriendo Búnker con tu cuenta del centro…</p>}
       {loading && <div className="loading-card" role="status"><span className="spinner"/> Cargando tu espacio…</div>}
       {!loading && error === 'client_authentication_required' && pilotLoginEnabled && <section className="state-card error-card" aria-labelledby="member-login-title"><span className="state-icon">2J</span><p className="eyebrow">PILOTO LOCAL</p><h1 id="member-login-title">Tu espacio, a tu manera</h1><p>Introduce el código de acceso de tu piloto para consultar tus reservas y derechos.</p><form className="member-login-form" onSubmit={event => void login(event)}><label className="field-label" htmlFor="member-pilot-code">Código de acceso</label><input id="member-pilot-code" name="code" type="password" autoComplete="one-time-code" value={pilotCode} onChange={event => setPilotCode(event.target.value)} required maxLength={128}/>{loginError && <p role="alert" className="inline-message">{loginError}</p>}<button className="button primary" disabled={busy === 'login' || !pilotCode}>{busy === 'login' ? 'Entrando…' : 'Iniciar sesión'}</button></form></section>}
       {!loading && error && !(error === 'client_authentication_required' && pilotLoginEnabled) && <section className="state-card error-card" role="alert"><span className="state-icon">!</span><h1>Tu espacio no está disponible ahora</h1><p>{error === 'client_authentication_required' ? 'Inicia sesión con tu cuenta para consultar tus reservas y derechos.' : 'Comprueba tu conexión e inténtalo de nuevo.'}</p><button className="button primary" onClick={() => void refresh()}>Intentar de nuevo</button></section>}
