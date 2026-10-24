@@ -7,7 +7,7 @@ import { resolveEffectiveClientAssignments } from './entitlements.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const personIdSchema = z.string().uuid().transform(value => value.toLowerCase());
-const responseSchema = z.object({
+export const trainingCapabilitiesResponseSchema = z.object({
   contract: z.literal('2J-CAPABILITIES-V2'), version: z.literal(2), personId: z.string().uuid(),
   trainingSubject: z.object({ linkStatus: z.enum(['active','not_linked','revoked']), trainingUserId: z.string().min(1).max(200).optional() }).strict(),
   capabilityLevel: z.enum(['full','autonomous','baseline','blocked']), accessState: z.enum(['active','provisional','blocked_unpaid','ended','baseline','suspended']),
@@ -16,15 +16,32 @@ const responseSchema = z.object({
   suspensionStatus: z.enum(['none','suspended','lifted']),
   effectiveFrom: z.string().date().nullable(), expiresAt: z.string().datetime(), generatedAt: z.string().datetime(), source: z.object({platform:z.literal(true)}).strict(),
 }).strict();
+export type TrainingCapabilitiesResponse = z.infer<typeof trainingCapabilitiesResponseSchema>;
 
-const responseSchemaV21 = responseSchema.omit({ contract: true }).extend({ contract: z.literal('2J-CAPABILITIES-V2.1'), revision: z.literal(1) }).strict();
+export type ComputedTrainingCapabilities =
+  | { readonly status: 'not_found' }
+  | { readonly status: 'invalid' }
+  | { readonly status: 'ok'; readonly payload: TrainingCapabilitiesResponse };
+
+/**
+ * Single source of truth for the V2 capability payload. Used by the internal GET endpoint and by the
+ * one-time SSO redemption so both always return the same Platform-authoritative answer.
+ */
+export async function computeTrainingCapabilities(db: DB, personId: string, now: Date = new Date()): Promise<ComputedTrainingCapabilities> {
+  const input = await loadTrainingCapabilityInput(db, personId, now);
+  if (!input) return { status: 'not_found' };
+  const parsed = trainingCapabilitiesResponseSchema.safeParse(resolveTrainingCapabilities({ ...input, generatedAt: now.toISOString() }));
+  return parsed.success ? { status: 'ok', payload: parsed.data } : { status: 'invalid' };
+}
+
+const responseSchemaV21 = trainingCapabilitiesResponseSchema.omit({ contract: true }).extend({ contract: z.literal('2J-CAPABILITIES-V2.1'), revision: z.literal(1) }).strict();
 const CAPABILITY_ROUTES = [
-  { path: (personId: string) => `/api/internal/platform/v2/persons/${personId}/training-capabilities`, pattern: '/api/internal/platform/v2/persons/:personId/training-capabilities', resolve: resolveTrainingCapabilities, schema: responseSchema },
+  { path: (personId: string) => `/api/internal/platform/v2/persons/${personId}/training-capabilities`, pattern: '/api/internal/platform/v2/persons/:personId/training-capabilities', resolve: resolveTrainingCapabilities, schema: trainingCapabilitiesResponseSchema },
   { path: (personId: string) => `/api/internal/platform/v2.1/persons/${personId}/training-capabilities`, pattern: '/api/internal/platform/v2.1/persons/:personId/training-capabilities', resolve: resolveTrainingCapabilitiesV21, schema: responseSchemaV21 },
 ] as const;
 
 /** Everything the resolvers need about one person, read from the database. `null` when the person does not exist or is not active. */
-export async function loadTrainingCapabilityInput(db: DB, personId: string): Promise<ResolveTrainingCapabilitiesInput | null> {
+export async function loadTrainingCapabilityInput(db: DB, personId: string, now: Date = new Date()): Promise<ResolveTrainingCapabilitiesInput | null> {
   const [person] = await db`SELECT p.status,pc.client_id AS "clientId",c.status AS "clientStatus"
     FROM platform_persons p LEFT JOIN platform_person_clients pc ON pc.person_id=p.id
     LEFT JOIN clients c ON c.id=pc.client_id WHERE p.id=${personId}::uuid`;
@@ -34,7 +51,6 @@ export async function loadTrainingCapabilityInput(db: DB, personId: string): Pro
     WHERE person_id=${personId}::uuid ORDER BY updated_at DESC,created_at DESC,link_id DESC LIMIT 1`;
   const linkStatus: TrainingLinkStatus = link?.status === 'active' ? 'active' : link?.status === 'revoked' ? 'revoked' : 'not_linked';
   const activeLink = linkStatus === 'active' && link ? {status:'active' as const,trainingUserId:String(link.trainingUserId)} : {status:linkStatus};
-  const now = new Date();
   const localDate = canaryBusinessDate(now);
   const effective = person.clientId && person.clientStatus === 'active'
     ? await resolveEffectiveClientAssignments(db, String(person.clientId), now)

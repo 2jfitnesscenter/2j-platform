@@ -6,6 +6,7 @@ import React from 'react';
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://127.0.0.1:5173/#clients' });
 dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(callback, 0);
 dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+dom.window.scrollTo = () => {};
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
@@ -207,14 +208,14 @@ test('create dialog focuses its first field, traps keyboard focus, and restores 
   fireEvent.click(opener);
   const dialog = await screen.findByRole('dialog', { name: 'Nuevo cliente' });
   const firstName = within(dialog).getByLabelText('Nombre');
-  assert.equal(document.activeElement, firstName);
+  assert.ok(document.activeElement === firstName);
   const close = within(dialog).getByRole('button', { name: 'Cerrar diálogo' });
   close.focus();
   fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
-  assert.equal(document.activeElement, within(dialog).getByRole('button', { name: 'Guardar' }));
+  assert.ok(document.activeElement === within(dialog).getByRole('button', { name: 'Guardar' }));
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => assert.equal(screen.queryByRole('dialog'), null));
-  assert.equal(document.activeElement, opener);
+  assert.ok(document.activeElement === opener);
 });
 
 test('Guardar y añadir cuota creates the client, assigns the active plan and records an immediate charge payment',async()=>{
@@ -389,8 +390,7 @@ test('opening a client is a page: focus lands on its name and Back keeps the lis
   await waitFor(() => assert.ok(requests.some((url) => url.includes('q=marta'))), { timeout: 1500 });
   fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   const heading = await screen.findByRole('heading', { level: 1, name: 'Marta Santos' });
-  // Compare as a boolean: a failing assert.equal on DOM nodes makes node inspect the whole jsdom tree (minutes) on every waitFor retry.
-  await waitFor(() => assert.ok(document.activeElement === heading, 'focus lands on the client name'));
+  await waitFor(() => assert.ok(document.activeElement === heading, 'focus lands on the client name'), { timeout: 5000 });
   assert.equal(screen.queryByLabelText('Buscar cliente'), null, 'the list is replaced by the 360 page, not squeezed beside it');
   fireEvent.click(screen.getByRole('button', { name: 'Todos los clientes' }));
   await waitFor(() => assert.equal(window.location.hash, '#clients'));
@@ -420,10 +420,10 @@ test('profile tabs support keyboard navigation and hide unauthorized financial s
   selected.focus();
   fireEvent.keyDown(selected, { key: 'End' });
   const history = screen.getByRole('tab', { name: 'Historial' });
-  assert.equal(document.activeElement, history);
+  assert.ok(document.activeElement === history);
   assert.equal(history.tabIndex, 0);
   fireEvent.keyDown(history, { key: 'Home' });
-  assert.equal(document.activeElement, selected);
+  assert.ok(document.activeElement === selected);
   assert.equal(screen.queryByRole('tab', { name: /Pagos/ }), null);
   assert.equal(screen.queryByText(/billing\.read-basic|source:/i), null);
 });

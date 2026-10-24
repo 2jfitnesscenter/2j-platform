@@ -1,0 +1,14 @@
+{
+  "taskId": "2J-INT-H5",
+  "branch": "agent/claude/2J-INT-E2E",
+  "builtOn": ["agent/claude/2J-INT-PLATFORM-IDENTITY", "agent/claude/2J-INT-HOME-CONNECTED"],
+  "bunkerBranchUnderTest": "agent/claude/2J-INT-BUNKER-CONSUMER",
+  "status": "validated_locally_reviewed_fixes_applied",
+  "harness": { "file": "tooling/e2e/training-sso.e2e.mjs", "realProcesses": ["platform", "bunker"], "database": "disposable PostgreSQL, loopback only", "childEnvironment": "allow-listed, no inherited credentials", "secrets": "random per run", "artefacts": "<2J root>/temp/e2e or E2E_OUT_DIR, deleted unless E2E_KEEP=1" },
+  "cases": ["free baseline", "fuerza", "other fee", "unpaid", "expired contract", "suspension", "lift", "revoked link", "expired code", "reused code", "platform down", "expired cache", "direct API access", "data preserved", "mode transitions", "log hygiene"],
+  "waitsDerivedFrom": "capability TTL and SSO code TTL read from the systems",
+  "notCovered": ["WebAuthn ceremonies", "Platform-side link lifecycle", "kiosk beyond check-in", "routineCreation commercial distinction", "native shells"],
+  "productionTouched": false,
+  "review": { "independentCodeReview": "performed_findings_addressed", "independentQa": "pending" },
+  "pullRequest": null
+}
