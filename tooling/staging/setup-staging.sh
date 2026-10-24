@@ -121,7 +121,7 @@ cmd_base() {
   say "3/8 Cortafuegos (UFW): solo 22, 80 y 443"
   ufw default deny incoming; ufw default allow outgoing
   # Allow the port sshd REALLY listens on (and 22) BEFORE enabling the firewall: enabling it first on a non-standard port would cut this very session.
-  ssh_ports="22 $(sshd -T 2>/dev/null | awk '$1=="port"{print $2}') $(ss -ltnH 2>/dev/null | awk '/sshd/{n=split($4,a,":"); print a[n]}')"
+  ssh_ports="22 $(sshd -T 2>/dev/null | awk '$1=="port"{print $2}') $(printf '%s' "${SSH_CONNECTION:-}" | awk '{print $4}')"
   for p in $(printf '%s\n' $ssh_ports | sort -un); do case "$p" in ''|*[!0-9]*) continue;; esac; ufw allow "${p}/tcp" >/dev/null; ok "SSH permitido en el puerto ${p}"; done
   ufw allow 80/tcp; ufw allow 443/tcp
   ufw --force enable
@@ -163,7 +163,7 @@ EOF
   fi
   systemctl enable caddy
 
-  install -m 755 "$(readlink -f "$0")" /usr/local/sbin/2j-staging      # readable by ${OPS_USER} after SSH is locked (a copy in /root is not)
+  [ "$(readlink -f "$0")" = /usr/local/sbin/2j-staging ] || install -m 755 "$(readlink -f "$0")" /usr/local/sbin/2j-staging      # readable by ${OPS_USER} after SSH is locked (a copy in /root is not)
 
   say "8/8 Estructura de carpetas"
   install -d -m 755 "$ROOT" "$ROOT/src" "$ROOT/build" "$ROOT/compose" "$ROOT/www/home" "$ROOT/www/admin"
@@ -185,7 +185,8 @@ cmd_lock_ssh() {
   local force=no; [ "${2:-}" = "--force" ] && force=yes
   [ "${1:-}" = "--confirm" ] || die "Escribe: 2j-staging lock-ssh --confirm   (solo después de comprobar en otra ventana que ssh ${OPS_USER}@${SERVER_IP} entra sin contraseña)."
   [ -s "/home/${OPS_USER}/.ssh/authorized_keys" ] || die "${OPS_USER} no tiene ninguna clave instalada: ejecuta primero 'base'."
-  if [ "$force" != yes ] && ! journalctl -u ssh --no-pager 2>/dev/null | grep -q "Accepted publickey for ${OPS_USER} "; then
+  local ssh_log; ssh_log="$(journalctl -u ssh --no-pager 2>/dev/null || true)"
+  if [ "$force" != yes ] && ! grep -q "Accepted publickey for ${OPS_USER} " <<<"$ssh_log"; then
     die "No veo ningún login por CLAVE de ${OPS_USER} en el registro de SSH. Entra primero desde otra ventana con: ssh ${OPS_USER}@${SERVER_IP} y repite. (Solo si estás seguro: lock-ssh --confirm --force. Rescate si te quedas fuera: consola VNC del panel de Contabo.)"
   fi
   # Ubuntu 24.04 reads /etc/ssh/sshd_config.d/*.conf in alphabetical order and the FIRST value wins, so ours is named 00-.
@@ -244,7 +245,7 @@ git_sync() {  # name repo ref dest
 render_files() {  # DIR  — generated config; reads secrets from $ROOT/secrets unless RENDER_FAKE=1
   local dir="$1"; mkdir -p "$dir"
   local ba_hash="${FAKE_BASIC_HASH:-}"
-  [ -n "$ba_hash" ] || ba_hash="$(htpasswd -niB staging < "$ROOT/secrets/basic-auth.pass" | cut -d: -f2)"   # password read from stdin: never in ps
+  if [ -z "$ba_hash" ]; then ba_hash="$(htpasswd -niB staging < "$ROOT/secrets/basic-auth.pass" | cut -d: -f2)"; [ -n "$ba_hash" ] || die "No se pudo generar el hash de la contraseña (¿está instalado apache2-utils?)"; fi   # password read from stdin: never in ps
   local allow="127.0.0.1 ::1 ${ADMIN_ALLOW_IPS}"
   local email_block=""; [ -n "$ACME_EMAIL" ] && email_block="	email ${ACME_EMAIL}"
 
@@ -453,7 +454,7 @@ cmd_deploy() {
 
   say "0/8 DNS (si no apunta aquí, Let's Encrypt fallaría y limita los reintentos)"
   for h in "$HOSTS_HOME" "$HOSTS_APP" "$HOSTS_ADMIN"; do
-    ips="$(getent ahostsv4 "$h" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+    ips="$( { getent ahostsv4 "$h" || true; } | awk '{print $1}' | sort -u | tr '\n' ' ')"
     case " $ips " in *" $SERVER_IP "*) ok "$h -> $ips";; *) die "$h apunta a '${ips:-nada}' y debería ser $SERVER_IP. Corrige el DNS y espera a que propague.";; esac
   done
 
@@ -584,7 +585,7 @@ cmd_selftest() {
   [ -n "$pass" ] || die "Aún no hay despliegue (falta ${ROOT}/secrets/basic-auth.pass)."
   say "DNS (cada nombre debe apuntar a ${SERVER_IP})"
   for h in "$HOSTS_HOME" "$HOSTS_APP" "$HOSTS_ADMIN"; do
-    ips="$(getent ahostsv4 "$h" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+    ips="$( { getent ahostsv4 "$h" || true; } | awk '{print $1}' | sort -u | tr '\n' ' ')"
     case " $ips " in *" $SERVER_IP "*) ok "$h -> $ips";; *) bad "$h apunta a '${ips:-nada}' (debería ser $SERVER_IP)";; esac
   done
   say "HTTPS y salud (certificado real, sin saltarse la comprobación)"
