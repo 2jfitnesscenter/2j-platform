@@ -170,12 +170,44 @@ export function registerClientAppRoutes(
         (SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=s.id AND r.status IN ('reserved','attended','no_show','cancelled_late')) AS "occupiedCount",
         (SELECT count(*)::int FROM calendar_waitlist_entries w WHERE w.session_id=s.id AND w.status='waiting') AS "waitlistCount",
         (SELECT r.status FROM calendar_reservations r WHERE r.session_id=s.id AND r.client_id=${actor.clientId} AND r.status IN ('reserved','attended','no_show','cancelled_late') ORDER BY r.created_at DESC,r.id DESC LIMIT 1) AS "myReservationStatus",
-        (SELECT w.status FROM calendar_waitlist_entries w WHERE w.session_id=s.id AND w.client_id=${actor.clientId} AND w.status IN ('waiting','promoted') ORDER BY w.created_at DESC,w.id DESC LIMIT 1) AS "myWaitlistStatus"
+        (SELECT w.status FROM calendar_waitlist_entries w WHERE w.session_id=s.id AND w.client_id=${actor.clientId} AND w.status IN ('waiting','promoted') ORDER BY w.created_at DESC,w.id DESC LIMIT 1) AS "myWaitlistStatus",
+        (SELECT w.id FROM calendar_waitlist_entries w WHERE w.session_id=s.id AND w.client_id=${actor.clientId} AND w.status='waiting' ORDER BY w.created_at DESC,w.id DESC LIMIT 1) AS "myWaitlistEntryId"
       FROM calendar_sessions s JOIN services sv ON sv.id=s.service_id JOIN areas a ON a.id=s.area_id LEFT JOIN staff_professionals sp ON sp.id=s.professional_id AND sp.status='active'
       WHERE s.starts_at >= (${query.data.from}::date::timestamp AT TIME ZONE 'Atlantic/Canary') AND s.starts_at < ((${query.data.to}::date + 1)::timestamp AT TIME ZONE 'Atlantic/Canary')
         AND s.status='scheduled' AND sv.status='active' AND a.status='active' AND (s.individual_client_id IS NULL OR s.individual_client_id=${actor.clientId})
       ORDER BY s.starts_at,s.id LIMIT 300`;
-    return { timezone: 'Atlantic/Canary', sessions };
+    const sessionsWithAvailability = await db.begin(async tx => {
+      const result = [];
+      for (const session of sessions) {
+        const { myWaitlistEntryId, ...publicSession } = session;
+        let availability: 'available' | 'full' | 'booked' | 'not_allowed_by_plan' | 'waitlisted' | 'waitlist_suspended';
+        let availabilityReason: string | null = null;
+        if (session.myReservationStatus) {
+          availability = 'booked';
+        } else if (session.myWaitlistStatus === 'waiting') {
+          const eligibility = await resolveEligibility({
+            tx, clientId: actor.clientId, serviceId: session.serviceId,
+            startsAt: session.startsAt instanceof Date ? session.startsAt.toISOString() : String(session.startsAt),
+            sessionId: session.id, allowFullSession: true, ignoreWaitlistId: myWaitlistEntryId,
+          });
+          availability = eligibility.eligible ? 'waitlisted' : 'waitlist_suspended';
+          if (!eligibility.eligible) availabilityReason = eligibility.reason;
+        } else if (Number(session.occupiedCount) >= Number(session.capacity)) {
+          availability = 'full';
+        } else {
+          const eligibility = await resolveEligibility({
+            tx, clientId: actor.clientId, serviceId: session.serviceId,
+            startsAt: session.startsAt instanceof Date ? session.startsAt.toISOString() : String(session.startsAt),
+            sessionId: session.id, allowFullSession: true,
+          });
+          availability = eligibility.eligible ? 'available' : 'not_allowed_by_plan';
+          if (!eligibility.eligible) availabilityReason = eligibility.reason;
+        }
+        result.push({ ...publicSession, availability, availabilityReason });
+      }
+      return result;
+    });
+    return { timezone: 'Atlantic/Canary', sessions: sessionsWithAvailability };
   });
 
   app.get('/api/me/sessions/:sessionId', async (request, reply) => {
