@@ -61,7 +61,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
     if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: memberPreferences }), { headers: { 'content-type': 'application/json' } });
     if (url === '/api/me' && loggedIn) return new Response(JSON.stringify({ profile: { id: 'd0700000-0000-4000-8000-000000000001', firstName: 'María', lastName: 'González', email: null, status: 'active' } }), { headers: { 'content-type': 'application/json' } });
     if (url === '/api/me' && !loggedIn) return new Response(JSON.stringify({ error: 'client_authentication_required' }), { status: 401, headers: { 'content-type': 'application/json' } });
-    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }));
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }));
     if (String(url).startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [] }));
@@ -113,7 +113,7 @@ test('preference save failure keeps the immediate appearance and offers a workin
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, { window:{configurable:true,value:dom.window}, document:{configurable:true,value:dom.window.document}, navigator:{configurable:true,value:dom.window.navigator}, HTMLElement:{configurable:true,value:dom.window.HTMLElement}, sessionStorage:{configurable:true,value:dom.window.sessionStorage} });
   let patchAttempts=0; let savedAppearance='dark';
-  globalThis.fetch=async (input,init={})=>{const url=String(input);if(url==='/api/me/preferences'&&init.method==='PATCH'){patchAttempts++;if(patchAttempts===1)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});savedAppearance=JSON.parse(init.body).appearance;return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));}if(url==='/api/me/preferences')return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'a',firstName:'Eva',lastName:'Piloto',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[]}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response('[]');if(url==='/api/me/booking-access')return new Response(JSON.stringify({enabled:false}));if(url==='/api/me/news')return new Response(JSON.stringify({items:[],featured:null}));if(url==='/api/me/store/catalog'||url==='/api/me/store/purchases')return new Response(JSON.stringify({items:[]}));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:0}));return new Response('{}');};
+  globalThis.fetch=async (input,init={})=>{const url=String(input);if(url==='/api/me/preferences'&&init.method==='PATCH'){patchAttempts++;if(patchAttempts===1)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});savedAppearance=JSON.parse(init.body).appearance;return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));}if(url==='/api/me/preferences')return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'a',firstName:'Eva',lastName:'Piloto',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[],active:[],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response('[]');if(url==='/api/me/booking-access')return new Response(JSON.stringify({enabled:false}));if(url==='/api/me/news')return new Response(JSON.stringify({items:[],featured:null}));if(url==='/api/me/store/catalog'||url==='/api/me/store/purchases')return new Response(JSON.stringify({items:[]}));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:0}));return new Response('{}');};
   const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));
   assert.ok(await ui.findByRole('heading',{name:'Hola, Eva'}));fireEvent.click(ui.getByRole('button',{name:'Ajustes'}));assert.ok(await ui.findByRole('heading',{name:'Apariencia'}));fireEvent.click(ui.getByRole('radio',{name:/Claro/}));assert.ok(await ui.findByRole('alert'));assert.ok(ui.container.querySelector('.client-app')?.classList.contains('hub-theme-light'));assert.ok(ui.getByRole('button',{name:'Reintentar'}));fireEvent.click(ui.getByRole('button',{name:'Reintentar'}));assert.ok(await ui.findByText('Preferencia guardada.'));assert.equal(savedAppearance,'light');assert.equal(patchAttempts,2);
   cleanup();dom.window.close();
@@ -157,7 +157,7 @@ test('client notification bell opens a self-scoped inbox and marks notices read'
   const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/'});
   Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage},crypto:{configurable:true,value:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'}}});
   const item={id:'99999999-9999-4999-8999-999999999999',type:'booking_confirmed',title:'Reserva confirmada',body:'Tu plaza está confirmada.',deeplink:'/bookings',createdAt:'2026-10-10T10:00:00.000Z',readAt:null};
-  let failRead=true;globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}),{status:200});if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[]}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){if(failRead)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
+  let failRead=true;globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}),{status:200});if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[{id:'12111111-1111-4111-8111-111111111111',planName:'Plan 2J',kind:'monthly',status:'active',startsOn:'2026-10-01',endsOn:null,lastEvent:'activated',rights:[],modules:[]}],active:[{id:'12111111-1111-4111-8111-111111111111',planName:'Plan 2J',kind:'monthly',status:'active',startsOn:'2026-10-01',endsOn:null,lastEvent:'activated',rights:[],modules:[]}],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){if(failRead)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
   const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));
   const bell=await ui.findByRole('button',{name:/Notificaciones, 1 sin leer/});fireEvent.click(bell);await ui.findByRole('heading',{name:'Notificaciones'});assert.ok(ui.getByText('Tu plaza está confirmada.'));fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Mis reservas'});assert.ok(await ui.findByText('No se ha podido marcar como leída. Puedes volver a intentarlo.'));assert.ok(await ui.findByRole('button',{name:/Notificaciones, 1 sin leer/}));assert.equal(item.readAt,null);
   failRead=false;fireEvent.click(ui.getByRole('button',{name:/Notificaciones, 1 sin leer/}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Mis reservas'});await ui.findByRole('button',{name:'Notificaciones'});assert.equal(item.readAt!==null,true);
@@ -170,7 +170,7 @@ test('informational client messages are marked read without opening a nonexisten
   const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/'});
   Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage},crypto:{configurable:true,value:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'}}});
   const item={id:'99999999-9999-4999-8999-999999999998',type:'message_received',title:'Nuevo mensaje del centro',body:'El centro te ha enviado un mensaje.',deeplink:null,createdAt:'2026-10-10T10:00:00.000Z',readAt:null};
-  globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[]}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
+  globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[],active:[],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
   const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));fireEvent.click(await ui.findByRole('button',{name:/Notificaciones/}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Nuevo mensaje del centro'}));await ui.findByText('Este aviso es informativo; los mensajes del centro todavía no están disponibles aquí.');assert.equal(item.readAt!==null,true);assert.equal(ui.queryByRole('heading',{name:'Mensajes'}),null);item.deeplink='https://evil.test';item.readAt=null;fireEvent.click(ui.getByRole('button',{name:'Notificaciones'}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Nuevo mensaje del centro'}));assert.ok(await ui.findByText('Este aviso no tiene un destino disponible.'));assert.ok(ui.getByRole('heading',{name:'Notificaciones'}));cleanup();dom.window.close();
 });
 
@@ -195,7 +195,7 @@ test('Member books one session after server eligibility and retries a lost respo
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '55555555-5555-4555-8555-555555555555', firstName: 'María', lastName: 'González', email: 'maria@example.test', status: 'active' } }), { status: 200 });
-    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [{ id: detail.availableAlternatives[0].assignmentId, planName: 'Bono 10', kind: 'session_pack', status: 'active', startsOn: days[0].date, endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', quantity: 10, balance: 4 }], modules: [] }] }), { status: 200 });
+    if (url === '/api/me/membership') { const assignment = { id: detail.availableAlternatives[0].assignmentId, planName: 'Bono 10', kind: 'session_pack', status: 'active', startsOn: days[0].date, endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', quantity: 10, balance: 4 }], modules: [] }; return new Response(JSON.stringify({ assignments: [assignment], active: [assignment], asOf: days[0].date, timezone: 'Atlantic/Canary' }), { status: 200 }); }
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: true }), { status: 200 });
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }), { status: 200 });
     if (url === '/api/me/booking-services') return new Response(JSON.stringify({ services: [{ id: session.serviceId, name: session.serviceName }] }), { status: 200 });
@@ -243,7 +243,7 @@ test('Member outside the booking cohort can browse sessions but sees a clear dis
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '15111111-1111-4111-8111-111111111111', firstName: 'Bea', lastName: 'Cliente', email: null, status: 'active' } }));
-    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
+    if (url === '/api/me/membership') { const assignment = { id: 'eeeeeee1-eeee-4eee-8eee-eeeeeeeeeeee', planName: 'Plan funcional', kind: 'monthly', status: 'active', startsOn: '2026-10-01', endsOn: null, lastEvent: 'activated', rights: [], modules: [{ module: 'training', accessLevel: 'read', capabilities: ['training.autonomous'] }] }; return new Response(JSON.stringify({ assignments: [assignment], active: [assignment], asOf: '2026-10-23', timezone: 'Atlantic/Canary' })); }
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }));
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }));
     if (url === '/api/me/booking-services') return new Response(JSON.stringify({ services: [{ id: session.serviceId, name: session.serviceName }] }));
@@ -285,7 +285,7 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', firstName: 'Lucía', lastName: 'Piloto', email: null, status: 'active' } }));
-    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
+    if (url === '/api/me/membership') { const assignment = { id: 'aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaaa', planName: 'Plan activo', kind: 'monthly', status: 'active', startsOn: '2026-10-01', endsOn: null, lastEvent: 'activated', rights: [], modules: [] }; return new Response(JSON.stringify({ assignments: [assignment], active: [assignment], asOf: '2026-10-23', timezone: 'Atlantic/Canary' })); }
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: true }));
     if (url === '/api/me/bookings') return new Response(JSON.stringify(booked ? { reservations: [cancelled ? { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'cancelled', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false } : { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'reserved', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }], waitlist: joinedWaitlist ? [{ id: 'abababab-abab-4bab-8bab-abababababab', status: 'waiting', sessionId: full.id, startsAt: full.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] : [] } : { reservations: [], waitlist: [] }));
     if (url === '/api/me/booking-services') return new Response(JSON.stringify({ services: [service] }));
@@ -352,6 +352,60 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
   cleanup(); dom.window.close();
 });
 
+test('D31 keeps Home, Profile, Store and Búnker entry available without a fee and does not load booking operations', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document }, navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage },
+  });
+  const requests = [];
+  const notice = { id: '19111111-1111-4111-8111-111111111111', type: 'booking_confirmed', title: 'Aviso de agenda', body: 'Acceso al calendario.', deeplink: '/sessions/22222222-2222-4222-8222-222222222222', createdAt: '2026-10-22T10:00:00.000Z', readAt: null };
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input); requests.push(url);
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '18111111-1111-4111-8111-111111111111', firstName: 'Noa', lastName: 'Sin Cuota', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
+    if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
+    if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: notice.readAt ? 0 : 1 }));
+    if (url === '/api/me/notifications') return new Response(JSON.stringify({ items: [notice], nextBefore: null, nextBeforeId: null }));
+    if (url.endsWith('/read') && init.method === 'PATCH') { notice.readAt = new Date().toISOString(); return new Response(JSON.stringify({ id: notice.id, readAt: notice.readAt })); }
+    if (url === '/api/me/training-summary') return new Response(JSON.stringify({ status: 'not_linked' }));
+    throw new Error(`Unexpected request ${url}`);
+  };
+  const { render, cleanup, fireEvent, within, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Noa' }));
+  assert.equal(ui.container.querySelector('.home-book-cta'), null);
+  assert.equal(ui.container.querySelector('.home-next-booking'), null);
+  const navigation = ui.getByRole('navigation', { name: 'Navegación principal' });
+  assert.equal(navigation.querySelectorAll('button').length, 5);
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Perfil' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
+  assert.ok(ui.getByText('No tienes ninguna cuota activa.'));
+  assert.equal(ui.queryByRole('heading', { name: 'Mis reservas' }), null);
+  assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));
+  assert.ok(ui.getByRole('heading', { name: 'Mensajes y avisos' }));
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Tienda' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Tienda' }));
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Búnker' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Búnker' }));
+  assert.ok(ui.getByRole('link', { name: /Abrir Búnker/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Notificaciones/ }));
+  await ui.findByRole('heading', { name: 'Notificaciones' });
+  fireEvent.click(ui.getByRole('button', { name: 'Abrir aviso: Aviso de agenda' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Reservas no disponibles' }));
+  notice.deeplink = '/bookings';
+  fireEvent.click(ui.getByRole('button', { name: /Notificaciones/ }));
+  await ui.findByRole('heading', { name: 'Notificaciones' });
+  fireEvent.click(ui.getByRole('button', { name: 'Abrir aviso: Aviso de agenda' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Mis reservas' }));
+  assert.ok(ui.getByText(/El acceso a reservas requiere una cuota vigente/));
+  assert.equal(requests.some(url => url === '/api/me/bookings' || url === '/api/me/booking-access' || url.startsWith('/api/me/sessions?') || url === '/api/me/booking-services'), false);
+  cleanup(); dom.window.close();
+});
+
 test('profile completes only the signed-in client’s form and records an explicit consent acceptance', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, {
@@ -367,7 +421,7 @@ test('profile completes only the signed-in client’s form and records an explic
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', firstName: 'Lucía', lastName: 'Díaz', email: null, status: 'active' } }), { status: 200 });
-    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [activePlan] }), { status: 200 });
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [activePlan], active: [activePlan], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }), { status: 200 });
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }), { status: 200 });
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [] }), { status: 200 });
     if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ timezone: 'Atlantic/Canary', sessions: [] }), { status: 200 });
@@ -547,7 +601,7 @@ test('Inicio hides the upcoming booking card when empty and Perfil keeps access 
   globalThis.fetch = async input => {
     const url = String(input);
     if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Eva', lastName: 'Piloto', email: null, status: 'active' } }));
-    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [] }));
+    if (url === '/api/me/membership') { const assignment = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', planName: 'Plan 2J', kind: 'monthly', status: 'active', startsOn: '2026-10-01', endsOn: null, lastEvent: 'activated', rights: [], modules: [] }; return new Response(JSON.stringify({ assignments: [assignment], active: [assignment], asOf: '2026-10-23', timezone: 'Atlantic/Canary' })); }
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: false }));
     if (url === '/api/me/bookings') return new Response(JSON.stringify({ reservations: [], waitlist: [{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', status: 'waiting', sessionId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: new Date(Date.now() + 86_400_000).toISOString(), durationMinutes: 45, serviceName: 'Funcional', areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] }));
     if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [] }));
@@ -580,7 +634,7 @@ test('Inicio reads Center News independently from notifications and opens a newe
   globalThis.fetch=async input=>{
     const url=String(input);
     if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'33333333-3333-4333-8333-333333333333',firstName:'Eva',lastName:'News',email:null,status:'active'}}));
-    if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[]}));
+    if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[],active:[],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));
     if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));
     if(url==='/api/me/booking-access')return new Response(JSON.stringify({enabled:false}));
     if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));

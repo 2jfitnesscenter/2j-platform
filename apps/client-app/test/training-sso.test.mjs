@@ -86,7 +86,7 @@ async function mountLoggedIn(props, onRequest, { summary = { status: 'linked', s
     if (target === '/api/pilot/member/login') { state.signedIn = true; return json({ expiresAt: new Date(Date.now() + 3_600_000).toISOString() }); }
     if (target === '/api/me') return state.signedIn ? json({ profile: { id: 'd0700000-0000-4000-8000-000000000001', firstName: 'María', lastName: 'González', email: null, status: 'active' } }) : json({ error: 'client_authentication_required' }, 401);
     if (target === '/api/me/preferences') return json({ preferences: { appearance: 'dark', language: 'es' } });
-    if (target === '/api/me/membership') return json({ assignments: [] });
+    if (target === '/api/me/membership') return json({ assignments: [], active: [] });
     if (target === '/api/me/booking-access') return json({ enabled: false });
     if (target === '/api/me/bookings') return json({ reservations: [], waitlist: [] });
     if (String(target).startsWith('/api/me/sessions?')) return json({ sessions: [] });
