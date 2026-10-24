@@ -3,6 +3,7 @@
 **Estado:** implementación local para revisión; sin push, PR, merge ni despliegue.  
 **Rama:** `agent/codex/2J-HOME-IDENTITY-EVOLUTION`  
 **Base:** `origin/agent/claude/2J-INTEGRATION-PREVIEW` (`2602953500bff4d1e2eb9ccc372736ca74927eeb`).  
+**Commit de implementación:** `9eabe41a14909e985ca790f0ca63e03ad4d1dbad`.  
 **PR:** no creado; la tarea permanece local según `AGENTS.md`.  
 **PR #86:** no modificado.  
 **Diseño:** cinco destinos existentes; grafito y lima `#A4D65E`; demo con la marca `DEMO · DATOS FICTICIOS`.
