@@ -17,6 +17,8 @@ import { createTrainingSignalDispatcher } from './training-signals.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
+import { createPushService, registerPushRoutes, type PushProvider } from './push.js';
+import { createWebPushProvider } from './push-web-provider.js';
 import { createMemberPilotAuth } from './member-pilot-auth.js';
 import { registerMemberBookingCohortRoutes } from './member-booking-cohort.js';
 import { registerEconomicRoutes } from './economics.js';
@@ -175,6 +177,11 @@ export type ServerOptions = {
   memberPilotAuthEnabled?: boolean;
   memberPilotBookingEnabled?: boolean;
   memberPilotCohortManagementEnabled?: boolean;
+  /** Web Push (decisions D152, D176, D199…). Off by default; needs the VAPID keys unless a provider is injected. */
+  pushEnabled?: boolean;
+  pushProvider?: PushProvider;
+  pushVapidPublicKey?: string;
+  pushIntervalMs?: number;
   memberAppOrigin?: string | null;
   trainingLinkingEnabled?: boolean;
   trainingVerifiedLinkingEnabled?: boolean;
@@ -312,6 +319,13 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver, allowMemberBooking);
   registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter);
   registerMemberBookingCohortRoutes(app, client, authorizationResolver, options.memberPilotCohortManagementEnabled === true);
+  const pushEnabled = options.pushEnabled === true;
+  const vapid = { publicKey: options.pushVapidPublicKey ?? process.env.PUSH_VAPID_PUBLIC_KEY ?? '', privateKey: process.env.PUSH_VAPID_PRIVATE_KEY ?? '', subject: process.env.PUSH_VAPID_SUBJECT ?? '' };
+  if (pushEnabled && !options.pushProvider && !(vapid.publicKey && vapid.privateKey && vapid.subject)) throw new Error('PUSH_ENABLED needs PUSH_VAPID_PUBLIC_KEY, PUSH_VAPID_PRIVATE_KEY and PUSH_VAPID_SUBJECT.');
+  const push = createPushService(client, { enabled: pushEnabled, provider: pushEnabled ? options.pushProvider ?? createWebPushProvider(vapid) : null, vapidPublicKey: vapid.publicKey || null, ...(options.pushIntervalMs ? { intervalMs: options.pushIntervalMs } : {}), logger: app.log });
+  registerPushRoutes(app, client, clientAuthorizationResolver, push, memberOrigin);
+  app.addHook('onReady', async () => { push.start(); });
+  app.addHook('onClose', async () => { push.stop(); });
   memberPilotAuth.register(app);
   registerPlatformPasskeyRoutes(app, client, { enabled: options.platformPasskeysEnabled === true, rpId: options.platformPasskeyRpId ?? null, origin: options.memberAppOrigin ?? null, startSession: memberPilotAuth.startSession, resolveAuthorization: authorizationResolver, ...(options.platformPasskeyMaxRequestsPerMinute ? { maxRequestsPerMinute: options.platformPasskeyMaxRequestsPerMinute } : {}) });
   registerEconomicRoutes(app, client, authorizationResolver);
