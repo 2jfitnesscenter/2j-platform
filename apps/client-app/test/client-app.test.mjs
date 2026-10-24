@@ -524,6 +524,56 @@ test('profile completes only the signed-in client’s form and records an explic
   cleanup(); dom.window.close();
 });
 
+test('D31 lets a client without a fee read assigned documents and submit an assigned form and consent', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    HTMLInputElement: { configurable: true, value: dom.window.HTMLInputElement }, sessionStorage: { configurable: true, value: dom.window.sessionStorage },
+    crypto: { configurable: true, value: { randomUUID: () => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' } },
+  });
+  const assignment = { id: '11111111-1111-4111-8111-111111111111', name: 'Ficha de bienvenida', status: 'assigned', required: true, dueAt: null, category: 'onboarding', version: 1 };
+  const consent = { consentId: '22222222-2222-4222-8222-222222222222', versionId: '33333333-3333-4333-8333-333333333333', title: 'Normas del centro', body: 'Texto aprobado.', version: 1, required: true, accepted: false };
+  let formSent = false; let accepted = false; let consentPayload;
+  const requests = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input); requests.push({ url, method: init.method ?? 'GET' });
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '44444444-4444-4444-8444-444444444444', firstName: 'Lola', lastName: 'Sin cuota', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
+    if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
+    if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
+    if (url === '/api/client-portal/form-assignments') return new Response(JSON.stringify([{ ...assignment, status: formSent ? 'submitted' : 'assigned' }]));
+    if (url === '/api/client-portal/consents') return new Response(JSON.stringify([{ ...consent, accepted }]));
+    if (url === `/api/client-portal/form-assignments/${assignment.id}`) return new Response(JSON.stringify({ ...assignment, description: 'Datos de bienvenida.', sensitivity: 'operational', fields: [{ id: 'goal', label: 'Objetivo principal', type: 'short_text', required: true }] }));
+    if (url.endsWith('/respond') && init.method === 'POST') { formSent = true; return new Response(JSON.stringify({ status: 'submitted' }), { status: 201 }); }
+    if (url === `/api/client-portal/consents/${consent.versionId}/accept` && init.method === 'POST') { consentPayload = JSON.parse(init.body); accepted = true; return new Response(JSON.stringify({ id: 'acceptance', acceptedAt: '2026-10-23T12:00:00.000Z' }), { status: 201 }); }
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
+  };
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Lola' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
+  fireEvent.click(ui.getByRole('button', { name: 'Completar' }));
+  assert.ok(await ui.findByRole('dialog', { name: 'Ficha de bienvenida' }));
+  const answer = await ui.findByLabelText(/Objetivo principal/);
+  const setInputValue = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set;
+  setInputValue.call(answer, 'Mejorar movilidad');
+  answer.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  answer.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  fireEvent.click(ui.getByRole('button', { name: 'Enviar documento' }));
+  assert.ok(await ui.findByText('Enviado · pendiente de revisión'));
+  fireEvent.click(ui.getByRole('button', { name: 'Consultar' }));
+  fireEvent.click(ui.getByLabelText('He leído y acepto este consentimiento.'));
+  fireEvent.change(ui.getByLabelText('Nombre completo'), { target: { value: 'Lola Sin cuota' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Confirmar aceptación' }));
+  assert.ok(await ui.findByText('Aceptado'));
+  assert.deepEqual(consentPayload, { typedName: 'Lola Sin cuota', accepted: true });
+  assert.equal(requests.some(request => request.url === '/api/me/booking-access' || request.url === '/api/me/bookings'), false);
+  cleanup(); dom.window.close();
+});
+
 test('2J Hub preview is build-gated, presents five destinations and never calls the API', async (t) => {
   const { isHubPreviewEnabled, isHubDemoBuild, HUB_TRAINING_URL } = await import('../src/client-app.tsx').then(({clientAppTestHelpers}) => clientAppTestHelpers);
   assert.equal(isHubDemoBuild(true), true);
