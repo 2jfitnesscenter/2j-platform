@@ -7,7 +7,7 @@ import { resolveEffectiveClientAssignments } from './entitlements.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const personIdSchema = z.string().uuid().transform(value => value.toLowerCase());
-const responseSchema = z.object({
+export const trainingCapabilitiesResponseSchema = z.object({
   contract: z.literal('2J-CAPABILITIES-V2'), version: z.literal(2), personId: z.string().uuid(),
   trainingSubject: z.object({ linkStatus: z.enum(['active','not_linked','revoked']), trainingUserId: z.string().min(1).max(200).optional() }).strict(),
   capabilityLevel: z.enum(['full','autonomous','baseline','blocked']), accessState: z.enum(['active','provisional','blocked_unpaid','ended','baseline','suspended']),
@@ -16,6 +16,56 @@ const responseSchema = z.object({
   suspensionStatus: z.enum(['none','suspended','lifted']),
   effectiveFrom: z.string().date().nullable(), expiresAt: z.string().datetime(), generatedAt: z.string().datetime(), source: z.object({platform:z.literal(true)}).strict(),
 }).strict();
+export type TrainingCapabilitiesResponse = z.infer<typeof trainingCapabilitiesResponseSchema>;
+
+export type ComputedTrainingCapabilities =
+  | { readonly status: 'not_found' }
+  | { readonly status: 'invalid' }
+  | { readonly status: 'ok'; readonly payload: TrainingCapabilitiesResponse };
+
+/**
+ * Single source of truth for the V2 capability payload. Used by the internal GET endpoint and by the
+ * one-time SSO redemption so both always return the same Platform-authoritative answer.
+ */
+export async function computeTrainingCapabilities(db: DB, personId: string, now: Date = new Date()): Promise<ComputedTrainingCapabilities> {
+  const [person] = await db`SELECT p.status,pc.client_id AS "clientId",c.status AS "clientStatus"
+    FROM platform_persons p LEFT JOIN platform_person_clients pc ON pc.person_id=p.id
+    LEFT JOIN clients c ON c.id=pc.client_id WHERE p.id=${personId}::uuid`;
+  if (!person || person.status !== 'active') return { status: 'not_found' };
+
+  const [link] = await db`SELECT status,training_user_id AS "trainingUserId" FROM training_account_links
+    WHERE person_id=${personId}::uuid ORDER BY updated_at DESC,created_at DESC,link_id DESC LIMIT 1`;
+  const linkStatus: TrainingLinkStatus = link?.status === 'active' ? 'active' : link?.status === 'revoked' ? 'revoked' : 'not_linked';
+  const activeLink = linkStatus === 'active' && link ? {status:'active' as const,trainingUserId:String(link.trainingUserId)} : {status:linkStatus};
+  const localDate = canaryBusinessDate(now);
+  const effective = person.clientId && person.clientStatus === 'active'
+    ? await resolveEffectiveClientAssignments(db, String(person.clientId), now)
+    : { localDate, effective:{assignments:[]}, nextKnownAccessTransition:null };
+  const memberships: EffectiveMembershipForCapabilities[] = [];
+  for (const assignment of effective.effective.assignments) {
+    const rights = assignment.rights.filter(right => right.rightType === 'training_access' && (right.trainingAccessLevel === 'full' || right.trainingAccessLevel === 'autonomous'));
+    if (!rights.length) continue;
+    const status = assignment.operationalAccess;
+    let accessState: CapabilityAccessState;
+    if (assignment.status === 'paused' || assignment.status === 'cancelled' || assignment.status === 'expired') accessState = 'ended';
+    else if (assignment.status === 'scheduled') accessState = 'blocked_unpaid';
+    else if (status === 'active' || status === 'provisional' || status === 'blocked_unpaid' || status === 'ended') accessState = status;
+    else accessState = 'blocked_unpaid';
+    for (const right of rights) memberships.push({trainingAccessLevel:right.trainingAccessLevel as 'full'|'autonomous',accessState,effectiveFrom:assignment.startsOn});
+  }
+  const [suspension] = await db`SELECT action FROM platform_training_access_events WHERE person_id=${personId}::uuid ORDER BY occurred_at DESC,id DESC LIMIT 1`;
+  const suspensionStatus = suspension?.action === 'suspended' ? 'suspended' : suspension?.action === 'lifted' ? 'lifted' : 'none';
+  const payload = resolveTrainingCapabilities({
+    personId,
+    link:activeLink,
+    memberships,
+    generatedAt:now.toISOString(),
+    nextKnownAccessTransition:effective.nextKnownAccessTransition,
+    suspensionStatus,
+  });
+  const parsed = trainingCapabilitiesResponseSchema.safeParse(payload);
+  return parsed.success ? { status: 'ok', payload: parsed.data } : { status: 'invalid' };
+}
 
 /** Read-only, server-authenticated Platform capability endpoint. */
 export function registerTrainingCapabilitiesRoute(app: FastifyInstance<any,any,any,any,any>, db: DB, keys: InternalServiceKeys) {
@@ -28,47 +78,12 @@ export function registerTrainingCapabilitiesRoute(app: FastifyInstance<any,any,a
     if (verified && 'unavailable' in verified) return reply.code(503).send({error:'service_auth_unavailable'});
     if (!verified) return reply.code(401).send({error:'service_auth_rejected'});
 
-    const [person] = await db`SELECT p.status,pc.client_id AS "clientId",c.status AS "clientStatus"
-      FROM platform_persons p LEFT JOIN platform_person_clients pc ON pc.person_id=p.id
-      LEFT JOIN clients c ON c.id=pc.client_id WHERE p.id=${params.data.personId}::uuid`;
-    if (!person || person.status !== 'active') return reply.code(404).send({error:'person_not_found'});
-
-    const [link] = await db`SELECT status,training_user_id AS "trainingUserId" FROM training_account_links
-      WHERE person_id=${params.data.personId}::uuid ORDER BY updated_at DESC,created_at DESC,link_id DESC LIMIT 1`;
-    const linkStatus: TrainingLinkStatus = link?.status === 'active' ? 'active' : link?.status === 'revoked' ? 'revoked' : 'not_linked';
-    const activeLink = linkStatus === 'active' && link ? {status:'active' as const,trainingUserId:String(link.trainingUserId)} : {status:linkStatus};
-    const now = new Date();
-    const localDate = canaryBusinessDate(now);
-    const effective = person.clientId && person.clientStatus === 'active'
-      ? await resolveEffectiveClientAssignments(db, String(person.clientId), now)
-      : { localDate, effective:{assignments:[]}, nextKnownAccessTransition:null };
-    const memberships: EffectiveMembershipForCapabilities[] = [];
-    for (const assignment of effective.effective.assignments) {
-      const rights = assignment.rights.filter(right => right.rightType === 'training_access' && (right.trainingAccessLevel === 'full' || right.trainingAccessLevel === 'autonomous'));
-      if (!rights.length) continue;
-      const status = assignment.operationalAccess;
-      let accessState: CapabilityAccessState;
-      if (assignment.status === 'paused' || assignment.status === 'cancelled' || assignment.status === 'expired') accessState = 'ended';
-      else if (assignment.status === 'scheduled') accessState = 'blocked_unpaid';
-      else if (status === 'active' || status === 'provisional' || status === 'blocked_unpaid' || status === 'ended') accessState = status;
-      else accessState = 'blocked_unpaid';
-      for (const right of rights) memberships.push({trainingAccessLevel:right.trainingAccessLevel as 'full'|'autonomous',accessState,effectiveFrom:assignment.startsOn});
-    }
-    const [suspension] = await db`SELECT action FROM platform_training_access_events WHERE person_id=${params.data.personId}::uuid ORDER BY occurred_at DESC,id DESC LIMIT 1`;
-    const suspensionStatus = suspension?.action === 'suspended' ? 'suspended' : suspension?.action === 'lifted' ? 'lifted' : 'none';
-    const payload = resolveTrainingCapabilities({
-      personId:params.data.personId,
-      link:activeLink,
-      memberships,
-      generatedAt:now.toISOString(),
-      nextKnownAccessTransition:effective.nextKnownAccessTransition,
-      suspensionStatus,
-    });
-    const parsed = responseSchema.safeParse(payload);
-    if (!parsed.success) {
+    const computed = await computeTrainingCapabilities(db, params.data.personId);
+    if (computed.status === 'not_found') return reply.code(404).send({error:'person_not_found'});
+    if (computed.status === 'invalid') {
       request.log.error({errorCode:'training_capability_contract_invalid'},'capability response failed contract validation');
       return reply.code(500).send({error:'capability_contract_invalid'});
     }
-    return reply.code(200).send(parsed.data);
+    return reply.code(200).send(computed.payload);
   });
 }

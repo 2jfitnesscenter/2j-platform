@@ -7,6 +7,8 @@
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
+    "build:demo": "node scripts/build-demo.mjs",
+    "preview:demo": "vite preview --outDir dist-demo --host 127.0.0.1 --port 4173 --strictPort",
     "test": "node --import tsx --test test/*.test.mjs",
     "cap:sync": "cap sync"
   },
