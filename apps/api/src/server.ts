@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import Fastify, { type FastifyError, type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import { createHash, createHmac } from 'node:crypto';
@@ -10,7 +11,9 @@ import { registerClientPlanRoutes } from './client-plans.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-service-auth.js';
 import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
+import { registerTrainingSsoRoutes } from './training-sso.js';
 import { registerTrainingSuspensionRoutes } from './training-suspensions.js';
+import { createTrainingSignalDispatcher } from './training-signals.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
@@ -24,7 +27,10 @@ import { registerStaffRoutes } from './staff.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
-import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
+import { registerPlatformPasskeyRoutes } from './platform-passkeys.js';
+import { createTrainingLinkTransactions, registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
+import { registerTrainingLinkReviewRoutes } from './training-link-review.js';
+import { createTrainingLinkFlow, createTrainingServiceClient, registerTrainingLinkFlowRoutes, type TrainingServiceClient } from './training-link-flow.js';
 import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, type TrainingAdapter } from './training-integration.js';
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
@@ -148,6 +154,22 @@ export function mapDatabaseError(error: unknown) {
   return { status: 500, body: { error: 'internal_error', message: 'No se pudo completar la operación.' } };
 }
 
+/** Validates the trusted-proxy list: concrete addresses or narrow CIDRs only, so a typo can never trust the whole internet. */
+export function parseTrustedProxies(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 4) throw new Error('trustedProxies must be a list of at most 4 proxy addresses.');
+  return value.map(entry => {
+    if (typeof entry !== 'string') throw new Error('trustedProxies entries must be strings.');
+    const [address, prefix, ...rest] = entry.trim().split('/');
+    const family = address ? isIP(address) : 0;
+    const bits = family === 4 ? 32 : 128;
+    const length = prefix === undefined ? bits : /^\d{1,3}$/.test(prefix) ? Number(prefix) : NaN;
+    const minimum = family === 4 ? 16 : 64;
+    if (!family || rest.length || !Number.isInteger(length) || length > bits || (prefix !== undefined && length < minimum)) throw new Error('trustedProxies entries must be an IP address or a CIDR no wider than /16 (IPv4) or /64 (IPv6).');
+    return prefix === undefined ? address! : `${address}/${length}`;
+  });
+}
+
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
   bookingEligibilityResolver?: BookingEligibilityResolver;
@@ -168,8 +190,30 @@ export type ServerOptions = {
   trainingSummaryEnabled?: boolean;
   trainingSummaryAdapter?: TrainingAdapter;
   trainingCapabilitiesKeys?: InternalServiceKeys;
+  /** One-time Training SSO (Platform -> Búnker). Off by default; never enabled implicitly. */
+  trainingSsoEnabled?: boolean;
+  trainingSsoRedirectUrl?: string | null;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
+  /** Bilateral link lifecycle (finish linking with the owner's proof, activate, revoke). Off by default; needs verified + canonical linking and service calls. */
+  /** Platform-owned WebAuthn passkeys. Off by default; refused outside development/test until a human security review approves a rollout. */
+  platformPasskeysEnabled?: boolean;
+  /** Exact relying-party id, immutable once credentials exist (for example home.2jfitnesscenter.com). */
+  platformPasskeyRpId?: string | null;
+  platformPasskeyMaxRequestsPerMinute?: number;
+  /** Exact addresses/CIDRs of the reverse proxies allowed to set X-Forwarded-For/-Proto (empty = trust none, the default). Never `true` or a catch-all: see docs/runbooks/2J-INT-proxy-and-rate-limits.md. */
+  trustedProxies?: string[];
+  trainingLinkLifecycleEnabled?: boolean;
+  /** Idempotent provisioning of a minimal Training profile. Off by default. */
+  trainingProvisioningEnabled?: boolean;
+  /** Manual review queue for Training links that cannot be completed with the owner's passkey proof (A26). Off by default. */
+  trainingLinkReviewEnabled?: boolean;
+  /** Signed suspension/lift signals to Training (2J-CAPABILITY-SIGNAL-V1). Proof of concept: off by default and refused outside development/test. Needs the signed Training client. */
+  trainingSignalsEnabled?: boolean;
+  trainingSignalsIntervalMs?: number;
+  trainingServiceClient?: TrainingServiceClient;
+  /** Development/test only: lets the signed Training client talk to a loopback http origin. */
+  trainingServiceAllowInsecureLoopback?: boolean;
   logger?: FastifyServerOptions['logger'];
 };
 
@@ -177,9 +221,14 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   if (options.memberPilotAuthEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) {
     throw new Error('Pilot member authentication is restricted to development/test environments.');
   }
+  if (options.trainingProvisioningEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training provisioning is restricted to development/test environments until a later, explicitly approved phase.');
+  if (options.trainingSignalsEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training signals are a proof of concept, restricted to development/test environments until a later, explicitly approved phase.');
+  if (options.platformPasskeysEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Platform passkeys are restricted to development/test environments until a security review approves a rollout.');
   if (options.memberPilotBookingEnabled && (!options.memberPilotAuthEnabled || !['development', 'test'].includes(process.env.NODE_ENV ?? ''))) throw new Error('Member booking pilot mutations require development/test Member pilot authentication.');
   if (options.memberPilotCohortManagementEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Member pilot cohort management is restricted to development/test environments.');
+  const trustedProxies = parseTrustedProxies(options.trustedProxies);
   const app = Fastify({
+    trustProxy: trustedProxies.length ? trustedProxies : false,
     logger: options.logger ?? { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/' }; } } },
     bodyLimit: 16_384,
   });
@@ -194,10 +243,11 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     if (statusCode >= 500) app.log.error({ errorCode: fastifyError.code ?? 'unknown', method: request.method, route }, 'request failed');
     return reply.code(statusCode).send({ error: statusCode < 500 ? 'request_rejected' : 'internal_error' });
   });
+  if (options.trainingServiceAllowInsecureLoopback && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Insecure loopback Training calls are restricted to development/test environments.');
   const { client } = createDatabase(databaseUrl);
   const trainingCapabilitiesKeys = options.trainingCapabilitiesKeys ?? parseInternalServiceKeys(process.env.PLATFORM_INTERNAL_SERVICE_KEYS);
   const authorizationResolver = options.authorizationResolver ?? (async () => null);
-  const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null });
+  const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
   const trainingSummaryAdapter = options.trainingSummaryEnabled === true && options.trainingServiceCallsEnabled === true
     ? options.trainingSummaryAdapter ?? (() => {
@@ -245,12 +295,20 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     }
     return payload;
   });
-  app.addHook('onClose', async () => { await client.end(); });
+  let stopTrainingSignals: () => void = () => {};
+  app.addHook('onClose', async () => { stopTrainingSignals(); await client.end(); });
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
   registerTrainingCapabilitiesRoute(app, client, trainingCapabilitiesKeys);
   registerTrainingSuspensionRoutes(app, client, authorizationResolver);
+  registerTrainingSsoRoutes(app, client, {
+    enabled: options.trainingSsoEnabled === true,
+    keys: trainingCapabilitiesKeys,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    redirectUrl: options.trainingSsoRedirectUrl ?? null,
+    allowedOrigin: options.memberAppOrigin ?? null,
+  });
   registerAssignmentPeriodRoutes(app, client, authorizationResolver);
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
   const allowMemberBooking = async (personId: string | undefined, request: import('fastify').FastifyRequest) => {
@@ -269,6 +327,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.addHook('onReady', async () => { push.start(); });
   app.addHook('onClose', async () => { push.stop(); });
   memberPilotAuth.register(app);
+  registerPlatformPasskeyRoutes(app, client, { enabled: options.platformPasskeysEnabled === true, rpId: options.platformPasskeyRpId ?? null, origin: options.memberAppOrigin ?? null, startSession: memberPilotAuth.startSession, resolveAuthorization: authorizationResolver, ...(options.platformPasskeyMaxRequestsPerMinute ? { maxRequestsPerMinute: options.platformPasskeyMaxRequestsPerMinute } : {}) });
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
@@ -289,7 +348,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
       fetcher: globalThis.fetch,
     }),
-    resolvePersonAuth: options.resolvePersonAuth ?? (async () => null),
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
   });
   app.decorate('trainingCanonicalLinkLifecycle', createTrainingCanonicalLinkLifecycle(client, {
     trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
@@ -299,12 +358,52 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
       trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
       trainingCanonicalLinkingEnabled: options.trainingCanonicalLinkingEnabled === true,
+      ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
       ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
       ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
       ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
       fetcher: globalThis.fetch,
     }),
   }));
+  const lifecycleOn = options.trainingLinkLifecycleEnabled === true || options.trainingProvisioningEnabled === true || options.trainingSignalsEnabled === true;
+  const trainingServiceClient = options.trainingServiceClient ?? createTrainingServiceClient({
+    trainingVerifiedLinkingEnabled: lifecycleOn,
+    trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
+    ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
+    ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
+    fetcher: globalThis.fetch,
+    ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
+  });
+  const linkVerifier = options.trainingLinkVerifier ?? createRemoteTrainingLinkVerifier({
+    trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
+    trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
+    ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
+    ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
+    fetcher: globalThis.fetch,
+    ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
+  });
+  const trainingSignals = createTrainingSignalDispatcher(client, { client: trainingServiceClient, enabled: options.trainingSignalsEnabled === true && options.trainingServiceCallsEnabled === true, ...(options.trainingSignalsIntervalMs ? { intervalMs: options.trainingSignalsIntervalMs } : {}), logger: app.log });
+  (app as unknown as { trainingSignals: typeof trainingSignals }).trainingSignals = trainingSignals;
+  app.addHook('onReady', async () => { trainingSignals.start(); });
+  stopTrainingSignals = () => trainingSignals.stop();
+  registerTrainingLinkFlowRoutes(app, client, {
+    enabled: options.trainingLinkLifecycleEnabled === true && options.trainingVerifiedLinkingEnabled === true && options.trainingCanonicalLinkingEnabled === true && options.trainingServiceCallsEnabled === true,
+    provisioningEnabled: options.trainingProvisioningEnabled === true && options.trainingServiceCallsEnabled === true,
+    flow: createTrainingLinkFlow(client, { client: trainingServiceClient }),
+    transactions: createTrainingLinkTransactions(client, { enabled: options.trainingVerifiedLinkingEnabled === true, serviceCallsEnabled: options.trainingServiceCallsEnabled === true, verifier: linkVerifier }),
+    lifecycle: (app as unknown as { trainingCanonicalLinkLifecycle: ReturnType<typeof createTrainingCanonicalLinkLifecycle> }).trainingCanonicalLinkLifecycle,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    resolveAuthorization: authorizationResolver,
+    allowedOrigin: options.memberAppOrigin ?? null,
+  });
+  registerTrainingLinkReviewRoutes(app, client, {
+    enabled: options.trainingLinkReviewEnabled === true,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    resolveAuthorization: authorizationResolver,
+    allowedOrigin: options.memberAppOrigin ?? null,
+  });
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }
@@ -617,6 +716,18 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
     trainingServiceCallsEnabled: process.env.TRAINING_SERVICE_CALLS_ENABLED === 'true',
     trainingSummaryEnabled: process.env.TRAINING_SUMMARY_ENABLED === 'true',
+    trainingVerifiedLinkingEnabled: process.env.TRAINING_VERIFIED_LINKING_ENABLED === 'true',
+    trainingCanonicalLinkingEnabled: process.env.TRAINING_CANONICAL_LINKING_ENABLED === 'true',
+    platformPasskeysEnabled: process.env.PLATFORM_PASSKEYS_ENABLED === 'true',
+    trustedProxies: (process.env.PLATFORM_TRUSTED_PROXIES ?? '').split(',').map(value => value.trim()).filter(Boolean),
+    platformPasskeyRpId: process.env.PLATFORM_PASSKEY_RP_ID ?? null,
+    trainingLinkLifecycleEnabled: process.env.TRAINING_LINK_LIFECYCLE_ENABLED === 'true',
+    trainingProvisioningEnabled: process.env.TRAINING_PROVISIONING_ENABLED === 'true',
+    trainingSignalsEnabled: process.env.TRAINING_SIGNALS_ENABLED === 'true',
+    ...(Number.isInteger(Number(process.env.TRAINING_SIGNALS_INTERVAL_MS)) && Number(process.env.TRAINING_SIGNALS_INTERVAL_MS) >= 100 ? { trainingSignalsIntervalMs: Number(process.env.TRAINING_SIGNALS_INTERVAL_MS) } : {}),
+    trainingServiceAllowInsecureLoopback: process.env.TRAINING_SERVICE_ALLOW_INSECURE_LOOPBACK === 'true',
+    trainingSsoEnabled: process.env.TRAINING_SSO_ENABLED === 'true',
+    trainingSsoRedirectUrl: process.env.TRAINING_SSO_REDIRECT_URL ?? null,
     memberAppOrigin: process.env.MEMBER_APP_ORIGIN ?? null,
     ...(localDemoClientId ? { clientAuthorizationResolver: async () => ({ clientId: localDemoClientId.toLowerCase() }) } : {}),
   });

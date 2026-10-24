@@ -1,0 +1,21 @@
+{
+  "taskId": "2J-INT-H2",
+  "status": "implementation_reviewed_fixes_applied",
+  "branch": "agent/claude/2J-INT-PLATFORM-IDENTITY",
+  "baseSha": "f87818afe474176c6e6ae77cb4d62a7e73fc1adf",
+  "migration": "0039_training_sso_codes.sql",
+  "tables": ["platform_training_sso_codes"],
+  "endpoints": {
+    "issue": "POST /api/me/training/sso (member session, exact member-app origin required)",
+    "redeem": "POST /api/internal/platform/v2/sso/redeem (2J-SERVICE-AUTH-V1, caller bunker only)"
+  },
+  "featureGates": { "trainingSsoEnabled": false },
+  "codePolicy": { "storedForm": "sha256_only", "ttlSeconds": 60, "singleUse": true, "liveCodesPerPerson": 1, "issuesPerPersonPerMinute": 10, "rejectionAuditsPerCode": 5, "boundTo": ["personId", "authSubject", "trainingUserId", "audience", "purpose"] },
+  "securityControls": ["origin_required_for_all_providers", "person_row_share_lock_during_redemption", "capabilities_read_inside_transaction", "service_auth_replay_protection", "fail_closed"],
+  "contract": "2J-CAPABILITIES-V2",
+  "notImplemented": ["production credential (passkeys)", "provisioning", "ACK/lifecycle messages", "production activation"],
+  "trainingRepositoryTouched": false,
+  "credentialsStored": false,
+  "review": { "independentCodeReview": "performed_findings_addressed_see_consolidated_report", "backendSecurity": "pending", "independentQa": "pending" },
+  "pullRequest": null
+}
