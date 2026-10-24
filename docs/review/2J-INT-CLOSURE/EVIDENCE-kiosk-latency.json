@@ -1,0 +1,79 @@
+{
+  "startedAt": "2026-10-23T08:43:31.165Z",
+  "pollMs": 250,
+  "capabilityCacheMaxMs": 60000,
+  "trials": [
+    {
+      "trial": 1,
+      "cacheAgeBeforeSuspensionMs": 38627,
+      "latencyMs": 21391,
+      "restorationMs": 60079
+    },
+    {
+      "trial": 2,
+      "cacheAgeBeforeSuspensionMs": 29886,
+      "latencyMs": 30298,
+      "restorationMs": 60035
+    },
+    {
+      "trial": 3,
+      "cacheAgeBeforeSuspensionMs": 20330,
+      "latencyMs": 39740,
+      "restorationMs": 60146
+    },
+    {
+      "trial": 4,
+      "cacheAgeBeforeSuspensionMs": 53008,
+      "latencyMs": 7252,
+      "restorationMs": 60178
+    },
+    {
+      "trial": 5,
+      "cacheAgeBeforeSuspensionMs": 29550,
+      "latencyMs": 30528,
+      "restorationMs": 60172
+    },
+    {
+      "trial": 6,
+      "cacheAgeBeforeSuspensionMs": 47063,
+      "latencyMs": 12978,
+      "restorationMs": 60231
+    },
+    {
+      "trial": 7,
+      "cacheAgeBeforeSuspensionMs": 40979,
+      "latencyMs": 19219,
+      "restorationMs": 60243
+    },
+    {
+      "trial": 8,
+      "cacheAgeBeforeSuspensionMs": 42226,
+      "latencyMs": 17786
+    }
+  ],
+  "platformSuspension": {
+    "n": 8,
+    "minMs": 7252,
+    "p50Ms": 19219,
+    "p95Ms": 39740,
+    "maxMs": 39740,
+    "neverBlocked": 0
+  },
+  "platformDownNobodyActs": {
+    "observedMs": 75233,
+    "statuses": [
+      200
+    ],
+    "kioskStillWorking": true,
+    "note": "free baseline includes autonomousTraining: an unknown (undeliverable) suspension does not reach the kiosk until Platform is back or someone disables the account locally"
+  },
+  "emergencyLocalDisable": {
+    "adminCallStatus": 200,
+    "firstBlockedAfter": {
+      "status": 401,
+      "ms": 6
+    },
+    "note": "independent of Platform; the account cannot sign in at all until re-enabled"
+  },
+  "finishedAt": "2026-10-23T09:00:49.685Z"
+}
