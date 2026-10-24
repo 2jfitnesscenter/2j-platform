@@ -12,7 +12,7 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
 const hash = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 // The structure of the WebAuthn response is validated by the library; here we only bound what we are willing to parse.
-const webauthnResponse = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{16,1024}$/), rawId: z.string().max(2048), type: z.literal('public-key'), response: z.record(z.unknown()), clientExtensionResults: z.record(z.unknown()).optional(), authenticatorAttachment: z.string().max(32).optional() }).passthrough();
+const webauthnResponse = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{16,1024}$/), rawId: z.string().max(2048), type: z.literal('public-key'), response: z.record(z.string(), z.unknown()), clientExtensionResults: z.record(z.string(), z.unknown()).optional(), authenticatorAttachment: z.string().max(32).optional() }).passthrough();
 
 export type PlatformPasskeyOptions = {
   enabled: boolean;
