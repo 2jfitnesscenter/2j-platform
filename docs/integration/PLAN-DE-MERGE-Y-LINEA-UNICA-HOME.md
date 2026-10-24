@@ -1,37 +1,67 @@
 # Plan de merge (aprobado como plan) y línea única de los commits visuales de Home
 
-Fecha de los datos: 2026-10-23, `main` de Platform = `c94830f`. **Nada se fusiona sin el «sí» explícito del propietario en ese momento; cada paso se propone solo con su CI en verde.** No se reescribe la historia de ninguna rama ya publicada: todo lo siguiente usa commits de *merge* o ramas nuevas.
+Actualizado: 2026-10-24. `main` de Platform = `7b58555` (incluye #75, zod 4). **Nada se fusiona sin el «sí» explícito del propietario en ese momento; cada paso se propone solo con su CI en verde, después de #75 y de un merge de `main` en su rama.** No se reescribe la historia de ninguna rama publicada: todo usa commits de *merge* o ramas nuevas.
 
-## 1. Orden aprobado y estado
+## 0. Dos repositorios
 
-| Paso | PR | CI hoy | Antes de proponerlo / notas |
+| Repositorio | PRs |
+|---|---|
+| **`2jfitnesscenter/2j-platform`** (Platform) | todo lo de Platform **y también todo Home** (la app de Home vive en `apps/client-app` de este repo): #64–#67, #69–#74, #76–#78, **#82–#86 (pila de Home de Work Home)**, #80, #81, #88, #87, #51, #52 |
+| **`2jfitnessapp`** (Búnker) | #56, #57, #58, #59, #61, #62 (#60 ya fusionado) |
+
+Por tanto: **los PRs de Home (#74, #76–#78, #82–#86) están en `2j-platform`**, no en el repositorio de Búnker; su CI es el de Platform (`quality` + `secret scan`). Los despliegues son distintos: Home se construye junto a Platform (`apps/client-app`), Búnker es otro stack y otro repo.
+
+## 1. Orden aprobado y estado (CI a 2026-10-24, tras fusionar `main` en cada rama)
+
+### Platform / Home (repo `2j-platform`)
+| Paso | PR | CI | Antes de proponerlo |
 |---|---|---|---|
-| 1 | **#75** zod 4 (nuevo, desbloquea el resto) | **verde** (4/4) | **Propongo este primero**: sin él, `pnpm audit --audit-level high` falla en cualquier PR que se vuelva a ejecutar (aviso GHSA-mrhx-c7xc-m3w5, publicado hoy). Sin migraciones |
-| 2 | #69 checksums/LF/prefijos únicos | verde, **pero la ejecución es anterior al aviso de zod** | tras #75: fusionar `main` en la rama y volver a lanzar el CI |
-| 3 | #70 calendario (Codex), sustituye a #50 (se cierra como sustituido) | verde (2/2) | mismo reejecutado tras #75; sin solapes con mis PRs (medido) |
-| 4 | SSO #64 → #65 → #66 → #67 (+ #81 cola de revisión encima) | #64–#66 verdes (ejecuciones antiguas), #67 y #81 con rojos | antes de #64: fusionar `main` (con #68 y #75) en la rama de #64 y propagar por la pila con commits de merge (arregla los 3 tests de reloj y la auditoría). Migraciones 0039–0043 (+0045 de #81) |
-| 5 | #71 push (migración 0044) | auditoría en rojo (zod) | tras #75 y un merge de `main`; choca con #67 en `apps/api/package.json`, `pnpm-lock.yaml`, `server.ts`, `.env.example` (el segundo en entrar rebasa/mergea) |
-| 6 | #73 capacidades V2.1 + Búnker #58 | auditoría en rojo (zod) | tras #75; Búnker #58 va apilado sobre #56/#57 (Búnker antes que Platform en cualquier despliegue) |
-| 7 | Pila Home #74 → #76 → #77 → #78 | rojos por reloj/zod | **ya actualizadas con `main`** (3634dc1…); tras #75, un merge más; ver §2 |
-| 8 | #51 y #52 (Design V2) | verdes (antiguos) | #52 renumera `0033_store_product_media` (propuesta en el informe de #69); rebase/merge sobre `main` |
+| 0 | **#75** zod 4 | fusionado | — |
+| 1 | **#69** checksums/LF/prefijos únicos | verde | `main` ya incorporado |
+| 2 | **#70** calendario (sustituye a #50, que se cierra como sustituido) | verde | `main` incorporado |
+| 3 | **#88** reconocer un falso positivo de gitleaks | nuevo, borrador | **fusionarlo antes que nada de Home**: el `secret scan` de #76–#78, #81 y la pila de Home falla por un SHA citado en un handoff de la rama de #85 (`generic-api-key`, línea 6); no se reescribe esa rama, se reconoce en `.gitleaksignore`. Después, un merge de `main` en cada rama afectada |
+| 4 | SSO **#64 → #65 → #66 → #67** (+ **#81** cola de revisión encima) | #64–#66 verdes; #67 y #81 con el typecheck roto por zod 4 → **corregido** (`z.record` con dos argumentos, commit `deec99c`; API 282/282) y propagado a #81; CI relanzándose | migraciones 0039–0043 (+0045 de #81) |
+| 5 | **#71** push (migración 0044) | verde | choca con #67 en `apps/api/package.json`, `pnpm-lock.yaml`, `server.ts`, `.env.example`: el segundo en entrar resuelve (receta en §3) |
+| 6 | **#73** capacidades V2.1 + `trainingCapabilities` en `/api/me/membership` | verde | Búnker #58 va después de #56/#57; Búnker antes que Platform en cualquier despliegue |
+| 7 | **#80** D185 elegibilidad en el listado de sesiones (Work Platform) | 1 de 2 ejecuciones en rojo | **No proponerlo todavía**: revisión independiente con hallazgos (ver §4) por resolver; CI en verde con `pnpm audit` |
+| 8 | **Pila de Home en orden: #74 → #76 → #77 → #78 → #82 → #83 → #84 → #85 → #86** | #74, #76–#78: `quality` verde (el `secret scan` se arregla con #88); #82–#86: pendientes tras el merge de `main` | todas ya contienen `main` (merge propagado por la pila, sin reescribir) |
+| 9 | **#51 y #52** (Design V2) | verdes (antiguos) | **conflicto real al incorporar `main`**: `apps/admin-web/src/calendar-page.tsx` y `apps/admin-web/test/clients-page.test.mjs` (y `apps/api/package.json` en #52) por el solape con #70 (calendario). Lo resuelve Work Platform tras fusionar #70; #52 renumera `0033_store_product_media` |
+| — | #87 renombrar D278/D279 → INT-V2-03/04 (docs) | borrador | independiente |
+
+**#86 (capabilities de Training V2.1 en Home) está bloqueado hasta que #73 esté integrado en `main`** (Home lee `trainingCapabilities` de `/api/me/membership`, que añade #73).
+
+### Búnker (repo `2jfitnessapp`)
+| PR | Estado | Nota |
+|---|---|---|
+| #60 | fusionado | arregla la inestabilidad de tests de locales/corrupción (ya con `main` en las ramas) |
+| **#56 → #57 → #58** | `main` fusionado en las tres ramas (merge commits) | #58 = consumidor V2.1 opt-in **+ corrección de la caché por (personId, trainingUserId)** (§5); API 912/912 |
+| **#61** consumidor del Codex | **sustituido, no fusionar** | implementación canónica = la de #56/#58 (`platform-sso`); su idea de test de partición ya está portada |
+| #59 Caddy/guardia/compose | **revisión independiente hecha** (§6); no autorizado | decisión y despliegue del propietario |
+| #62 renombrar D276–D282 → INT-V2-01..07 | borrador | docs |
 
 ## 2. Una sola línea para los 5 commits visuales de Home
 
-**Línea canónica: #65** (`agent/claude/2J-INT-HOME-CONNECTED`), la única revisada y con el SSO encima. Los cinco parches son idénticos en las tres copias (`git patch-id --stable`: `40a09fb06f`, `e389eb10a3`, `4e2eafccbc`, `259f09c7e2`, `3b341ed8e8`):
+Línea canónica: **#65**. Los cinco parches son idénticos en las tres copias (`git patch-id`: `40a09fb06f`, `e389eb10a3`, `4e2eafccbc`, `259f09c7e2`, `3b341ed8e8`). Se fusiona SSO (#64→#67) primero; la pila de Home entra después con commits de merge (git trata los parches idénticos como el mismo cambio). Ramas redundantes (`agent/claude/2J-INT-HOME-REBASE`, `agent/codex/2J-HOME-VISUAL-UNIFICATION`, `agent/codex/2J-HOME-004-staging-readiness`): marcadas como sustituidas, no borradas.
 
-| Parche | #65 | Pila de Home (#74…) | Otras ramas |
-|---|---|---|---|
-| demo sintética | `7bb8ce0` | `0025d6c` | `9eadc78` (INT-HOME-REBASE), `0025d6c` (codex VISUAL-UNIFICATION) |
-| staging candidate | `01a93ad` | `0987639` | `aa488e7`; también `codex/2J-HOME-004-staging-readiness` |
-| visuales Búnker | `5d0e037` | `88b7163` | `a7accd5` |
-| handoff visual | `2f16996` | `a9cd24d` | `75a2484` |
-| corrección del handoff | `dd144e9` | `6763cf9` | `1bc037f` |
+## 3. Conflicto conocido #86 ↔ SSO y cómo se resolverá (a mi cargo, sin force-push)
+- La rama `agent/claude/2J-INTEGRATION-PREVIEW` (no fusionable; **se mantiene como rama de comprobación**) ya demuestra la unión pila de Home (hasta #78) + SSO + push + `main`: único conflicto textual `apps/client-app/src/client-app.tsx` (tres bloques donde SSO añade código → se toma el lado SSO) más la unión de `package.json`/`.env.example` y regenerar el lockfile; las pruebas SSO de Home necesitan el formato `active: []` de `/api/me/membership`. Verificado: API 290/290, client-app 39/39.
+- **#86 toca `client-app.tsx` y no estaba en esa comprobación**: cuando el SSO (#64–#67) esté en `main`, hago `merge main` en la rama de #86 (y propago por la pila), resuelvo el conflicto con la misma receta, ejecuto client-app y API completos y lo propongo solo con CI verde. Sin rebase ni force-push.
 
-Qué se hace (sin reescribir nada publicado):
-1. **Se fusiona SSO (#64→#67) primero** (orden aprobado), de modo que #65 introduce los cinco una sola vez en `main`.
-2. **La pila de Home entra después con commits de merge**: git trata los parches idénticos como el mismo cambio (sin conflicto, sin contenido duplicado). La historia conservará las copias, el contenido no.
-3. **Las ramas redundantes quedan marcadas como sustituidas, sin borrarlas**: `agent/claude/2J-INT-HOME-REBASE`, `agent/codex/2J-HOME-VISUAL-UNIFICATION`, `agent/codex/2J-HOME-004-staging-readiness` (ninguna tiene PR). No se les añadirán commits; se cierran/borran solo si el propietario lo pide.
-4. **Prueba de que la unión funciona** (rama `agent/claude/2J-INTEGRATION-PREVIEW`, 2602953; **no es un PR ni se fusiona**): pila de Home + `main` + #71 + pila SSO. El único conflicto textual real fue `apps/client-app/src/client-app.tsx` (tres bloques donde SSO añade código sobre texto que Home no cambió → se toma el lado SSO) más la unión de `package.json`/`.env.example`/lockfile (`web-push` y `@simplewebauthn/server`), y las pruebas SSO de Home necesitan el formato de `/api/me/membership` de D31 (`active: []`; una línea de test). Resultado verificado: **API 290/290, client-app 39/39, typecheck OK**, gitleaks sin hallazgos. Sirve de receta exacta para cuando entren los PRs.
+## 4. Revisión independiente de #80 (D185) — hallazgos (agente distinto del autor; solo lectura; no ejecutó los tests)
+Sin hallazgos de severidad alta. A resolver por Work Platform **antes** de proponer el merge: (1) la lista dice «available» sin replicar los controles reales de documentos pendientes, deuda (`debtBlocksNewBooking`) y selección de cuota; (2) «waitlisted» no replica el criterio real de promoción (puede saltarse por deuda/documento); (3) «full» se evalúa antes que la elegibilidad (oculta la falta de derecho; asimetría con `ignoreDebt` en la espera); (4) razones ajenas al plan (sesión empezada, conflicto, duplicada) etiquetadas «not_allowed_by_plan»; (5) N+1 secuencial dentro de una transacción (hasta ~2000–3000 consultas); (6) `availabilityReason` expone códigos internos; D185 pide solo hora y disponibilidad; (10) faltan pruebas (cuota agotada, esperas suspendidas, sesión pasada/cancelada, consistencia lista-vs-acción). La documentación omite estos matices. **No lo he podido verificar con los tests (el revisor no instaló dependencias); CI remoto: 1 de 2 ejecuciones en rojo.**
 
-## 3. Sobre «actualizar #74 y #76 con `main`»
-Hecho con merges (sin reescribir): #74 → `3634dc1`, #76 → `7832765`, #77 → `4abe4e4`, #78 → `7074177`. Arregla los 3 tests de reloj (#68). La auditoría de zod **solo** se arregla cuando #75 esté en `main`; entonces hará falta otro `merge main` en cada una (lo hago yo, sin reescribir).
+## 5. #58: caché por (personId, trainingUserId)
+Confirmado con 5 tests que fallaban (una segunda cuenta de Training de la misma persona heredaba la respuesta verificada de la primera, compartía la petición en vuelo y la memoria de rechazos). Corregido: clave `persona\nusuario`, cada acierto de caché revalida que responde al usuario que pregunta, `prime` solo para el par que nombra la respuesta, `forget(persona)` borra todas las particiones. API de Búnker 912/912.
+
+## 6. Revisión independiente de Búnker #59 (solo lectura) — resumen
+Sin acceso a producción. El guardia existente **falla cerrado** y compara por bytes; el rollback es independiente del destino. Hallazgos: **(alta)** nada comprueba que existan las redes externas `2j-home-staging-proxy` y `2j-pwa-demo-edge` antes de `up -d`; si faltan, el despliegue falla y el rollback falla igual (su compose también las declara) → el stack entero queda sin poder arrancar por una dependencia de Home/staging; **(media-alta)** Caddy no se recarga ni se valida (`caddy validate/reload`) al cambiar solo el Caddyfile: un fichero inválido tumba todos los dominios, y el guardia compara el disco, no lo cargado; **(media)** el rollback y la sonda de salud no cubren home./staging-home. ni assetlinks; la doc afirma un «manifiesto con hashes» que el PR no contiene; el guardia no detecta ficheros extra en `caddy-config/`; staging-home sin noindex/HSTS; **(baja)** `caddy:2-alpine` sin fijar. Tests del kit: 99/99 en una copia limpia. Lista de comprobaciones de solo lectura que debe hacer el propietario en el servidor: en el informe del revisor (comandos `sha256sum`, `docker network ls`, `docker compose config -q`, `caddy validate`, `curl -sI`…), pegada abajo en §8.
+
+## 7. Backlog de endurecimiento (añadido por decisión del propietario)
+1. **Activar auditd y un registro de despliegues en el servidor de producción** (quién despliega qué y cuándo; ficheros de configuración vigilados: Caddyfile, compose, `.env`, `data/`).
+2. **Plan de retirada de las rutas de staging del Caddy de producción** (`staging-home.` y el bloque de demos) cuando exista el nuevo staging (Contabo, 2jfit.es): verificar que el nuevo staging funciona → quitar los bloques y las redes externas del compose de producción en un cambio revisado → comprobar con `caddy validate` y sondas.
+3. Del informe de #59: pre-comprobación de redes y `compose config -q`, `caddy validate` + recarga controlada, sondas a home./staging-home./assetlinks, versión fija de Caddy, manifiesto real con los hashes, noindex/HSTS en staging.
+4. Platform: autenticación de personal apta para servidor (hoy el rol de demostración solo existe en `NODE_ENV=development`); mientras tanto el staging expone el admin con contraseña + lista de IP (ver runbook de staging).
+5. Zod 4: revisar los límites estrictos de `uuid`/`datetime` en esquemas sin test.
+
+## 8. Comprobaciones de solo lectura para el propietario en producción (de la revisión de #59)
+`cd /opt/2jfitness && sha256sum Caddyfile caddy-config/Caddyfile docker-compose.prod.yml; ls -la caddy-config` · comparar con `git show origin/fix/production-config-guard-reconciliation:caddy-config/Caddyfile | sha256sum` · `docker network ls | grep -E '2j-home-staging-proxy|2j-pwa-demo-edge'` · `docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q` · `docker exec <caddy> caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` · `docker exec <caddy> sha256sum /etc/caddy/Caddyfile` · `curl -sI https://app.2jfitnesscenter.com/` (y home., staging-home.) · `curl -s -o /dev/null -w '%{http_code}\n' -X POST https://app.2jfitnesscenter.com/api/platform/v1/link-proofs` (esperado 401/403, nunca 2xx) · `ls -la /root/backups | tail` · `stat -c '%U:%G %a %y' /opt/2jfitness/{.env,data,Caddyfile,caddy-config/Caddyfile,docker-compose.prod.yml}`.
