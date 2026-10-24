@@ -47,6 +47,10 @@ export function isHubPreviewEnabled(buildFlag: unknown, search: string): boolean
   return requested.length === 1 && requested[0] === '1';
 }
 
+export function isHubDemoBuild(buildFlag: unknown): boolean {
+  return buildFlag === true || buildFlag === 'true';
+}
+
 const labels: Record<string, string> = {
   member_pilot_action_not_enabled: 'Las reservas desde la app todavía no están activadas para tu cuenta.',
   session_full: 'La sesión está completa', space_available: 'La sesión ya tiene plazas disponibles', service_archived: 'El servicio ya no está disponible', area_archived: 'El área ya no está disponible',
@@ -158,10 +162,60 @@ const makeHubPreview = (now = new Date()) => {
     purchases: [{id:'b0000000-0000-4000-8000-000000000001',status:'completed',paymentState:'paid',totalCents:3290,createdAt:now.toISOString(),lines:[{productName:'Proteína 2J',variantLabel:'Chocolate · 900 g',quantity:1,unitPriceCents:3290,lineTotalCents:3290}]}] satisfies MemberPurchase[],
   };
 };
-const HUB_TRAINING_URL = 'https://app.2jfitnesscenter.com';
+/** https, or http only on loopback (local/staging tests); never credentials. Shared by every URL this module will follow or link to. */
+function isHttpsOrLoopback(url: URL): boolean {
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+  return !url.username && !url.password && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback));
+}
+
+/** Training URL for this build: empty in the synthetic demo; a staging/local override must be https (or loopback http); otherwise production. */
+export function resolveTrainingUrl(demoFlag: unknown, configured: unknown): string {
+  if (demoFlag === 'true') return '';
+  if (typeof configured === 'string' && configured) {
+    try {
+      const url = new URL(configured);
+      if (isHttpsOrLoopback(url) && !url.search && !url.hash) return url.origin;
+    } catch { /* fall through to production */ }
+  }
+  return 'https://app.2jfitnesscenter.com';
+}
+const HUB_TRAINING_URL = resolveTrainingUrl(import.meta.env?.VITE_2J_HUB_DEMO, import.meta.env?.VITE_2J_TRAINING_URL);
 const HUB_STAFF_URL = import.meta.env?.VITE_2J_STAFF_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5175' : '');
 const HUB_ADMIN_URL = import.meta.env?.VITE_2J_ADMIN_URL || (import.meta.env?.DEV ? 'http://127.0.0.1:5174' : '');
 const HUB_BUILD_ID = import.meta.env?.VITE_2J_BUILD_ID || 'local';
+// Connected Búnker entry through Platform's one-time SSO. Off unless the build explicitly enables it; the synthetic demo never does.
+const HUB_TRAINING_SSO_BUILD = import.meta.env?.VITE_2J_TRAINING_SSO === 'true';
+
+/**
+ * Validates the destination Platform returned for the one-time SSO code. The browser only ever follows a URL whose origin is the
+ * configured Training origin, whose path is exactly `/sso` (the only page that redeems a code), with the code in the fragment
+ * (never in a query string) and no credentials.
+ */
+export const TRAINING_SSO_PATH = '/sso';
+export function trainingSsoDestination(redirectUrl: unknown, trainingUrl: string): string | null {
+  if (typeof redirectUrl !== 'string' || !trainingUrl) return null;
+  try {
+    const target = new URL(redirectUrl), expected = new URL(trainingUrl);
+    if (target.origin !== expected.origin || !isHttpsOrLoopback(target) || target.search || target.pathname !== TRAINING_SSO_PATH) return null;
+    return /^#code=[A-Za-z0-9_-]{43,128}$/.test(target.hash) ? target.toString() : null;
+  } catch { return null; }
+}
+
+/** How the page leaves for Training. A same-tab navigation is right in a browser; tests replace `navigate`. */
+export const trainingSsoRuntime = { navigate: (url: string) => window.location.assign(url) };
+
+/** In the Capacitor shell a same-tab navigation would replace the whole app with the Training site, so the flag stays off there. */
+function isNativeShell(): boolean {
+  try { return typeof window !== 'undefined' && Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()); } catch { return false; }
+}
+
+const trainingSsoErrors: Record<string, string> = {
+  training_link_required: 'Tu cuenta todavía no está vinculada con Búnker. Puedes entrar con tu acceso habitual y pedir al centro que la vincule.',
+  training_access_suspended: 'El acceso a Búnker está suspendido. Habla con el centro para revisarlo.',
+  training_sso_rate_limited: 'Has pedido varias entradas seguidas. Espera un minuto e inténtalo de nuevo.',
+  authentication_required: 'Tu sesión ha caducado. Vuelve a iniciar sesión.',
+};
+export const trainingSsoMessage = (code: string) => trainingSsoErrors[code] ?? 'Ahora mismo no podemos abrir Búnker con tu cuenta del centro. Puedes entrar con tu acceso habitual.';
 
 export function selectNextConfirmedBooking(bookings: Booking[], now = Date.now()): Booking | null {
   return bookings
@@ -177,10 +231,27 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { previewModeOverride?: boolean; pilotLoginEnabledOverride?: boolean } = {}) {
-  const previewMode = previewModeOverride ?? isHubPreviewEnabled(import.meta.env?.VITE_2J_HUB_PREVIEW, typeof window === 'undefined' ? '' : window.location.search);
+export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trainingSsoEnabledOverride }: { previewModeOverride?: boolean; pilotLoginEnabledOverride?: boolean; trainingSsoEnabledOverride?: boolean } = {}) {
+  const previewMode = isHubDemoBuild(import.meta.env?.VITE_2J_HUB_DEMO) || (previewModeOverride ?? isHubPreviewEnabled(import.meta.env?.VITE_2J_HUB_PREVIEW, typeof window === 'undefined' ? '' : window.location.search));
   const pilotLoginEnabled = !previewMode && (pilotLoginEnabledOverride ?? import.meta.env?.VITE_2J_PILOT_MEMBER_LOGIN === 'true');
-  const pilotToolsEnabled = previewMode || import.meta.env?.DEV === true || import.meta.env?.VITE_2J_PILOT_TOOLS === 'true';
+  const pilotToolsEnabled = !previewMode && (import.meta.env?.DEV === true || import.meta.env?.VITE_2J_PILOT_TOOLS === 'true');
+  const trainingSsoEnabled = !previewMode && !isNativeShell() && (trainingSsoEnabledOverride ?? HUB_TRAINING_SSO_BUILD);
+  const [ssoBusy, setSsoBusy] = React.useState(false);
+  const [ssoMessage, setSsoMessage] = React.useState('');
+  const openTrainingWithSso = async () => {
+    if (ssoBusy) return;
+    setSsoBusy(true); setSsoMessage('');
+    try {
+      const result = await api<{ v: number; redirectUrl: string }>('/api/me/training/sso', { method: 'POST', body: '{}' });
+      const destination = trainingSsoDestination(result.redirectUrl, HUB_TRAINING_URL);
+      if (!destination) { setSsoMessage(trainingSsoMessage('invalid_destination')); setSsoBusy(false); return; }
+      trainingSsoRuntime.navigate(destination);
+      return;                       // stay busy while the page unloads: a second tap must not mint another code
+    } catch (error) {
+      setSsoMessage(trainingSsoMessage(error instanceof Error ? error.message : ''));
+    }
+    setSsoBusy(false);
+  };
   const preview = React.useMemo(() => previewMode ? makeHubPreview() : null, [previewMode]);
   const [view, setView] = React.useState<View>('home');
   const [selectedDate, setSelectedDate] = React.useState(() => preview?.sessions[0] ? dateKey(new Date(preview.sessions[0].startsAt)) : dateKey(new Date()));
@@ -492,7 +563,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
   const resolvedAppearance = preferences.appearance === 'system' ? (systemLight ? 'light' : 'dark') : preferences.appearance;
   React.useEffect(() => { document.documentElement.dataset['2jAppearance'] = resolvedAppearance; const meta=document.querySelector<HTMLMetaElement>('meta[name="theme-color"]'); if(meta) meta.content=resolvedAppearance==='light'?'#F5F7F4':'#0B0F12'; }, [resolvedAppearance]);
   return <div className={`client-app hub-theme${resolvedAppearance === 'light' ? ' hub-theme-light' : ''}`} data-appearance={resolvedAppearance}>
-    <header className="client-header" data-view={view}><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><div className="client-header-actions">{previewMode&&<span className="preview-pill">Vista previa</span>}{pilotLoginEnabled && profile && <button className="text-button" type="button" onClick={() => void logout()} disabled={busy === 'logout'}>{busy === 'logout' ? 'Saliendo…' : 'Cerrar sesión'}</button>}{profile && <><button className="notification-bell" aria-label={`Notificaciones${unreadNotifications?`, ${unreadNotifications} sin leer`:''}`} onClick={()=>void openNotifications()}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>{unreadNotifications>0&&<span aria-hidden="true">{unreadNotifications>99?'99+':unreadNotifications}</span>}</button><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile.firstName.slice(0,1)}</button></>}</div></header>
+    <header className="client-header" data-view={view}><a className="client-brand" href="#home" onClick={() => setView('home')} aria-label="2J Fitness, inicio"><span className="client-mark">2J</span><span><strong>2J Fitness</strong><small>Tu espacio</small></span></a><div className="client-header-actions">{previewMode&&<span className="preview-pill">DEMO · DATOS FICTICIOS</span>}{pilotLoginEnabled && profile && <button className="text-button" type="button" onClick={() => void logout()} disabled={busy === 'logout'}>{busy === 'logout' ? 'Saliendo…' : 'Cerrar sesión'}</button>}{profile && <><button className="notification-bell" aria-label={`Notificaciones${unreadNotifications?`, ${unreadNotifications} sin leer`:''}`} onClick={()=>void openNotifications()}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>{unreadNotifications>0&&<span aria-hidden="true">{unreadNotifications>99?'99+':unreadNotifications}</span>}</button><button className="avatar" aria-label="Mi perfil" onClick={() => setView('profile')}>{profile.firstName.slice(0,1)}</button></>}</div></header>
     <main className="client-main" id="main-content">
       {loading && <div className="loading-card" role="status"><span className="spinner"/> Cargando tu espacio…</div>}
       {!loading && error === 'client_authentication_required' && pilotLoginEnabled && <section className="state-card error-card" aria-labelledby="member-login-title"><span className="state-icon">2J</span><p className="eyebrow">PILOTO LOCAL</p><h1 id="member-login-title">Tu espacio, a tu manera</h1><p>Introduce el código de acceso de tu piloto para consultar tus reservas y derechos.</p><form className="member-login-form" onSubmit={event => void login(event)}><label className="field-label" htmlFor="member-pilot-code">Código de acceso</label><input id="member-pilot-code" name="code" type="password" autoComplete="one-time-code" value={pilotCode} onChange={event => setPilotCode(event.target.value)} required maxLength={128}/>{loginError && <p role="alert" className="inline-message">{loginError}</p>}<button className="button primary" disabled={busy === 'login' || !pilotCode}>{busy === 'login' ? 'Entrando…' : 'Iniciar sesión'}</button></form></section>}
@@ -527,7 +598,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
           {bookingStage === 'results' && <section className="member-booking-results" aria-live="polite"><ul>{bookingResults.map(item=><li className={`booking-result ${item.result}`} key={item.selection.session.id}><span aria-hidden="true">{item.result==='confirmed'?'✓':item.result==='waitlist'?'◷':'!'}</span><div><strong>{item.selection.session.serviceName} · {dateLabel(item.selection.session.startsAt)} · {timeLabel(item.selection.session.startsAt)}</strong><small>{item.result==='confirmed'?'Reserva confirmada':item.result==='waitlist'?'En lista de espera':item.reason}</small></div></li>)}</ul>{bookingResults.some(item=>item.result==='failed')&&<button className="button secondary full" disabled={busy==='member-bookings'} onClick={()=>void submitSelectedBookings()}>Reintentar las que no se completaron</button>}<button className="button primary full" onClick={()=>{setSelectedSessions([]);setBookingResults([]);setBookingStage('browse');setScheduleVersion(value=>value+1);}}>Elegir más clases</button><button className="text-button" onClick={()=>setView('home')}>Volver a Inicio</button></section>}
         </>}
         {view === 'news' && (selectedNews ? <><button className="text-button contextual-link" onClick={()=>setSelectedNews(null)}>← Volver a noticias</button><article className="center-news-detail"><p className="eyebrow">2J FITNESS CENTER</p>{selectedNews.publishedAt&&<small>{dateLabel(selectedNews.publishedAt)}</small>}<h1>{selectedNews.title}</h1><p>{selectedNews.body}</p><button type="button" className="text-button" onClick={()=>{setSelectedNews(null);setView('home');}}>Volver a Inicio <span aria-hidden="true">→</span></button></article></> : <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Noticias</h1><p>Novedades publicadas por tu centro.</p></div><button className="text-button contextual-link" onClick={()=>setView('home')}>← Volver a Inicio</button>{newsError?<section className="empty-card" role="alert"><h2>No se han podido cargar las noticias</h2><button className="button secondary" onClick={()=>void refresh()}>Intentar de nuevo</button></section>:newsItems.length?<div className="member-news-list">{newsItems.map(item=><article className="member-news-item" key={item.id}><div>{item.featured&&<span className="member-news-featured">Destacada</span>}<h2>{item.title}</h2>{item.publishedAt&&<small>{dateLabel(item.publishedAt)}</small>}</div><p>{item.body.length>260?`${item.body.slice(0,257).trimEnd()}…`:item.body}</p><button className="text-button" onClick={()=>setSelectedNews(item)}>Leer noticia <span aria-hidden="true">→</span></button></article>)}</div>:<section className="empty-card"><h2>No hay noticias publicadas</h2><p>Cuando el centro comparta una novedad, aparecerá aquí.</p></section>}</>)}
-        {view === 'bunker' && <section className="hub-destination"><div className="destination-mark"><NavIcon name="bunker"/></div><p className="eyebrow">ENTRENAMIENTO</p><h1>Búnker</h1><p>Tu espacio de rutinas, seguimiento y progreso.</p>{previewMode ? <p role="status">Vista previa: el estado de tu conexión real no está disponible aquí.</p> : trainingSummaryLoading ? <p role="status">Consultando tu espacio de entrenamiento…</p> : trainingSummaryFailed || (trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'unavailable') ? <div role="status"><p>Información de entrenamiento temporalmente no disponible.</p><button className="text-button" onClick={() => setTrainingSummaryRetry(value => value + 1)}>Intentar de nuevo</button></div> : trainingSummary?.status === 'not_linked' ? <p role="status">Búnker aún no vinculado.</p> : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'available' ? <div className="hub-training-summary" role="status"><strong>Búnker conectado</strong>{trainingSummary.summary.currentProgram && <p>Programa actual: {trainingSummary.summary.currentProgram.name}</p>}{trainingSummary.summary.recentActivity && <p>{trainingSummary.summary.recentActivity.lastTrainingAt ? `Última actividad: ${dateLabel(`${trainingSummary.summary.recentActivity.lastTrainingAt}T12:00:00.000Z`)}` : 'Todavía no hay actividad reciente.'} · {trainingSummary.summary.recentActivity.sessionsLast30Days} {trainingSummary.summary.recentActivity.sessionsLast30Days === 1 ? 'entreno' : 'entrenos'} en los últimos 30 días</p>}</div> : null}<a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a><small>Se abrirá el espacio de entrenamiento en una nueva pestaña.</small></section>}
+        {view === 'bunker' && <section className="hub-destination"><div className="destination-mark"><NavIcon name="bunker"/></div><p className="eyebrow">ENTRENAMIENTO</p><h1>Búnker</h1><p>Tu espacio de rutinas, seguimiento y progreso.</p>{previewMode ? <p role="status">La conexión con Búnker no está activa en esta demo sintética.</p> : trainingSummaryLoading ? <p role="status">Consultando tu espacio de entrenamiento…</p> : trainingSummaryFailed || (trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'unavailable') ? <div role="status"><p>Información de entrenamiento temporalmente no disponible.</p><button className="text-button" onClick={() => setTrainingSummaryRetry(value => value + 1)}>Intentar de nuevo</button></div> : trainingSummary?.status === 'not_linked' ? <p role="status">Búnker aún no vinculado.</p> : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'available' ? <div className="hub-training-summary" role="status"><strong>Búnker conectado</strong>{trainingSummary.summary.currentProgram && <p>Programa actual: {trainingSummary.summary.currentProgram.name}</p>}{trainingSummary.summary.recentActivity && <p>{trainingSummary.summary.recentActivity.lastTrainingAt ? `Última actividad: ${dateLabel(`${trainingSummary.summary.recentActivity.lastTrainingAt}T12:00:00.000Z`)}` : 'Todavía no hay actividad reciente.'} · {trainingSummary.summary.recentActivity.sessionsLast30Days} {trainingSummary.summary.recentActivity.sessionsLast30Days === 1 ? 'entreno' : 'entrenos'} en los últimos 30 días</p>}</div> : null}{previewMode ? <button className="button primary" type="button" disabled>Abrir Búnker</button> : (trainingSsoEnabled && trainingSummary?.status !== 'not_linked') ? <><button className="button primary" type="button" disabled={ssoBusy} onClick={() => void openTrainingWithSso()}>{ssoBusy ? 'Abriendo Búnker…' : 'Abrir Búnker'}</button>{ssoMessage && <p className="inline-message" role="alert">{ssoMessage}</p>}<a className="text-button" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir con tu acceso habitual <span aria-hidden="true">↗</span></a></> : <a className="button primary" href={HUB_TRAINING_URL} target="_blank" rel="noopener noreferrer">Abrir Búnker <span aria-hidden="true">↗</span></a>}<small>{previewMode ? 'La demo no abre aplicaciones ni servicios externos.' : (trainingSsoEnabled && trainingSummary?.status !== 'not_linked') ? 'Entrarás en Búnker con tu cuenta del centro.' : 'Se abrirá el espacio de entrenamiento en una nueva pestaña.'}</small></section>}
         {view === 'store' && <><div className="page-intro"><p className="eyebrow">2J FITNESS CENTER</p><h1>Tienda</h1><p>Consulta los productos disponibles en el centro.</p></div><div className="store-filter" role="group" aria-label="Filtrar productos por categoría"><button type="button" aria-pressed={storeCategory==='nutrition'} className={storeCategory==='nutrition'?'active':''} onClick={()=>setStoreCategory('nutrition')}>Nutrición</button><button type="button" aria-pressed={storeCategory==='merchandising'} className={storeCategory==='merchandising'?'active':''} onClick={()=>setStoreCategory('merchandising')}>Merchandising</button></div>{storeFailed&&<p className="inline-message" role="alert">No se ha podido actualizar el catálogo o el historial. <button className="text-button" onClick={()=>void refresh()}>Reintentar</button></p>}<div className="member-store-grid">{storeProducts.filter(item=>item.category===storeCategory).map(product=><article className="member-store-card" key={product.id}><span className="store-category-icon" aria-hidden="true">{product.category==='nutrition'?'✦':'◈'}</span><div><h2>{product.name}</h2>{product.description&&<p>{product.description}</p>}</div>{product.variants.map(variant=><div className="member-store-variant" key={variant.id}><span>{variant.label}</span><strong>{new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(variant.priceCents/100)}</strong><small className={`availability ${variant.availability}`}>{variant.availability==='disponible'?'Disponible':variant.availability==='pocas_unidades'?'Pocas unidades':'Agotado'}</small></div>)}</article>)}{storeProducts.filter(item=>item.category===storeCategory).length===0&&!storeFailed&&<section className="empty-card profile-empty"><h2>Aún no hay productos en esta categoría.</h2><p>Vuelve a consultar más adelante.</p></section>}</div><p className="store-notice">Consulta los productos disponibles. Las compras se gestionan directamente en el centro.</p></>}
         {view === 'bookings' && <><div className="page-intro"><p className="eyebrow">TU ACTIVIDAD</p><h1>Mis reservas</h1><p>Consulta próximas sesiones y tu historial.</p></div><button className="text-button contextual-link" onClick={() => setView('book')}>Volver a Reservar <span aria-hidden="true">→</span></button>{message && <p className="inline-message" role="status">{message}</p>}<h2 className="subheading">Próximas</h2>{upcoming.length ? <div className="booking-stack">{upcoming.map(row => <BookingCard key={row.id} booking={row} busy={busy === row.id} actionDisabled={previewMode || !bookingEnabled} onCancel={() => void cancelBooking(row)}/>)}</div> : <p className="muted">Todavía no tienes reservas próximas.</p>}<h2 className="subheading">Lista de espera</h2>{waitlist.filter(row => row.status === 'waiting').length ? <div className="booking-stack">{waitlist.filter(row => row.status === 'waiting').map(row => <BookingCard key={row.id} booking={row} waiting busy={busy === row.id} actionDisabled={previewMode || !bookingEnabled} onCancel={() => void leaveWaitlist(row)}/>)}</div> : <p className="muted">No estás en ninguna lista de espera.</p>}<h2 className="subheading">Historial</h2>{reservations.filter(row => row.status !== 'reserved' || new Date(row.startsAt).getTime() < Date.now()).slice(0,6).map(row => <BookingCard key={row.id} booking={row} compact/>)}{waitlist.filter(row => row.status !== 'waiting').slice(0,6).map(row => <BookingCard key={row.id} booking={row} waiting compact/>)}</>}
         {view === 'notifications' && <><div className="page-intro"><p className="eyebrow">TU ESPACIO</p><h1>Notificaciones</h1><p>Avisos importantes de tus reservas y mensajes.</p></div>{message&&<p className="inline-message" role="status">{message}</p>}{notifications.length>0&&unreadNotifications>0&&<button className="text-button" onClick={()=>void readAllNotifications()}>Marcar todas como leídas</button>}{notifications.length? <div className="notification-list">{notifications.map(item=><article className={`notification-item${item.readAt?' is-read':''}`} key={item.id}><span className="notification-dot" aria-hidden="true"/><button type="button" className="notification-open" aria-label={`Abrir aviso: ${item.title}`} onClick={()=>void openNotification(item)}><strong>{item.title}</strong><p>{item.body}</p><small>{new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',dateStyle:'medium',timeStyle:'short'}).format(new Date(item.createdAt))}</small></button>{!item.readAt&&<button type="button" className="text-button notification-read" onClick={()=>void readNotification(item)}>Marcar leída</button>}</article>)}</div>:<section className="empty-card"><h3>Todo al día</h3><p>Aquí aparecerán los avisos de tus reservas.</p></section>}{notificationCursor&&<button className="button secondary full" onClick={()=>void loadOlderNotifications()}>Cargar anteriores</button>}<button className="text-button" onClick={()=>void refresh()}>Actualizar</button></>}
@@ -537,7 +608,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride }: { 
             <div><p className="eyebrow">EXPERIENCIA</p><h2 id="appearance-title">Apariencia</h2><p>Elige cómo se muestra 2J en este dispositivo.</p></div>
             <fieldset className="appearance-options" disabled={preferenceSaving}>
               <legend className="visually-hidden">Tema de la aplicación</legend>
-              {([['system','Sistema','Sigue la configuración del dispositivo'],['light','Claro','Superficies claras y limpias'],['dark','Oscuro','Grafito y acentos esmeralda']] as const).map(([value,label,description])=><label className={`appearance-option${preferences.appearance===value?' selected':''}`} key={value}><input type="radio" name="appearance" value={value} checked={preferences.appearance===value} onChange={()=>void savePreferences({appearance:value})}/><span className="appearance-option-copy"><strong>{label}</strong><small>{description}</small></span><span className="appearance-indicator" aria-hidden="true">{preferences.appearance===value?'✓':''}</span></label>)}
+              {([['system','Sistema','Sigue la configuración del dispositivo'],['light','Claro','Superficies claras y limpias'],['dark','Oscuro','Grafito y acentos lima']] as const).map(([value,label,description])=><label className={`appearance-option${preferences.appearance===value?' selected':''}`} key={value}><input type="radio" name="appearance" value={value} checked={preferences.appearance===value} onChange={()=>void savePreferences({appearance:value})}/><span className="appearance-option-copy"><strong>{label}</strong><small>{description}</small></span><span className="appearance-indicator" aria-hidden="true">{preferences.appearance===value?'✓':''}</span></label>)}
             </fieldset>
             <p className="settings-feedback" role={preferenceError?'alert':'status'} aria-live="polite">{preferenceError || (preferenceSaving?'Guardando preferencia…':preferenceSaved?'Preferencia guardada.':previewMode?'Vista previa: el cambio solo se aplica aquí.':'Los cambios se guardan automáticamente.')}</p>
             {preferenceError&&<button className="button secondary" type="button" onClick={retryPreferenceSave} disabled={preferenceSaving}>Reintentar</button>}
@@ -623,4 +694,4 @@ function weekRangeDays(selected = dateKey(new Date())) {
   return Array.from({length:7},(_,index)=>{const key=shiftDateKey(start,index);const date=new Date(`${key}T12:00:00Z`);return {date:key,label:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',weekday:'short'}).format(date),number:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',day:'numeric'}).format(date),today:key===todayKey};});
 }
 
-export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, selectNextConfirmedBooking, HUB_TRAINING_URL };
+export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, isHubDemoBuild, selectNextConfirmedBooking, HUB_TRAINING_URL };
