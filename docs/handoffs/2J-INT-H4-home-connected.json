@@ -1,0 +1,13 @@
+{
+  "taskId": "2J-INT-H4",
+  "branch": "agent/claude/2J-INT-HOME-CONNECTED",
+  "baseSha": "f87818afe474176c6e6ae77cb4d62a7e73fc1adf",
+  "status": "implementation_reviewed_fixes_applied",
+  "featureGates": { "VITE_2J_TRAINING_SSO": false, "VITE_2J_TRAINING_URL": "optional; https or loopback only" },
+  "destinationPolicy": { "origin": "configured Training origin", "path": "/sso", "codeIn": "fragment", "queryAllowed": false, "credentialsAllowed": false },
+  "syntheticDemo": { "usesSso": false, "networkRequests": 0, "demoBuildStripsViteEnv": true },
+  "nativeShell": "SSO entry disabled (same-tab navigation would replace the app)",
+  "acceptedRisks": ["demo bundle contains the dormant SSO endpoint string; unreachable at runtime"],
+  "review": { "independentCodeReview": "performed_findings_addressed", "independentQa": "pending", "realBrowserSmoke": "free persona only" },
+  "pullRequest": null
+}
