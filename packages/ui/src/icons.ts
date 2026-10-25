@@ -19,6 +19,7 @@ export {
   CircleCheck,
   ClipboardCheck,
   Clock,
+  DoorOpen,
   Dumbbell,
   FileText,
   FileWarning,
