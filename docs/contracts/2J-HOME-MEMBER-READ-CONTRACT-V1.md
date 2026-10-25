@@ -32,8 +32,8 @@ La identidad y el `clientId` se obtienen exclusivamente de la sesión Member. No
 }
 ```
 
-- `status`: `pending | partially_paid | paid | refunded | exempt | void | not_applicable`.
-- `accessStatus`: `active | provisional | blocked_unpaid | ended`; es la evaluación efectiva de acceso de Platform, no una deducción de Home.
+- `status`: `pending | unpaid | partially_paid | paid | refunded | exempt | void | not_applicable`. `unpaid` significa que la fecha local de vencimiento ya pasó y sigue existiendo saldo; no es un cálculo del cliente.
+- `accessStatus`: `active | provisional | blocked_unpaid | ended | unavailable`; `unavailable` es un estado contractual inconsistente que Platform cierra de forma segura. Es la evaluación efectiva de acceso de Platform, no una deducción de Home.
 - `amountCents`, `paidCents` y `pendingAmountCents` son importes enteros en céntimos de euro. `pendingAmountCents` nunca es negativo. Para `refunded`, el neto pendiente es cero, aunque se conserva el historial de pagos y devoluciones en Platform.
 - `dueOn` es una fecha local de negocio (`YYYY-MM-DD`), inclusiva. No es una hora UTC.
 - `effectiveBlockAt` es el instante ISO 8601 exacto en que Platform aplica el bloqueo. Para `monthly_day10_v1`, el vencimiento es el día 10 y el bloqueo comienza a las 00:00 locales del día 11. La serialización muestra ese instante con su offset UTC real, que varía con el horario de verano.
