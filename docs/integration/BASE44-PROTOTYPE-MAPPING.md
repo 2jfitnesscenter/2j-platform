@@ -38,7 +38,7 @@ Destinos: `admin-web` (panel de escritorio), `staff-app` (móvil del personal), 
 | `Team`, `Administration`, `Activity`, `ActivityLog` | Equipo y permisos, auditoría | `api/staff.ts`, `admin-web/staff-page.tsx`, `staff_audit_events` | DIFFERENT (§3: perfiles RBAC) |
 | `TimeClock`, `components/timeclock/*`, `member/StaffWork` | Fichaje | `staff_timeclock_events`, `staff_timeclock_corrections`, `staff-app` | DIFFERENT (§3: D115–D123) |
 | `Settings`, `components/settings/*` | Negocio, colores, IVA/IGIC, día de pago | `economic_settings`, `dashboard_preferences` | DIFFERENT (§3) |
-| `MyGym` | Panel «mi gimnasio» del dueño | — | MISSING; sin decisión equivalente |
+| `MyGym` | Centro de ajustes con 3 pestañas: datos del negocio, novedades, consentimientos (no es un panel de resultados) | Novedades: `news-page.tsx`; ajustes: `notification-settings.tsx`, `economic_settings` | HAVE parcial; propuesta de decisión en `MYGYM-PROPUESTA-DECISION.md` |
 | `Login`, `Register`, `ForgotPassword`, `ResetPassword`, `OAuthConsent`, `AuthLayout`, `GoogleIcon` | Identidad (Base44 Auth + Google) | Identidad de Platform (`person-identity.ts`, `platform-passkeys.ts`, `member-pilot-auth.ts`) | **No adoptar**: Platform es la autoridad de identidad |
 
 ### 1.2 Portal de socio (`src/pages/member/*`, `MemberShell`)
