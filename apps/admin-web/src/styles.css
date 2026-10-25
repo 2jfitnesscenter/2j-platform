@@ -698,3 +698,10 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .plan-mobile-summary strong { color:var(--2j-color-text-primary); white-space:nowrap; }
 .plan-catalog-mobile .plan-detail-expanded { border-top:1px solid var(--2j-color-border); }
 @media(max-width:760px) { .catalog { grid-template-columns:minmax(0,1fr); } .plan-catalog-table-wrap { display:none; } .plan-catalog-mobile { display:grid; gap:10px; } }
+
+.attendee-actions .attendance-mark { width: 44px; min-height: 44px; display: inline-grid; place-items: center; padding: 0; border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); color: var(--2j-color-text-secondary); cursor: pointer; }
+.attendee-actions .attendance-mark:hover { background: var(--2j-color-surface-subtle); color: var(--2j-color-text-primary); }
+.attendee-actions .attendance-mark.is-selected { border-color: var(--2j-color-brand-strong); background: color-mix(in srgb, var(--2j-color-brand) 14%, var(--2j-color-surface)); color: var(--2j-color-brand-strong); }
+.attendee-actions .attendance-mark--no-show.is-selected { border-color: var(--2j-color-danger); background: color-mix(in srgb, var(--2j-color-danger) 12%, var(--2j-color-surface)); color: var(--2j-color-danger); }
+.attendee-actions .attendance-mark:focus-visible { outline: 3px solid var(--2j-color-focus); outline-offset: 2px; }
+.attendee-actions .attendance-mark:disabled { cursor: wait; opacity: .65; }

@@ -446,6 +446,25 @@ textarea:focus-visible {
   font-size: 11px;
   font-weight: var(--2j-type-weight-semibold);
 }
+.person-actions button.attendance-mark {
+  width: 44px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  color: var(--2j-color-text-secondary);
+  font-size: 19px;
+  line-height: 1;
+}
+.person-actions button.attendance-mark.is-selected {
+  border-color: var(--2j-color-brand-strong);
+  background: color-mix(in srgb, var(--2j-color-brand) 14%, var(--2j-color-surface));
+  color: var(--2j-color-brand-strong);
+}
+.person-actions button.attendance-mark--no-show.is-selected {
+  border-color: var(--2j-color-danger);
+  background: color-mix(in srgb, var(--2j-color-danger) 12%, var(--2j-color-surface));
+  color: var(--2j-color-danger);
+}
 .wait-rank {
   width: 28px;
   height: 28px;

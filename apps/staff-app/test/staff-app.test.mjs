@@ -189,6 +189,12 @@ test("agenda presents sessions in local time and links into session detail", asy
     await q.findByRole("heading", { name: "Reservas" });
     assert.ok(q.getByText("Eva Pérez"));
     assert.ok(q.getByText(/2 en espera/));
+    const attended = q.getByRole("button", { name: "Asistió: Eva" });
+    const noShow = q.getByRole("button", { name: "No-show: Eva" });
+    assert.equal(attended.textContent.trim(), "✓");
+    assert.equal(noShow.textContent.trim(), "✗");
+    assert.equal(attended.getAttribute("aria-pressed"), "false");
+    assert.equal(noShow.getAttribute("aria-pressed"), "false");
   } finally {
     cleanup();
     globalThis.fetch = original;

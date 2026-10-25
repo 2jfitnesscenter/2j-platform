@@ -333,8 +333,15 @@ test('reopen reservation is only offered after attendance or no-show', async () 
   fireEvent.click(await screen.findByRole('button', { name: /Fuerza 2J/ }));
   await screen.findByText('Lucía Martín');
   assert.equal(screen.queryByRole('button', { name: 'Reabrir reserva' }), null);
-  fireEvent.click(screen.getByRole('button', { name: 'Asistió' }));
+  const attended = screen.getByRole('button', { name: 'Asistió' });
+  const noShow = screen.getByRole('button', { name: 'No-show' });
+  assert.equal(attended.getAttribute('aria-pressed'), 'false');
+  assert.equal(noShow.getAttribute('aria-pressed'), 'false');
+  assert.ok(attended.querySelector('svg'));
+  assert.ok(noShow.querySelector('svg'));
+  fireEvent.click(attended);
   assert.ok(await screen.findByRole('button', { name: 'Reabrir reserva' }));
+  assert.equal(screen.getByRole('button', { name: 'Asistió' }).getAttribute('aria-pressed'), 'true');
 });
 
 test('session cancellation uses an in-app confirmation dialog', async () => {

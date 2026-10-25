@@ -730,18 +730,26 @@ export function StaffApp() {
                     ["reserved", "attended", "no_show"].includes(r.status) && (
                       <div className="person-actions">
                         <button
+                          type="button"
+                          className={`attendance-mark${r.status === "attended" ? " is-selected" : ""}`}
                           disabled={busy}
-                          aria-label={`Marcar asistió: ${r.firstName}`}
+                          aria-label={`Asistió: ${r.firstName}`}
+                          aria-pressed={r.status === "attended"}
+                          title="Marcar como asistió"
                           onClick={() => void attendance(r.id, "attended")}
                         >
-                          {r.status === "attended" ? "✓" : "Asistió"}
+                          ✓
                         </button>
                         <button
+                          type="button"
+                          className={`attendance-mark attendance-mark--no-show${r.status === "no_show" ? " is-selected" : ""}`}
                           disabled={busy}
-                          aria-label={`Marcar no-show: ${r.firstName}`}
+                          aria-label={`No-show: ${r.firstName}`}
+                          aria-pressed={r.status === "no_show"}
+                          title="Marcar como no-show"
                           onClick={() => void attendance(r.id, "no_show")}
                         >
-                          {r.status === "no_show" ? "✓" : "No-show"}
+                          ✗
                         </button>
                       </div>
                     )}
