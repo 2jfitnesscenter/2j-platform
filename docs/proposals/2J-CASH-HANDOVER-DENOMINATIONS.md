@@ -57,8 +57,8 @@ La configuración del posible límite de gastos pertenece a Configuración opera
 
 Una vez que D113 (#97) esté integrado y revisado independientemente, los PRs pequeños con pruebas serán:
 
-1. Modelo de conteo por denominación y conteo ciego en apertura y cierre.
-2. Movimiento de traspaso con dos conteos ciegos independientes.
+1. D97: explicación obligatoria del descuadre y validación posterior de Admin. #97 ya incorpora el desglose por denominación y el conteo ciego de apertura/cierre; no se vuelve a implementar esa parte.
+2. Movimiento de traspaso con dos conteos ciegos independientes por denominación.
 3. Vista diaria de caja exclusiva del propietario.
 4. Resolución auditada por el propietario de caja olvidada abierta.
 5. Gastos/retiros tipificados, con motivo, permiso, sesión abierta y umbral opcional de aprobación del propietario.
