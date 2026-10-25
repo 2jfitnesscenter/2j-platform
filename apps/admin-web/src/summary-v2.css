@@ -93,3 +93,11 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
   .summary-team-stats { gap: var(--2j-space-3); }
 }
 @media (prefers-reduced-motion: reduce) { .summary-row { transition: none; } }
+.activity-tabs { margin: 0 0 var(--2j-space-4); }
+.activity-filter { padding: 0 var(--2j-space-5) var(--2j-space-3); }
+.activity-filter label { display: grid; gap: var(--2j-space-1); max-width: 22rem; font-size: 12px; color: var(--2j-color-text-secondary); }
+.activity-filter input { min-height: 44px; padding: 0 var(--2j-space-3); border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font: inherit; }
+.activity-audit-row { grid-template-columns: minmax(0, 1fr) auto; }
+.activity-audit-row code { font-size: 13px; }
+.activity-audit-row time { font-size: 12px; color: var(--2j-color-text-secondary); white-space: nowrap; }
+.activity-more { display: flex; justify-content: center; padding: var(--2j-space-3); border-top: 1px solid var(--2j-color-border); }
