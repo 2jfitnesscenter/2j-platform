@@ -39,7 +39,8 @@ test('Informes shows sold versus collected, the voided sales differentiated, and
   window.location.hash = '#reports'; mount();
   assert.ok(await screen.findByRole('heading', { name: 'Informes' }));
   const totals = await screen.findByRole('list', { name: 'Totales del periodo' });
-  assert.match(totals.textContent, /90,00/); assert.match(totals.textContent, /50,00/); assert.match(totals.textContent, /40,00/); assert.match(totals.textContent, /Anuladas/);
+  await waitFor(() => assert.match(totals.textContent, /90,00/));
+  assert.match(totals.textContent, /50,00/); assert.match(totals.textContent, /40,00/); assert.match(totals.textContent, /Anuladas/);
   const table = await screen.findByRole('table', { name: 'Ventas del periodo' });
   assert.deepEqual(within(table).getAllByRole('columnheader').map((cell) => cell.textContent), ['Fecha', 'Cliente', 'Concepto', 'Tipo', 'Vendido', 'Cobrado', 'Estado', 'Método', 'Factura']);
   const rows = within(table).getAllByRole('row').slice(1);
