@@ -20,7 +20,8 @@ const post=(url,payload,extra={})=>admin.inject({method:'POST',url,headers:extra
 async function product({category='nutrition',name=`Producto ${randomUUID()}`,active=true}={}){const response=await post('/api/admin/store/products',{category,name,description:'Producto de prueba'});assert.equal(response.statusCode,201,response.body);return response.json();}
 async function variant(productId,{label='Formato 300 g',priceCents=1250,stockTracked=true,active=true,sku=null}={}){const response=await post(`/api/admin/store/products/${productId}/variants`,{label,priceCents,stockTracked,active,sku});assert.equal(response.statusCode,201,response.body);return response.json();}
 async function stock(variantId,quantity=3){const response=await post(`/api/admin/store/variants/${variantId}/movements`,{type:'opening',quantity,reason:'Apertura sintética'});assert.equal(response.statusCode,201,response.body);}
-async function sale(clientId,variantId,quantity,key=randomUUID(),payloadExtra={}){return post('/api/admin/store/sales',{clientId,lines:[{variantId,quantity}],paymentState:'paid',paymentMethod:'cash',...payloadExtra},{'idempotency-key':key});}
+async function ensureOpenCash(){const [session]=await sql`SELECT id FROM economic_cash_sessions WHERE status='open' LIMIT 1`;if(!session)await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,0,'store-test-fixture')`;}
+async function sale(clientId,variantId,quantity,key=randomUUID(),payloadExtra={}){await ensureOpenCash();return post('/api/admin/store/sales',{clientId,lines:[{variantId,quantity}],paymentState:'paid',paymentMethod:'cash',...payloadExtra},{'idempotency-key':key});}
 
 test('store management and POS are denied to roles without explicit grants',async()=>{
   assert.equal((await trainer.inject({method:'GET',url:'/api/admin/store'})).statusCode,403);
@@ -49,6 +50,31 @@ test('catalog filters inactive products and variants and exposes only coarse sto
   const hidden=await product({name:`Oculto ${randomUUID()}`});await variant(hidden.id,{label:'Inactivo'});await admin.inject({method:'PATCH',url:`/api/admin/store/products/${hidden.id}`,payload:{active:false}});
   const response=await memberA.inject({method:'GET',url:'/api/me/store/catalog'});assert.equal(response.statusCode,200,response.body);const found=response.json().items.find(row=>row.id===item.id);assert.ok(found);assert.deepEqual(found.variants.map(row=>row.id),[live.id]);assert.equal(found.variants[0].availability,'pocas_unidades');assert.equal(JSON.stringify(response.json()).includes('stock'),false);assert.equal(JSON.stringify(response.json()).includes('movement'),false);
   assert.equal((await memberA.inject({method:'GET',url:`/api/me/store/catalog?clientId=${memberIds.b}`})).json().items.some(row=>row.id===hidden.id),false);
+});
+
+test('D113 blocks paid POS sales without an open shift and links cash sales into the shift total',async()=>{
+  const item=await product();const v=await variant(item.id,{label:'Venta de caja',priceCents:1299});await stock(v.id,2);
+  const current=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
+  if(current.json().session?.status==='open'){
+    const closed=await admin.inject({method:'POST',url:`/api/economics/cash/${current.json().session.id}/close`,payload:{countedCents:current.json().session.expectedCents}});
+    assert.equal(closed.statusCode,200,closed.body);
+  }
+  const key=randomUUID();
+  const denied=await post('/api/admin/store/sales',{clientId:memberIds.a,lines:[{variantId:v.id,quantity:1}],paymentState:'paid',paymentMethod:'card'},{'idempotency-key':key});
+  assert.equal(denied.statusCode,409,denied.body);assert.equal(denied.json().error,'cash_session_required');
+  const [noSale]=await sql`SELECT count(*)::int AS count FROM store_sales WHERE idempotency_key=${key}::uuid`;assert.equal(noSale.count,0);
+  await assert.rejects(sql`INSERT INTO store_sales(center_key,client_id,payment_state,payment_method,subtotal_cents,total_cents,note,idempotency_key,request_hash,created_by) VALUES ('2j',${memberIds.a},'paid','card',100,100,'',${randomUUID()},${'a'.repeat(64)},'qa')`,{code:'23514'});
+  await ensureOpenCash();
+  const accepted=await sale(memberIds.a,v.id,1);assert.equal(accepted.statusCode,201,accepted.body);
+  assert.ok(accepted.json().cashSessionId);
+  const snapshot=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
+  assert.equal(Number(snapshot.json().session.cashStoreSalesCents),1299);
+  assert.equal(Number(snapshot.json().session.expectedCents),1299);
+  const voided=await admin.inject({method:'POST',url:`/api/admin/store/sales/${accepted.json().id}/void`,payload:{reason:'Anulación de prueba D113'}});
+  assert.equal(voided.statusCode,200,voided.body);
+  const afterVoid=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
+  assert.equal(Number(afterVoid.json().session.cashStoreSalesCents),0);
+  assert.equal(Number(afterVoid.json().session.expectedCents),0);
 });
 
 test('sale calculates authoritative price, snapshots labels, decrements stock, and idempotent retry creates one sale and movement',async()=>{

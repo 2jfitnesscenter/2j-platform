@@ -24,12 +24,13 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     const [row] = await tx`SELECT s.id,s.local_date AS "localDate",s.opening_cents AS "openingCents",s.status,s.opened_at AS "openedAt",s.opened_by AS "openedBy",s.closed_at AS "closedAt",s.closed_by AS "closedBy",s.expected_cents AS "frozenExpectedCents",s.counted_cents AS "countedCents",s.difference_cents AS "differenceCents",
       COALESCE(sum(ps.amount_cents) FILTER(WHERE et.kind='payment' AND ps.method='cash'),0)::bigint AS "cashPaymentsCents",
       COALESCE(sum(ps.amount_cents) FILTER(WHERE et.kind='refund' AND ps.method='cash'),0)::bigint AS "cashRefundsCents",
+      COALESCE((SELECT sum(sale.total_cents) FROM store_sales sale WHERE sale.cash_session_id=s.id AND sale.status='completed' AND sale.payment_state='paid' AND sale.payment_method='cash'),0)::bigint AS "cashStoreSalesCents",
       COALESCE((SELECT sum(a.amount_cents) FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id),0)::bigint AS "adjustmentsCents"
       FROM economic_cash_sessions s LEFT JOIN economic_transactions et ON et.cash_session_id=s.id LEFT JOIN economic_payment_splits ps ON ps.transaction_id=et.id WHERE s.id=${sessionId}
       GROUP BY s.id`;
     if (!row) return null;
     const expectedCents = row.frozenExpectedCents == null
-      ? Number(row.openingCents) + Number(row.cashPaymentsCents) - Number(row.cashRefundsCents) + Number(row.adjustmentsCents)
+      ? Number(row.openingCents) + Number(row.cashPaymentsCents) + Number(row.cashStoreSalesCents) - Number(row.cashRefundsCents) + Number(row.adjustmentsCents)
       : Number(row.frozenExpectedCents);
     return { ...row, expectedCents, liveExpectedCents: expectedCents, differenceCents: row.differenceCents == null ? null : Number(row.differenceCents) };
   }
@@ -211,12 +212,12 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
           if (Number(balance?.cents ?? 0) + Number(proof.amountCents) > Number(charge.amountCents)) return { error: 'amount_exceeds_balance' as const };
           transactionId = randomUUID();
           const requestHash = createHash('sha256').update(`proof:${proof.id}:${proof.amountCents}`).digest('hex');
-          const [cash] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date FOR UPDATE`;
-          await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${transactionId},${charge.id},${charge.clientId},'payment',${proof.amountCents},'Justificante de transferencia validado',${context.actorId},${proof.id},${requestHash},NULL)`;
+          const [cash] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`;
+          if (!cash) return { error: 'cash_session_required' as const };
+          await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${transactionId},${charge.id},${charge.clientId},'payment',${proof.amountCents},'Justificante de transferencia validado',${context.actorId},${proof.id},${requestHash},${cash.id})`;
           await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${transactionId},'transfer',${proof.amountCents})`;
           await audit(tx, context, 'payment.transfer_validated', 'transaction', transactionId, charge.clientId, { amountCents: proof.amountCents, proofId: proof.id });
           await activateSettledEntitlementPeriods(tx,charge.id,context.actorId);
-          void cash;
         }
         const [updated] = await tx`UPDATE economic_transfer_proofs SET status=${body.data.decision},reviewed_by=${context.actorId},reviewed_at=now(),decision_note=${body.data.note ?? null},transaction_id=${transactionId} WHERE id=${proof.id} RETURNING id,status,reviewed_at AS "reviewedAt"`;
         if (!updated) throw new Error('proof review update returned no row');

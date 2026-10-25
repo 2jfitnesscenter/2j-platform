@@ -107,12 +107,11 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         const [balance]=await tx`SELECT COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0)::bigint cents,COALESCE(sum(amount_cents) FILTER(WHERE kind='payment'),0)::bigint AS paid_cents FROM economic_transactions WHERE charge_id=${charge.id}`;
         if(Number(balance?.paid_cents??0)>0&&Number(balance?.cents??0)===0)return{error:'charge_refunded' as const};
         if(total+Number(balance?.cents??0)>Number(charge.amountCents))return{error:'amount_exceeds_balance' as const};
-        const hasCash=data.splits.some(split=>split.method==='cash');
-        const [cash]=hasCash?await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`:[];
-        if(hasCash&&!cash)return{error:'cash_session_required' as const};
-        await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${charge.id},${charge.clientId},'payment',${total},${data.note??null},${context.actorId},${key.data},${requestHash},${hasCash?cash!.id:null})`;
+        const [cash]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`;
+        if(!cash)return{error:'cash_session_required' as const};
+        await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${charge.id},${charge.clientId},'payment',${total},${data.note??null},${context.actorId},${key.data},${requestHash},${cash.id})`;
         for(const split of data.splits)await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${id},${split.method},${split.amountCents})`;
-        await audit(tx,context.actorId,'payment.recorded','transaction',id,charge.clientId,{amountCents:total,methods:data.splits.map(split=>split.method),cashSessionId:hasCash?cash!.id:null});
+        await audit(tx,context.actorId,'payment.recorded','transaction',id,charge.clientId,{amountCents:total,methods:data.splits.map(split=>split.method),cashSessionId:cash.id});
         await activateSettledEntitlementPeriods(tx,charge.id,context.actorId);
         return{id,replay:false as const};
       });

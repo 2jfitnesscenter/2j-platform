@@ -17,6 +17,7 @@ const databaseUrl = new URL(sourceUrl); databaseUrl.pathname = `/${databaseName}
 const dbUrl = databaseUrl.toString();
 const sql = postgres(dbUrl, { max: 20, connect_timeout: 5 });
 await migrateDatabase(sql);
+await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,0,'f1c2-cash-fixture')`;
 const app = buildServer(dbUrl, { authorizationResolver: async () => ({ actorId:'f1c2-test-admin', role:'admin' }) });
 const hash='a'.repeat(64);
 const actor={actorId:'f1c2-test-admin',role:'admin'};
