@@ -192,3 +192,57 @@ test('reservation evaluation share-lock serializes with payment writer without a
   assert.equal((await pendingPayment).statusCode,201);
   assert.equal((await evaluate(client.id,service.id)).eligible,true,'next booking observes the committed full payment');
 });
+
+test('Member read contracts expose authoritative payment state and per-session waitlist eligibility without queue data',async()=>{
+  const memberA=await createClient(),memberB=await createClient(),memberC=await createClient(),memberD=await createClient(),holder=await createClient(),service=await createService();
+  const partialPlan=await createContractPlan(service,{paymentBlock:'off'}),partialAssignment=await assign(memberA,partialPlan);
+  const partialPayment=await recordPayment(partialAssignment.chargeId,2500);assert.equal(partialPayment.statusCode,201,partialPayment.body);
+  const suspendedPlan=await createContractPlan(service),suspendedAssignment=await assign(memberB,suspendedPlan);
+  const refundedPlan=await createContractPlan(service,{paymentBlock:'off'}),refundedAssignment=await assign(memberC,refundedPlan);
+  const refundedPayment=await recordPayment(refundedAssignment.chargeId,5000);assert.equal(refundedPayment.statusCode,201,refundedPayment.body);
+  const refundedTransaction=await refund(refundedPayment.json().id,5000);assert.equal(refundedTransaction.statusCode,201,refundedTransaction.body);
+  const refundLedger=await sql`SELECT kind,amount_cents AS "amountCents" FROM economic_transactions WHERE charge_id=${refundedAssignment.chargeId} ORDER BY created_at,id`;
+  assert.deepEqual(Array.from(refundLedger,row=>({kind:row.kind,amountCents:row.amountCents})),[{kind:'payment',amountCents:'5000'},{kind:'refund',amountCents:'5000'}]);
+  const holderPlan=await createContractPlan(service,{paymentBlock:'off'}),holderAssignment=await assign(holder,holderPlan);
+  const makeSession=hours=>createSession(service,{capacity:1,startsAt:futureSessionStart(hours)});
+  const bookedSession=await makeSession(24),availableSession=await makeSession(27),fullSession=await makeSession(30),waitlistedSession=await makeSession(33),suspendedSession=await makeSession(36),notAllowedSession=await makeSession(39);
+  const reserve=async(client,session,assignment)=>app.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,entitlementAssignmentId:assignment.assignmentId}});
+  assert.equal((await reserve(memberA,bookedSession,partialAssignment)).statusCode,201);
+  for(const session of [fullSession,waitlistedSession,suspendedSession,notAllowedSession]) assert.equal((await reserve(holder,session,holderAssignment)).statusCode,201);
+  const join=async(client,session,assignment)=>app.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/waitlist`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,entitlementAssignmentId:assignment.assignmentId}});
+  const waitingA=await join(memberA,waitlistedSession,partialAssignment);assert.equal(waitingA.statusCode,201,waitingA.body);
+  const waitingB=await join(memberB,suspendedSession,suspendedAssignment);assert.equal(waitingB.statusCode,201,waitingB.body);
+  const memberApp=clientId=>buildServer(dbUrl,{clientAuthorizationResolver:async()=>({clientId}),bookingEligibilityResolver:async input=>evaluateBookingEligibility(input)});
+  const appA=memberApp(memberA.id),appB=memberApp(memberB.id),appC=memberApp(memberC.id),appD=memberApp(memberD.id);
+  try {
+    const membership=await appA.inject({method:'GET',url:'/api/me/membership'});assert.equal(membership.statusCode,200,membership.body);
+    const payment=membership.json().assignments.find(item=>item.id===partialAssignment.assignmentId).payment;
+    assert.deepEqual({status:payment.status,amountCents:payment.amountCents,paidCents:payment.paidCents,pendingAmountCents:payment.pendingAmountCents,dueOn:payment.dueOn},
+      {status:'partially_paid',amountCents:5000,paidCents:2500,pendingAmountCents:2500,dueOn:partialAssignment.dueOn});
+    assert.equal(payment.timezone,'Atlantic/Canary');assert.equal(payment.payments.length,1);assert.equal(payment.payments[0].amountCents,2500);
+    assert.equal('chargeId' in payment,false);assert.equal(JSON.stringify(membership.json()).includes(memberB.id),false);
+    const membershipB=await appB.inject({method:'GET',url:'/api/me/membership'});assert.equal(membershipB.statusCode,200,membershipB.body);
+    const blockedPayment=membershipB.json().assignments.find(item=>item.id===suspendedAssignment.assignmentId).payment;
+    assert.equal(blockedPayment.status,'unpaid');assert.equal(blockedPayment.accessStatus,'blocked_unpaid');
+    assert.equal(blockedPayment.effectiveBlockAt,canaryMidnight(addDays(suspendedAssignment.dueOn,1)).toISOString());
+    const from=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()),to=addDays(from,7);
+    const listA=await appA.inject({method:'GET',url:`/api/me/sessions?from=${from}&to=${to}`});assert.equal(listA.statusCode,200,listA.body);
+    const sessionsA=new Map(listA.json().sessions.map(item=>[item.id,item]));
+    assert.equal(sessionsA.get(bookedSession.id).availability.status,'booked');
+    assert.equal(sessionsA.get(availableSession.id).availability.status,'available');
+    assert.equal(sessionsA.get(fullSession.id).availability.status,'full');assert.equal(sessionsA.get(fullSession.id).availability.canJoinWaitlist,true);
+    assert.equal(sessionsA.get(waitlistedSession.id).availability.status,'waitlisted');
+    assert.equal(sessionsA.get(waitlistedSession.id).availability.canJoinWaitlist,false);
+    assert.equal(JSON.stringify(listA.json()).includes(waitingA.json().id),false);
+    assert.equal(JSON.stringify(listA.json()).toLowerCase().includes('queueposition'),false);
+    const listB=await appB.inject({method:'GET',url:`/api/me/sessions?from=${from}&to=${to}`});
+    assert.equal(listB.json().sessions.find(item=>item.id===suspendedSession.id).availability.status,'waitlist_suspended');
+    assert.equal(listB.json().sessions.find(item=>item.id===suspendedSession.id).availability.reason,null);
+    const membershipC=await appC.inject({method:'GET',url:'/api/me/membership'});assert.equal(membershipC.statusCode,200,membershipC.body);
+    const refunded=membershipC.json().assignments.find(item=>item.id===refundedAssignment.assignmentId).payment;
+    assert.equal(refunded.status,'refunded');assert.equal(refunded.paidCents,0);assert.equal(refunded.pendingAmountCents,0);
+    const listD=await appD.inject({method:'GET',url:`/api/me/sessions?from=${from}&to=${to}`});
+    const denied=listD.json().sessions.find(item=>item.id===availableSession.id).availability;
+    assert.deepEqual(denied,{status:'not_allowed_by_plan',reason:'service_not_allowed',canJoinWaitlist:false});
+  } finally { await Promise.all([appA.close(),appB.close(),appC.close(),appD.close()]); }
+});
