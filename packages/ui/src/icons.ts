@@ -38,6 +38,7 @@ export {
   ReceiptText,
   RefreshCw,
   Search,
+  Settings,
   ShieldCheck,
   ShoppingBag,
   Ticket,

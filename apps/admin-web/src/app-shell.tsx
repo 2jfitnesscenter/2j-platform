@@ -32,6 +32,7 @@ const routes={
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
+  settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
   'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
@@ -40,7 +41,7 @@ const navSections:NavSection[]=[
   {id:'clients',label:'Clientes',icon:icons.Users,route:routes.clients},
   {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes.calendar,routes.services]},
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
-  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.store,routes.news,routes['notification-settings']]},
+  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.store,routes.news,routes.settings,routes['notification-settings']]},
 ];
 const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
 function hasNavigationCapability(route:NavRoute,capabilities:NavigationCapabilities|null){return route.permission===null||capabilities?.[route.permission]===true;}
