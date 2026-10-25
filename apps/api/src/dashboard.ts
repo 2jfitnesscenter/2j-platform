@@ -83,6 +83,7 @@ export function registerDashboardRoutes(
       followup: can(context, 'followup.read'),
       billing: can(context, 'billing.read-basic'),
       cash: can(context, 'billing.cash.manage') || can(context, 'billing.payments.manage'),
+      ownerPanel: can(context, 'owner.panel.read'),
       transfers: can(context, 'billing.validate_transfer'),
       staff: can(context, 'staff.read'),
       timeclock: can(context, 'timeclock.read'),
@@ -175,7 +176,7 @@ export function registerDashboardRoutes(
           COALESCE(sum(balance) FILTER (WHERE state='pending'),0)::bigint AS "pendingCents",
           count(*) FILTER (WHERE state='pending' AND balance>0 AND due_on < (now() AT TIME ZONE ${zone})::date)::int AS "overdueCount",
           COALESCE((SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint FROM economic_transactions WHERE created_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone}) AND created_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})),0)::bigint AS "collectedTodayCents",
-          CASE WHEN ${permissions.cash} THEN COALESCE((SELECT jsonb_build_object('status',s.status,'openingCents',s.opening_cents,'expectedCents',COALESCE(s.expected_cents,s.opening_cents+COALESCE(cash.amount,0)+COALESCE(adj.amount,0)),'countedCents',s.counted_cents,'differenceCents',s.difference_cents)
+          CASE WHEN ${permissions.cash} THEN COALESCE((SELECT jsonb_strip_nulls(jsonb_build_object('status',s.status,'openingCents',s.opening_cents,'expectedCents',COALESCE(s.expected_cents,s.opening_cents+COALESCE(cash.amount,0)+COALESCE(adj.amount,0)),'countedCents',s.counted_cents,'differenceCents',CASE WHEN ${permissions.ownerPanel} THEN s.difference_cents ELSE NULL END))
             FROM economic_cash_sessions s
             LEFT JOIN LATERAL (SELECT COALESCE(sum(CASE WHEN t.kind='payment' THEN ps.amount_cents ELSE -ps.amount_cents END),0)::bigint AS amount FROM economic_transactions t JOIN economic_payment_splits ps ON ps.transaction_id=t.id WHERE t.cash_session_id=s.id AND ps.method='cash') cash ON true
             LEFT JOIN LATERAL (SELECT COALESCE(sum(amount_cents),0)::bigint AS amount FROM economic_cash_adjustments WHERE cash_session_id=s.id) adj ON true

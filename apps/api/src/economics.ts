@@ -32,7 +32,7 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
     try {
       const [overview]=await db`SELECT count(*) FILTER(WHERE c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0) AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date AND c.amount_cents>COALESCE(x.net,0))::int AS "overdueCount",COALESCE(sum(c.amount_cents-COALESCE(x.net,0)) FILTER(WHERE c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0) AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date),0)::bigint AS "overdueCents",count(*) FILTER(WHERE c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0))::int AS "chargeCount" FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(amount_cents) FILTER(WHERE kind='payment') paid,sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true`;
       const [cashSession]=await db`SELECT id,local_date AS "localDate",opening_cents AS "openingCents",status FROM economic_cash_sessions WHERE local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date`;
-      return {currency:'EUR',timezone:'Atlantic/Canary',...overview,cashSession:cashSession??null,capabilities:{payments:can(context,'billing.payments.manage'),cash:can(context,'billing.cash.manage'),invoices:can(context,'billing.invoices.manage'),tax:can(context,'billing.read-tax'),writeTax:can(context,'billing.write-tax'),validateTransfers:can(context,'billing.validate_transfer')}};
+      return {currency:'EUR',timezone:'Atlantic/Canary',...overview,cashSession:cashSession??null,capabilities:{payments:can(context,'billing.payments.manage'),cash:can(context,'billing.cash.manage'),ownerPanelRead:can(context,'owner.panel.read'),invoices:can(context,'billing.invoices.manage'),tax:can(context,'billing.read-tax'),writeTax:can(context,'billing.write-tax'),validateTransfers:can(context,'billing.validate_transfer')}};
     } catch(e){return error(reply,e);}
   });
 
@@ -135,12 +135,11 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         await tx`SELECT id FROM economic_charges WHERE id=${payment.chargeId} FOR UPDATE`;
         const [refunded]=await tx`SELECT COALESCE(sum(amount_cents),0)::bigint cents FROM economic_transactions WHERE refund_of=${payment.id}`;
         if(data.amountCents+Number(refunded?.cents??0)>Number(payment.amountCents))return{error:'refund_exceeds_payment' as const};
-        const hasCash=data.method==='cash';
-        const [cash]=hasCash?await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`:[];
-        if(hasCash&&!cash)return{error:'cash_session_required' as const};
-        await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,refund_of,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${payment.chargeId},${payment.clientId},'refund',${data.amountCents},${payment.id},${data.note},${context.actorId},${key.data},${requestHash},${hasCash?cash!.id:null})`;
+        const [cash]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`;
+        if(!cash)return{error:'cash_session_required' as const};
+        await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,refund_of,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${payment.chargeId},${payment.clientId},'refund',${data.amountCents},${payment.id},${data.note},${context.actorId},${key.data},${requestHash},${cash.id})`;
         await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${id},${data.method},${data.amountCents})`;
-        await audit(tx,context.actorId,'payment.refunded','transaction',id,payment.clientId,{amountCents:data.amountCents,reverses:payment.id,method:data.method,cashSessionId:hasCash?cash!.id:null});
+        await audit(tx,context.actorId,'payment.refunded','transaction',id,payment.clientId,{amountCents:data.amountCents,reverses:payment.id,method:data.method,cashSessionId:cash.id});
         return{id,replay:false as const};
       });
       if('error'in result)return reply.code(result.error==='payment_not_found'?404:409).send({error:result.error});

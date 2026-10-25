@@ -67,6 +67,8 @@ test('D113 blocks paid POS sales without an open shift and links cash sales into
   await ensureOpenCash();
   const accepted=await sale(memberIds.a,v.id,1);assert.equal(accepted.statusCode,201,accepted.body);
   assert.ok(accepted.json().cashSessionId);
+  const cardSale=await post('/api/admin/store/sales',{clientId:memberIds.a,lines:[{variantId:v.id,quantity:1}],paymentState:'paid',paymentMethod:'card'},{'idempotency-key':randomUUID()});
+  assert.equal(cardSale.statusCode,201,cardSale.body);assert.equal(cardSale.json().cashSessionId,accepted.json().cashSessionId,'all POS payment methods retain the open shift link');
   const snapshot=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
   assert.equal(Number(snapshot.json().session.cashStoreSalesCents),1299);
   assert.equal(Number(snapshot.json().session.expectedCents),1299);

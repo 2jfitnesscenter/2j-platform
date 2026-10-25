@@ -12,13 +12,14 @@ const client = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Ada', l
 const charge = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', clientId: client.id, firstName: client.firstName, lastName: client.lastName, concept: 'Cuota mensual', amountCents: 10000, paidCents: 2500, balanceCents: 7500, dueOn: '2099-12-10', status: 'pending' };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const overview = { overdueCount: 0, overdueCents: 0, chargeCount: 1, cashSession: null, capabilities: { payments: true, cash: true, invoices: true } };
-function mockFetch({ onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201) } = {}) {
+function mockFetch({ onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201), cashSession = null, ownerPanelRead = false } = {}) {
+  const pageOverview = { ...overview, capabilities: { ...overview.capabilities, ownerPanelRead } };
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
-    if (path.endsWith('/api/economics/overview')) return response(overview);
+    if (path.endsWith('/api/economics/overview')) return response(pageOverview);
     if (path.endsWith('/api/economics/charges') && options.method === 'POST') return onCharge(url, options);
     if (path.includes('/api/economics/charges')) return response({ items: [charge], total: 1 });
-    if (path.endsWith('/api/economics/cash/today')) return response({ session: null });
+    if (path.endsWith('/api/economics/cash/today')) return response({ session: cashSession });
     if (path.startsWith('http://127.0.0.1:3100/api/clients?')) return response({ items: [client] });
     if (path.endsWith('/api/economics/payments')) return onPayment(url, options);
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
@@ -35,6 +36,20 @@ test('renders cash, overdue and client charge summaries without horizontal table
   assert.ok(screen.getByRole('button', { name: 'Abrir caja' }));
   assert.equal(screen.getAllByText('Cuota mensual').length, 2, 'table and mobile card stay available for responsive CSS');
   assert.ok(screen.getAllByText(/75,00\s*€/).length >= 1);
+});
+
+test('shows the cash difference only when the server grants owner.panel.read', async () => {
+  const cashSession = { id: 'cash-1', localDate: '2026-10-25', status: 'closed', openingCents: 1000, cashPaymentsCents: 0, cashStoreSalesCents: 0, cashRefundsCents: 0, adjustmentsCents: 0, expectedCents: 1000, countedCents: 1200, differenceCents: 200 };
+  mockFetch({ cashSession });
+  const staffView = render(React.createElement(EconomicsPage));
+  await screen.findByText(/Contado 12,00/);
+  assert.equal(screen.queryByText(/diferencia/i), null);
+  staffView.unmount();
+
+  mockFetch({ cashSession, ownerPanelRead: true });
+  render(React.createElement(EconomicsPage));
+  await screen.findByText(/Contado 12,00/);
+  assert.ok(await screen.findByText(/diferencia/i));
 });
 
 test('creates a charge with integer cents and records a partial payment idempotently', async () => {

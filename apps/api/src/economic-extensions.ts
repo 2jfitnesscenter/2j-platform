@@ -53,7 +53,9 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         return { closed, snapshot };
       });
       if ('error' in result) return reply.code(result.error === 'cash_session_not_found' ? 404 : 409).send({ error: result.error });
-      return { ...result.closed, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
+      if (can(context, 'owner.panel.read')) return { ...result.closed, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
+      const { differenceCents: _ownerOnlyDifference, ...closedForStaff } = result.closed;
+      return { ...closedForStaff, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
     } catch (error) {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
       app.log.error({ databaseCode: code, route: 'POST /api/economics/cash/close' }, 'cash close failed');
@@ -63,9 +65,12 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
 
   app.get('/api/economics/cash/today', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    if (!await auth(request, reply, 'billing.read-basic')) return;
+    const context = await auth(request, reply, 'billing.read-basic'); if (!context) return;
     const [session] = await db`SELECT id FROM economic_cash_sessions WHERE status='open' OR local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY (status='open') DESC,opened_at DESC LIMIT 1`;
-    return { session: session ? await cashSnapshot(db, session.id) : null, timezone: 'Atlantic/Canary' };
+    const snapshot = session ? await cashSnapshot(db, session.id) : null;
+    if (!snapshot || can(context, 'owner.panel.read')) return { session: snapshot, timezone: 'Atlantic/Canary' };
+    const { differenceCents: _ownerOnlyDifference, ...visibleSnapshot } = snapshot;
+    return { session: visibleSnapshot, timezone: 'Atlantic/Canary' };
   });
   app.post('/api/economics/cash/open', async (request, reply) => {
     const context = await auth(request, reply, 'billing.cash.manage'); if (!context) return;
@@ -212,9 +217,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
           if (Number(balance?.cents ?? 0) + Number(proof.amountCents) > Number(charge.amountCents)) return { error: 'amount_exceeds_balance' as const };
           transactionId = randomUUID();
           const requestHash = createHash('sha256').update(`proof:${proof.id}:${proof.amountCents}`).digest('hex');
-          const [cash] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`;
-          if (!cash) return { error: 'cash_session_required' as const };
-          await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${transactionId},${charge.id},${charge.clientId},'payment',${proof.amountCents},'Justificante de transferencia validado',${context.actorId},${proof.id},${requestHash},${cash.id})`;
+          await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${transactionId},${charge.id},${charge.clientId},'payment',${proof.amountCents},'Justificante de transferencia validado',${context.actorId},${proof.id},${requestHash},NULL)`;
           await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${transactionId},'transfer',${proof.amountCents})`;
           await audit(tx, context, 'payment.transfer_validated', 'transaction', transactionId, charge.clientId, { amountCents: proof.amountCents, proofId: proof.id });
           await activateSettledEntitlementPeriods(tx,charge.id,context.actorId);

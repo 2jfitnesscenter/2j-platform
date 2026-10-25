@@ -28,6 +28,7 @@ const clientsAdminApp = buildServer(process.env.DATABASE_URL, { authorizationRes
 const clientsTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-trainer', role: 'trainer' }) });
 const clientsReceptionApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-reception', role: 'reception-management' }) });
 const clientsAccountantApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-accountant', role: 'accountant' }) });
+const ownerPanelApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-owner', role: 'admin', explicitPermissions: ['owner.panel.read'] }) });
 const trainingLinkingAdminApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }), trainingLinkingEnabled: true });
 const trainingLinkingTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-trainer', role: 'trainer' }), trainingLinkingEnabled: true });
 const trainingLinkingReceptionApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-reception', role: 'reception-management' }), trainingLinkingEnabled: true });
@@ -45,7 +46,7 @@ beforeEach(async (context) => {
   const [session] = await sql`SELECT id FROM economic_cash_sessions WHERE status='open' LIMIT 1`;
   if (!session) await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,0,'qa-cash-fixture')`;
 });
-after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
+after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), ownerPanelApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
 
 function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
   const timestamp = overrides.timestamp ?? new Date().toISOString();
@@ -2177,7 +2178,7 @@ test('debt restriction permits waitlist and Trainer can make a reasoned audited 
   }
 });
 
-test('D113 requires an open cash session for every payment collection path', async () => {
+test('D113 gates payment collection and D102 transfer validation remains independent of cash', async () => {
   const open = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
   assert.equal(open.statusCode, 200, open.body);
   const closed = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${open.json().session.id}/close`, payload: { countedCents: open.json().session.expectedCents } });
@@ -2206,12 +2207,14 @@ test('D113 requires an open cash session for every payment collection path', asy
 
   const proof = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/transfer-proofs', payload: { chargeId: charge.json().id, amountCents: 1000, contentType: 'application/pdf', fileName: 'd113.pdf', base64: Buffer.from('%PDF-1.7\nD113').toString('base64') } });
   assert.equal(proof.statusCode, 201, proof.body);
-  const validatedWithoutShift = await clientsTrainerApp.inject({ method: 'POST', url: `/api/economics/transfer-proofs/${proof.json().id}/review`, payload: { decision: 'validated', note: 'Revisión D113' } });
-  assert.equal(validatedWithoutShift.statusCode, 409, validatedWithoutShift.body);
-  assert.equal(validatedWithoutShift.json().error, 'cash_session_required');
-  const [stillPending] = await sql`SELECT status,transaction_id FROM economic_transfer_proofs WHERE id=${proof.json().id}`;
-  assert.equal(stillPending.status, 'pending_validation');
-  assert.equal(stillPending.transaction_id, null);
+  const validatedWithoutShift = await clientsTrainerApp.inject({ method: 'POST', url: `/api/economics/transfer-proofs/${proof.json().id}/review`, payload: { decision: 'validated', note: 'Revisión D102 sin exigir caja' } });
+  assert.equal(validatedWithoutShift.statusCode, 200, validatedWithoutShift.body);
+  const [validatedProof] = await sql`SELECT status,transaction_id FROM economic_transfer_proofs WHERE id=${proof.json().id}`;
+  assert.equal(validatedProof.status, 'validated');
+  assert.ok(validatedProof.transaction_id);
+  const [transferTransaction] = await sql`SELECT cash_session_id,kind FROM economic_transactions WHERE id=${validatedProof.transaction_id}`;
+  assert.equal(transferTransaction.kind, 'payment');
+  assert.equal(transferTransaction.cash_session_id, null, 'D102 transfer validation is not attributed to a cash shift');
 
   const reopened = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 0 } });
   assert.equal(reopened.statusCode, 201, reopened.body);
@@ -2219,6 +2222,53 @@ test('D113 requires an open cash session for every payment collection path', asy
   assert.equal(paid.statusCode, 201, paid.body);
   const [linked] = await sql`SELECT cash_session_id FROM economic_transactions WHERE id=${paid.json().id}`;
   assert.equal(linked.cash_session_id, reopened.json().id);
+});
+
+test('D113 requires an open shift for every refund method and links the refund to that shift', async () => {
+  const client = (await createClientRequest(clientsAdminApp, { firstName: 'Refund D113', lastName: randomUUID(), email: null, phone: null })).json();
+  const charge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'Reembolso D113', amountCents: 10000, dueOn: '2099-12-10' } });
+  const payment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 5000 }] } });
+  assert.equal(payment.statusCode, 201, payment.body);
+  const current = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  const close = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${current.json().session.id}/close`, payload: { countedCents: current.json().session.expectedCents } });
+  assert.equal(close.statusCode, 200, close.body);
+
+  for (const method of ['cash', 'card', 'transfer', 'direct_debit', 'other']) {
+    const response = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: payment.json().id, amountCents: 500, method, note: `D113 ${method}` } });
+    assert.equal(response.statusCode, 409, `${method}: ${response.body}`);
+    assert.equal(response.json().error, 'cash_session_required');
+  }
+  const [noRefunds] = await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE refund_of=${payment.json().id}`;
+  assert.equal(noRefunds.count, 0);
+
+  const opened = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 0 } });
+  assert.equal(opened.statusCode, 201, opened.body);
+  const refund = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: payment.json().id, amountCents: 500, method: 'card', note: 'D113 tarjeta con caja abierta' } });
+  assert.equal(refund.statusCode, 201, refund.body);
+  const [linked] = await sql`SELECT cash_session_id FROM economic_transactions WHERE id=${refund.json().id}`;
+  assert.equal(linked.cash_session_id, opened.json().id);
+});
+
+test('cash difference is returned only to an explicit owner.panel.read grant', async () => {
+  const current = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(current.statusCode, 200, current.body);
+  const close = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${current.json().session.id}/close`, payload: { countedCents: Number(current.json().session.expectedCents) + 77 } });
+  assert.equal(close.statusCode, 200, close.body);
+  assert.equal(Object.hasOwn(close.json(), 'differenceCents'), false, 'generic admin role is not the owner permission');
+  const genericCash = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(Object.hasOwn(genericCash.json().session, 'differenceCents'), false);
+  const genericOverview = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/overview' });
+  assert.equal(genericOverview.json().capabilities.ownerPanelRead, false);
+  const ownerCash = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(Number(ownerCash.json().session.differenceCents), 77);
+  const ownerOverview = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/overview' });
+  assert.equal(ownerOverview.json().capabilities.ownerPanelRead, true);
+  const genericDashboard = await clientsAdminApp.inject({ method: 'GET', url: '/api/dashboard/command-center' });
+  assert.equal(genericDashboard.statusCode, 200, genericDashboard.body);
+  assert.equal(Object.hasOwn(genericDashboard.json().economics.cashSession, 'differenceCents'), false);
+  const ownerDashboard = await ownerPanelApp.inject({ method: 'GET', url: '/api/dashboard/command-center' });
+  assert.equal(ownerDashboard.statusCode, 200, ownerDashboard.body);
+  assert.equal(Number(ownerDashboard.json().economics.cashSession.differenceCents), 77);
 });
 
 test('cash close, human transfer validation, and tax-explicit invoice drafts have guarded transitions', async () => {
@@ -2302,7 +2352,9 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   assert.equal(closed.statusCode, 200, closed.body);
   assert.equal(closed.json().status, 'closed');
   assert.equal(Number(closed.json().expectedCents), 22800);
-  assert.equal(Number(closed.json().differenceCents), 200);
+  assert.equal(Object.hasOwn(closed.json(), 'differenceCents'), false, 'cash difference is not returned to the generic admin role');
+  const ownerClosedCash = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(Number(ownerClosedCash.json().session.differenceCents), 200);
   const duplicateClose = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/close', payload: { countedCents: 27000 } });
   assert.equal(duplicateClose.statusCode, 409);
   const [immutableCash] = await sql`SELECT expected_cents,difference_cents FROM economic_cash_sessions WHERE id=${opened.json().id}`;
