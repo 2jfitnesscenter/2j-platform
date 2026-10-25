@@ -285,9 +285,10 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
   const service = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Funcional' };
   const date = '2026-10-13';
   const base = { serviceId: service.id, serviceName: service.name, areaName: 'La Sala', professionalName: 'Alex Rivera', durationMinutes: 45, capacity: 8, waitlistCount: 0, isIndividual: false, status: 'scheduled', myReservationStatus: null, myWaitlistStatus: null };
-  const free = { ...base, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: '2026-10-13T17:00:00.000Z', occupiedCount: 3, availability: 'available', availabilityReason: null };
-  const full = { ...base, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', startsAt: '2026-10-13T19:00:00.000Z', occupiedCount: 8, waitlistCount: 1, availability: 'full', availabilityReason: null };
-  const details = { [free.id]: { ...free, eligible: true, canJoinWaitlist: false, availableAlternatives: [] }, [full.id]: { ...full, eligible: false, eligibilityReason: 'session_full', canJoinWaitlist: true, availableAlternatives: [] } };
+  const free = { ...base, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: '2026-10-13T17:00:00.000Z', occupiedCount: 3, availability: { status: 'available', reason: null, canJoinWaitlist: false } };
+  const full = { ...base, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', startsAt: '2026-10-13T19:00:00.000Z', occupiedCount: 8, waitlistCount: 1, availability: { status: 'full', reason: null, canJoinWaitlist: true } };
+  const fullIneligible = { ...base, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', startsAt: '2026-10-13T20:00:00.000Z', occupiedCount: 8, waitlistCount: 1, availability: { status: 'full', reason: 'no_entitlement', canJoinWaitlist: false } };
+  const details = { [free.id]: { ...free, eligible: true, canJoinWaitlist: false, availableAlternatives: [] }, [full.id]: { ...full, eligible: true, availability: { status: 'full', reason: null, canJoinWaitlist: true }, canJoinWaitlist: true, availableAlternatives: [] } };
   const mutations = []; let booked = false; let joinedWaitlist = false; let cancelled = false;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
@@ -296,13 +297,13 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: true }));
     if (url === '/api/me/bookings') return new Response(JSON.stringify(booked ? { reservations: [cancelled ? { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'cancelled', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false } : { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'reserved', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }], waitlist: joinedWaitlist ? [{ id: 'abababab-abab-4bab-8bab-abababababab', status: 'waiting', sessionId: full.id, startsAt: full.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] : [] } : { reservations: [], waitlist: [] }));
     if (url === '/api/me/booking-services') return new Response(JSON.stringify({ services: [service] }));
-    if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [free, full] }));
+    if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [free, full, fullIneligible] }));
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
     if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
     if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
     if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
     if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
-    if (url === `/api/me/sessions/${free.id}` || url === `/api/me/sessions/${full.id}`) { const sessionId = url.split('/').at(-1); return new Response(JSON.stringify({ session: details[sessionId] })); }
+    if (url === `/api/me/sessions/${free.id}` || url === `/api/me/sessions/${full.id}` || url === `/api/me/sessions/${fullIneligible.id}`) { const sessionId = url.split('/').at(-1); return new Response(JSON.stringify({ session: details[sessionId] ?? { ...fullIneligible, eligible: false, eligibilityReason: 'waitlist_not_allowed', canJoinWaitlist: false, availableAlternatives: [] } })); }
     if (url.endsWith('/cancellation-preview')) return new Response(JSON.stringify({ canCancel: true, cancellation: { summary: 'Si cancelas ahora, recuperarás la sesión.' } }));
     if (init.method === 'POST' && (url.endsWith('/reservations') || url.endsWith('/waitlist'))) { mutations.push({ url, key: new Headers(init.headers).get('idempotency-key') }); if(url.endsWith('/waitlist')) joinedWaitlist=true; else booked = true; return new Response(JSON.stringify({ status: url.endsWith('/waitlist') ? 'waiting' : 'reserved' }), { status: 201 }); }
     if (init.method === 'PATCH' && url.endsWith('/cancel')) { cancelled = true; return new Response(JSON.stringify({ status: 'cancelled' })); }
@@ -313,10 +314,11 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
   fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   fireEvent.click(await ui.findByRole('button', { name: /Funcional/ }));
   fireEvent.click(ui.getByRole('button', { name: `${Number(date.slice(-2))}, hay sesiones` }));
-  assert.equal(ui.container.querySelectorAll('.session-card').length, 2);
+  assert.equal(ui.container.querySelectorAll('.session-card').length, 3);
   assert.doesNotMatch(ui.container.textContent, /Repetir cada semana|Todos los lunes|Reserva recurrente/i);
-  assert.equal(ui.container.querySelectorAll('.session-card-detail').length, 2);
+  assert.equal(ui.container.querySelectorAll('.session-card-detail').length, 3);
   assert.equal(ui.container.querySelectorAll('.session-waitlist-button').length, 1);
+  assert.equal(ui.container.querySelectorAll('.session-card')[2].querySelector('.session-waitlist-button'), null, 'no se ofrece lista de espera sin elegibilidad explícita del servidor');
   assert.equal(ui.container.querySelectorAll('.session-card')[1].textContent.includes(clientAppTestHelpers.timeLabel(full.startsAt)), true);
   assert.equal(ui.container.querySelectorAll('.session-card')[1].textContent.includes('en espera'), false);
   fireEvent.click(ui.container.querySelectorAll('.session-card-detail')[0]);
