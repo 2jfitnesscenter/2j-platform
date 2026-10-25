@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
 import { activateSettledEntitlementPeriods } from './assignment-periods.js';
+import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -107,15 +108,15 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         const [balance]=await tx`SELECT COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0)::bigint cents,COALESCE(sum(amount_cents) FILTER(WHERE kind='payment'),0)::bigint AS paid_cents FROM economic_transactions WHERE charge_id=${charge.id}`;
         if(Number(balance?.paid_cents??0)>0&&Number(balance?.cents??0)===0)return{error:'charge_refunded' as const};
         if(total+Number(balance?.cents??0)>Number(charge.amountCents))return{error:'amount_exceeds_balance' as const};
-        const [cash]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`;
-        if(!cash)return{error:'cash_session_required' as const};
+        const cash=await lockOpenCashSession(tx);
+        if(!cash.ok)return {error:cash.error};
         await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${charge.id},${charge.clientId},'payment',${total},${data.note??null},${context.actorId},${key.data},${requestHash},${cash.id})`;
         for(const split of data.splits)await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${id},${split.method},${split.amountCents})`;
         await audit(tx,context.actorId,'payment.recorded','transaction',id,charge.clientId,{amountCents:total,methods:data.splits.map(split=>split.method),cashSessionId:cash.id});
         await activateSettledEntitlementPeriods(tx,charge.id,context.actorId);
         return{id,replay:false as const};
       });
-      if('error'in result)return reply.code(result.error==='charge_not_found'?404:409).send({error:result.error});
+      if('error'in result)return reply.code(result.error==='charge_not_found'?404:409).send({error:result.error,...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{})});
       return reply.code(result.replay?200:201).send({id:result.id});
     }catch(e){return error(reply,e);}
   });
@@ -135,14 +136,14 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         await tx`SELECT id FROM economic_charges WHERE id=${payment.chargeId} FOR UPDATE`;
         const [refunded]=await tx`SELECT COALESCE(sum(amount_cents),0)::bigint cents FROM economic_transactions WHERE refund_of=${payment.id}`;
         if(data.amountCents+Number(refunded?.cents??0)>Number(payment.amountCents))return{error:'refund_exceeds_payment' as const};
-        const [cash]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`;
-        if(!cash)return{error:'cash_session_required' as const};
+        const cash=await lockOpenCashSession(tx);
+        if(!cash.ok)return {error:cash.error};
         await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,refund_of,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${payment.chargeId},${payment.clientId},'refund',${data.amountCents},${payment.id},${data.note},${context.actorId},${key.data},${requestHash},${cash.id})`;
         await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${id},${data.method},${data.amountCents})`;
         await audit(tx,context.actorId,'payment.refunded','transaction',id,payment.clientId,{amountCents:data.amountCents,reverses:payment.id,method:data.method,cashSessionId:cash.id});
         return{id,replay:false as const};
       });
-      if('error'in result)return reply.code(result.error==='payment_not_found'?404:409).send({error:result.error});
+      if('error'in result)return reply.code(result.error==='payment_not_found'?404:409).send({error:result.error,...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{})});
       return reply.code(result.replay?200:201).send({id:result.id});
     }catch(e){return error(reply,e);}
   });

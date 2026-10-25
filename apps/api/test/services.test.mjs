@@ -40,9 +40,7 @@ const capabilityKeyId = 'qa-home-v1';
 const capabilitySecret = Buffer.alloc(32, 37).toString('base64url');
 const trainingCapabilitiesApp = buildServer(process.env.DATABASE_URL, { trainingCapabilitiesKeys: { [capabilityKeyId]: { caller:'home', secret:capabilitySecret } } });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
-beforeEach(async (context) => {
-  if (context.name === 'late close preserves the operational date and records the actual closer and timestamp'
-    || context.name === 'client plan sale leaves only an unpaid charge when no money is collected and rolls back if cash cannot be recorded') return;
+beforeEach(async () => {
   const [session] = await sql`SELECT id FROM economic_cash_sessions WHERE status='open' LIMIT 1`;
   if (!session) await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,0,'qa-cash-fixture')`;
 });
@@ -2249,6 +2247,41 @@ test('D113 requires an open shift for every refund method and links the refund t
   assert.equal(linked.cash_session_id, opened.json().id);
 });
 
+test('database guard rejects unlinked payments and refunds while D102 validated transfer remains the only NULL-shift exception', async () => {
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'DB guard',lastName:randomUUID(),email:null,phone:null})).json();
+  const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'DB guard',amountCents:2000,dueOn:'2099-12-10'}});
+  const paymentId=randomUUID(),paymentKey=randomUUID(),paymentHash='a'.repeat(64);
+  await assert.rejects(sql.begin(async tx=>{
+    await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${paymentId},${charge.json().id},${client.id},'payment',500,'qa-db-guard',${paymentKey},${paymentHash},NULL)`;
+    await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${paymentId},'card',500)`;
+  }),{code:'23514'});
+  const paid=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'card',amountCents:500}]}});
+  assert.equal(paid.statusCode,201,paid.body);
+  const refundId=randomUUID(),refundKey=randomUUID(),refundHash='b'.repeat(64);
+  await assert.rejects(sql.begin(async tx=>{
+    await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,refund_of,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${refundId},${charge.json().id},${client.id},'refund',100,${paid.json().id},'qa-db-guard',${refundKey},${refundHash},NULL)`;
+    await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${refundId},'card',100)`;
+  }),{code:'23514'});
+  assert.equal((await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE id IN (${paymentId},${refundId})`)[0].count,0);
+});
+
+test('concurrent collection and cash close serialize with the close including exactly the accepted cash collection',async()=>{
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'Close race',lastName:randomUUID(),email:null,phone:null})).json();
+  const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Close race',amountCents:1000,dueOn:'2099-12-10'}});
+  const current=await clientsAdminApp.inject({method:'GET',url:'/api/economics/cash/today'});assert.equal(current.statusCode,200,current.body);
+  const session=current.json().session,baseline=Number(session.expectedCents);
+  const [payment,close]=await Promise.all([
+    clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'cash',amountCents:500}]}}),
+    clientsAdminApp.inject({method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedCents:baseline}}),
+  ]);
+  assert.equal(close.statusCode,200,close.body);
+  assert.ok(payment.statusCode===201||(payment.statusCode===409&&payment.json().error==='cash_session_required'),payment.body);
+  const count=Number((await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${charge.json().id} AND kind='payment'`)[0].count);
+  assert.equal(count,payment.statusCode===201?1:0);
+  const [closed]=await sql`SELECT expected_cents FROM economic_cash_sessions WHERE id=${session.id}`;
+  assert.equal(Number(closed.expected_cents),baseline+(count?500:0));
+});
+
 test('cash difference is returned only to an explicit owner.panel.read grant', async () => {
   const current = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
   assert.equal(current.statusCode, 200, current.body);
@@ -2363,19 +2396,32 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   assert.equal(Number(immutableCash.difference_cents), 200);
 });
 
-test('late close preserves the operational date and records the actual closer and timestamp', async () => {
-  const today=await clientsAdminApp.inject({method:'GET',url:'/api/economics/cash/today'});
-  if(today.json().session?.status==='open'){
-    const close=await clientsAdminApp.inject({method:'POST',url:`/api/economics/cash/${today.json().session.id}/close`,payload:{countedCents:today.json().session.expectedCents}});
-    assert.equal(close.statusCode,200,close.body);
+test('previous-day open cash blocks collection and requires owner resolution without changing clock records', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`cash_stale_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
+  let testDb,testApp;
+  try {
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);sourceUrl.pathname=`/${databaseName}`;
+    testDb=postgres(sourceUrl.toString(),{max:3,connect_timeout:5});await migrateDatabase(testDb);
+    testApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'qa-stale-cash-owner-resolution',role:'admin'})});
+    const client=(await testApp.inject({method:'POST',url:'/api/clients',headers:{'idempotency-key':randomUUID()},payload:{firstName:'Caja',lastName:'Ayer',email:null,phone:null}})).json();
+    const charge=await testApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Cobro bloqueado por caja anterior',amountCents:1000,dueOn:'2099-12-10'}});
+    assert.equal(charge.statusCode,201,charge.body);
+    const [session]=await testDb`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date-1,5000,'qa-stale-shift') RETURNING id,local_date`;
+    const payment=await testApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'cash',amountCents:500}]}});
+    assert.equal(payment.statusCode,409,payment.body);assert.equal(payment.json().error,'cash_session_previous_day_requires_owner_resolution');
+    assert.match(payment.json().message,/propietario debe resolverla/i);
+    const opened=await testApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingCents:0}});
+    assert.equal(opened.statusCode,409,opened.body);assert.equal(opened.json().error,'cash_session_previous_day_requires_owner_resolution');
+    const close=await testApp.inject({method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedCents:5000}});
+    assert.equal(close.statusCode,409,close.body);assert.equal(close.json().error,'cash_session_previous_day_requires_owner_resolution');
+    const [unchanged]=await testDb`SELECT status,closed_at,closed_by,local_date FROM economic_cash_sessions WHERE id=${session.id}`;
+    assert.equal(unchanged.status,'open');assert.equal(unchanged.closed_at,null);assert.equal(unchanged.closed_by,null);
+    const [clockCount]=await testDb`SELECT count(*)::int AS count FROM staff_timeclock_events`;
+    assert.equal(clockCount.count,0,'stale cash resolution does not invent timeclock events');
+  } finally {
+    await testApp?.close();await testDb?.end();await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
   }
-  const [session] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ('1900-01-01',5000,'qa-late-open') RETURNING id,local_date`;
-  const response = await clientsAdminApp.inject({ method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedCents:5000} });
-  assert.equal(response.statusCode,200,response.body);
-  assert.equal(response.json().status,'late_close');
-  assert.equal(String(response.json().localDate),session.local_date instanceof Date ? session.local_date.toISOString().slice(0,10) : String(session.local_date));
-  assert.equal(response.json().closedBy,'qa-admin');
-  assert.ok(response.json().closedAt);
 });
 
 test('pending charges can be voided once with an audited reason, while charges with money require compensation', async () => {

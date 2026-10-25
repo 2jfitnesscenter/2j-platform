@@ -75,8 +75,12 @@ test('D113 blocks paid POS sales without an open shift and links cash sales into
   const voided=await admin.inject({method:'POST',url:`/api/admin/store/sales/${accepted.json().id}/void`,payload:{reason:'Anulación de prueba D113'}});
   assert.equal(voided.statusCode,200,voided.body);
   const afterVoid=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
-  assert.equal(Number(afterVoid.json().session.cashStoreSalesCents),0);
+  assert.equal(Number(afterVoid.json().session.cashStoreSalesCents),1299);
+  assert.equal(Number(afterVoid.json().session.cashStoreRefundsCents),1299);
+  assert.equal(Number(afterVoid.json().session.storeSaleAnnulmentsCents),1299);
   assert.equal(Number(afterVoid.json().session.expectedCents),0);
+  const [voidMovement]=await sql`SELECT cash_session_id,payment_method,amount_cents FROM store_sale_cash_movements WHERE sale_id=${accepted.json().id}`;
+  assert.equal(voidMovement.cash_session_id,accepted.json().cashSessionId);assert.equal(voidMovement.payment_method,'cash');assert.equal(Number(voidMovement.amount_cents),1299);
 });
 
 test('sale calculates authoritative price, snapshots labels, decrements stock, and idempotent retry creates one sale and movement',async()=>{
@@ -119,6 +123,28 @@ test('void restores tracked stock once and preserves sale, lines, movement ledge
   const [balance]=await sql`SELECT sum(quantity_delta)::int AS stock FROM store_inventory_movements WHERE variant_id=${v.id}`;assert.equal(balance.stock,4);
   const [saleCount]=await sql`SELECT count(*)::int AS count FROM store_sales WHERE id=${created.json().id}`;const [lineCount]=await sql`SELECT count(*)::int AS count FROM store_sale_lines WHERE sale_id=${created.json().id}`;const [movementCount]=await sql`SELECT count(*)::int AS count FROM store_inventory_movements WHERE sale_id=${created.json().id}`;const [auditCount]=await sql`SELECT count(*)::int AS count FROM store_audit_events WHERE resource_id=${created.json().id} AND action IN ('sale.created','sale.voided')`;
   assert.equal(saleCount.count,1);assert.equal(lineCount.count,1);assert.equal(movementCount.count,2);assert.equal(auditCount.count,2);
+});
+
+test('store sale annulment is refused without a shift and appears as a linked movement in the next close',async()=>{
+  const item=await product();const v=await variant(item.id,{label:'Anulación con turno'});await stock(v.id,2);
+  const created=await sale(memberIds.a,v.id,1);assert.equal(created.statusCode,201,created.body);
+  const current=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
+  const closed=await admin.inject({method:'POST',url:`/api/economics/cash/${current.json().session.id}/close`,payload:{countedCents:current.json().session.expectedCents}});assert.equal(closed.statusCode,200,closed.body);
+  const rejected=await admin.inject({method:'POST',url:`/api/admin/store/sales/${created.json().id}/void`,payload:{reason:'Sin turno de caja'}});
+  assert.equal(rejected.statusCode,409,rejected.body);assert.equal(rejected.json().error,'cash_session_required');
+  await assert.rejects(sql`UPDATE store_sales SET status='voided',voided_at=now(),voided_by='qa-bypass' WHERE id=${created.json().id}`,{code:'23514'});
+  const [unchanged]=await sql`SELECT status FROM store_sales WHERE id=${created.json().id}`;assert.equal(unchanged.status,'completed');
+  const [none]=await sql`SELECT count(*)::int AS count FROM store_sale_cash_movements WHERE sale_id=${created.json().id}`;assert.equal(none.count,0);
+  const opened=await admin.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingCents:2000}});assert.equal(opened.statusCode,201,opened.body);
+  const voided=await admin.inject({method:'POST',url:`/api/admin/store/sales/${created.json().id}/void`,payload:{reason:'Anulación con turno'}});assert.equal(voided.statusCode,200,voided.body);
+  const [movement]=await sql`SELECT cash_session_id,payment_method,amount_cents FROM store_sale_cash_movements WHERE sale_id=${created.json().id}`;
+  assert.equal(movement.cash_session_id,opened.json().id);assert.equal(movement.payment_method,'cash');assert.equal(Number(movement.amount_cents),Number(created.json().totalCents));
+  const live=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
+  assert.equal(Number(live.json().session.cashStoreRefundsCents),Number(created.json().totalCents));
+  const expectedAfterRefund=Number(opened.json().openingCents)-Number(created.json().totalCents);
+  assert.equal(Number(live.json().session.expectedCents),expectedAfterRefund);
+  const close=await admin.inject({method:'POST',url:`/api/economics/cash/${opened.json().id}/close`,payload:{countedCents:expectedAfterRefund}});assert.equal(close.statusCode,200,close.body);
+  assert.equal(Number(close.json().cashStoreRefundsCents),Number(created.json().totalCents));
 });
 
 test('Member history is self-scoped, includes own sale snapshots, and does not require booking entitlement',async()=>{

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
+import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
 import type { createDatabase } from './db.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
@@ -104,8 +105,8 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
           AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version AND (s.status<>'active' OR a.status<>'active')) FOR SHARE OF p,v`;
         if (!plan) return { error: 'plan_unavailable' as const };
         if (plan.termKind != null) return { error: 'contract_terms_not_available' as const };
-        const [cash] = data.paymentAmountCents != null ? await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE` : [];
-        if (data.paymentAmountCents != null && !cash) return { error: 'cash_session_required' as const };
+        const cash = data.paymentAmountCents != null ? await lockOpenCashSession(tx) : null;
+        if (cash && !cash.ok) return { error: cash.error };
         const concept = `${plan.name} · Cuota`;
         const [commercial]=await tx`SELECT
           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',s.id,'name',s.name,'area',a.name) ORDER BY s.id) FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion}),'[]'::jsonb) AS services,
@@ -136,7 +137,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
         }
         return { id: assignmentId, chargeId, paymentId, replay: false as const };
       });
-      if ('error' in result) return reply.code(result.error==='price_override_forbidden'?403:409).send({ error: result.error });
+      if ('error' in result) return reply.code(result.error==='price_override_forbidden'?403:409).send({ error: result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
       return reply.code(result.replay ? 200 : 201).send(result);
     } catch (error) {
       const dbCode = code(error);

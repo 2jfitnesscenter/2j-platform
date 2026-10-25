@@ -5,6 +5,7 @@ import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
 import { activateSettledEntitlementPeriods } from './assignment-periods.js';
 import { appendNotificationEvent } from './notifications.js';
+import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -24,26 +25,28 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     const [row] = await tx`SELECT s.id,s.local_date AS "localDate",s.opening_cents AS "openingCents",s.status,s.opened_at AS "openedAt",s.opened_by AS "openedBy",s.closed_at AS "closedAt",s.closed_by AS "closedBy",s.expected_cents AS "frozenExpectedCents",s.counted_cents AS "countedCents",s.difference_cents AS "differenceCents",
       COALESCE(sum(ps.amount_cents) FILTER(WHERE et.kind='payment' AND ps.method='cash'),0)::bigint AS "cashPaymentsCents",
       COALESCE(sum(ps.amount_cents) FILTER(WHERE et.kind='refund' AND ps.method='cash'),0)::bigint AS "cashRefundsCents",
-      COALESCE((SELECT sum(sale.total_cents) FROM store_sales sale WHERE sale.cash_session_id=s.id AND sale.status='completed' AND sale.payment_state='paid' AND sale.payment_method='cash'),0)::bigint AS "cashStoreSalesCents",
+      COALESCE((SELECT sum(sale.total_cents) FROM store_sales sale WHERE sale.cash_session_id=s.id AND sale.payment_state='paid' AND sale.payment_method='cash'),0)::bigint AS "cashStoreSalesCents",
+      COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id AND m.payment_method='cash'),0)::bigint AS "cashStoreRefundsCents",
+      COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id),0)::bigint AS "storeSaleAnnulmentsCents",
       COALESCE((SELECT sum(a.amount_cents) FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id),0)::bigint AS "adjustmentsCents"
       FROM economic_cash_sessions s LEFT JOIN economic_transactions et ON et.cash_session_id=s.id LEFT JOIN economic_payment_splits ps ON ps.transaction_id=et.id WHERE s.id=${sessionId}
       GROUP BY s.id`;
     if (!row) return null;
     const expectedCents = row.frozenExpectedCents == null
-      ? Number(row.openingCents) + Number(row.cashPaymentsCents) + Number(row.cashStoreSalesCents) - Number(row.cashRefundsCents) + Number(row.adjustmentsCents)
+      ? Number(row.openingCents) + Number(row.cashPaymentsCents) + Number(row.cashStoreSalesCents) - Number(row.cashRefundsCents) - Number(row.cashStoreRefundsCents) + Number(row.adjustmentsCents)
       : Number(row.frozenExpectedCents);
     return { ...row, expectedCents, liveExpectedCents: expectedCents, differenceCents: row.differenceCents == null ? null : Number(row.differenceCents) };
   }
-  async function openCashForToday(tx: any, context: AuthorizationContext) {
-    const [session] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`;
-    return session ? String(session.id) : null;
+  async function openCashForToday(tx: any) {
+    return lockOpenCashSession(tx);
   }
   async function closeCash(request: FastifyRequest, reply: any, sessionId: string, countedCents: number, context: AuthorizationContext) {
     try {
       const result = await db.begin(async tx => {
-        const [session] = await tx`SELECT id,local_date,status FROM economic_cash_sessions WHERE id=${sessionId} FOR UPDATE`;
+        const [session] = await tx`SELECT id,local_date,status,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE id=${sessionId} FOR UPDATE`;
         if (!session) return { error: 'cash_session_not_found' as const };
         if (session.status !== 'open') return { error: 'cash_already_closed' as const };
+        if (!session.isToday) return { error: 'cash_session_previous_day_requires_owner_resolution' as const };
         const snapshot = await cashSnapshot(tx, session.id);
         if (!snapshot) return { error: 'cash_session_not_found' as const };
         const difference = countedCents - snapshot.expectedCents;
@@ -52,10 +55,10 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         await audit(tx, context, 'cash.closed', 'cash_session', session.id, null, { localDate: String(session.local_date), lateClose: closed.status === 'late_close', openingCents: snapshot.openingCents, cashPaymentsCents: snapshot.cashPaymentsCents, cashRefundsCents: snapshot.cashRefundsCents, adjustmentsCents: snapshot.adjustmentsCents, expectedCents: snapshot.expectedCents, countedCents, differenceCents: difference });
         return { closed, snapshot };
       });
-      if ('error' in result) return reply.code(result.error === 'cash_session_not_found' ? 404 : 409).send({ error: result.error });
-      if (can(context, 'owner.panel.read')) return { ...result.closed, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
+      if ('error' in result) return reply.code(result.error === 'cash_session_not_found' ? 404 : 409).send({ error: result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
+      if (can(context, 'owner.panel.read')) return { ...result.closed, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, cashStoreSalesCents: result.snapshot.cashStoreSalesCents, cashStoreRefundsCents: result.snapshot.cashStoreRefundsCents, storeSaleAnnulmentsCents: result.snapshot.storeSaleAnnulmentsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
       const { differenceCents: _ownerOnlyDifference, ...closedForStaff } = result.closed;
-      return { ...closedForStaff, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
+      return { ...closedForStaff, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, cashStoreSalesCents: result.snapshot.cashStoreSalesCents, cashStoreRefundsCents: result.snapshot.cashStoreRefundsCents, storeSaleAnnulmentsCents: result.snapshot.storeSaleAnnulmentsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
     } catch (error) {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
       app.log.error({ databaseCode: code, route: 'POST /api/economics/cash/close' }, 'cash close failed');
@@ -79,14 +82,14 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     try {
       const result = await db.begin(async tx => {
         await tx`SELECT pg_advisory_xact_lock(hashtext('2j-economic-open-cash'))`;
-        const [open] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' LIMIT 1 FOR UPDATE`;
-        if (open) return { error: 'cash_already_open' as const };
+        const [open] = await tx`SELECT id,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE status='open' LIMIT 1 FOR UPDATE`;
+        if (open) return { error: open.isToday ? 'cash_already_open' as const : 'cash_session_previous_day_requires_owner_resolution' as const };
         const [row] = await tx`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,${parsed.data.openingCents},${context.actorId}) RETURNING id,local_date AS "localDate",opening_cents AS "openingCents",status,opened_at AS "openedAt"`;
         if (!row) throw new Error('cash session insert returned no row');
         await audit(tx, context, 'cash.opened', 'cash_session', row.id, null, { openingCents: parsed.data.openingCents, localDate: String(row.localDate) });
         return { row };
       });
-      if ('error' in result) return reply.code(409).send({ error: result.error });
+      if ('error' in result) return reply.code(409).send({ error: result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
       return reply.code(201).send(result.row);
     } catch (error) {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
@@ -98,7 +101,10 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     const context = await auth(request, reply, 'billing.cash.manage'); if (!context) return;
     const parsed = closeBody.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
     const [session] = await db`SELECT id FROM economic_cash_sessions WHERE local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AND status='open'`;
-    if (!session) return reply.code(409).send({ error: 'cash_not_open' });
+    if (!session) {
+      const [stale]=await db`SELECT id FROM economic_cash_sessions WHERE status='open' LIMIT 1`;
+      return reply.code(409).send(stale?{error:'cash_session_previous_day_requires_owner_resolution',message:previousDayCashSessionMessage}:{error:'cash_not_open'});
+    }
     return closeCash(request, reply, session.id, parsed.data.countedCents, context);
   });
   app.post('/api/economics/cash/:sessionId/close', async (request, reply) => {
@@ -114,14 +120,14 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
     try {
       const result = await db.begin(async tx => {
-        const id = await openCashForToday(tx, context);
-        if (!id) return { error: 'cash_not_open' as const };
-        const [row] = await tx`INSERT INTO economic_cash_adjustments(cash_session_id,amount_cents,reason,actor_id) VALUES (${id},${parsed.data.amountCents},${parsed.data.reason},${context.actorId}) RETURNING id,amount_cents AS "amountCents",reason,created_at AS "createdAt"`;
+        const cash = await openCashForToday(tx);
+        if (!cash.ok) return { error: cash.error };
+        const [row] = await tx`INSERT INTO economic_cash_adjustments(cash_session_id,amount_cents,reason,actor_id) VALUES (${cash.id},${parsed.data.amountCents},${parsed.data.reason},${context.actorId}) RETURNING id,amount_cents AS "amountCents",reason,created_at AS "createdAt"`;
         if (!row) throw new Error('cash adjustment insert returned no row');
-        await audit(tx, context, 'cash.adjusted', 'cash_adjustment', row.id, null, { sessionId: id, amountCents: parsed.data.amountCents, reason: parsed.data.reason });
+        await audit(tx, context, 'cash.adjusted', 'cash_adjustment', row.id, null, { sessionId: cash.id, amountCents: parsed.data.amountCents, reason: parsed.data.reason });
         return { row };
       });
-      if ('error' in result) return reply.code(409).send({ error: result.error });
+      if ('error' in result) return reply.code(409).send({ error: result.error==='cash_session_required'?'cash_not_open':result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
       return reply.code(201).send(result.row);
     } catch { return reply.code(500).send({ error: 'cash_adjustment_failed' }); }
   });

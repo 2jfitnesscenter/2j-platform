@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
+import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
 import type { createDatabase } from './db.js';
 import type { ClientAuthorizationContext } from './communications.js';
 
@@ -121,8 +122,8 @@ export function registerStoreRoutes(app: FastifyInstance, db: DB, resolveStaff: 
       await tx`SELECT pg_advisory_xact_lock(hashtextextended(${'store:'+centerKey+':'+key.toLowerCase()},0))`;
       const [existing]=await tx`SELECT id,request_hash AS "requestHash" FROM store_sales WHERE center_key=${centerKey} AND idempotency_key=${key}::uuid`;
       if(existing)return existing.requestHash.trim()===hash?{replay:existing.id}:{error:'idempotency_conflict'} as const;
-      const [cash]=body.paymentState==='paid'?await tx`SELECT id FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`:[];
-      if(body.paymentState==='paid'&&!cash)return {error:'cash_session_required'} as const;
+      const cash=body.paymentState==='paid'?await lockOpenCashSession(tx):null;
+      if(cash&&!cash.ok)return {error:cash.error};
       const [member]=await tx`SELECT id FROM clients WHERE id=${body.clientId}::uuid AND status='active'`;if(!member)return {error:'member_not_found'} as const;
       const ids=body.lines.map(line=>line.variantId);
       const variants=await tx`SELECT v.id,v.label,v.sku,v.price_cents AS "priceCents",v.active AS "variantActive",v.stock_tracked AS "stockTracked",p.name AS "productName",p.active AS "productActive" FROM store_product_variants v JOIN store_products p ON p.id=v.product_id WHERE v.id=ANY(${ids}::uuid[]) AND p.center_key=${centerKey} ORDER BY v.id FOR UPDATE OF v,p`;
@@ -135,7 +136,7 @@ export function registerStoreRoutes(app: FastifyInstance, db: DB, resolveStaff: 
       for(const line of lines){await tx`INSERT INTO store_sale_lines(sale_id,variant_id,product_name_snapshot,variant_label_snapshot,sku_snapshot,unit_price_cents,quantity,line_total_cents) VALUES (${sale.id},${line.variant.id},${line.variant.productName},${line.variant.label},${line.variant.sku},${money(line.variant.priceCents)},${line.quantity},${line.lineTotal})`;if(line.variant.stockTracked)await tx`INSERT INTO store_inventory_movements(variant_id,quantity_delta,movement_type,reason,actor_id,sale_id) VALUES (${line.variant.id},${-line.quantity},'sale',${`Venta ${sale.id}`},${actor.actorId},${sale.id})`;}
       await audit(tx,actor.actorId,'sale.created','sale',sale.id,{lineCount:lines.length,totalCents:total,paymentState:body.paymentState});return {created:sale.id};
     });
-    if('error'in outcome){const status=outcome.error==='member_not_found'||outcome.error==='variant_not_found'?404:outcome.error==='idempotency_conflict'||outcome.error==='cash_session_required'?409:outcome.error==='product_inactive'||outcome.error==='variant_inactive'||outcome.error==='insufficient_stock'?409:400;return reply.code(status).send({error:outcome.error});}
+      if('error'in outcome){const status=outcome.error==='member_not_found'||outcome.error==='variant_not_found'?404:outcome.error==='idempotency_conflict'||outcome.error==='cash_session_required'||outcome.error==='cash_session_previous_day_requires_owner_resolution'?409:outcome.error==='product_inactive'||outcome.error==='variant_inactive'||outcome.error==='insufficient_stock'?409:400;return reply.code(status).send({error:outcome.error,...(outcome.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{})});}
     if('replay'in outcome)return reply.send(await saleDetail(db,outcome.replay));
     return reply.code(201).send(await saleDetail(db,outcome.created));
   });
@@ -143,9 +144,10 @@ export function registerStoreRoutes(app: FastifyInstance, db: DB, resolveStaff: 
   app.post('/api/admin/store/sales/:saleId/void', async (request,reply) => {
     const actor=await staffContext(request,reply,resolveStaff,'store.sales.void');if(!actor)return;
     const params=z.object({saleId:uuid}).safeParse(request.params);if(!params.success)return reply.code(400).send({error:'invalid_sale_id'});
-    const result=await db.begin(async tx=>{const [sale]=await tx`SELECT id,status FROM store_sales WHERE id=${params.data.saleId} AND center_key=${centerKey} FOR UPDATE`;if(!sale)return {error:'sale_not_found'} as const;if(sale.status==='voided')return {error:'sale_already_voided'} as const;const lines=await tx`SELECT variant_id AS "variantId",quantity FROM store_sale_lines WHERE sale_id=${sale.id} ORDER BY variant_id`;for(const line of lines){await tx`SELECT id FROM store_product_variants WHERE id=${line.variantId} FOR UPDATE`;const [variant]=await tx`SELECT stock_tracked AS "stockTracked" FROM store_product_variants WHERE id=${line.variantId}`;if(variant?.stockTracked)await tx`INSERT INTO store_inventory_movements(variant_id,quantity_delta,movement_type,reason,actor_id,sale_id) VALUES (${line.variantId},${line.quantity},'sale_reversal',${`Anulación ${sale.id}`},${actor.actorId},${sale.id})`;}
-      const [updated]=await tx`UPDATE store_sales SET status='voided',voided_at=now(),voided_by=${actor.actorId} WHERE id=${sale.id} AND status='completed' RETURNING id,status`;if(!updated)return {error:'sale_already_voided'} as const;await audit(tx,actor.actorId,'sale.voided','sale',sale.id,{lineCount:lines.length});return {sale:updated};});
-    if('error'in result)return reply.code(result.error==='sale_not_found'?404:409).send({error:result.error});return result.sale;
+    const result=await db.begin(async tx=>{const [sale]=await tx`SELECT id,status,payment_state AS "paymentState",payment_method AS "paymentMethod",total_cents AS "totalCents" FROM store_sales WHERE id=${params.data.saleId} AND center_key=${centerKey} FOR UPDATE`;if(!sale)return {error:'sale_not_found'} as const;if(sale.status==='voided')return {error:'sale_already_voided'} as const;const cash=await lockOpenCashSession(tx);if(!cash.ok)return {error:cash.error};const lines=await tx`SELECT variant_id AS "variantId",quantity FROM store_sale_lines WHERE sale_id=${sale.id} ORDER BY variant_id`;for(const line of lines){await tx`SELECT id FROM store_product_variants WHERE id=${line.variantId} FOR UPDATE`;const [variant]=await tx`SELECT stock_tracked AS "stockTracked" FROM store_product_variants WHERE id=${line.variantId}`;if(variant?.stockTracked)await tx`INSERT INTO store_inventory_movements(variant_id,quantity_delta,movement_type,reason,actor_id,sale_id) VALUES (${line.variantId},${line.quantity},'sale_reversal',${`Anulación ${sale.id}`},${actor.actorId},${sale.id})`;}
+      await tx`INSERT INTO store_sale_cash_movements(sale_id,cash_session_id,movement_type,payment_method,amount_cents,reason,actor_id) VALUES (${sale.id},${cash.id},'annulment',${sale.paymentState==='paid'?sale.paymentMethod:null},${sale.paymentState==='paid'?sale.totalCents:0},'Anulación de venta',${actor.actorId})`;
+      const [updated]=await tx`UPDATE store_sales SET status='voided',voided_at=now(),voided_by=${actor.actorId} WHERE id=${sale.id} AND status='completed' RETURNING id,status`;if(!updated)return {error:'sale_already_voided'} as const;await audit(tx,actor.actorId,'sale.voided','sale',sale.id,{lineCount:lines.length,cashSessionId:cash.id,amountCents:sale.paymentState==='paid'?Number(sale.totalCents):0,paymentMethod:sale.paymentState==='paid'?sale.paymentMethod:null});return {sale:updated};});
+    if('error'in result)return reply.code(result.error==='sale_not_found'?404:409).send({error:result.error,...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{})});return result.sale;
   });
 }
 
