@@ -21,6 +21,7 @@ export function registerClientAppRoutes(
   resolveEligibility: BookingEligibilityResolver,
   memberBookingEnabled = false,
   trainingAdapter?: TrainingAdapter,
+  memberNow: () => Date = () => new Date(),
 ) {
   async function client(request: FastifyRequest, reply: any) {
     reply.header('Cache-Control', 'no-store');
@@ -120,12 +121,12 @@ export function registerClientAppRoutes(
 
   app.get('/api/me/membership', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;
-    const now = new Date();
+    const now = memberNow();
     const localDate = canaryBusinessDate(now);
     const assignments = await db`
       SELECT a.id,a.starts_on::text AS "startsOn",a.ends_on::text AS "endsOn",a.status,
         COALESCE(a.snapshot->>'name',p.name) AS "planName",v.kind,
-        v.term_kind AS "termKind",a.charge_id AS "chargeId",c.due_on::text AS "dueOn",c.state AS "chargeState",c.amount_cents AS "amountCents",
+        v.term_kind AS "termKind",c.id AS "linkedChargeId",c.due_on::text AS "dueOn",c.state AS "chargeState",c.amount_cents AS "amountCents",
         t.payment_rule AS "paymentRule",t.payment_block AS "paymentBlock",t.deadline_computation AS deadline,
         t.term_kind AS "contractTermKind",t.assigned_local_date::text AS "assignedLocalDate",
         COALESCE(x.paid_cents,0)::bigint AS "paidCents",COALESCE(x.net_cents,0)::bigint AS "netCents",
@@ -149,13 +150,12 @@ export function registerClientAppRoutes(
       const paidCents = Number(item.paidCents ?? 0);
       const netCents = Number(item.netCents ?? 0);
       const pendingAmountCents = chargeState === 'void' || chargeState === 'exempt' || !amountCents || (paidCents > 0 && netCents === 0) ? 0 : Math.max(0, amountCents - netCents);
-      const paymentStatus = !item.chargeId ? 'not_applicable'
-        : chargeState === 'void' ? 'void'
+      const paymentStatus = chargeState === 'void' ? 'void'
         : chargeState === 'exempt' ? 'exempt'
         : paidCents > 0 && netCents === 0 ? 'refunded'
         : amountCents !== null && netCents >= amountCents ? 'paid'
-        : netCents > 0 ? 'partially_paid'
-        : item.dueOn && item.dueOn < localDate ? 'unpaid' : 'pending';
+        : pendingAmountCents > 0 && item.dueOn && item.dueOn < localDate ? 'unpaid'
+        : netCents > 0 ? 'partially_paid' : 'pending';
       const termAccess = paymentAccess.get(String(item.id));
       const accessStatus = assignmentStatus === 'expired' || assignmentStatus === 'cancelled' ? 'ended'
         : assignmentStatus === 'paused' ? 'paused'
@@ -165,18 +165,18 @@ export function registerClientAppRoutes(
         : termAccess?.state === 'entitlement_unavailable' ? 'unavailable'
         : assignmentStatus === 'active' ? 'active' : 'ended';
       const blockDate = termAccess?.paymentBlockEffectiveOn ?? null;
-      const payment = !item.chargeId ? null : {
+      const payment = !item.linkedChargeId ? null : {
         status: paymentStatus,
         accessStatus,
         amountCents,
         paidCents: Math.max(0, netCents),
         pendingAmountCents,
         dueOn: item.dueOn ?? null,
-        effectiveBlockAt: blockDate ? canaryLocalMidnightUtc(blockDate).toISOString() : null,
+        effectiveBlockAt: blockDate ? canaryLocalMidnightIso(blockDate) : null,
         timezone: 'Atlantic/Canary',
         payments: item.payments ?? [],
       };
-      const { chargeId: _chargeId, chargeState: _chargeState, amountCents: _amountCents, paidCents: _paidCents, netCents: _netCents, termKind: _termKind, paymentRule: _paymentRule, paymentBlock: _paymentBlock, deadline: _deadline, contractTermKind: _contractTermKind, assignedLocalDate: _assignedLocalDate, payments: _payments, ...publicItem } = item;
+      const { linkedChargeId: _linkedChargeId, chargeState: _chargeState, amountCents: _amountCents, paidCents: _paidCents, netCents: _netCents, termKind: _termKind, paymentRule: _paymentRule, paymentBlock: _paymentBlock, deadline: _deadline, contractTermKind: _contractTermKind, assignedLocalDate: _assignedLocalDate, payments: _payments, ...publicItem } = item;
       return { ...publicItem, status: assignmentStatus, payment };
     });
     const active = derivedAssignments.filter((item: any) => item.status === 'active');
@@ -234,19 +234,14 @@ export function registerClientAppRoutes(
         AND s.status='scheduled' AND sv.status='active' AND a.status='active' AND (s.individual_client_id IS NULL OR s.individual_client_id=${actor.clientId})
       ORDER BY s.starts_at,s.id LIMIT 300`;
     const evaluated: any[] = [];
-    for (let index = 0; index < sessions.length; index += 12) {
-      const batch = sessions.slice(index, index + 12);
+    const eligibilityNow = memberNow();
+    // Leave most of the API pool available to staff and admin traffic. The
+    // underlying query is already capped at 300 sessions per request.
+    for (let index = 0; index < sessions.length; index += 2) {
+      const batch = sessions.slice(index, index + 2);
       evaluated.push(...await Promise.all(batch.map(async (session: any) => {
-        const eligibility = await db.begin(tx => resolveEligibility({ tx, clientId: actor.clientId, serviceId: session.serviceId, startsAt: session.startsAt instanceof Date ? session.startsAt.toISOString() : String(session.startsAt), sessionId: session.id, ...(session.myWaitlistId == null ? {} : { ignoreWaitlistId: String(session.myWaitlistId) }), allowFullSession: true }));
-        const reserved = ['reserved','attended','no_show','cancelled_late'].includes(String(session.myReservationStatus));
-        const waitlisted = session.myWaitlistStatus === 'waiting';
-        let availability: { status: string; reason: string | null; canJoinWaitlist: boolean };
-        if (reserved) availability = { status: 'booked', reason: null, canJoinWaitlist: false };
-        else if (waitlisted && !eligibility.eligible) availability = { status: 'waitlist_suspended', reason: null, canJoinWaitlist: false };
-        else if (waitlisted) availability = { status: 'waitlisted', reason: null, canJoinWaitlist: false };
-        else if (!eligibility.eligible) availability = { status: 'not_allowed_by_plan', reason: memberEligibilityReason(eligibility.reason), canJoinWaitlist: false };
-        else if (Number(eligibility.capacity?.available ?? 1) <= 0) availability = { status: 'full', reason: null, canJoinWaitlist: Boolean(eligibility.waitlistAllowed) };
-        else availability = { status: 'available', reason: null, canJoinWaitlist: false };
+        const eligibility = await db.begin(tx => resolveEligibility({ tx, clientId: actor.clientId, serviceId: session.serviceId, startsAt: session.startsAt instanceof Date ? session.startsAt.toISOString() : String(session.startsAt), sessionId: session.id, ...(session.myWaitlistId == null ? {} : { ignoreWaitlistId: String(session.myWaitlistId) }), allowFullSession: true, now: eligibilityNow }));
+        const availability = memberSessionAvailability(eligibility, session.myReservationStatus, session.myWaitlistStatus);
         const { myWaitlistId: _myWaitlistId, ...publicSession } = session;
         return { ...publicSession, availability };
       })));
@@ -264,14 +259,41 @@ export function registerClientAppRoutes(
         (SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=s.id AND r.status IN ('reserved','attended','no_show','cancelled_late')) AS "occupiedCount",
         (SELECT count(*)::int FROM calendar_waitlist_entries w WHERE w.session_id=s.id AND w.status='waiting') AS "waitlistCount",
         (SELECT r.status FROM calendar_reservations r WHERE r.session_id=s.id AND r.client_id=${actor.clientId} AND r.status IN ('reserved','attended','no_show','cancelled_late') ORDER BY r.created_at DESC,r.id DESC LIMIT 1) AS "myReservationStatus",
-        (SELECT w.status FROM calendar_waitlist_entries w WHERE w.session_id=s.id AND w.client_id=${actor.clientId} AND w.status IN ('waiting','promoted') ORDER BY w.created_at DESC,w.id DESC LIMIT 1) AS "myWaitlistStatus"
+        (SELECT w.status FROM calendar_waitlist_entries w WHERE w.session_id=s.id AND w.client_id=${actor.clientId} AND w.status IN ('waiting','promoted') ORDER BY w.created_at DESC,w.id DESC LIMIT 1) AS "myWaitlistStatus",
+        (SELECT w.id FROM calendar_waitlist_entries w WHERE w.session_id=s.id AND w.client_id=${actor.clientId} AND w.status='waiting' ORDER BY w.created_at DESC,w.id DESC LIMIT 1) AS "myWaitlistId"
       FROM calendar_sessions s JOIN services sv ON sv.id=s.service_id JOIN areas a ON a.id=s.area_id LEFT JOIN staff_professionals sp ON sp.id=s.professional_id AND sp.status='active'
       WHERE s.id=${params.data.sessionId} AND s.status='scheduled' AND sv.status='active' AND a.status='active' AND (s.individual_client_id IS NULL OR s.individual_client_id=${actor.clientId})`;
     if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const eligibility = await db.begin(tx => resolveEligibility({ tx, clientId: actor.clientId, serviceId: session.serviceId, startsAt: session.startsAt instanceof Date ? session.startsAt.toISOString() : String(session.startsAt), sessionId: session.id, allowFullSession: true }));
-    const eligibilityReason = eligibility.eligible ? null : eligibility.reason;
-    return { timezone: 'Atlantic/Canary', session: { ...session, eligible: eligibility.eligible, eligibilityReason, canJoinWaitlist: eligibility.waitlistAllowed ?? eligibilityReason === 'session_full', availableAlternatives: eligibility.availableAlternatives ?? [] } };
+    const eligibility = await db.begin(tx => resolveEligibility({ tx, clientId: actor.clientId, serviceId: session.serviceId, startsAt: session.startsAt instanceof Date ? session.startsAt.toISOString() : String(session.startsAt), sessionId: session.id, ...(session.myWaitlistId == null ? {} : { ignoreWaitlistId: String(session.myWaitlistId) }), allowFullSession: true, now: memberNow() }));
+    const availability = memberSessionAvailability(eligibility, session.myReservationStatus, session.myWaitlistStatus);
+    const { myWaitlistId: _myWaitlistId, myReservationStatus: _myReservationStatus, myWaitlistStatus: _myWaitlistStatus, ...publicSession } = session;
+    return { timezone: 'Atlantic/Canary', session: { ...publicSession, eligible: availability.status === 'available' || availability.status === 'full' || availability.status === 'waitlisted' || availability.status === 'booked', availability, canJoinWaitlist: availability.canJoinWaitlist, availableAlternatives: eligibility.availableAlternatives ?? [] } };
   });
+}
+
+function memberSessionAvailability(
+  eligibility: Awaited<ReturnType<BookingEligibilityResolver>>,
+  reservationStatus: unknown,
+  waitlistStatus: unknown,
+): { status: 'available' | 'full' | 'booked' | 'not_allowed_by_plan' | 'waitlisted' | 'waitlist_suspended'; reason: string | null; canJoinWaitlist: boolean } {
+  if (['reserved','attended','no_show','cancelled_late'].includes(String(reservationStatus))) return { status: 'booked', reason: null, canJoinWaitlist: false };
+  const waitlisted = waitlistStatus === 'waiting';
+  if (waitlisted && !eligibility.eligible) return { status: 'waitlist_suspended', reason: null, canJoinWaitlist: false };
+  if (waitlisted) return { status: 'waitlisted', reason: null, canJoinWaitlist: false };
+  if (!eligibility.eligible) return { status: 'not_allowed_by_plan', reason: memberEligibilityReason(eligibility.reason), canJoinWaitlist: false };
+  if (Number(eligibility.capacity?.available ?? 1) <= 0) return { status: 'full', reason: null, canJoinWaitlist: Boolean(eligibility.waitlistAllowed) };
+  return { status: 'available', reason: null, canJoinWaitlist: false };
+}
+
+function canaryLocalMidnightIso(date: string): string {
+  const midnightUtc = canaryLocalMidnightUtc(date);
+  const [year, month, day] = date.split('-').map(Number);
+  const offsetMinutes = Math.round((Date.UTC(year!, month! - 1, day!) - midnightUtc.getTime()) / 60_000);
+  const sign = offsetMinutes < 0 ? '-' : '+';
+  const absoluteMinutes = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(absoluteMinutes / 60)).padStart(2, '0');
+  const minutes = String(absoluteMinutes % 60).padStart(2, '0');
+  return `${date}T00:00:00${sign}${hours}:${minutes}`;
 }
 
 function memberEligibilityReason(reason: string): string {
