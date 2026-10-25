@@ -22,23 +22,23 @@ La identidad y el `clientId` se obtienen exclusivamente de la sesión Member. No
     "amountCents": 6000,
     "paidCents": 2000,
     "pendingAmountCents": 4000,
-    "dueOn": "2026-11-10",
-    "effectiveBlockAt": "2026-11-11T00:00:00+00:00",
+    "dueOn": "2026-07-10",
+    "effectiveBlockAt": "2026-07-11T00:00:00+01:00",
     "timezone": "Atlantic/Canary",
     "payments": [
-      { "amountCents": 2000, "occurredAt": "2026-11-05T12:30:00Z" }
+      { "amountCents": 2000, "occurredAt": "2026-07-05T12:30:00Z" }
     ]
   }
 }
 ```
 
-- `status`: `pending | unpaid | partially_paid | paid | refunded | exempt | void | not_applicable`. `unpaid` significa que la fecha local de vencimiento ya pasó y sigue existiendo saldo; no es un cálculo del cliente.
-- `accessStatus`: `active | provisional | blocked_unpaid | scheduled | paused | ended | unavailable`; `unavailable` es un estado contractual inconsistente que Platform cierra de forma segura. Resume la puerta económica/términos de esta asignación. La elegibilidad final para cada sesión sigue siendo `availability` en el listado y vuelve a validarse al reservar.
+- `status`: `pending | unpaid | partially_paid | paid | refunded | exempt | void`. `unpaid` significa que la fecha local de vencimiento ya pasó y queda saldo pendiente, incluso si hubo un pago parcial. `partially_paid` solo se usa mientras el vencimiento siga vigente. No es un cálculo del cliente.
+- `accessStatus`: `active | provisional | blocked_unpaid | scheduled | paused | ended | unavailable`; `unavailable` es un estado contractual inconsistente que Platform cierra de forma segura. Resume la puerta económica/términos de esta asignación; no sustituye la evaluación de reserva. Los bloqueos globales de deuda y los límites/derechos por sesión se expresan en `availability`.
 - `amountCents`, `paidCents` y `pendingAmountCents` son importes enteros en céntimos de euro. `paidCents` es el neto validado después de devoluciones; `pendingAmountCents` nunca es negativo. Para `refunded`, ambos netos son cero, aunque Platform conserva el historial inmutable de pagos y devoluciones.
 - `dueOn` es una fecha local de negocio (`YYYY-MM-DD`), inclusiva. No es una hora UTC.
-- `effectiveBlockAt` es el instante ISO 8601 exacto en que Platform aplica el bloqueo. Para `monthly_day10_v1`, el vencimiento es el día 10 y el bloqueo comienza a las 00:00 locales del día 11. La serialización muestra ese instante con su offset UTC real, que varía con el horario de verano.
-- `payments` contiene solo abonos confirmados que afectan a esta obligación, con importes originales e instante. Los importes parciales se conservan como hechos separados; un justificante pendiente no es un pago confirmado. El estado y `paidCents` ya reflejan devoluciones confirmadas.
-- Si la asignación no tiene obligación económica aplicable, `payment` es `null` o `status: not_applicable` de forma consistente para todas las asignaciones; se recomienda `null` para evitar objetos vacíos.
+- `effectiveBlockAt` es el instante ISO 8601 exacto en que Platform aplica el bloqueo. Para `monthly_day10_v1`, el vencimiento es el día 10 y el bloqueo comienza a las 00:00 locales del día 11. Se serializa con el offset local real: `+01:00` durante el horario de verano y `+00:00` durante el horario de invierno; nunca se calcula sumando 24 horas.
+- `payments` contiene los pagos confirmados del cargo contractual, con su importe original e instante, incluso si después fueron compensados por una devolución. Los importes parciales se conservan como hechos separados; un justificante pendiente no es un pago confirmado. `paidCents` y el estado reflejan el neto después de devoluciones.
+- Si no existe una obligación económica aplicable o la referencia al cargo no es coherente con cliente y plan de la asignación, `payment` es `null`. No se emite `not_applicable`.
 
 El estado sale de los cargos y movimientos económicos autoritativos de Platform (D250), aplicando su semántica de pagos parciales, devolución completa, exención y anulación. El estado de acceso conserva las reglas D99/D103 y los términos congelados de la asignación. El cliente no calcula fechas, vencimientos, netos ni bloqueos.
 
@@ -89,6 +89,10 @@ Se añade `availability` a cada sesión del listado existente. Se calcula en el 
 
 `canJoinWaitlist` es booleano y solo describe si el endpoint de alta permite intentar la operación con el estado actual. La escritura vuelve a validar capacidad, derecho, deuda y estado en una transacción; esta respuesta es una instantánea de lectura y puede quedar obsoleta inmediatamente.
 
+La ruta de detalle `GET /api/me/sessions/{sessionId}` expone el mismo objeto `availability`, con la misma enumeración y los mismos motivos seguros. No devuelve códigos internos de `eligibilityReason`; puede conservar el booleano histórico `eligible` por compatibilidad, pero Home debe leer `availability`.
+
+El listado acepta un rango máximo de 31 días, devuelve como máximo 300 sesiones y evalúa como máximo dos sesiones en paralelo por petición para dejar capacidad de conexiones al uso de Admin/Staff. Una ráfaga distribuida de peticiones todavía debe tratarse mediante límites operativos del borde/API; no se debe ampliar la concurrencia por petición sin medir el pool.
+
 ### Reglas de privacidad y seguridad
 
 - No devolver `queuePosition`, posición, orden, número de personas delante, `waitlistEntryId` ni identidad de otros miembros. `waitlistCount` puede seguir usándose para ocupación agregada si la política de Home lo permite, pero nunca identifica al solicitante.
@@ -99,9 +103,9 @@ Se añade `availability` a cada sesión del listado existente. Se calcula en el 
 ## 3. Compatibilidad y validación
 
 - Cambios aditivos; no eliminar ni renombrar campos existentes.
-- Tests deben comprobar aislamiento entre Member A/B, pagos parciales, devolución completa, vencimiento y transición de bloqueo en medianoche Canaria; más cada estado de elegibilidad y la ausencia de posición/IDs de cola en JSON.
-- Comparar la lista y el detalle para que ambas superficies usen la misma evaluación por sesión.
-- Verificar que `payment.effectiveBlockAt` representa el mismo instante que el motor de elegibilidad y que el cambio horario no se calcula sumando 24 horas.
+- Tests deben comprobar aislamiento entre Member A/B, pagos parciales y vencidos, devolución completa, los estados `pending/paid/unpaid/partially_paid/refunded/exempt/void`, accesos `provisional/blocked_unpaid/unavailable`, y la transición día 10→11 a medianoche Canaria en horario de verano e invierno; más cada estado de elegibilidad y la ausencia de posición/IDs de cola en JSON.
+- Comparar lista y detalle para que ambas superficies usen el mismo objeto `availability` y no expongan razones internas.
+- Verificar que `payment.effectiveBlockAt` representa el mismo instante que el motor de elegibilidad, serializado con offset Canary real, y que el cambio horario no se calcula sumando 24 horas.
 
 ## 4. Secuencia
 
