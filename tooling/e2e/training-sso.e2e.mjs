@@ -179,6 +179,8 @@ before(async () => {
   };
   const plans = { full: await makePlan('full'), autonomous: await makePlan('autonomous') };
   const commercial = { fuerza: ['full', 0, true], otra: ['autonomous', 0, true], impago: ['full', 0, false], vencido: ['full', -1, true], outfull: ['full', 0, true] };
+  const cash = await padmin('POST', '/api/economics/cash/open', { openingCents: 0 });
+  assert.equal(cash.status, 201, `open synthetic cash session: ${cash.text}`);
 
   for (const [label, name] of PERSONAS) {
     const client = await padmin('POST', '/api/clients', { firstName: name, lastName: `E2E ${label}` });

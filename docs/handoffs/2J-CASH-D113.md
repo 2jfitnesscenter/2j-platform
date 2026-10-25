@@ -10,6 +10,7 @@ Aplicar D113 en las rutas de cobro ya existentes: cualquier cobro confirmado req
 - Las ventas POS pagadas requieren turno abierto y quedan asociadas a `economic_cash_sessions`; las ventas en efectivo se incluyen en el efectivo esperado del cierre.
 - La API mantiene el rechazo transaccional si no hay turno. Los reintentos idempotentes de una operación ya confirmada conservan su respuesta.
 - Se añaden pruebas de API/PostgreSQL y una comprobación de la restricción de Store.
+- El fixture E2E de Platform abre una caja sintética antes de registrar los pagos de sus escenarios; no modifica el repo ni el runtime de Búnker.
 
 ## Límites conocidos
 
