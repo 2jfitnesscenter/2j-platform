@@ -12,7 +12,7 @@ const client = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Ada', l
 const charge = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', clientId: client.id, firstName: client.firstName, lastName: client.lastName, concept: 'Cuota mensual', amountCents: 10000, paidCents: 2500, balanceCents: 7500, dueOn: '2099-12-10', status: 'pending' };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const overview = { overdueCount: 0, overdueCents: 0, chargeCount: 1, cashSession: null, capabilities: { payments: true, cash: true, invoices: true } };
-function mockFetch({ onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201), cashSession = null, ownerPanelRead = false } = {}) {
+function mockFetch({ onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201), onCash = () => response({ id: 'cash' }, 201), cashSession = null, ownerPanelRead = false } = {}) {
   const pageOverview = { ...overview, capabilities: { ...overview.capabilities, ownerPanelRead } };
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
@@ -20,6 +20,7 @@ function mockFetch({ onPayment = () => response({ id: 'txn' }, 201), onCharge = 
     if (path.endsWith('/api/economics/charges') && options.method === 'POST') return onCharge(url, options);
     if (path.includes('/api/economics/charges')) return response({ items: [charge], total: 1 });
     if (path.endsWith('/api/economics/cash/today')) return response({ session: cashSession });
+    if (path.endsWith('/api/economics/cash/open') || path.includes('/api/economics/cash/cash-1/close')) return onCash(url, options);
     if (path.startsWith('http://127.0.0.1:3100/api/clients?')) return response({ items: [client] });
     if (path.endsWith('/api/economics/payments')) return onPayment(url, options);
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
@@ -50,6 +51,24 @@ test('shows the cash difference only when the server grants owner.panel.read', a
   render(React.createElement(EconomicsPage));
   await screen.findByText(/Contado 12,00/);
   assert.ok(await screen.findByText(/diferencia/i));
+});
+
+test('cash open and close submit denomination counts and keep the expected amount hidden from non-owners', async () => {
+  const cashSession={id:'cash-1',localDate:'2026-10-25',status:'open',countedCents:null,openedAt:'2026-10-25T10:00:00Z',closedAt:null};
+  let payload;
+  mockFetch({cashSession,onCash:(_url,options)=>{payload=JSON.parse(options.body);return response({id:'cash-1',status:'closed'},200);}});
+  render(React.createElement(EconomicsPage));
+  const closeButton=await screen.findByRole('button',{name:'Cerrar caja'});
+  fireEvent.click(closeButton);
+  const dialog=await screen.findByRole('dialog',{name:'Cerrar caja'});
+  assert.ok(within(dialog).getByText(/recuento es ciego/i));
+  assert.equal(within(dialog).queryByText(/importe esperado/i),null);
+  const labels=['Monedas de 1 céntimo','Monedas de 2 céntimos','Monedas de 5 céntimos','Monedas de 10 céntimos','Monedas de 20 céntimos','Monedas de 50 céntimos','Monedas de 1 €','Monedas de 2 €','Billetes de 5 €','Billetes de 10 €','Billetes de 20 €','Billetes de 50 €','Billetes de 100 €','Billetes de 200 €','Billetes de 500 €'];
+  for(const label of labels)fireEvent.change(within(dialog).getByRole('spinbutton',{name:label}),{target:{value:'0'}});
+  fireEvent.change(within(dialog).getByRole('spinbutton',{name:'Billetes de 10 €'}),{target:{value:'1'}});
+  fireEvent.click(within(dialog).getByRole('checkbox',{name:/Confirmo el recuento físico por denominación/i}));
+  fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar cierre'}));
+  await waitFor(()=>assert.deepEqual(payload,{countedDenominations:{coin_0_01:0,coin_0_02:0,coin_0_05:0,coin_0_10:0,coin_0_20:0,coin_0_50:0,coin_1:0,coin_2:0,bill_5:0,bill_10:1,bill_20:0,bill_50:0,bill_100:0,bill_200:0,bill_500:0}}));
 });
 
 test('creates a charge with integer cents and records a partial payment idempotently', async () => {

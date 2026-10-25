@@ -8,7 +8,7 @@ import { migrateDatabase } from '../src/migrate.ts';
 process.env.NODE_ENV ??= 'test';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: Store integration tests cannot be skipped.');
 const sql=postgres(process.env.DATABASE_URL,{max:12,connect_timeout:5});await migrateDatabase(sql);
-const admin=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'store-test-admin',role:'admin'})});
+const admin=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'store-test-admin',role:'admin'}),ownerActorId:'store-test-admin'});
 const trainer=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'store-test-trainer',role:'trainer'})});
 const accountant=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'store-test-accountant',role:'accountant'})});
 const memberIds={};
@@ -17,6 +17,8 @@ for(const [name,firstName] of [['a','Tienda A'],['b','Tienda B']]){const created
 const memberA=member('a');const memberB=member('b');
 after(async()=>{await Promise.all([admin.close(),trainer.close(),accountant.close(),memberA.close(),memberB.close()]);await sql.end();});
 const post=(url,payload,extra={})=>admin.inject({method:'POST',url,headers:extra,payload});
+const cashDenominationKeys=['coin_0_01','coin_0_02','coin_0_05','coin_0_10','coin_0_20','coin_0_50','coin_1','coin_2','bill_5','bill_10','bill_20','bill_50','bill_100','bill_200','bill_500'];
+const cashCount=(cents)=>Object.fromEntries(cashDenominationKeys.map((key,index)=>[key,index===0?cents:0]));
 async function product({category='nutrition',name=`Producto ${randomUUID()}`,active=true}={}){const response=await post('/api/admin/store/products',{category,name,description:'Producto de prueba'});assert.equal(response.statusCode,201,response.body);return response.json();}
 async function variant(productId,{label='Formato 300 g',priceCents=1250,stockTracked=true,active=true,sku=null}={}){const response=await post(`/api/admin/store/products/${productId}/variants`,{label,priceCents,stockTracked,active,sku});assert.equal(response.statusCode,201,response.body);return response.json();}
 async function stock(variantId,quantity=3){const response=await post(`/api/admin/store/variants/${variantId}/movements`,{type:'opening',quantity,reason:'Apertura sintética'});assert.equal(response.statusCode,201,response.body);}
@@ -56,7 +58,7 @@ test('D113 blocks paid POS sales without an open shift and links cash sales into
   const item=await product();const v=await variant(item.id,{label:'Venta de caja',priceCents:1299});await stock(v.id,2);
   const current=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
   if(current.json().session?.status==='open'){
-    const closed=await admin.inject({method:'POST',url:`/api/economics/cash/${current.json().session.id}/close`,payload:{countedCents:current.json().session.expectedCents}});
+    const closed=await admin.inject({method:'POST',url:`/api/economics/cash/${current.json().session.id}/close`,payload:{countedDenominations:cashCount(current.json().session.expectedCents)}});
     assert.equal(closed.statusCode,200,closed.body);
   }
   const key=randomUUID();
@@ -129,13 +131,13 @@ test('store sale annulment is refused without a shift and appears as a linked mo
   const item=await product();const v=await variant(item.id,{label:'Anulación con turno'});await stock(v.id,2);
   const created=await sale(memberIds.a,v.id,1);assert.equal(created.statusCode,201,created.body);
   const current=await admin.inject({method:'GET',url:'/api/economics/cash/today'});
-  const closed=await admin.inject({method:'POST',url:`/api/economics/cash/${current.json().session.id}/close`,payload:{countedCents:current.json().session.expectedCents}});assert.equal(closed.statusCode,200,closed.body);
+  const closed=await admin.inject({method:'POST',url:`/api/economics/cash/${current.json().session.id}/close`,payload:{countedDenominations:cashCount(current.json().session.expectedCents)}});assert.equal(closed.statusCode,200,closed.body);
   const rejected=await admin.inject({method:'POST',url:`/api/admin/store/sales/${created.json().id}/void`,payload:{reason:'Sin turno de caja'}});
   assert.equal(rejected.statusCode,409,rejected.body);assert.equal(rejected.json().error,'cash_session_required');
   await assert.rejects(sql`UPDATE store_sales SET status='voided',voided_at=now(),voided_by='qa-bypass' WHERE id=${created.json().id}`,{code:'23514'});
   const [unchanged]=await sql`SELECT status FROM store_sales WHERE id=${created.json().id}`;assert.equal(unchanged.status,'completed');
   const [none]=await sql`SELECT count(*)::int AS count FROM store_sale_cash_movements WHERE sale_id=${created.json().id}`;assert.equal(none.count,0);
-  const opened=await admin.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingCents:2000}});assert.equal(opened.statusCode,201,opened.body);
+  const opened=await admin.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingDenominations:cashCount(2000)}});assert.equal(opened.statusCode,201,opened.body);
   const voided=await admin.inject({method:'POST',url:`/api/admin/store/sales/${created.json().id}/void`,payload:{reason:'Anulación con turno'}});assert.equal(voided.statusCode,200,voided.body);
   const [movement]=await sql`SELECT cash_session_id,payment_method,amount_cents FROM store_sale_cash_movements WHERE sale_id=${created.json().id}`;
   assert.equal(movement.cash_session_id,opened.json().id);assert.equal(movement.payment_method,'cash');assert.equal(Number(movement.amount_cents),Number(created.json().totalCents));
@@ -143,7 +145,7 @@ test('store sale annulment is refused without a shift and appears as a linked mo
   assert.equal(Number(live.json().session.cashStoreRefundsCents),Number(created.json().totalCents));
   const expectedAfterRefund=Number(opened.json().openingCents)-Number(created.json().totalCents);
   assert.equal(Number(live.json().session.expectedCents),expectedAfterRefund);
-  const close=await admin.inject({method:'POST',url:`/api/economics/cash/${opened.json().id}/close`,payload:{countedCents:expectedAfterRefund}});assert.equal(close.statusCode,200,close.body);
+  const close=await admin.inject({method:'POST',url:`/api/economics/cash/${opened.json().id}/close`,payload:{countedDenominations:cashCount(expectedAfterRefund)}});assert.equal(close.statusCode,200,close.body);
   assert.equal(Number(close.json().cashStoreRefundsCents),Number(created.json().totalCents));
 });
 

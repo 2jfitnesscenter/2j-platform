@@ -149,6 +149,7 @@ test('direct business API routes stay fail-closed when a Trainer lacks business 
 });
 
 test('cash summary follows 2J-040 selection semantics and never fails with multiple sessions per day', async () => {
+  const denominationsForEuros=(euros)=>({coin_0_01:0,coin_0_02:0,coin_0_05:0,coin_0_10:0,coin_0_20:0,coin_0_50:0,coin_1:euros,coin_2:0,bill_5:0,bill_10:0,bill_20:0,bill_50:0,bill_100:0,bill_200:0,bill_500:0});
   const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`dashboard_cash_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';const adminSql=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
   let testSql,testApp;
@@ -157,20 +158,20 @@ test('cash summary follows 2J-040 selection semantics and never fails with multi
     testSql=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});await migrateDatabase(testSql);
     testApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'dashboard-cash-isolated',role:'admin'})});
     const today=await testSql`SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS day`;
-    const [only]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
-      VALUES (${today[0].day},1100,1100,1100,0,'closed','closed','qa','qa',now()-interval '30 seconds',now()-interval '29 seconds') RETURNING id`;
+    const [only]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,expected_cents,counted_cents,counted_denominations,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
+      VALUES (${today[0].day},1100,${testSql.json(denominationsForEuros(11))},1100,1100,${testSql.json(denominationsForEuros(11))},0,'closed','closed','qa','qa',now()-interval '30 seconds',now()-interval '29 seconds') RETURNING id`;
     let response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
     assert.equal(response.statusCode,200,response.body);assert.equal(Number(response.json().economics.cashSession.openingCents),1100);
-    const [newer]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
-      VALUES (${today[0].day},2200,2200,2200,0,'closed','closed','qa','qa',now()-interval '20 seconds',now()-interval '19 seconds') RETURNING id`;
+    const [newer]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,expected_cents,counted_cents,counted_denominations,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
+      VALUES (${today[0].day},2200,${testSql.json(denominationsForEuros(22))},2200,2200,${testSql.json(denominationsForEuros(22))},0,'closed','closed','qa','qa',now()-interval '20 seconds',now()-interval '19 seconds') RETURNING id`;
     response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
     assert.equal(response.statusCode,200,response.body);assert.equal(Number(response.json().economics.cashSession.openingCents),2200);
-    const [openToday]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by,opened_at) VALUES (${today[0].day},3300,'qa',now()-interval '10 seconds') RETURNING id`;
+    const [openToday]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,opened_by,opened_at) VALUES (${today[0].day},3300,${testSql.json(denominationsForEuros(33))},'qa',now()-interval '10 seconds') RETURNING id`;
     response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
     assert.equal(response.statusCode,200,response.body);assert.equal(response.json().economics.cashSession.status,'open');
     assert.equal(Number(response.json().economics.cashSession.openingCents),3300);
-    await testSql`UPDATE economic_cash_sessions SET status='closed',close_kind='closed',expected_cents=opening_cents,counted_cents=opening_cents,difference_cents=0,closed_by='qa',closed_at=now() WHERE id=${openToday.id}`;
-    const [staleOpen]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by,opened_at) VALUES (${today[0].day}::date-1,4400,'qa',now()-interval '40 seconds') RETURNING id`;
+    await testSql`UPDATE economic_cash_sessions SET status='closed',close_kind='closed',expected_cents=opening_cents,counted_cents=opening_cents,counted_denominations=opening_denominations,difference_cents=0,closed_by='qa',closed_at=now() WHERE id=${openToday.id}`;
+    const [staleOpen]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,opened_by,opened_at) VALUES (${today[0].day}::date-1,4400,${testSql.json(denominationsForEuros(44))},'qa',now()-interval '40 seconds') RETURNING id`;
     response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
     assert.equal(response.statusCode,200,response.body);assert.equal(response.json().economics.cashSession.status,'open');
     assert.equal(Number(response.json().economics.cashSession.openingCents),4400);

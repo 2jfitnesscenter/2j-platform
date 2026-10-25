@@ -5,7 +5,7 @@ import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
 import { activateSettledEntitlementPeriods } from './assignment-periods.js';
 import { appendNotificationEvent } from './notifications.js';
-import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
+import { cashDenominationsSchema, cashDenominationsToCents, lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -22,7 +22,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details) VALUES (${context.actorId},${action},${type},${id},${clientId},${JSON.stringify(details)}::jsonb)`;
   }
   async function cashSnapshot(tx: any, sessionId: string) {
-    const [row] = await tx`SELECT s.id,s.local_date AS "localDate",s.opening_cents AS "openingCents",s.status,s.opened_at AS "openedAt",s.opened_by AS "openedBy",s.closed_at AS "closedAt",s.closed_by AS "closedBy",s.expected_cents AS "frozenExpectedCents",s.counted_cents AS "countedCents",s.difference_cents AS "differenceCents",
+    const [row] = await tx`SELECT s.id,s.local_date AS "localDate",s.opening_cents AS "openingCents",s.opening_denominations AS "openingDenominations",s.status,s.opened_at AS "openedAt",s.opened_by AS "openedBy",s.closed_at AS "closedAt",s.closed_by AS "closedBy",s.expected_cents AS "frozenExpectedCents",s.counted_cents AS "countedCents",s.counted_denominations AS "countedDenominations",s.difference_cents AS "differenceCents",
       COALESCE(sum(ps.amount_cents) FILTER(WHERE et.kind='payment' AND ps.method='cash'),0)::bigint AS "cashPaymentsCents",
       COALESCE(sum(ps.amount_cents) FILTER(WHERE et.kind='refund' AND ps.method='cash'),0)::bigint AS "cashRefundsCents",
       COALESCE((SELECT sum(sale.total_cents) FROM store_sales sale WHERE sale.cash_session_id=s.id AND sale.payment_state='paid' AND sale.payment_method='cash'),0)::bigint AS "cashStoreSalesCents",
@@ -40,7 +40,14 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
   async function openCashForToday(tx: any) {
     return lockOpenCashSession(tx);
   }
-  async function closeCash(request: FastifyRequest, reply: any, sessionId: string, countedCents: number, context: AuthorizationContext) {
+  function blindCashSnapshot(snapshot: any) {
+    const { openingCents: _opening, openingDenominations: _openingDenominations, expectedCents: _expected, liveExpectedCents: _liveExpected,
+      cashPaymentsCents: _payments, cashRefundsCents: _refunds, cashStoreSalesCents: _storeSales, cashStoreRefundsCents: _storeRefunds,
+      storeSaleAnnulmentsCents: _annulments, adjustmentsCents: _adjustments, differenceCents: _difference, ...visible } = snapshot;
+    return visible;
+  }
+  async function closeCash(request: FastifyRequest, reply: any, sessionId: string, countedDenominations: z.infer<typeof cashDenominationsSchema>, context: AuthorizationContext) {
+    const countedCents = cashDenominationsToCents(countedDenominations);
     try {
       const result = await db.begin(async tx => {
         const [session] = await tx`SELECT id,local_date,status,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE id=${sessionId} FOR UPDATE`;
@@ -50,15 +57,14 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         const snapshot = await cashSnapshot(tx, session.id);
         if (!snapshot) return { error: 'cash_session_not_found' as const };
         const difference = countedCents - snapshot.expectedCents;
-        const [closed] = await tx`UPDATE economic_cash_sessions SET status=CASE WHEN local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'late_close' ELSE 'closed' END,close_kind=CASE WHEN local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'late_close' ELSE 'closed' END,expected_cents=${snapshot.expectedCents},counted_cents=${countedCents},difference_cents=${difference},closed_by=${context.actorId},closed_at=now() WHERE id=${session.id} AND status='open' RETURNING id,status,local_date AS "localDate",opened_at AS "openedAt",closed_at AS "closedAt",closed_by AS "closedBy",opening_cents AS "openingCents",expected_cents AS "expectedCents",counted_cents AS "countedCents",difference_cents AS "differenceCents"`;
+        const [closed] = await tx`UPDATE economic_cash_sessions SET status=CASE WHEN local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'late_close' ELSE 'closed' END,close_kind=CASE WHEN local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'late_close' ELSE 'closed' END,expected_cents=${snapshot.expectedCents},counted_cents=${countedCents},counted_denominations=${JSON.stringify(countedDenominations)}::jsonb,difference_cents=${difference},closed_by=${context.actorId},closed_at=now() WHERE id=${session.id} AND status='open' RETURNING id,status,local_date AS "localDate",opened_at AS "openedAt",closed_at AS "closedAt",closed_by AS "closedBy",opening_cents AS "openingCents",expected_cents AS "expectedCents",counted_cents AS "countedCents",counted_denominations AS "countedDenominations",difference_cents AS "differenceCents"`;
         if (!closed) return { error: 'cash_already_closed' as const };
-        await audit(tx, context, 'cash.closed', 'cash_session', session.id, null, { localDate: String(session.local_date), lateClose: closed.status === 'late_close', openingCents: snapshot.openingCents, cashPaymentsCents: snapshot.cashPaymentsCents, cashRefundsCents: snapshot.cashRefundsCents, adjustmentsCents: snapshot.adjustmentsCents, expectedCents: snapshot.expectedCents, countedCents, differenceCents: difference });
+        await audit(tx, context, 'cash.closed', 'cash_session', session.id, null, { localDate: String(session.local_date), lateClose: closed.status === 'late_close', openingCents: snapshot.openingCents, openingDenominations: snapshot.openingDenominations, cashPaymentsCents: snapshot.cashPaymentsCents, cashRefundsCents: snapshot.cashRefundsCents, adjustmentsCents: snapshot.adjustmentsCents, expectedCents: snapshot.expectedCents, countedCents, countedDenominations, differenceCents: difference });
         return { closed, snapshot };
       });
       if ('error' in result) return reply.code(result.error === 'cash_session_not_found' ? 404 : 409).send({ error: result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
-      if (can(context, 'owner.panel.read')) return { ...result.closed, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, cashStoreSalesCents: result.snapshot.cashStoreSalesCents, cashStoreRefundsCents: result.snapshot.cashStoreRefundsCents, storeSaleAnnulmentsCents: result.snapshot.storeSaleAnnulmentsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
-      const { differenceCents: _ownerOnlyDifference, ...closedForStaff } = result.closed;
-      return { ...closedForStaff, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, cashStoreSalesCents: result.snapshot.cashStoreSalesCents, cashStoreRefundsCents: result.snapshot.cashStoreRefundsCents, storeSaleAnnulmentsCents: result.snapshot.storeSaleAnnulmentsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
+      const response = { ...result.closed, openingDenominations: result.snapshot.openingDenominations, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, cashStoreSalesCents: result.snapshot.cashStoreSalesCents, cashStoreRefundsCents: result.snapshot.cashStoreRefundsCents, storeSaleAnnulmentsCents: result.snapshot.storeSaleAnnulmentsCents, adjustmentsCents: result.snapshot.adjustmentsCents };
+      return can(context, 'owner.panel.read') ? response : blindCashSnapshot(response);
     } catch (error) {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
       app.log.error({ databaseCode: code, route: 'POST /api/economics/cash/close' }, 'cash close failed');
@@ -71,22 +77,21 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     const context = await auth(request, reply, 'billing.read-basic'); if (!context) return;
     const [session] = await db`SELECT id FROM economic_cash_sessions WHERE status='open' OR local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY (status='open') DESC,opened_at DESC LIMIT 1`;
     const snapshot = session ? await cashSnapshot(db, session.id) : null;
-    if (!snapshot || can(context, 'owner.panel.read')) return { session: snapshot, timezone: 'Atlantic/Canary' };
-    const { differenceCents: _ownerOnlyDifference, ...visibleSnapshot } = snapshot;
-    return { session: visibleSnapshot, timezone: 'Atlantic/Canary' };
+    return { session: snapshot && !can(context, 'owner.panel.read') ? blindCashSnapshot(snapshot) : snapshot, timezone: 'Atlantic/Canary' };
   });
   app.post('/api/economics/cash/open', async (request, reply) => {
     const context = await auth(request, reply, 'billing.cash.manage'); if (!context) return;
-    const parsed = z.object({ openingCents: z.number().int().min(0).max(100_000_000_000) }).strict().safeParse(request.body);
+    const parsed = z.object({ openingDenominations: cashDenominationsSchema }).strict().safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const openingCents = cashDenominationsToCents(parsed.data.openingDenominations);
     try {
       const result = await db.begin(async tx => {
         await tx`SELECT pg_advisory_xact_lock(hashtext('2j-economic-open-cash'))`;
         const [open] = await tx`SELECT id,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE status='open' LIMIT 1 FOR UPDATE`;
         if (open) return { error: open.isToday ? 'cash_already_open' as const : 'cash_session_previous_day_requires_owner_resolution' as const };
-        const [row] = await tx`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,${parsed.data.openingCents},${context.actorId}) RETURNING id,local_date AS "localDate",opening_cents AS "openingCents",status,opened_at AS "openedAt"`;
+        const [row] = await tx`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,${openingCents},${JSON.stringify(parsed.data.openingDenominations)}::jsonb,${context.actorId}) RETURNING id,local_date AS "localDate",opening_cents AS "openingCents",opening_denominations AS "openingDenominations",status,opened_at AS "openedAt"`;
         if (!row) throw new Error('cash session insert returned no row');
-        await audit(tx, context, 'cash.opened', 'cash_session', row.id, null, { openingCents: parsed.data.openingCents, localDate: String(row.localDate) });
+        await audit(tx, context, 'cash.opened', 'cash_session', row.id, null, { openingCents, openingDenominations: row.openingDenominations, localDate: String(row.localDate) });
         return { row };
       });
       if ('error' in result) return reply.code(409).send({ error: result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
@@ -96,7 +101,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       return reply.code(code === '23505' ? 409 : 500).send({ error: code === '23505' ? 'cash_session_exists' : 'cash_open_failed' });
     }
   });
-  const closeBody = z.object({ countedCents: z.number().int().min(0).max(100_000_000_000) }).strict();
+  const closeBody = z.object({ countedDenominations: cashDenominationsSchema }).strict();
   app.post('/api/economics/cash/close', async (request, reply) => {
     const context = await auth(request, reply, 'billing.cash.manage'); if (!context) return;
     const parsed = closeBody.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
@@ -105,14 +110,14 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       const [stale]=await db`SELECT id FROM economic_cash_sessions WHERE status='open' LIMIT 1`;
       return reply.code(409).send(stale?{error:'cash_session_previous_day_requires_owner_resolution',message:previousDayCashSessionMessage}:{error:'cash_not_open'});
     }
-    return closeCash(request, reply, session.id, parsed.data.countedCents, context);
+    return closeCash(request, reply, session.id, parsed.data.countedDenominations, context);
   });
   app.post('/api/economics/cash/:sessionId/close', async (request, reply) => {
     const context = await auth(request, reply, 'billing.cash.manage'); if (!context) return;
     const params = z.object({ sessionId: uuid }).safeParse(request.params);
     const parsed = closeBody.safeParse(request.body);
     if (!params.success || !parsed.success) return reply.code(400).send({ error: 'validation_error' });
-    return closeCash(request, reply, params.data.sessionId, parsed.data.countedCents, context);
+    return closeCash(request, reply, params.data.sessionId, parsed.data.countedDenominations, context);
   });
   app.post('/api/economics/cash/adjustments', async (request, reply) => {
     const context = await auth(request, reply, 'billing.cash.manage'); if (!context) return;
