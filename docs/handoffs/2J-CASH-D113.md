@@ -13,6 +13,7 @@ Este PR cierra D113 y añade el recuento ciego D111 solicitado para cerrar la re
 - El Command Center conserva campos nulos legítimos y oculta solo `differenceCents` a quien no tenga `owner.panel.read`.
 - Se retiraron las dos exclusiones basadas en el nombre del test. Hay cobertura de concurrencia cobro/cierre y pruebas en PostgreSQL desechable.
 - Apertura y cierre requieren cantidades enteras para las 15 denominaciones de euro. PostgreSQL conserva los desglose JSON junto a los totales en céntimos; la auditoría de apertura/cierre conserva ambos desgloses.
+- La fixture sintética de la E2E Home–Platform–Búnker abre su caja enviando las 15 denominaciones en cero; no se cambió código ni datos de Búnker.
 - Las respuestas de `/api/economics/cash/today`, cierre y Command Center no entregan al cajero el esperado ni los componentes que permitirían reconstruirlo. El esperado y la diferencia solo se devuelven al contexto con `owner.panel.read`.
 
 ## Asignación de `owner.panel.read` y estado de D111
@@ -53,6 +54,7 @@ Ya se comprobó que `staff_schedule_slots` es disponibilidad semanal para agenda
 - `git diff --check`: PASS.
 - `pnpm audit --audit-level high`: PASS; el informe local lista 10 vulnerabilidades de severidad baja/moderada (6 low, 4 moderate), ninguna alcanza el umbral de CI.
 - CI exacto del nuevo head y secret scan están pendientes de push; no reutilizar la evidencia del head anterior `c86e89e`.
+- La primera E2E posterior a D111 detectó que su fixture seguía usando `openingCents`; se corrigió para usar `openingDenominations`. La E2E debe confirmarse de nuevo en el CI del head final.
 - No se ha aplicado migración a una base real.
 
 PR #97 sigue abierto y no fusionado. No se ha hecho deploy ni se ha aplicado una migración a una base real.
