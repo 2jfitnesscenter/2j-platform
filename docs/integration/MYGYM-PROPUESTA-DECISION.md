@@ -1,6 +1,6 @@
 # Propuesta de decisión: «Mi gimnasio» (MyGym)
 
-Estado: **el propietario ha elegido la opción A (panel de resultados de solo lectura) el 25 oct 2026.** Respuestas recibidas: pregunta 2 (la diferencia de caja la ve solo el propietario) y pregunta 3 («añadir todo lo estándar en apps de gestión de gimnasios», recogido en §2). **Fase 2 aceptada por el propietario con los valores por defecto propuestos** (umbrales de ocupación baja y stock bajo, semanas sin asistencia y definición de baja, tal como están en §2.3–§2.4 y §4). Pendiente: asignación de número de decisión, revisión de Work Platform y la aclaración de la sección 7. **No se implementa nada hasta cerrar eso.** Solo documento: sin código ni migraciones.
+Estado: **el propietario ha elegido la opción A (panel de resultados de solo lectura) el 25 oct 2026.** Respuestas recibidas: pregunta 2 (la diferencia de caja la ve solo el propietario) y pregunta 3 («añadir todo lo estándar en apps de gestión de gimnasios», recogido en §2). **Fase 2 aceptada por el propietario con los valores por defecto propuestos** (umbrales de ocupación baja y stock bajo, semanas sin asistencia y definición de baja, tal como están en §2.3–§2.4 y §4). Pendiente: asignación de número de decisión, revisión de Work Platform (la aclaración de la sección 7 ya está resuelta). **No se implementa nada hasta cerrar eso.** Solo documento: sin código ni migraciones.
 Origen: pantalla `MyGym` del prototipo Base44 (`2j-fitness-admin`, commit `73c58b5`). Referencia: `docs/integration/BASE44-PROTOTYPE-MAPPING.md` (#95).
 
 ## 1. Aviso importante: lo que el prototipo llama «Mi gimnasio» no es un panel de resultados
@@ -94,6 +94,9 @@ Agrupar datos del negocio, novedades, consentimientos, día de pago y avisos en 
 
 Respuestas a §4 → número de decisión en el registro → revisión de Work Platform → implementación de la Fase 1 en un PR aparte, pequeño y con tests. Mientras tanto: nada que implementar.
 
-## 7. Aclaración pendiente: la lista de paridad visual
+## 7. Aclaración resuelta: la lista de paridad visual
 
-La lista del propietario (`PARIDAD-VISUAL-BASE44.md`, A46–A50) define `/mi-gimnasio` con las tres pestañas del prototipo (Datos del negocio / Novedades / Consentimientos) y remite a este documento «opción A». Son dos cosas distintas (ver §1 y §5). Propuesta, a confirmar por el propietario: `/mi-gimnasio` tiene **cuatro pestañas**, la primera **«Panel»** (la opción A de este documento, solo con `owner.panel.read`) y después las tres del prototipo. Las tres pestañas de ajustes reutilizan lo que ya existe en Platform (novedades, ajustes) y no incluyen consentimientos de salud ni datos fiscales hasta cerrar D33 y la validación fiscal.
+**Decidido por el propietario:** `/mi-gimnasio` tendrá **cuatro pestañas**: Panel (opción A) primero y después Datos del negocio, Novedades y Consentimientos.
+
+
+La lista del propietario (`PARIDAD-VISUAL-BASE44.md`, A46–A50) define `/mi-gimnasio` con las tres pestañas del prototipo (Datos del negocio / Novedades / Consentimientos) y remite a este documento «opción A». Son dos cosas distintas (ver §1 y §5). Propuesta aceptada: `/mi-gimnasio` tiene **cuatro pestañas**, la primera **«Panel»** (la opción A de este documento, solo con `owner.panel.read`) y después las tres del prototipo. Las tres pestañas de ajustes reutilizan lo que ya existe en Platform (novedades, ajustes) y no incluyen consentimientos de salud ni datos fiscales hasta cerrar D33 y la validación fiscal.
