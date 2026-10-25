@@ -207,6 +207,23 @@ test('Admin summary prioritizes real agenda, attention and pending work, with fi
   assert.equal(requested.some(url=>url.includes('/api/dashboard/preferences')),false);
 });
 
+test('Resumen renders only server-provided quick actions as real internal destinations',async()=>{
+  const data={...model,quickActions:[
+    {id:'new-client',label:'Abrir clientes',href:'#clients'},
+    {id:'new-reservation',label:'Abrir agenda',href:'#calendar'},
+    {id:'collect-payment',label:'Abrir economía',href:'#economics'},
+    {id:'send-message',label:'Abrir mensajes',href:'#communications'},
+    {id:'unknown',label:'Destino externo',href:'https://example.invalid'},
+  ]};
+  globalThis.fetch=async url=>String(url).includes('/api/dashboard/command-center')?response(data):String(url).includes('/api/session/capabilities')?response(capabilities):response({groups:[]});
+  window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
+  const actions=await screen.findByRole('navigation',{name:'Acciones rápidas'});
+  assert.deepEqual([...actions.querySelectorAll('a')].map(link=>[link.textContent,link.getAttribute('href')]),[
+    ['Abrir clientes','#clients'],['Abrir agenda','#calendar'],['Abrir economía','#economics'],['Abrir mensajes','#communications'],
+  ]);
+  assert.equal(actions.querySelectorAll('svg.lucide').length,4);
+});
+
 test('Trainer summary uses operational data and never renders finance without its server grant',async()=>{
   const trainerSummary={...model,permissions:{...model.permissions,billing:false,cash:false},economics:null,unread:0};
   globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(trainerSummary):String(url).includes('/api/session/capabilities')?response(capabilities):response({groups:[]});

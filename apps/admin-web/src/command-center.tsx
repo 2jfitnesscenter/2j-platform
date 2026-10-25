@@ -59,6 +59,30 @@ function MetricTile({ metric }: { metric: Metric }) {
   </Card></li>;
 }
 
+const quickActionIcons: Record<string, LucideIcon> = {
+  'new-client': icons.UserRound,
+  'new-reservation': icons.CalendarDays,
+  'collect-payment': icons.Wallet,
+  'send-message': icons.MessageSquare,
+  'record-absence': icons.Clock,
+  cash: icons.ReceiptText,
+};
+
+function QuickActions({ actions }: { actions: CommandCenterModel['quickActions'] }) {
+  const available = actions.filter(action => safeInternalHref(action.href));
+  if (available.length === 0) return null;
+  return <nav className="summary-quick-actions" aria-label="Acciones rápidas">
+    {available.map(action => <Button
+      key={action.id}
+      variant="ghost"
+      size="sm"
+      href={action.href}
+      icon={quickActionIcons[action.id] ?? icons.LayoutGrid}
+      className="summary-quick-action"
+    >{action.label}</Button>)}
+  </nav>;
+}
+
 function buildMetrics(data: CommandCenterModel): Metric[] {
   const { permissions, today } = data;
   const metrics: Metric[] = [];
@@ -167,6 +191,8 @@ export function CommandCenter() {
       meta={updatedAt ? `Actualizado a las ${dateTime(updatedAt)} · hora de Canarias` : undefined}
       actions={<Button icon={icons.RefreshCw} loading={refreshing} onClick={() => void reload()}>Actualizar</Button>}
     />
+
+    <QuickActions actions={data.quickActions ?? []} />
 
     {metrics.length > 0 && <ul className="summary-metrics" aria-label="Indicadores de hoy">{metrics.map(metric => <MetricTile key={metric.id} metric={metric} />)}</ul>}
 
