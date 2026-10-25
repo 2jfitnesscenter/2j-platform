@@ -111,7 +111,16 @@ export function registerCalendarRoutes(
   async function debtBlocksNewBooking(tx: SqlTransaction, clientId: string) {
     const [settings] = await tx`SELECT debt_blocks_new_reservations AS enabled FROM economic_settings WHERE singleton=true`;
     if (!settings?.enabled) return false;
-    const [debt] = await tx`SELECT EXISTS(SELECT 1 FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(amount_cents) FILTER(WHERE kind='payment') paid,sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true WHERE c.client_id=${clientId} AND c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0) AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date AND c.amount_cents>COALESCE(x.net,0)) AS overdue`;
+    const [debt] = await tx`SELECT EXISTS(SELECT 1 FROM economic_charges c
+      LEFT JOIN LATERAL(SELECT sum(amount_cents) FILTER(WHERE kind='payment') paid,
+        sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net
+        FROM economic_transactions WHERE charge_id=c.id)x ON true
+      WHERE c.client_id=${clientId} AND c.state='pending'
+        AND NOT EXISTS(SELECT 1 FROM client_plan_assignments a JOIN assignment_contract_terms t ON t.assignment_id=a.id
+          WHERE a.charge_id=c.id AND a.client_id=c.client_id)
+        AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0)
+        AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date
+        AND c.amount_cents>COALESCE(x.net,0)) AS overdue`;
     return Boolean(debt?.overdue);
   }
   async function missingDocuments(tx: SqlTransaction, clientId: string, serviceId: string, planId?: string) {
@@ -135,13 +144,15 @@ export function registerCalendarRoutes(
     for (const right of rights) {
       let ledgerEntryId: string | null = null;
       if (right.rightType === 'sessions_quota') {
-        const [ledger] = await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash)
-          VALUES (${clientId},${entitlement.assignmentId},${right.id}::text,'consume',-1,'Reserva confirmada',${`calendar_reservation:${reservationId}`},${actorId},${randomUUID()},${createHash('sha256').update(`consume:${reservationId}:${right.id}`).digest('hex')}) RETURNING id`;
+        const periodId = entitlement.entitlementPeriodIdsByRightId[right.id] ?? null;
+        const [ledger] = await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entitlement_period_id,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash)
+          VALUES (${clientId},${entitlement.assignmentId},${right.id}::text,${periodId},'consume',-1,'Reserva confirmada',${`calendar_reservation:${reservationId}`},${actorId},${randomUUID()},${createHash('sha256').update(`consume:${reservationId}:${right.id}`).digest('hex')}) RETURNING id`;
         ledgerEntryId = ledger!.id;
         await appendAudit(tx, actorId, 'reservation.entitlement_consumed', 'calendar_reservation', reservationId, null, clientId, { rightId: right.id, ledgerEntryId });
       }
-      await tx`INSERT INTO calendar_reservation_rights(reservation_id,assignment_id,client_id,right_id,right_type,ledger_entry_id)
-        VALUES (${reservationId},${entitlement.assignmentId},${clientId},${right.id},${right.rightType},${ledgerEntryId})`;
+      const periodId = right.rightType === 'sessions_quota' ? entitlement.entitlementPeriodIdsByRightId[right.id] ?? null : null;
+      await tx`INSERT INTO calendar_reservation_rights(reservation_id,assignment_id,client_id,right_id,right_type,ledger_entry_id,entitlement_period_id)
+        VALUES (${reservationId},${entitlement.assignmentId},${clientId},${right.id},${right.rightType},${ledgerEntryId},${periodId})`;
     }
   }
   const operationIdempotencyHeader = (request: FastifyRequest) => z.string().uuid().safeParse(request.headers['idempotency-key']);
@@ -204,14 +215,14 @@ export function registerCalendarRoutes(
     return promoted;
   }
   async function restoreReservationEntitlements(tx: SqlTransaction, reservationId: string, clientId: string, actorId: string, reason: string) {
-    const consumed=await tx`SELECT cr.assignment_id AS "assignmentId",cr.right_id AS "rightId"
+    const consumed=await tx`SELECT cr.assignment_id AS "assignmentId",cr.right_id AS "rightId",cr.entitlement_period_id AS "periodId"
       FROM calendar_reservation_rights cr WHERE cr.reservation_id=${reservationId} AND cr.right_type='sessions_quota' AND cr.ledger_entry_id IS NOT NULL ORDER BY cr.assignment_id,cr.right_id FOR UPDATE`;
     for(const item of consumed){
       await tx`SELECT id FROM client_plan_assignments WHERE id=${item.assignmentId} AND client_id=${clientId} FOR UPDATE`;
       const [prior]=await tx`SELECT id FROM client_entitlement_ledger WHERE external_reference=${`calendar_reservation_restore:${reservationId}:${item.rightId}`}`;
       if(prior)continue;
-      const [entry]=await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash)
-        VALUES (${clientId},${item.assignmentId},${item.rightId}::text,'restore',1,${reason},${`calendar_reservation_restore:${reservationId}:${item.rightId}`},${actorId},${randomUUID()},${createHash('sha256').update(`restore:${reservationId}:${item.rightId}`).digest('hex')}) RETURNING id`;
+      const [entry]=await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entitlement_period_id,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash)
+        VALUES (${clientId},${item.assignmentId},${item.rightId}::text,${item.periodId},'restore',1,${reason},${`calendar_reservation_restore:${reservationId}:${item.rightId}`},${actorId},${randomUUID()},${createHash('sha256').update(`restore:${reservationId}:${item.rightId}`).digest('hex')}) RETURNING id`;
       await appendAudit(tx,actorId,'reservation.entitlement_restored','calendar_reservation',reservationId,null,clientId,{rightId:item.rightId,ledgerEntryId:entry!.id});
     }
   }

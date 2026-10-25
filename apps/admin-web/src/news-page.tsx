@@ -1,4 +1,5 @@
 import React from 'react';
+import { ConfirmDialog, SaveState } from '@2j/ui';
 
 const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 type NewsStatus = 'draft' | 'published' | 'withdrawn';
@@ -12,6 +13,8 @@ export function NewsPage() {
   const [items,setItems]=React.useState<NewsItem[]>([]);
   const [loading,setLoading]=React.useState(true);
   const [saving,setSaving]=React.useState(false);
+  const [withdrawTarget,setWithdrawTarget]=React.useState<NewsItem|null>(null);
+  const [withdrawBusy,setWithdrawBusy]=React.useState(false);
   const [error,setError]=React.useState('');
   const [message,setMessage]=React.useState('');
   const [editing,setEditing]=React.useState<NewsItem|null>(null);
@@ -41,7 +44,6 @@ export function NewsPage() {
   };
 
   const mutate=async(item:NewsItem,action:'publish'|'withdraw'|'feature'|'unfeature')=>{
-    if(action==='withdraw'&&!window.confirm(`¿Retirar «${item.title}»? Dejará de aparecer a los miembros y se conservará en el historial.`))return;
     setError('');setMessage('');
     try{const response=await fetch(`${api}/api/admin/news/${item.id}/${action}`,{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:'{}'});if(!response.ok)throw new Error();setMessage(action==='publish'?'Noticia publicada.':action==='withdraw'?'Noticia retirada.':action==='feature'?'Noticia destacada.':'Se quitó de destacadas.');await load();}
     catch{setError('No se pudo actualizar el estado de la noticia.');}
@@ -62,7 +64,7 @@ export function NewsPage() {
         <label htmlFor="center-news-title">Título</label><input id="center-news-title" value={title} onChange={event=>setTitle(event.target.value)} required maxLength={120} />
         <label htmlFor="center-news-body">Texto</label><textarea id="center-news-body" value={body} onChange={event=>setBody(event.target.value)} required maxLength={5000} rows={7} />
         <p className="center-news-helper">El título admite 120 caracteres y el texto 5.000. El contenido se muestra como texto seguro.</p>
-        {error&&<p className="inline-error" role="alert">{error}</p>}{message&&<p className="center-news-saved" role="status">{message}</p>}
+        {error&&<p className="inline-error" role="alert">{error}</p>}<SaveState className="center-news-saved" status={saving?'saving':message?'saved':'idle'} savedLabel={message} />
         <div className="center-news-actions"><button className="button primary" disabled={saving||!title.trim()||!body.trim()}>{saving?'Guardando…':editing?'Guardar cambios':'Guardar borrador'}</button>{editing&&<button type="button" className="button secondary" onClick={reset}>Cancelar edición</button>}</div>
       </form>
       <section className="panel center-news-list" aria-labelledby="center-news-list-title">
@@ -73,12 +75,13 @@ export function NewsPage() {
           <div className="center-news-actions">
             {item.status!=='withdrawn'&&<button type="button" className="button secondary" onClick={()=>startEdit(item)}>Editar</button>}
             {(item.status==='draft'||item.status==='withdrawn')&&<button type="button" className="button primary" onClick={()=>void mutate(item,'publish')}>Publicar</button>}
-            {item.status==='published'&&<><button type="button" className="button secondary" onClick={()=>void mutate(item,item.featured?'unfeature':'feature')}>{item.featured?'Quitar destacada':'Destacar'}</button><button type="button" className="button secondary" onClick={()=>void mutate(item,'withdraw')}>Retirar</button></>}
+            {item.status==='published'&&<><button type="button" className="button secondary" onClick={()=>void mutate(item,item.featured?'unfeature':'feature')}>{item.featured?'Quitar destacada':'Destacar'}</button><button type="button" className="button secondary" onClick={()=>setWithdrawTarget(item)}>Retirar</button></>}
             <button type="button" className="text-button" aria-expanded={auditFor===item.id} onClick={()=>void toggleAudit(item)}>Historial</button>
           </div>
           {auditFor===item.id&&<ol className="center-news-audit" aria-label={`Historial de ${item.title}`}>{audit.map(event=><li key={event.id}><strong>{actionLabel[event.action]??'Actualización'}</strong><span>{dateLabel(event.occurredAt)} · {event.actorId}</span></li>)}</ol>}
         </article>)}</div>}
       </section>
     </div>
+  <ConfirmDialog open={withdrawTarget!==null} title={withdrawTarget?`Retirar «${withdrawTarget.title}»`:'Retirar noticia'} description="Dejará de aparecer a los miembros y se conservará en el historial." confirmLabel="Retirar noticia" busy={withdrawBusy} onCancel={()=>setWithdrawTarget(null)} onConfirm={()=>{const item=withdrawTarget;if(!item)return;setWithdrawBusy(true);void mutate(item,'withdraw').finally(()=>{setWithdrawBusy(false);setWithdrawTarget(null);});}}/>
   </main>;
 }

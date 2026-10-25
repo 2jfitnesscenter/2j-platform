@@ -71,6 +71,22 @@ test('calendar day and week counts match filtered sessions and cancelled cards r
   assert.equal(column.querySelectorAll('.session-card').length,1);
 });
 
+test('day view title names the weekday once, e.g. "sáb 17 oct", and day labels do not repeat it',async()=>{
+  window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+  globalThis.fetch=async(url)=>String(url).includes('/api/calendar/week')?response({...baseData,sessions:[]}):response({});
+  render(React.createElement(CalendarPage));
+  await screen.findByRole('button',{name:'Día'});
+  fireEvent.click(screen.getByRole('button',{name:'Día'}));
+  const repeatsWeekday=(text)=>/(\b[a-zé]{3}\b).*\b\1\b/i.test(text);
+  const title=document.querySelector('.calendar-toolbar h2').textContent;
+  assert.match(title,/^(lun|mar|mié|jue|vie|sáb|dom) \d{1,2} [a-zé]+\.?$/i,'weekday + day + month, no comma: '+title);
+  assert.ok(!repeatsWeekday(title),'the weekday is not repeated: '+title);
+  for(const column of document.querySelectorAll('.day-column')){
+    const label=column.getAttribute('aria-label');
+    assert.ok(!label.includes(',')&&!repeatsWeekday(label),'day column label does not repeat the weekday: '+label);
+  }
+});
+
 test('day and week views show simultaneous sessions as parallel cards and open their existing detail',async()=>{
   window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
   const startsAt=`${baseData.weekStart}T17:00:00.000Z`;

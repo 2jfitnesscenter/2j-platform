@@ -14,6 +14,9 @@ import postgres from 'postgres';
 import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
 import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
 import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
+import { activateSettledEntitlementPeriods, materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
+import { signedRequestSignature } from '../src/internal-service-auth.ts';
+import { canaryBusinessDate, proratedSessionsForPayment } from '@2j/domain';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
 
@@ -32,8 +35,101 @@ const trainingLinkingAccountantApp = buildServer(process.env.DATABASE_URL, { aut
 let resolvedTrainingAuth = null;
 const trainingVerifiedLinkingApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }), trainingVerifiedLinkingEnabled: true, resolvePersonAuth: async () => resolvedTrainingAuth });
 const trainingServiceCallsOnlyApp = buildServer(process.env.DATABASE_URL, { trainingServiceCallsEnabled: true, resolvePersonAuth: async () => resolvedTrainingAuth });
+const capabilityKeyId = 'qa-home-v1';
+const capabilitySecret = Buffer.alloc(32, 37).toString('base64url');
+const trainingCapabilitiesApp = buildServer(process.env.DATABASE_URL, { trainingCapabilitiesKeys: { [capabilityKeyId]: { caller:'home', secret:capabilitySecret } } });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close()]); await sql.end(); });
+after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
+
+function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
+  const timestamp = overrides.timestamp ?? new Date().toISOString();
+  const keyId = overrides.keyId ?? capabilityKeyId;
+  return {
+    'x-2j-key-id': keyId,
+    'x-2j-timestamp': timestamp,
+    'x-2j-request-id': requestId,
+    'x-2j-signature': overrides.signature ?? signedRequestSignature(capabilitySecret, { keyId, timestamp, requestId, method:'GET', path:`/api/internal/platform/v2/persons/${personId}/training-capabilities` }),
+  };
+}
+
+test('versioned Training access rights require effective payment without a tracked quota and the internal endpoint consumes service requests', async () => {
+  const service = await createService(`Training access ${randomUUID()}`);
+  const createSubject = async (level, additionalRights = []) => {
+    const plan = await createPlan([service.id], { basePriceCents:4500, rights:[
+      {rightType:'service_access',serviceId:service.id},
+      {rightType:'training_access',trainingAccessLevel:level},
+      ...additionalRights,
+    ] });
+    assert.equal(plan.response.statusCode,201,plan.response.body);
+    assert.equal(plan.response.json().rights.find(item=>item.rightType==='training_access').trainingAccessLevel,level);
+    assert.equal((await app.inject({method:'POST',url:`/api/plans/${plan.response.json().id}/activate`})).statusCode,200);
+    const client = (await createClientRequest(clientsAdminApp,{firstName:'Capability',lastName:`${level} ${randomUUID()}`})).json();
+    const sale = await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:plan.response.json().id,startsOn:'2026-10-01',endsOn:'2026-10-31',dueOn:'2026-10-01',amountCents:4500}});
+    assert.equal(sale.statusCode,201,sale.body);
+    const person = await clientsAdminApp.inject({method:'POST',url:'/api/platform/v1/persons',payload:{clientId:client.id}});
+    assert.equal(person.statusCode,201,person.body);
+    const personId=person.json().personId;
+    await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${`training-${level}-${randomUUID()}`},'explicit_admin','capability-test','capability-test')`;
+    return {personId,planId:plan.response.json().id,chargeId:sale.json().chargeId};
+  };
+  assert.equal(planInput.safeParse(planPayload([service.id],{rights:[{rightType:'service_access',serviceId:service.id},{rightType:'training_access',trainingAccessLevel:'full'}]})).success,true);
+  assert.equal(planInput.safeParse(planPayload([service.id],{rights:[{rightType:'service_access',serviceId:service.id},{rightType:'training_access'}]})).success,false);
+  const {personId,planId,chargeId}=await createSubject('full');
+  const [storedRight]=await sql`SELECT id FROM plan_rights WHERE plan_id=${planId} AND right_type='training_access'`;
+  await assert.rejects(sql`UPDATE plan_rights SET training_access_level='autonomous' WHERE id=${storedRight.id}`,{code:'55000'},'activated historical plan-version access remains immutable');
+  const path=`/api/internal/platform/v2/persons/${personId}/training-capabilities`;
+  const unpaidFull=await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId)});
+  assert.equal(unpaidFull.statusCode,200,unpaidFull.body);
+  assert.equal(unpaidFull.json().capabilityLevel,'baseline','an unpaid commercial assignment cannot grant elevation but does not erase free baseline');
+  assert.equal(unpaidFull.json().accessState,'baseline');
+  assert.equal(unpaidFull.json().capabilities.aiCoach,false);
+  assert.equal((await anonymousApp.inject({method:'GET',url:path})).statusCode,503,'no service keys means the internal endpoint stays disabled');
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path})).statusCode,401,'Member/session auth is not accepted in place of service auth');
+  const invalidId=randomUUID();
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId,invalidId,{signature:'A'.repeat(43)})})).statusCode,401);
+  const expiredId=randomUUID();
+  const expiredHeaders=capabilityHeaders(personId,expiredId,{timestamp:new Date(Date.now()-31_000).toISOString()});
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:expiredHeaders})).statusCode,401);
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:capabilityHeaders(personId,randomUUID(),{keyId:'unknown-key'})})).statusCode,401);
+  const validId=randomUUID(), validHeaders=capabilityHeaders(personId,validId);
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:`${path}?extra=1`,headers:capabilityHeaders(personId)})).statusCode,401,'the signed path must match exactly and cannot carry a query');
+  const fullPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(fullPayment.statusCode,201,fullPayment.body);
+  const valid=await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:validHeaders});
+  assert.equal(valid.statusCode,200,valid.body);
+  assert.equal(valid.headers['cache-control'],'no-store');
+  assert.equal(valid.json().capabilityLevel,'full');
+  assert.deepEqual(valid.json().capabilities,{autonomousTraining:true,routineCreation:true,personalRoutineCreation:true,personalRoutineManagement:true,workoutRecording:true,workoutHistory:true,guidedTraining:true,premiumPrograms:true,aiCoach:true,professionalFollowUp:true});
+  assert.equal((await trainingCapabilitiesApp.inject({method:'GET',url:path,headers:validHeaders})).statusCode,401,'a valid request ID is accepted only once');
+  const raceId=randomUUID(),raceHeaders=capabilityHeaders(personId,raceId);
+  const race=await Promise.all([trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders}),trainingCapabilitiesApp.inject({method:'GET',url:path,headers:raceHeaders})]);
+  assert.deepEqual(race.map(item=>item.statusCode).sort(),[200,401],'concurrent replay attempts have exactly one winner');
+  const {personId:autonomousId,chargeId:autonomousChargeId}=await createSubject('autonomous');
+  const autonomousPath=`/api/internal/platform/v2/persons/${autonomousId}/training-capabilities`;
+  const unpaidAutonomous=await trainingCapabilitiesApp.inject({method:'GET',url:autonomousPath,headers:capabilityHeaders(autonomousId)});
+  assert.equal(unpaidAutonomous.statusCode,200,unpaidAutonomous.body);
+  assert.equal(unpaidAutonomous.json().capabilityLevel,'baseline','an unpaid commercial assignment cannot grant commercial extras');
+  assert.equal(unpaidAutonomous.json().accessState,'baseline');
+  assert.equal(unpaidAutonomous.json().capabilities.guidedTraining,false);
+  const autonomousPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:autonomousChargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(autonomousPayment.statusCode,201,autonomousPayment.body);
+  const autonomous=await trainingCapabilitiesApp.inject({method:'GET',url:autonomousPath,headers:capabilityHeaders(autonomousId)});
+  assert.equal(autonomous.statusCode,200,autonomous.body);
+  assert.equal(autonomous.json().capabilityLevel,'autonomous');
+  assert.equal(autonomous.json().capabilities.aiCoach,false);
+  assert.equal(autonomous.json().capabilities.professionalFollowUp,false);
+
+  const {personId:periodQuotaId,chargeId:periodQuotaChargeId}=await createSubject('full',[{rightType:'period_quota',quotaScope:'shared',quantity:8,period:'month',periodMode:'calendar',timezone:'Atlantic/Canary'}]);
+  const periodQuotaPath=`/api/internal/platform/v2/persons/${periodQuotaId}/training-capabilities`;
+  const unpaidPeriodQuota=await trainingCapabilitiesApp.inject({method:'GET',url:periodQuotaPath,headers:capabilityHeaders(periodQuotaId)});
+  assert.equal(unpaidPeriodQuota.statusCode,200,unpaidPeriodQuota.body);
+  assert.equal(unpaidPeriodQuota.json().capabilityLevel,'baseline','period_quota without payment cannot grant commercial elevation');
+  const periodQuotaPayment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:periodQuotaChargeId,splits:[{method:'card',amountCents:4500}]}});
+  assert.equal(periodQuotaPayment.statusCode,201,periodQuotaPayment.body);
+  const paidPeriodQuota=await trainingCapabilitiesApp.inject({method:'GET',url:periodQuotaPath,headers:capabilityHeaders(periodQuotaId)});
+  assert.equal(paidPeriodQuota.statusCode,200,paidPeriodQuota.body);
+  assert.equal(paidPeriodQuota.json().capabilityLevel,'full','settled period_quota assignment with explicit full right is operational');
+});
 
 function createClientRequest(server, payload, key = randomUUID()) {
   return server.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': key }, payload });
@@ -57,6 +153,45 @@ async function createPlan(serviceIds, overrides = {}, idempotencyKey = randomUUI
   const response = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': idempotencyKey }, payload: body });
   return { body, response };
 }
+
+test('linked person without a client facet receives only free baseline; invitation proof remains outside this API', async () => {
+  const personId=randomUUID(),trainingUserId=`external-${randomUUID()}`;
+  await sql`INSERT INTO platform_persons(id,created_by) VALUES (${personId},'capability-test')`;
+  await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${trainingUserId},'explicit_admin','capability-test','capability-test')`;
+  const response=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(response.statusCode,200,response.body);
+  assert.equal(response.json().capabilityLevel,'baseline');
+  assert.deepEqual(response.json().capabilities,{autonomousTraining:true,routineCreation:false,personalRoutineCreation:true,personalRoutineManagement:true,workoutRecording:true,workoutHistory:true,guidedTraining:false,premiumPrograms:false,aiCoach:false,professionalFollowUp:false});
+});
+
+test('Training suspension is audited, idempotent, independent from commercial rights, and reversible', async () => {
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'Suspension',lastName:`Fixture ${randomUUID()}`})).json();
+  const person=(await clientsAdminApp.inject({method:'POST',url:'/api/platform/v1/persons',payload:{clientId:client.id}})).json();
+  const personId=person.personId,trainingUserId=`suspension-${randomUUID()}`;
+  await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${personId},${trainingUserId},'explicit_admin','capability-test','capability-test')`;
+  const path=`/api/platform/v1/persons/${personId}/training-suspension`;
+  const denied=await clientsTrainerApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':randomUUID()},payload:{reason:'Incumplimiento de normas'}});
+  assert.equal(denied.statusCode,403);
+  const suspendKey=randomUUID(),body={reason:'Incumplimiento de normas internas'};
+  const suspended=await clientsAdminApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':suspendKey},payload:body});
+  assert.equal(suspended.statusCode,201,suspended.body); assert.equal(suspended.json().status,'suspended');
+  const replay=await clientsAdminApp.inject({method:'POST',url:`${path}/suspend`,headers:{'idempotency-key':suspendKey},payload:body});
+  assert.equal(replay.statusCode,200); assert.equal(replay.json().replayed,true);
+  const state=await clientsAdminApp.inject({method:'GET',url:path}); assert.equal(state.json().status,'suspended');
+  const caps=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(caps.json().capabilityLevel,'blocked'); assert.equal(caps.json().reasonCode,'ADMIN_SUSPENDED');
+  assert.equal(caps.json().trainingSubject.trainingUserId,trainingUserId);
+  const lift=await clientsAdminApp.inject({method:'POST',url:`${path}/lift`,headers:{'idempotency-key':randomUUID()},payload:{reason:'Revisión completada y acceso restituido'}});
+  assert.equal(lift.statusCode,201,lift.body);
+  const restored=await trainingCapabilitiesApp.inject({method:'GET',url:`/api/internal/platform/v2/persons/${personId}/training-capabilities`,headers:capabilityHeaders(personId)});
+  assert.equal(restored.json().capabilityLevel,'baseline'); assert.equal(restored.json().suspensionStatus,'lifted');
+  const [audit]=await sql`SELECT count(*)::int AS count FROM platform_identity_audit_events WHERE person_id=${personId} AND action IN ('training.suspended','training.suspension_lifted')`;
+  const [events]=await sql`SELECT count(*)::int AS count FROM platform_training_access_events WHERE person_id=${personId}`;
+  assert.equal(audit.count,2); assert.equal(events.count,2);
+  const [personRow]=await sql`SELECT status FROM platform_persons WHERE id=${personId}`;
+  const [link]=await sql`SELECT status,training_user_id AS "trainingUserId" FROM training_account_links WHERE person_id=${personId}`;
+  assert.equal(personRow.status,'active'); assert.equal(link.status,'active'); assert.equal(link.trainingUserId,trainingUserId);
+});
 
 async function createTrainingReceiptFixture(ttlMs = TRAINING_LINK_TTL_MS) {
   const client = (await createClientRequest(clientsAdminApp, { firstName: 'Receipt', lastName: `Fixture ${randomUUID()}` })).json();
@@ -131,13 +266,209 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   assert.deepEqual(first.map((item) => item.name), names);
   for (const name of names) {
     const contents = await readFile(new URL(name, directory), 'utf8');
-    assert.equal(first.find((item) => item.name === name)?.checksum.trim(), createHash('sha256').update(contents).digest('hex'));
+    assert.equal(first.find((item) => item.name === name)?.checksum.trim(), createHash('sha256').update(contents.replace(/\r\n/g, '\n')).digest('hex'), 'new rows store the checksum of the LF form, whatever the checkout line endings');
   }
   const migration = names[0];
   const originalChecksum = first.find((item) => item.name === migration).checksum.trim();
   await sql`UPDATE schema_migrations SET checksum=${'0'.repeat(64)} WHERE name=${migration}`;
   await assert.rejects(migrateDatabase(sql), /Migration checksum mismatch/);
   await sql`UPDATE schema_migrations SET checksum=${originalChecksum} WHERE name=${migration}`;
+});
+
+test('0037 upgrades the checksummed current-main schema once and preserves legacy rows', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL);
+  const databaseName=`capability_upgrade_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
+  const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
+  let upgradeDb;
+  try{
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+    sourceUrl.pathname=`/${databaseName}`;
+    upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
+    const directory=new URL('../migrations/',import.meta.url);
+    const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
+    const contract='0037_contract_entitlement_periods_v1.sql';
+    assert.ok(names.includes(contract));
+    assert.ok(names.includes('0038_economic_grace_days.sql'));
+    const prior=names.filter(name=>name<contract);
+    await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
+    for(const name of prior){
+      const contents=await readFile(new URL(name,directory),'utf8');
+      const checksum=createHash('sha256').update(contents).digest('hex');
+      await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
+    }
+    const legacyPlanId=randomUUID(),legacyClientId=randomUUID(),legacyChargeId=randomUUID(),legacyPendingChargeId=randomUUID(),legacyAssignmentId=randomUUID(),legacyRightId=randomUUID(),legacyPeriodId=randomUUID(),legacyPendingPeriodId=randomUUID();
+    const today=canaryBusinessDate(new Date());
+    const currentPeriodStart=`${today.slice(0,7)}-01`;
+    const currentPeriodEnd=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10);
+    const priorMonthEnd=new Date(`${currentPeriodStart}T00:00:00.000Z`);priorMonthEnd.setUTCDate(priorMonthEnd.getUTCDate()-1);
+    const priorPeriodEnd=priorMonthEnd.toISOString().slice(0,10);
+    const priorPeriodStart=`${priorPeriodEnd.slice(0,7)}-01`;
+    const [legacyArea]=await upgradeDb`SELECT id FROM areas WHERE normalized_name='la sala'`;
+    const [legacyService]=await upgradeDb`INSERT INTO services(area_id,name,status) VALUES (${legacyArea.id},${`Legacy upgrade ${randomUUID()}`},'active') RETURNING id`;
+    await upgradeDb.begin(async tx=>{
+      // Schema-36 has no supported way to create historical state except fixture SQL.
+      // Seed the exact result of catalog activation: active plan + immutable version.
+      await tx`INSERT INTO plans(id,name,status,current_version,idempotency_key,request_hash) VALUES (${legacyPlanId},'Legacy upgrade fixture','draft',1,${randomUUID()},${'b'.repeat(64)})`;
+      await tx`INSERT INTO plan_versions(plan_id,version,kind,renewal_cadence,timezone) VALUES (${legacyPlanId},1,'recurring','monthly','Atlantic/Canary')`;
+      await tx`INSERT INTO plan_services(plan_id,plan_version,service_id) VALUES (${legacyPlanId},1,${legacyService.id})`;
+      await tx`INSERT INTO plan_rights(plan_id,plan_version,right_type,service_id) VALUES (${legacyPlanId},1,'service_access',${legacyService.id})`;
+      await tx`INSERT INTO plan_rights(id,plan_id,plan_version,right_type,quota_scope,quantity,weekly_frequency) VALUES (${legacyRightId},${legacyPlanId},1,'sessions_quota','shared',8,3)`;
+      await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${legacyPlanId} AND version=1`;
+      await tx`UPDATE plans SET status='active' WHERE id=${legacyPlanId}`;
+      await tx`INSERT INTO clients(id,first_name,last_name) VALUES (${legacyClientId},'Legacy F1-B','Fixture')`;
+      await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash)
+        VALUES (${legacyChargeId},${legacyClientId},${legacyPlanId},'Legacy paid contract',8000,${priorPeriodStart},'migration-fixture',${randomUUID()},${'c'.repeat(64)})`;
+      await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash)
+        VALUES (${legacyPendingChargeId},${legacyClientId},${legacyPlanId},'Legacy pending period',8000,${currentPeriodStart},'migration-fixture',${randomUUID()},${'a'.repeat(64)})`;
+      await tx`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by)
+        VALUES (${legacyAssignmentId},${legacyClientId},${legacyPlanId},1,${legacyChargeId},${priorPeriodStart},NULL,${randomUUID()},${'d'.repeat(64)},'migration-fixture')`;
+      await tx`INSERT INTO assignment_entitlement_periods(id,assignment_id,client_id,right_id,period_start,period_end,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash)
+        VALUES (${legacyPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},${priorPeriodStart},${priorPeriodEnd},3,entitlement_sessions_v1(entitlement_weekdays(${priorPeriodStart},${priorPeriodEnd}),3),
+          ${tx.json({version:1,source:'098E migration fixture'})},${randomUUID()},${'e'.repeat(64)})`;
+      await tx`INSERT INTO assignment_entitlement_periods(id,assignment_id,client_id,right_id,period_start,period_end,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash)
+        VALUES (${legacyPendingPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},${currentPeriodStart},${currentPeriodEnd},3,entitlement_sessions_v1(entitlement_weekdays(${currentPeriodStart},${currentPeriodEnd}),3),
+          ${tx.json({version:1,source:'098E pending-payment fixture'})},${randomUUID()},${'9'.repeat(64)})`;
+      const [legacySessions]=await tx`SELECT sessions_snapshot FROM assignment_entitlement_periods WHERE id=${legacyPeriodId}`;
+      await tx`INSERT INTO assignment_recurrence_events(assignment_id,enabled,actor_id,effective_on,reason,idempotency_key,request_hash)
+        VALUES (${legacyAssignmentId},true,'migration-fixture',${priorPeriodStart},'Legacy recurrence enabled',${randomUUID()},${'f'.repeat(64)})`;
+      await tx`INSERT INTO assignment_entitlement_period_events(period_id,assignment_id,client_id,right_id,event_type,charge_id,actor_id,reason,idempotency_key,request_hash)
+        VALUES (${legacyPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},'charge_linked',${legacyChargeId},'migration-fixture','Legacy charge linked',${randomUUID()},${'1'.repeat(64)})`;
+      await tx`INSERT INTO assignment_entitlement_period_events(period_id,assignment_id,client_id,right_id,event_type,charge_id,actor_id,reason,idempotency_key,request_hash)
+        VALUES (${legacyPendingPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},'charge_linked',${legacyPendingChargeId},'migration-fixture','Legacy pending charge linked',${randomUUID()},${'8'.repeat(64)})`;
+      await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,actor_id,idempotency_key,request_hash)
+        VALUES (${randomUUID()},${legacyChargeId},${legacyClientId},'payment',8000,'migration-fixture',${randomUUID()},${'2'.repeat(64)})`;
+      const [payment]=await tx`SELECT id FROM economic_transactions WHERE charge_id=${legacyChargeId}`;
+      await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${payment.id},'cash',8000)`;
+      await tx`INSERT INTO assignment_entitlement_period_events(period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on,sessions_granted,actor_id,reason,idempotency_key,request_hash)
+        VALUES (${legacyPeriodId},${legacyAssignmentId},${legacyClientId},${legacyRightId},'payment_validated',${legacyChargeId},${priorPeriodStart},${legacySessions.sessions_snapshot},'migration-fixture','Legacy payment validated',${randomUUID()},${'3'.repeat(64)})`;
+      await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,actor_id,idempotency_key,request_hash,entitlement_period_id)
+        VALUES (${legacyClientId},${legacyAssignmentId},${legacyRightId},'grant',${legacySessions.sessions_snapshot},'Legacy period grant','migration-fixture',${randomUUID()},${'4'.repeat(64)},${legacyPeriodId})`;
+    });
+    // LEGACY_FIXTURE_VALID_BEFORE_0037: these checks prove the seed is a valid
+    // schema-36 operational state, not merely rows accepted by loose SQL.
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version
+      WHERE p.id=${legacyPlanId} AND p.status='active' AND v.frozen_at IS NOT NULL AND v.term_kind IS NULL`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: active plan and frozen legacy version');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_plan_assignments a JOIN clients c ON c.id=a.client_id JOIN plans p ON p.id=a.plan_id
+      JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version JOIN economic_charges ch ON ch.id=a.charge_id
+      WHERE a.id=${legacyAssignmentId} AND a.client_id=${legacyClientId} AND a.plan_id=${legacyPlanId} AND a.plan_version=1 AND a.status='active'
+        AND c.status='active' AND p.status='active' AND v.frozen_at IS NOT NULL AND a.starts_on=${priorPeriodStart} AND a.ends_on IS NULL
+        AND ch.client_id=a.client_id AND ch.plan_id=a.plan_id`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: active assignment matches active client, frozen plan version, and valid charge');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_rights r JOIN plan_services ps ON ps.plan_id=r.plan_id AND ps.plan_version=r.plan_version
+      JOIN services s ON s.id=ps.service_id AND s.status='active' JOIN areas ar ON ar.id=s.area_id AND ar.status='active'
+      WHERE r.id=${legacyRightId} AND r.plan_id=${legacyPlanId} AND r.plan_version=1 AND r.right_type='sessions_quota' AND r.quantity=8 AND r.weekly_frequency=3`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: legacy quota right is valid');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_entitlement_periods p JOIN assignment_entitlement_period_events e ON e.period_id=p.id
+      JOIN client_entitlement_ledger l ON l.entitlement_period_id=p.id AND l.assignment_id=p.assignment_id AND l.client_id=p.client_id AND l.right_key=p.right_id::text
+      WHERE p.id=${legacyPeriodId} AND p.assignment_id=${legacyAssignmentId} AND p.client_id=${legacyClientId} AND p.right_id=${legacyRightId}
+        AND p.period_start=${priorPeriodStart} AND p.period_end=${priorPeriodEnd} AND p.sessions_snapshot>0
+        AND e.event_type='payment_validated' AND e.sessions_granted=p.sessions_snapshot AND l.entry_type='grant' AND l.quantity=p.sessions_snapshot`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: historical period, validation event, and grant agree');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId} AND enabled=true AND effective_on=${priorPeriodStart}`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: recurrence history is valid');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_schema='public' AND table_name='plan_rights' AND column_name='quantity_rule'`)[0].count,0,'LEGACY_FIXTURE_VALID_BEFORE_0037: quantity_rule does not yet exist');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_schema='public' AND table_name='assignment_entitlement_periods' AND column_name IN ('period_index','entitlement_mode','formula_id','weekdays_in_period','sessions_granted')`)[0].count,0,'LEGACY_FIXTURE_VALID_BEFORE_0037: no F1-B period facts exist yet');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_entitlement_periods p JOIN assignment_entitlement_period_events e ON e.period_id=p.id
+      JOIN economic_charges ch ON ch.id=e.charge_id WHERE p.id=${legacyPendingPeriodId} AND e.event_type='charge_linked'
+        AND ch.state='pending' AND NOT EXISTS(SELECT 1 FROM assignment_entitlement_period_events v WHERE v.period_id=p.id AND v.event_type='payment_validated')`)[0].count,1,'LEGACY_FIXTURE_VALID_BEFORE_0037: current period legitimately awaits payment activation');
+    const legacyBefore={
+      periods:await upgradeDb`SELECT id,assignment_id,client_id,right_id,period_start::text,period_end::text,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash FROM assignment_entitlement_periods WHERE assignment_id=${legacyAssignmentId} ORDER BY period_start`,
+      events:await upgradeDb`SELECT period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on::text,sessions_granted,actor_id,reason,idempotency_key,request_hash FROM assignment_entitlement_period_events WHERE period_id=${legacyPeriodId} ORDER BY event_type`,
+      pendingEvents:await upgradeDb`SELECT period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on::text,sessions_granted,actor_id,reason,idempotency_key,request_hash FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} ORDER BY event_type`,
+      grants:await upgradeDb`SELECT id,client_id,assignment_id,right_key,entry_type,quantity,entitlement_period_id,request_hash FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId}`,
+      recurrence:await upgradeDb`SELECT assignment_id,enabled,actor_id,effective_on::text,reason,idempotency_key,request_hash FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId}`,
+      balance:await upgradeDb`SELECT COALESCE(sum(quantity),0)::int AS amount FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId} AND right_key=${legacyRightId}`,
+    };
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,36);
+    const upgraded=await migrateDatabase(upgradeDb);
+    assert.equal(upgraded.length,names.length);
+    assert.deepEqual(upgraded.slice(35,38).map(row=>row.name),['0036_contract_terms_dates.sql',contract,'0038_economic_grace_days.sql'],'later migrations are appended after 0038');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${contract}`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='quantity_rule'`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='assignment_entitlement_periods' AND column_name IN ('period_index','entitlement_mode','formula_id','weekdays_in_period','sessions_granted')`)[0].count,5);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await upgradeDb`SELECT to_regclass('public.platform_training_access_events') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await migrateDatabase(upgradeDb)).length,names.length,'re-running migration verification applies no duplicate migration');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE term_kind IS NOT NULL`)[0].count,0,'migration must not rewrite legacy plan versions');
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE plan_id=${legacyPlanId} AND version=1 AND term_kind IS NULL AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NULL AND payment_block IS NULL`)[0].count,1);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_contract_terms`)[0].count,0,'migration must not fabricate terms for legacy assignments');
+    const legacyAfter=await upgradeDb`SELECT id,assignment_id,client_id,right_id,period_start::text,period_end::text,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash,
+      entitlement_mode,period_index,formula_id,weekdays_in_period,sessions_granted FROM assignment_entitlement_periods WHERE assignment_id=${legacyAssignmentId} ORDER BY period_start`;
+    assert.deepEqual(legacyAfter.map(({entitlement_mode,period_index,formula_id,weekdays_in_period,sessions_granted,...row})=>row),Array.from(legacyBefore.periods),'0037 must preserve every legacy period fact byte-for-byte');
+    for(const row of legacyAfter){assert.equal(row.entitlement_mode,null);assert.equal(row.period_index,null);assert.equal(row.formula_id,null);assert.equal(row.weekdays_in_period,null);assert.equal(row.sessions_granted,null);}
+    assert.deepEqual(await upgradeDb`SELECT period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on::text,sessions_granted,actor_id,reason,idempotency_key,request_hash FROM assignment_entitlement_period_events WHERE period_id=${legacyPeriodId} ORDER BY event_type`,legacyBefore.events);
+    assert.deepEqual(await upgradeDb`SELECT period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on::text,sessions_granted,actor_id,reason,idempotency_key,request_hash FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} ORDER BY event_type`,legacyBefore.pendingEvents);
+    assert.deepEqual(await upgradeDb`SELECT id,client_id,assignment_id,right_key,entry_type,quantity,entitlement_period_id,request_hash FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId}`,legacyBefore.grants);
+    assert.deepEqual(await upgradeDb`SELECT assignment_id,enabled,actor_id,effective_on::text,reason,idempotency_key,request_hash FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId}`,legacyBefore.recurrence);
+    assert.deepEqual(await upgradeDb`SELECT COALESCE(sum(quantity),0)::int AS amount FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId} AND right_key=${legacyRightId}`,legacyBefore.balance);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId} AND right_key=${legacyRightId} AND entry_type='grant'`)[0].count,1,'legacy period replay/grant remains single under new unique index');
+    assert.ok((await upgradeDb`SELECT 1 FROM pg_indexes WHERE indexname='client_entitlement_ledger_period_grant_unique'`).length,'legacy grant unique index is installed with representative history');
+    // Exercise the real 098E payment route after 0037: it records payment,
+    // calls activateSettledEntitlementPeriods, creates one legacy grant, and
+    // preserves idempotent retry behavior under the new grant index.
+    const upgradedApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'migration-flow-test',role:'admin'})});
+    try{
+      await upgradedApp.ready();
+      const paymentKey=randomUUID();
+      const paymentResponse=await upgradedApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':paymentKey},payload:{chargeId:legacyPendingChargeId,splits:[{method:'card',amountCents:8000}]}});
+      assert.equal(paymentResponse.statusCode,201,paymentResponse.body);
+      const [newActivation]=await upgradeDb`SELECT event_type,effective_activation_on::text AS effective_on,sessions_granted FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} AND event_type='payment_validated'`;
+      assert.ok(newActivation,'real payment flow must validate the legacy period');
+      assert.equal(newActivation.effective_on,today);
+      const [activatedPeriod]=await upgradeDb`SELECT sessions_snapshot FROM assignment_entitlement_periods WHERE id=${legacyPendingPeriodId}`;
+      const [newGrant]=await upgradeDb`SELECT quantity,right_key,entitlement_period_id FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND entry_type='grant'`;
+      assert.equal(newGrant.quantity,newActivation.sessions_granted,'legacy grant quantity matches real payment activation');
+      assert.equal(newGrant.right_key,legacyRightId);assert.equal(newGrant.entitlement_period_id,legacyPendingPeriodId);
+      assert.ok(newActivation.sessions_granted>0);
+      const [paymentCountBeforeRetry]=await upgradeDb`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${legacyPendingChargeId}`;
+      const retry=await upgradedApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':paymentKey},payload:{chargeId:legacyPendingChargeId,splits:[{method:'card',amountCents:8000}]}});
+      assert.equal(retry.statusCode,200,retry.body);
+      const directActivationRetry=await upgradeDb.begin(tx=>activateSettledEntitlementPeriods(tx,legacyPendingChargeId,'migration-flow-test'));
+      assert.equal(directActivationRetry,0,'already validated legacy activation is an exact no-op on retry');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${legacyPendingChargeId}`)[0].count,paymentCountBeforeRetry.count);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} AND event_type='payment_validated'`)[0].count,1);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND entry_type='grant'`)[0].count,1,'legacy grant unique index allows the real activation and prevents duplicates');
+      assert.equal((await upgradeDb`SELECT COALESCE(sum(quantity),0)::int AS amount FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND right_key=${legacyRightId}`)[0].amount,newActivation.sessions_granted);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM economic_audit_events WHERE action='entitlement_period.payment_validated' AND details->>'periodId'=${legacyPendingPeriodId}`)[0].count,1);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_entitlement_periods WHERE id=${legacyPendingPeriodId} AND sessions_snapshot=${activatedPeriod.sessions_snapshot} AND entitlement_mode IS NULL AND period_index IS NULL AND formula_id IS NULL AND weekdays_in_period IS NULL AND sessions_granted IS NULL`)[0].count,1,'payment activation retains the legacy period shape and does not fabricate F1-B facts');
+
+      const recurrenceUrl=`/api/clients/${legacyClientId}/plans/${legacyAssignmentId}/recurrence`;
+      const disabled=await upgradedApp.inject({method:'PATCH',url:recurrenceUrl,headers:{'idempotency-key':randomUUID()},payload:{enabled:false,effectiveOn:today,reason:'Pausa legacy tras 0037'}});
+      assert.equal(disabled.statusCode,201,disabled.body);
+      assert.equal((await upgradeDb`SELECT enabled FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId} AND effective_on<=${today}::date ORDER BY effective_on DESC,created_at DESC,id DESC LIMIT 1`)[0].enabled,false);
+      const afterCurrentPeriod=new Date(`${currentPeriodEnd}T00:00:00.000Z`);afterCurrentPeriod.setUTCDate(afterCurrentPeriod.getUTCDate()+1);
+      const offMaterialization=await materializeRecurringEntitlementPeriods(upgradeDb,new Date(`${afterCurrentPeriod.toISOString().slice(0,10)}T12:00:00.000Z`));
+      assert.equal(offMaterialization.created,0,'effective OFF state prevents materialization after the current period ends');
+      const futureDay=new Date(`${afterCurrentPeriod.toISOString().slice(0,10)}T00:00:00.000Z`);futureDay.setUTCDate(futureDay.getUTCDate()+1);
+      const recurrenceResumeDate=futureDay.toISOString().slice(0,10);
+      const enabled=await upgradedApp.inject({method:'PATCH',url:recurrenceUrl,headers:{'idempotency-key':randomUUID()},payload:{enabled:true,effectiveOn:recurrenceResumeDate,reason:'Reanudación legacy tras 0037'}});
+      assert.equal(enabled.statusCode,201,enabled.body);
+      const recurrenceBefore=await upgradeDb`SELECT assignment_id,enabled,actor_id,effective_on::text,reason,idempotency_key,request_hash FROM assignment_recurrence_events WHERE assignment_id=${legacyAssignmentId} ORDER BY effective_on,created_at,id`;
+      assert.equal(recurrenceBefore.at(-1).enabled,true);
+      assert.equal(recurrenceBefore.at(-1).effective_on,recurrenceResumeDate);
+
+      const materializeAt=new Date(`${recurrenceResumeDate}T12:00:00.000Z`);
+      const materialized=await materializeRecurringEntitlementPeriods(upgradeDb,materializeAt);
+      assert.equal(materialized.created,1,JSON.stringify(materialized));
+      const materializedRetry=await materializeRecurringEntitlementPeriods(upgradeDb,materializeAt);
+      assert.equal(materializedRetry.created,0,'legacy next-period materialization is idempotent');
+      const nextPeriods=await upgradeDb`SELECT id,period_start::text AS starts_on,period_end::text AS ends_on,weekly_frequency,sessions_snapshot,snapshot,entitlement_mode,period_index,formula_id,weekdays_in_period,sessions_granted
+        FROM assignment_entitlement_periods WHERE assignment_id=${legacyAssignmentId} AND right_id=${legacyRightId} ORDER BY period_start`;
+      assert.equal(nextPeriods.length,3);
+      const nextPeriod=nextPeriods.at(-1);
+      assert.equal(nextPeriod.entitlement_mode,null);assert.equal(nextPeriod.period_index,null);assert.equal(nextPeriod.formula_id,null);assert.equal(nextPeriod.weekdays_in_period,null);assert.equal(nextPeriod.sessions_granted,null);
+      assert.ok(nextPeriod.sessions_snapshot>0);
+      assert.equal(nextPeriod.snapshot.quantityRule,'weekday_ratio_v1');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${nextPeriod.id} AND entry_type='grant'`)[0].count,0,'098E recurrence materializes a period only; it does not create a grant before payment');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_rights WHERE id=${legacyRightId} AND quantity_rule IS NULL`)[0].count,1,'legacy right stays valid without an F1-B quantity rule');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPeriodId} AND entry_type='grant'`)[0].count,1);
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND entry_type='grant'`)[0].count,1);
+      assert.equal((await upgradeDb`SELECT COALESCE(sum(quantity),0)::int AS amount FROM client_entitlement_ledger WHERE assignment_id=${legacyAssignmentId} AND right_key=${legacyRightId}`)[0].amount,Number(legacyBefore.balance[0].amount)+newActivation.sessions_granted,'existing and newly activated balances are preserved');
+      assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM economic_audit_events WHERE actor_id='migration-flow-test' AND resource_id=${legacyAssignmentId}`)[0].count,3,'payment and both recurrence actions retain their audit trail');
+    }finally{await upgradedApp.close();}
+  }finally{
+    if(upgradeDb)await upgradeDb.end();
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+    await admin.end();
+  }
 });
 
 test('0024 upgrades representative legacy active and revoked explicit-admin links without rewriting history', async () => {
@@ -179,7 +510,7 @@ test('0024 upgrades representative legacy active and revoked explicit-admin link
 });
 
 test('Drizzle table columns, checks and indexes match the SQL baseline', async () => {
-  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.clientPlanAssignmentEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
+  const tables = [schema.areas, schema.services, schema.plans, schema.planServices, schema.planVersions, schema.planRights, schema.planModuleAccesses, schema.planModuleCapabilities, schema.planVersionChanges, schema.clients, schema.clientEvents, schema.clientCreationIdempotency, schema.clientPlanAssignments, schema.assignmentContractTerms, schema.clientPlanAssignmentEvents, schema.assignmentRecurrenceEvents, schema.assignmentEntitlementPeriods, schema.assignmentEntitlementPeriodEvents, schema.clientEntitlementLedger, schema.dashboardPreferences, schema.recurringSessionTemplates, schema.calendarSessions, schema.calendarReservations, schema.calendarWaitlistEntries, schema.calendarReservationRights, schema.calendarBookingOperations, schema.calendarAuditEvents, schema.staffProfessionals, schema.staffScheduleSlots, schema.staffExceptions, schema.staffSubstitutions, schema.staffTimeclockEvents, schema.staffTimeclockCorrections, schema.staffAuditEvents, schema.platformPersons, schema.platformPersonClients, schema.platformPersonStaff, schema.trainingAccountLinks, schema.platformServiceRequestReplays, schema.platformIdentityAuditEvents, schema.platformPersonAuthSubjects, schema.trainingLinkTransactions];
   const databaseTables = await sql`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ${sql(tables.map((table) => getTableConfig(table).name))} ORDER BY table_name,column_name`;
   const dbColumns = Map.groupBy(databaseTables, (row) => row.table_name);
   const checks = new Set((await sql`SELECT conname FROM pg_constraint WHERE contype='c'`).map((row) => row.conname));
@@ -210,6 +541,64 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
   const rightIndexes = await sql`SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND indexname IN ('plan_rights_global_unique','plan_rights_service_unique')`;
   assert.equal(rightIndexes.length, 2);
   for (const index of rightIndexes) assert.match(index.indexdef, /COALESCE\(period, ''(?:::text)?\)/, `${index.indexname} must distinguish quota periods`);
+});
+
+test('0037/0038 migrate a fresh database from zero and verify the upgrade from current main exactly once', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`f1a_fresh_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
+  const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});let fresh;
+  try{
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+    sourceUrl.pathname=`/${databaseName}`;fresh=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
+    assert.equal((await fresh`SELECT to_regclass('public.plan_versions') AS table`)[0].table,null,'fresh database starts empty');
+    const first=await migrateDatabase(fresh);
+    const listing=(await readdir(new URL('../migrations/',import.meta.url))).filter(name=>name.endsWith('.sql')).sort();
+    assert.deepEqual(first.map(row=>row.name),listing,'every migration file is applied exactly once, in order, and nothing else is recorded');
+    assert.equal(first[36].name,'0037_contract_entitlement_periods_v1.sql','released history keeps its position');
+    assert.equal(first[37].name,'0038_economic_grace_days.sql','released history keeps its position');
+    const second=await migrateDatabase(fresh);
+    assert.deepEqual(second.map(row=>[row.name,row.checksum.trim()]),first.map(row=>[row.name,row.checksum.trim()]));
+    assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0037_contract_entitlement_periods_v1.sql'`)[0].count,1);
+    assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0038_economic_grace_days.sql'`)[0].count,1);
+    assert.equal((await fresh`SELECT grace_days FROM economic_settings WHERE singleton=true`)[0].grace_days,5);
+    assert.equal((await fresh`SELECT to_regprocedure('contract_end_v1(date,integer)') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await fresh`SELECT to_regclass('public.assignment_contract_terms') IS NOT NULL AS exists`)[0].exists,true);
+    assert.equal((await fresh`SELECT to_regprocedure('entitlement_weekdays(date,date)') IS NOT NULL AS exists`)[0].exists,true);
+  }finally{
+    if(fresh)await fresh.end();
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
+  }
+});
+
+test('the latest migration upgrades the previous schema once and remains checksum-stable on rerun', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`f1c_main_upgrade_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
+  const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});let upgradeDb;
+  try{
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+    sourceUrl.pathname=`/${databaseName}`;upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
+    const directory=new URL('../migrations/',import.meta.url);
+    const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
+    assert.ok(names.length>=39);assert.equal(names[36],'0037_contract_entitlement_periods_v1.sql');
+    assert.equal(names[37],'0038_economic_grace_days.sql');
+    const latest=names.at(-1);
+    await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
+    for(const name of names.slice(0,-1)){
+      const contents=await readFile(new URL(name,directory),'utf8');
+      const checksum=createHash('sha256').update(contents).digest('hex');
+      await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
+    }
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,names.length-1);
+    const upgraded=await migrateDatabase(upgradeDb);
+    assert.equal(upgraded.length,names.length);assert.equal(upgraded.at(-1).name,latest);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${latest}`)[0].count,1,'the new migration is applied exactly once');
+    assert.equal((await upgradeDb`SELECT grace_days FROM economic_settings WHERE singleton=true`)[0].grace_days,5);
+    const repeated=await migrateDatabase(upgradeDb);
+    assert.deepEqual(repeated.map(row=>[row.name,row.checksum.trim()]),upgraded.map(row=>[row.name,row.checksum.trim()]));
+  }finally{
+    if(upgradeDb)await upgradeDb.end();
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
+  }
 });
 
 test('2J-078B identity stays person-scoped and 2J-089 summary contract is strict and disabled by default', async () => {
@@ -931,6 +1320,28 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   const accountant = await clientsAccountantApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
   assert.equal(accountant.statusCode, 403);
   assert.equal(accountant.json().client, undefined);
+});
+
+test('client list orders A–Z by surname ignoring accents and searches name, email and phone without accents', async () => {
+  const tag = randomUUID().slice(0, 8);
+  const mk = async (firstName, lastName, extra = {}) => { const r = await createClientRequest(clientsAdminApp, { firstName, lastName, ...extra }); assert.equal(r.statusCode, 201, r.body); return r.json().id; };
+  const zeta = await mk('Ana', `Zeta${tag}`);
+  const garcia = await mk('Lucía', `García${tag}`, { email: `lucia.${tag}@example.test`, phone: '+34 600 123 456' });
+  const alvarez = await mk('Beto', `Álvarez${tag}`);
+  const ids = (await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${tag}&limit=10` })).json().items.map((item) => item.id);
+  assert.deepEqual(ids, [alvarez, garcia, zeta], 'accented surnames sort with their base letter');
+  const byName = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${encodeURIComponent(`garcia${tag}`)}` });
+  assert.deepEqual(byName.json().items.map((item) => item.id), [garcia], '"garcia" finds "García"');
+  const byEmail = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${encodeURIComponent(`lucia.${tag}`)}` });
+  assert.deepEqual(byEmail.json().items.map((item) => item.id), [garcia], 'a fragment of the email finds the client');
+  const byPhone = await clientsAdminApp.inject({ method: 'GET', url: '/api/clients?q=600123456' });
+  assert.equal(byPhone.json().items.some((item) => item.id === garcia), true, 'digits match a phone stored with spaces and prefix');
+  const trainerPhone = await clientsTrainerApp.inject({ method: 'GET', url: '/api/clients?q=600123456' });
+  assert.equal(trainerPhone.json().items.some((item) => item.id === garcia), false, 'roles without clients.manage cannot discover contact data');
+  const firstPage = (await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${tag}&limit=2` })).json();
+  assert.deepEqual(firstPage.items.map((item) => item.id), [alvarez, garcia]);
+  const secondPage = (await clientsAdminApp.inject({ method: 'GET', url: `/api/clients?q=${tag}&limit=2&cursor=${encodeURIComponent(firstPage.nextCursor)}` })).json();
+  assert.deepEqual(secondPage.items.map((item) => item.id), [zeta], 'the cursor continues in the same order');
 });
 
 test('client search minimizes contact discovery by permission and archive retains profile history', async () => {
@@ -2101,6 +2512,16 @@ test('canonical effective resolver keeps scheduled, expired and paused rights ou
   assert.ok(effective.assignments.find(item=>item.id==='a').blockingReasons.includes('service_access_target_missing'));
 });
 
+test('2J-098E keeps provisional operational access usable before its bag is activated', () => {
+  const effective=getEffectiveEntitlements([{
+    id:'provisional',status:'active',startsOn:'2026-11-01',endsOn:'2026-11-30',operationalAccess:'provisional',snapshot:{services:[{id:'service'}]},
+    rights:[{id:'quota',rightType:'sessions_quota',balance:0}],modules:[{module:'reservations',accessLevel:'limited',capabilities:['reservations.read']}],
+  }],'2026-11-05');
+  assert.equal(effective.assignments[0].usable,true);
+  assert.equal(effective.assignments[0].operationalAccess,'provisional');
+  assert.equal(effective.modules.length,1);
+});
+
 test('2J-073 concurrent identical renewal retries create one assignment and charge', async () => {
   const service=await createService(`Renovación concurrente ${randomUUID()}`);const created=await createPlan([service.id],{basePriceCents:2500});const planId=created.response.json().id;assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
   const client=(await createClientRequest(clientsAdminApp,{firstName:'Retry',lastName:`Renovación ${randomUUID()}`})).json();
@@ -2176,4 +2597,71 @@ test('Admin can update basic client profile including nullable date of birth wit
   const detail=await clientsAdminApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(detail.json().client.birthDate,'1990-04-06');assert.ok(detail.json().history.some(event=>event.eventType==='client.profile_updated'));
   const trainerDetail=await clientsTrainerApp.inject({method:'GET',url:`/api/clients/${id}`});assert.equal(trainerDetail.json().client.birthDate,undefined,'DOB is omitted without clients.manage');
   const cleared=await clientsAdminApp.inject({method:'PATCH',url:`/api/clients/${id}`,payload:{...payload,birthDate:null}});assert.equal(cleared.json().birthDate,null);
+});
+
+test('2J-098E creates a paid period once, prorates its bag, restores reservations to that period, and materializes only the next period', async () => {
+  const service=await createService(`Periodos ${randomUUID()}`);
+  const otherService=await createService(`Periodos compartidos ${randomUUID()}`);
+  const created=await createPlan([service.id,otherService.id],{basePriceCents:5000,rights:[
+    {rightType:'service_access',serviceId:service.id},
+    {rightType:'service_access',serviceId:otherService.id},
+    {rightType:'sessions_quota',serviceId:service.id,quotaScope:'per_service',quantity:8,weeklyFrequency:3},
+    {rightType:'sessions_quota',serviceId:otherService.id,quotaScope:'per_service',quantity:8,weeklyFrequency:2},
+  ]});
+  assert.equal(created.response.statusCode,201,created.response.body);
+  const planId=created.response.json().id;
+  assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'Periodo',lastName:`Cliente ${randomUUID()}`})).json();
+  const today=canaryBusinessDate(new Date());
+  const startsOn=`${today.slice(0,7)}-01`;
+  const periodEnd=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10);
+  const sale=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId,startsOn,endsOn:null,dueOn:today,amountCents:5000}});
+  assert.equal(sale.statusCode,201,sale.body);
+  const rights=await sql`SELECT id,service_id AS "serviceId",weekly_frequency AS "weeklyFrequency" FROM plan_rights WHERE plan_id=${planId} AND right_type='sessions_quota' ORDER BY service_id`;
+  const right=rights.find(item=>item.serviceId===service.id);const otherRight=rights.find(item=>item.serviceId===otherService.id);
+  assert.ok(right);assert.ok(otherRight);
+  const periodKey=randomUUID();
+  const periodPayload={rightId:right.id,startsOn,endsOn:periodEnd,recurrenceEnabled:true,reason:'Configuración mensual inicial'};
+  const period=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans/${sale.json().id}/entitlement-periods`,headers:{'idempotency-key':periodKey},payload:periodPayload});
+  assert.equal(period.statusCode,201,period.body);
+  const otherPeriod=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans/${sale.json().id}/entitlement-periods`,headers:{'idempotency-key':randomUUID()},payload:{...periodPayload,rightId:otherRight.id}});
+  assert.equal(otherPeriod.statusCode,201,otherPeriod.body,'one assignment charge may cover multiple right bags within the same period window');
+  const replay=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans/${sale.json().id}/entitlement-periods`,headers:{'idempotency-key':periodKey},payload:periodPayload});
+  assert.equal(replay.statusCode,200,replay.body);assert.equal(replay.json().id,period.json().id);
+  assert.equal((await clientsReceptionApp.inject({method:'PATCH',url:`/api/clients/${client.id}/plans/${sale.json().id}/recurrence`,headers:{'idempotency-key':randomUUID()},payload:{enabled:false,effectiveOn:today,reason:'QA'} })).statusCode,403);
+  assert.equal((await clientsTrainerApp.inject({method:'PATCH',url:`/api/clients/${client.id}/plans/${sale.json().id}/recurrence`,headers:{'idempotency-key':randomUUID()},payload:{enabled:false,effectiveOn:today,reason:'Pausa de recurrencia QA'} })).statusCode,201);
+  const recurrenceResumeOn=new Date(`${today}T00:00:00.000Z`);recurrenceResumeOn.setUTCDate(recurrenceResumeOn.getUTCDate()+1);
+  const recurrenceResumeDate=recurrenceResumeOn.toISOString().slice(0,10);
+  assert.equal((await clientsTrainerApp.inject({method:'PATCH',url:`/api/clients/${client.id}/plans/${sale.json().id}/recurrence`,headers:{'idempotency-key':randomUUID()},payload:{enabled:true,effectiveOn:recurrenceResumeDate,reason:'Reactivación futura QA'} })).statusCode,201);
+  const charge=await clientsAdminApp.inject({method:'GET',url:`/api/economics/charges?clientId=${client.id}`});
+  const payment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().items[0].id,splits:[{method:'card',amountCents:5000}]}});
+  assert.equal(payment.statusCode,201,payment.body);
+  const expected=proratedSessionsForPayment(today,periodEnd,3);
+  const [activation]=await sql`SELECT effective_activation_on::text AS "effectiveOn",sessions_granted AS granted FROM assignment_entitlement_period_events WHERE period_id=${period.json().id} AND event_type='payment_validated'`;
+  assert.equal(String(activation.effectiveOn),today);assert.equal(activation.granted,expected);
+  const [otherActivation]=await sql`SELECT sessions_granted AS granted FROM assignment_entitlement_period_events WHERE period_id=${otherPeriod.json().id} AND event_type='payment_validated'`;
+  assert.equal(otherActivation.granted,proratedSessionsForPayment(today,periodEnd,2));
+  const [chargeCountBefore]=await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${client.id}`;
+  const sessionDate=new Date(`${today}T12:00:00Z`);sessionDate.setUTCDate(sessionDate.getUTCDate()+1);
+  const session=await app.inject({method:'POST',url:'/api/calendar/sessions',payload:{serviceId:service.id,areaId:service.areaId,startsAt:sessionDate.toISOString(),durationMinutes:45,capacity:3}});
+  assert.equal(session.statusCode,201,session.body);
+  const booking=await app.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/reservations`,payload:{clientId:client.id}});
+  assert.equal(booking.statusCode,201,booking.body);
+  const [consumed]=await sql`SELECT entitlement_period_id AS "periodId",quantity FROM client_entitlement_ledger WHERE external_reference=${`calendar_reservation:${booking.json().id}`}`;
+  assert.equal(consumed.periodId,period.json().id);assert.equal(consumed.quantity,-1);
+  const cancelled=await app.inject({method:'PATCH',url:`/api/calendar/reservations/${booking.json().id}/cancel`,payload:{}});
+  assert.ok([200,201].includes(cancelled.statusCode),cancelled.body);
+  const [restored]=await sql`SELECT entitlement_period_id AS "periodId",quantity FROM client_entitlement_ledger WHERE external_reference=${`calendar_reservation_restore:${booking.json().id}:${right.id}`}`;
+  assert.equal(restored.periodId,period.json().id);assert.equal(restored.quantity,1);
+  const materializeAt=new Date(`${periodEnd}T12:00:00Z`);materializeAt.setUTCDate(materializeAt.getUTCDate()+1);
+  const first=await materializeRecurringEntitlementPeriods(sql,materializeAt);
+  const second=await materializeRecurringEntitlementPeriods(sql,materializeAt);
+  assert.equal(first.created,2,`first materialization failed: ${JSON.stringify({first,second,today,periodEnd,materializeAt:materializeAt.toISOString(),recurrenceResumeDate})}`);assert.equal(second.created,0);
+  const [periodCounts]=await sql`SELECT count(*)::int AS periods,(SELECT count(*)::int FROM economic_charges WHERE client_id=${client.id}) AS charges FROM assignment_entitlement_periods WHERE assignment_id=${sale.json().id}`;
+  assert.equal(periodCounts.periods,4);assert.equal(periodCounts.charges,chargeCountBefore.count,'recurrence creates periods only, never charges');
+  const [next]=await sql`SELECT period_start::text AS starts_on,period_end::text AS ends_on FROM assignment_entitlement_periods WHERE assignment_id=${sale.json().id} AND right_id=${right.id} AND id<>${period.json().id}`;
+  const expectedNext=new Date(`${periodEnd}T00:00:00Z`);expectedNext.setUTCDate(expectedNext.getUTCDate()+1);
+  assert.equal(next.starts_on,expectedNext.toISOString().slice(0,10));
+  const [legacy]=await sql`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE assignment_id=${sale.json().id} AND entitlement_period_id IS NULL`;
+  assert.equal(legacy.count,0,'new recurring monthly rights never fall through to the legacy assignment bag');
 });

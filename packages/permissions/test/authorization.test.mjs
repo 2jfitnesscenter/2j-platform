@@ -47,6 +47,11 @@ test('2J-073 entitlement operations follow the approved Reception, Trainer, Acco
   for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel']) assert.equal(has('reception-management', permission), true, `${permission} should be granted to Reception`);
   for (const permission of ['entitlements.adjust','catalog.pricing.manage','billing.payments.manage']) assert.equal(has('reception-management', permission), false, `${permission} should remain denied to Reception`);
   assert.equal(has('trainer','entitlements.read'), true);
+  assert.equal(has('trainer','entitlements.recurrence.manage'), true);
+  assert.equal(can({ actorId:'fixture',role:'trainer',deniedPermissions:['entitlements.recurrence.manage'] },'entitlements.recurrence.manage'),false);
+  assert.equal(has('reception-management','entitlements.recurrence.manage'), false);
+  assert.equal(has('accountant','entitlements.recurrence.manage'), false);
+  assert.equal(has('admin','entitlements.recurrence.manage'), true);
   for (const permission of ['entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage','billing.payments.manage']) assert.equal(has('trainer', permission), false, `${permission} should remain denied to Trainer`);
   for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage']) assert.equal(has('accountant', permission), false, `${permission} should remain denied to Accountant`);
   for (const permission of ['entitlements.read','entitlements.manage','entitlements.renew','entitlements.pause','entitlements.cancel','entitlements.adjust','catalog.pricing.manage']) assert.equal(has('admin', permission), true, `${permission} should remain available to Admin`);
@@ -73,6 +78,14 @@ test('person identity administration is restricted to Admin', () => {
 test('limited Member booking cohort management is restricted to Admin', () => {
   for (const role of ['trainer', 'reception-management', 'accountant']) assert.equal(can({ actorId: 'fixture', role }, 'member.pilot.booking.manage'), false);
   assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'member.pilot.booking.manage'), true);
+});
+
+test('Training suspension is Admin-only until a Trainer receives an explicit granular grant', () => {
+  assert.equal(knownPermissions.has('training.suspension.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'training.suspension.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer' }, 'training.suspension.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'reception-management' }, 'training.suspension.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'training.suspension.manage'), false);
 });
 
 test('runtime role matrix matches its reviewable JSON contract', async () => {

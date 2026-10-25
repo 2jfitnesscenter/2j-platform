@@ -26,12 +26,14 @@
 .calendar-toolbar h2::first-letter { text-transform: uppercase; }
 .calendar-toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--2j-space-3); }
 .week-controls { display: flex; align-items: center; gap: var(--2j-space-1); }
-.calendar-filter-bar { display: flex; align-items: center; justify-content: flex-end; gap: var(--2j-space-2); padding: 0 var(--2j-space-5) var(--2j-space-3); }
+.calendar-filter-bar { display: flex; align-items: end; justify-content: flex-start; flex-wrap: wrap; gap: var(--2j-space-3); padding: 0 var(--2j-space-5) var(--2j-space-3); }
+.calendar-filter-field { display: grid; gap: var(--2j-space-1); }
 .calendar-filter-bar label { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
-.calendar-filter-bar select { min-height: var(--2j-control-sm); max-width: 13rem; padding: 0 var(--2j-space-8) 0 var(--2j-space-3); border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font: inherit; font-size: var(--2j-type-size-sm); }
+.calendar-filter-bar select { min-height: var(--2j-control-sm); width: min(13rem, 100%); padding: 0 var(--2j-space-8) 0 var(--2j-space-3); border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font: inherit; font-size: var(--2j-type-size-sm); }
 .calendar-filter-bar select:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.calendar-filter-reset { margin-bottom: 1px; }
 @media (pointer: coarse) { .calendar-filter-bar select { min-height: var(--2j-control-md); } }
-@media (max-width: 767.98px) { .calendar-toolbar { padding: var(--2j-space-4); } .calendar-toolbar-actions { width: 100%; justify-content: space-between; } .calendar-filter-bar { padding-inline: var(--2j-space-4); justify-content: space-between; } }
+@media (max-width: 767.98px) { .calendar-toolbar { padding: var(--2j-space-4); } .calendar-toolbar-actions { width: 100%; justify-content: space-between; } .calendar-filter-bar { padding-inline: var(--2j-space-4); } .calendar-filter-field { flex: 1 1 9rem; min-width: 0; } .calendar-filter-bar select { width: 100%; } }
 
 /* ---------- Day strip (Día view and narrow screens) ---------- */
 .week-strip { display: none; }

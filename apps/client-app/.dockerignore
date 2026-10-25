@@ -1,0 +1,6 @@
+**
+!Dockerfile.demo
+!staging/
+!staging/nginx.conf
+!dist-demo/
+!dist-demo/**
