@@ -26,7 +26,7 @@ type FollowupItem = { id:string; name:string; status:string; dueAt:string|null; 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 const statusLabel = { active: 'Activo', archived: 'Archivado' };
 const moduleLabels: Record<string, string> = { reservations: 'Reservas', training: 'Entrenamiento', nutrition: 'Nutrición', health: 'Salud', clients: 'Clientes', communication: 'Comunicación' };
-const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'documents', 'messages', 'followup', 'history']);
+const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'purchases', 'documents', 'messages', 'followup', 'history']);
 
 function displayName(client: Client) { return `${client.firstName} ${client.lastName}`; }
 function dateLabel(value: string) { return new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(value)); }
@@ -37,6 +37,25 @@ function createIdempotencyKey() {
 function localDateKey() { return new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); }
 function plusLocalDays(value:string,days:number){const parts=value.split('-').map(Number);const next=new Date(Date.UTC(parts[0]??1970,(parts[1]??1)-1,(parts[2]??1)+days));return next.toISOString().slice(0,10);}
 function euroToCents(value:string) { const normalized=value.trim().replace(',','.'); if(!/^\d+(\.\d{1,2})?$/.test(normalized))return null; const cents=Math.round(Number(normalized)*100); return Number.isSafeInteger(cents)&&cents>0?cents:null; }
+
+type PurchaseRow = { id: string; createdAt: string; status: string; paymentState: string; paymentMethod: string | null; totalCents: number | string; lines: Array<{ productName: string; variantLabel: string; quantity: number }> };
+const purchaseDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short', year: 'numeric' });
+const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', other: 'Otro' };
+
+/** Compras de tienda del cliente (paridad visual 5; D49: compras consultables sin cuota). */
+function PurchasesPanel({ sales }: { sales: PurchaseRow[] }) {
+  return <Card as="section" aria-labelledby="client-purchases-title">
+    <CardHeader title="Compras" titleId="client-purchases-title" level={2} description="Ventas de tienda registradas a este cliente (las 30 más recientes)." />
+    {sales.length === 0
+      ? <EmptyState icon={icons.ShoppingBag} title="Sin compras registradas">Cuando se registre una venta de tienda a este cliente aparecerá aquí.</EmptyState>
+      : <ul className="client-purchases" aria-label="Compras del cliente">{sales.map((sale) => <li key={sale.id}>
+        <span className="client-purchase-copy"><strong>{sale.lines.map((line) => `${line.quantity} × ${line.productName} (${line.variantLabel})`).join(', ') || 'Venta sin líneas'}</strong>
+          <small>{purchaseDate.format(new Date(sale.createdAt))}{sale.paymentMethod ? ` · ${methodLabel[sale.paymentMethod] ?? sale.paymentMethod}` : ''}</small></span>
+        <span className="client-purchase-meta"><strong>{euros(Number(sale.totalCents))}</strong>
+          <StatusChip tone={sale.status === 'voided' ? 'neutral' : sale.paymentState === 'paid' ? 'success' : 'warning'}>{sale.status === 'voided' ? 'Anulada' : sale.paymentState === 'paid' ? 'Cobrada' : 'Pendiente de cobro'}</StatusChip></span>
+      </li>)}</ul>}
+  </Card>;
+}
 
 export function ClientsPage() {
   const [query, setQuery] = useState('');
@@ -522,6 +541,7 @@ export function ClientsPage() {
             </Card>
           </div>}
 
+          {activeSection === 'purchases' && activeSectionData?.access === 'available' && <PurchasesPanel sales={(profile?.summary.purchases?.data as PurchaseRow[] | null) ?? []} />}
           {activeSection === 'messages' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-msg-title"><CardHeader title="Conversación del centro" titleId="client-msg-title" level={2} actions={<Button variant="ghost" size="sm" href="#communications">Abrir bandeja</Button>} />
             <dl className="client-dl"><div><dt>Mensajes sin leer</dt><dd>{Number((profile.summary.messages?.data as { unreadCount?: number } | null)?.unreadCount ?? 0)}</dd></div><div><dt>Último mensaje</dt><dd>{(profile.summary.messages?.data as { lastMessageAt?: string | null } | null)?.lastMessageAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Atlantic/Canary' }).format(new Date((profile.summary.messages?.data as { lastMessageAt: string }).lastMessageAt)) : 'Sin conversación'}</dd></div></dl>
           </Card>}
