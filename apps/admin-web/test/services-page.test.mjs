@@ -36,6 +36,9 @@ const adminCapabilities = { calendar: true, clients: true, communications: true,
 function renderServices(capabilities = adminCapabilities) {
   return render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities }, React.createElement(ServicesPage)));
 }
+function renderSpaces(capabilities = adminCapabilities) {
+  return render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities }, React.createElement(ServicesPage, { initialView: 'areas' })));
+}
 
 async function openPlanDialog() {
   await screen.findByRole('heading', { name: service.name });
@@ -53,17 +56,20 @@ test('renders the catalog with understandable product terms and noninteractive f
   assert.equal(screen.queryByText('session_pack'), null);
 });
 
-test('Trainer receives operational spaces and services without commercial configuration or prices', async () => {
+test('Trainer receives separate operational Services and Spaces screens without commercial configuration or prices', async () => {
   initialFetch({ plans: [plan] });
   const trainerCapabilities = { calendar: true, clients: true, communications: true, billing: false, staff: true, catalogPricingManage: false };
   renderServices(trainerCapabilities);
   await screen.findByRole('heading', { name: service.name });
-  assert.ok(screen.getByRole('button', { name: 'Servicios' }));
-  assert.ok(screen.getByRole('button', { name: 'Espacios' }));
+  assert.equal(screen.getByRole('heading', { name: 'Servicios' }).textContent, 'Servicios');
+  assert.equal(screen.queryByRole('button', { name: 'Espacios' }), null);
   assert.equal(screen.queryByRole('button', { name: 'Cuotas y planes' }), null);
   assert.equal(screen.queryByRole('button', { name: /nuevo servicio/i }), null);
-  fireEvent.click(screen.getByRole('button', { name: 'Espacios' }));
-  assert.ok(await screen.findByRole('heading', { name: 'Espacios' }));
+  cleanup();
+  initialFetch({ plans: [plan] });
+  renderSpaces(trainerCapabilities);
+  assert.ok(await screen.findByRole('heading', { level: 1, name: 'Espacios' }));
+  assert.equal(screen.queryByRole('button', { name: 'Servicios' }), null);
   assert.ok(screen.getByText(area.name));
   assert.equal(screen.queryByRole('button', { name: 'Archivar' }), null);
   assert.equal(screen.queryByText(/Precio base/), null);
@@ -72,9 +78,7 @@ test('Trainer receives operational spaces and services without commercial config
 test('spaces are data-driven for more than three areas and show associated service state', async () => {
   const spaces = ['North room', 'Studio 2', 'Yoga loft', 'Functional floor', 'Recovery room'].map((name, index) => ({ id: index === 0 ? area.id : `area-${index}`, name }));
   initialFetch({ onAreaList: () => response(spaces) });
-  renderServices();
-  await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Espacios' }));
+  renderSpaces();
   for (const space of spaces) assert.ok(await screen.findByRole('heading', { name: space.name }));
   assert.ok(screen.getAllByText('Sin servicios asociados.').length >= 4);
   assert.ok(screen.getByText('Entrenamiento funcional'));
@@ -84,9 +88,7 @@ test('spaces are data-driven for more than three areas and show associated servi
 test('Admin creates an operational area through the existing API and receives inline success feedback', async () => {
   let posted;
   initialFetch({ onAreaCreate: (_url, options) => { posted = JSON.parse(options.body); return response({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', name: posted.name }, 201); } });
-  renderServices();
-  await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Espacios' }));
+  renderSpaces();
   fireEvent.click(screen.getByRole('button', { name: 'Nuevo espacio' }));
   const dialog = await screen.findByRole('dialog', { name: 'Nuevo espacio' });
   fireEvent.change(within(dialog).getByLabelText('Nombre del espacio'), { target: { value: '  Yoga loft  ' } });

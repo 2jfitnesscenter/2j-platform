@@ -30,7 +30,7 @@ function App() {
   }, []);
   React.useEffect(() => { document.title = `${getProfessionalPageContext(route).page} · 2J Platform`; }, [route]);
   usePageResetOnModuleChange(route);
-  const page = route === 'store' ? <StorePage/> : route === 'news' ? <NewsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
+  const page = route === 'store' ? <StorePage/> : route === 'news' ? <NewsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'spaces' ? <ServicesPage initialView="areas"/> : route === 'services' ? <ServicesPage initialView="services"/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }
 
