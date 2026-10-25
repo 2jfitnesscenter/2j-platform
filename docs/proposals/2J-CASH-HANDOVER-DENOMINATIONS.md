@@ -1,9 +1,8 @@
 # Propuesta consolidada: caja, traspasos, recuentos y gastos
 
-**Decisiones confirmadas:** A36–A45, 25 de octubre de 2026.
-**Actualización solicitada para aprobación:** A46–A50.
-**Referencias:** D96–D98, D110–D115, D111, D123, D124 y A36–A50.
-**Estado:** propuesta documental actualizada. Las operaciones de caja posteriores requieren que D113 (#97) esté integrado y revisado independientemente, y que el propietario apruebe esta actualización antes de implementar A46–A50. Este documento no implementa funcionalidad ni autoriza merges o despliegues.
+**Decisiones confirmadas:** A36–A47, 25 de octubre de 2026.
+**Alcance:** D96–D98, D110–D115, D111, D123, D124 y A36–A47.
+**Estado:** diseño aprobado por el propietario para los puntos A38–A44 y A47. Documento únicamente; no implementa funcionalidad ni autoriza merges o despliegues. La implementación se hará en PR pequeños después de que D113 (#97) esté integrado y revisado independientemente.
 
 ## Apertura y fondo
 
@@ -12,7 +11,7 @@
 - Apertura, traspaso y cierre registran cantidades por denominación. El servidor calcula los totales.
 - Denominaciones: monedas de 1, 2, 5, 10, 20 y 50 céntimos, 1 € y 2 €; billetes de 5 €, 10 €, 20 €, 50 €, 100 €, 200 € y 500 €.
 
-## Traspaso de caja
+## Traspaso y diferencias (A38–A44)
 
 - El profesional saliente y el entrante deben estar fichados. El saliente cuenta y confirma cada denominación; el entrante hace un conteo ciego independiente, sin ver el saldo esperado ni el desglose del saliente.
 - Cada traspaso es un movimiento auditable propio. Se completa cuando ambas partes confirman, aunque los totales no coincidan.
@@ -32,11 +31,11 @@
 - No se modifica, completa ni retrotrae ningún evento de fichaje (D123).
 - No se requiere la presencia del profesional; al resolverla se le notifica.
 
-## Vista diaria del propietario
+## Vista diaria del propietario (A38)
 
 La vista completa requiere `owner.panel.read` y muestra los movimientos del día, desglose por denominación, traspasos, diferencias y estado equilibrado/no equilibrado. El gerente y el personal no reciben las diferencias ni el conjunto diario reservado al propietario. Los profesionales solo introducen y confirman su propio conteo; el saldo esperado permanece oculto durante el conteo ciego.
 
-## Retiros y gastos (actualización A46–A50)
+## Retiros y gastos (A47)
 
 - Se permiten retiros y gastos desde la caja únicamente con un permiso específico, dentro de una sesión abierta.
 - Cada movimiento exige tipo y motivo. El justificante o foto es opcional.
@@ -50,13 +49,13 @@ La vista completa requiere `owner.panel.read` y muestra los movimientos del día
 - El horario de apertura es una configuración editable por el propietario y se puede ampliar; no se codifica en la aplicación. Se ubicará en el módulo existente de Configuración, en «Centro · Horario de apertura». Se recomienda guardarlo como configuración operativa estructurada y auditar cada cambio, separado de parámetros económicos.
 - El propietario asigna turnos a cada profesional. No se deducen de clases ni sesiones, que pueden ser alternativas y variables.
 - Las alertas comparan horario de apertura, turnos asignados e intervalos reales de custodia de caja. Solo las ve el propietario; nunca crean ni modifican fichajes.
-- El inventario de `main` encontró `staff_schedule_slots`: tramos semanales de disponibilidad utilizados por el calendario, no un registro de turnos asignados por fecha. Se preparará una propuesta documental separada para definir ese modelo, su edición por el propietario y su relación con D115–D123 y D124. No se implementarán turnos ni alertas hasta aprobarla.
+- El inventario de `main` encontró `staff_schedule_slots`: tramos semanales de disponibilidad utilizados por el calendario, no un registro de turnos asignados por fecha. Sigue pendiente una propuesta documental separada para definir ese modelo, su edición por el propietario y su relación con D115–D123 y D124. No se implementarán turnos ni alertas hasta aprobarla.
 
 La configuración del posible límite de gastos pertenece a Configuración operativa con acceso exclusivo del propietario, no al horario del centro ni a la configuración económica/fiscal. Horario de apertura y turnos asignados son datos distintos; la existencia de disponibilidad semanal no sustituye al modelo de turnos.
 
 ## Secuencia acordada
 
-Una vez que D113 (#97) esté integrado y revisado independientemente, y aprobada esta propuesta actualizada, los PRs pequeños con pruebas serán:
+Una vez que D113 (#97) esté integrado y revisado independientemente, los PRs pequeños con pruebas serán:
 
 1. Modelo de conteo por denominación y conteo ciego en apertura y cierre.
 2. Movimiento de traspaso con dos conteos ciegos independientes.
@@ -69,5 +68,5 @@ El modelo de turnos y las alertas de cobertura tienen una puerta separada: aprob
 ## Límites preservados
 
 - D113 (#97) conserva su alcance: cobros y devoluciones sujetos a caja abierta; validar un justificante de transferencia mantiene la excepción D102.
-- Los gastos/retiros siguen los controles tipificados de A46–A50; no se habilitan movimientos genéricos de entrada/salida ni ajustes sin tipo y motivo.
+- Los gastos/retiros siguen los controles tipificados aprobados en A47; no se habilitan movimientos genéricos de entrada/salida ni ajustes sin tipo y motivo.
 - Se conservan el efectivo real, los conteos y los registros originales; no se inventan valores, eventos ni horas de fichaje.
