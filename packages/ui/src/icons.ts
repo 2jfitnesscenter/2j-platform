@@ -27,6 +27,8 @@ export {
   Inbox,
   LayoutDashboard,
   LayoutGrid,
+  LogIn,
+  LogOut,
   Menu,
   MessageSquare,
   Newspaper,

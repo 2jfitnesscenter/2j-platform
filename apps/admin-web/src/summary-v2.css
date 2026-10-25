@@ -93,3 +93,15 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
   .summary-team-stats { gap: var(--2j-space-3); }
 }
 @media (prefers-reduced-motion: reduce) { .summary-row { transition: none; } }
+.timeclock-page > .ui-card, .timeclock-page > .summary-card { margin-bottom: var(--2j-space-4); }
+.timeclock-head-actions { display: inline-flex; align-items: center; gap: var(--2j-space-3); flex-wrap: wrap; justify-content: flex-end; }
+.timeclock-filter { display: flex; flex-wrap: wrap; align-items: end; gap: var(--2j-space-3); padding: 0 var(--2j-space-5) var(--2j-space-4); }
+.timeclock-filter label { display: grid; gap: var(--2j-space-1); font-size: 12px; color: var(--2j-color-text-secondary); }
+.timeclock-filter input { min-height: 44px; padding: 0 var(--2j-space-3); border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font: inherit; }
+.timeclock-table-wrap { overflow-x: auto; }
+.timeclock-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.timeclock-table th, .timeclock-table td { padding: var(--2j-space-3) var(--2j-space-5); text-align: left; border-top: 1px solid var(--2j-color-border); vertical-align: middle; }
+.timeclock-table thead th { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--2j-color-text-secondary); background: var(--2j-color-surface-subtle); }
+.timeclock-table tbody th { font-weight: 500; white-space: nowrap; }
+.timeclock-table time { font-variant-numeric: tabular-nums; }
+.timeclock-table td small { display: block; color: var(--2j-color-text-secondary); font-size: 12px; }
