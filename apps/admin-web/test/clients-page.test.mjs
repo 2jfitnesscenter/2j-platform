@@ -46,6 +46,19 @@ test('shows minimized clients, searches the server, and opens only backed Client
   assert.equal(screen.getByRole('heading', { name: 'Contexto del cliente' }).textContent, 'Contexto del cliente');
 });
 
+test('the client search says it covers name, email and phone, debounces once and sends the typed term as is', async () => {
+  const requests = [];
+  globalThis.fetch = async (url) => { requests.push(String(url)); return response(listResponse()); };
+  render(React.createElement(ClientsPage));
+  await screen.findByRole('link', { name: /Marta Santos/ });
+  const field = screen.getByLabelText('Buscar cliente');
+  assert.equal(field.getAttribute('placeholder'), 'Nombre, email o teléfono…');
+  const before = requests.length;
+  for (const value of ['6', '60', '600 12']) fireEvent.change(field, { target: { value } });
+  await waitFor(() => assert.ok(requests.some((url) => url.includes('q=600+12'))), { timeout: 1500 });
+  assert.equal(requests.length - before, 1, 'typing fast triggers one request, not one per key');
+});
+
 test('Admin can open the existing finance section while unsupported Training and Health remain absent', async () => {
   const adminSections = sections.map((section) => section.id === 'payments' ? { ...section, access: 'available' } : section);
   const adminProfile = { ...profile, sections: adminSections, summary: { ...summary, payments: { access: 'available', dataState: 'ready', data: { balanceCents: 2400, overdueCount: 1, charges: [], movements: [] } } } };
@@ -377,7 +390,7 @@ test('opening a client is a page: focus lands on its name and Back keeps the lis
   await waitFor(() => assert.ok(requests.some((url) => url.includes('q=marta'))), { timeout: 1500 });
   fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   const heading = await screen.findByRole('heading', { level: 1, name: 'Marta Santos' });
-  await waitFor(() => assert.ok(document.activeElement === heading), { timeout: 5000 });
+  await waitFor(() => assert.ok(document.activeElement === heading, 'focus lands on the client name'), { timeout: 5000 });
   assert.equal(screen.queryByLabelText('Buscar cliente'), null, 'the list is replaced by the 360 page, not squeezed beside it');
   fireEvent.click(screen.getByRole('button', { name: 'Todos los clientes' }));
   await waitFor(() => assert.equal(window.location.hash, '#clients'));

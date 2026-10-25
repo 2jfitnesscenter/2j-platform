@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
+import { activateSettledEntitlementPeriods } from './assignment-periods.js';
 import { appendNotificationEvent } from './notifications.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
@@ -214,6 +215,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
           await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${transactionId},${charge.id},${charge.clientId},'payment',${proof.amountCents},'Justificante de transferencia validado',${context.actorId},${proof.id},${requestHash},NULL)`;
           await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${transactionId},'transfer',${proof.amountCents})`;
           await audit(tx, context, 'payment.transfer_validated', 'transaction', transactionId, charge.clientId, { amountCents: proof.amountCents, proofId: proof.id });
+          await activateSettledEntitlementPeriods(tx,charge.id,context.actorId);
           void cash;
         }
         const [updated] = await tx`UPDATE economic_transfer_proofs SET status=${body.data.decision},reviewed_by=${context.actorId},reviewed_at=now(),decision_note=${body.data.note ?? null},transaction_id=${transactionId} WHERE id=${proof.id} RETURNING id,status,reviewed_at AS "reviewedAt"`;

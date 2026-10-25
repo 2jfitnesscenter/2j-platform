@@ -132,3 +132,11 @@
   .app-nav-item, .nav-chevron { transition: none; }
   .app-frame.is-drawer .app-sidebar { transition: none; }
 }
+
+/* RM-00-01: the page heading is focused programmatically on module change. Pointer navigation shows no ring (not focus-visible); keyboard navigation shows the standard ring, as for .client-name. */
+.app-page h1[tabindex="-1"]:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 4px; border-radius: var(--2j-radius-xs); }
+
+/* RM-00-02: "Saltar al contenido" — first focusable element, visible only while focused. */
+.skip-link { position: fixed; top: var(--2j-space-2); left: var(--2j-space-2); z-index: calc(var(--2j-z-flyout) + 1); padding: var(--2j-space-2) var(--2j-space-4); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font-weight: var(--2j-type-weight-semibold); box-shadow: var(--2j-elevation-high); transform: translateY(-200%); }
+.skip-link:focus-visible { transform: none; outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.app-page:focus { outline: none; }

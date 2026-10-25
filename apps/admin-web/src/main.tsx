@@ -20,6 +20,7 @@ import { CommandCenter } from './command-center.js';
 import { NotificationSettings } from './notification-settings.js';
 import { NewsPage } from './news-page.js';
 import { StorePage } from './store-page.js';
+import { usePageResetOnModuleChange } from './route-focus.js';
 
 function App() {
   const [route, setRoute] = React.useState(() => window.location.hash.slice(1).split('?')[0] || 'home');
@@ -29,6 +30,7 @@ function App() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
   React.useEffect(() => { document.title = `${getProfessionalPageContext(route).page} · 2J Platform`; }, [route]);
+  usePageResetOnModuleChange(route);
   const page = route === 'store' ? <StorePage/> : route === 'news' ? <NewsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }

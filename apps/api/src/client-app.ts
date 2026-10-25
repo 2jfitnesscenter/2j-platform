@@ -5,6 +5,7 @@ import type { ClientAuthorizationContext } from './communications.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { materializeCalendarTemplates } from './calendar-materializer.js';
 import type { TrainingAdapter } from './training-integration.js';
+import { memberTrainingCapabilities } from './training-capabilities-api.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -121,14 +122,19 @@ export function registerClientAppRoutes(
     const assignments = await db`
       SELECT a.id,a.starts_on::text AS "startsOn",a.ends_on::text AS "endsOn",a.status,
         COALESCE(a.snapshot->>'name',p.name) AS "planName",v.kind,
-        (SELECT COALESCE(jsonb_agg(jsonb_build_object('id',r.id,'rightType',r.right_type,'serviceId',r.service_id,'serviceName',sv.name,'serviceStatus',sv.status,'quantity',r.quantity,'period',r.period,'balance',CASE WHEN r.right_type='sessions_quota' THEN (SELECT COALESCE(sum(l.quantity),0)::int FROM client_entitlement_ledger l WHERE l.assignment_id=a.id AND l.right_key=r.id::text) ELSE NULL END) ORDER BY r.right_type,r.id),'[]'::jsonb) FROM plan_rights r LEFT JOIN services sv ON sv.id=r.service_id WHERE r.plan_id=a.plan_id AND r.plan_version=a.plan_version) AS rights,
+        (SELECT COALESCE(jsonb_agg(jsonb_build_object('id',r.id,'rightType',r.right_type,'trainingAccessLevel',r.training_access_level,'serviceId',r.service_id,'serviceName',sv.name,'serviceStatus',sv.status,'quantity',r.quantity,'period',r.period,'balance',CASE WHEN r.right_type='sessions_quota' THEN (SELECT COALESCE(sum(l.quantity),0)::int FROM client_entitlement_ledger l WHERE l.assignment_id=a.id AND l.right_key=r.id::text) ELSE NULL END) ORDER BY r.right_type,r.id),'[]'::jsonb) FROM plan_rights r LEFT JOIN services sv ON sv.id=r.service_id WHERE r.plan_id=a.plan_id AND r.plan_version=a.plan_version) AS rights,
         COALESCE((SELECT jsonb_agg(jsonb_build_object('module',m.module,'accessLevel',m.access_level,'capabilities',COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb)) ORDER BY m.module) FROM plan_module_accesses m WHERE m.plan_id=a.plan_id AND m.plan_version=a.plan_version),'[]'::jsonb) AS modules,
         COALESCE((SELECT e.event_type FROM client_plan_assignment_events e WHERE e.assignment_id=a.id AND e.effective_on<=${localDate}::date ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1),'activated') AS "lastEvent"
       FROM client_plan_assignments a JOIN plans p ON p.id=a.plan_id JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
       WHERE a.client_id=${actor.clientId} ORDER BY a.starts_on DESC,a.created_at DESC,a.id DESC LIMIT 100`;
     const derivedAssignments = assignments.map((item: any) => ({ ...item, status: item.lastEvent === 'paused' ? 'paused' : item.lastEvent === 'cancelled' || item.lastEvent === 'changed' ? 'cancelled' : item.startsOn > localDate ? 'scheduled' : item.endsOn && item.endsOn < localDate ? 'expired' : item.status }));
     const active = derivedAssignments.filter((item: any) => item.status === 'active');
-    return { asOf: localDate, timezone: 'Atlantic/Canary', assignments: derivedAssignments, active };
+    // V2.1 capabilities computed here from the member's own session: Home gets them without any service signature. Absent when the member has no active person yet.
+    const [personRow] = await db`
+      SELECT p.id FROM platform_person_clients pc JOIN platform_persons p ON p.id=pc.person_id AND p.status='active'
+      WHERE pc.client_id=${actor.clientId}::uuid AND (${actor.personId ?? null}::uuid IS NULL OR pc.person_id=${actor.personId ?? null}::uuid) LIMIT 1`;
+    const trainingCapabilities = personRow ? await memberTrainingCapabilities(db, String(personRow.id)) : null;
+    return { asOf: localDate, timezone: 'Atlantic/Canary', assignments: derivedAssignments, active, trainingCapabilities };
   });
 
   app.get('/api/me/bookings', async (request, reply) => {

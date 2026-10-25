@@ -145,3 +145,86 @@ test('EmptyState says what is missing, forwards role for errors and renders only
   render(h(EmptyState, { title: 'Aún no hay clientes' }));
   assert.equal(screen.queryByRole('button'), null);
 });
+
+const { ConfirmDialog, SaveState } = await import('../src/index.ts');
+
+test('ConfirmDialog is an alertdialog: focus starts on Cancel, Tab stays inside, Escape cancels and focus returns to the opener', () => {
+  let cancelled = 0;
+  const Host = () => {
+    const [open, setOpen] = React.useState(false);
+    return h('div', null,
+      h('button', { onClick: () => setOpen(true) }, 'Abrir'),
+      h(ConfirmDialog, { open, title: 'Retirar noticia', description: 'Se conservará en el historial.', confirmLabel: 'Retirar', onConfirm: () => {}, onCancel: () => { cancelled += 1; setOpen(false); } }));
+  };
+  render(h(Host));
+  const opener = screen.getByRole('button', { name: 'Abrir' });
+  opener.focus();
+  fireEvent.click(opener);
+  const dialog = screen.getByRole('alertdialog', { name: 'Retirar noticia' });
+  assert.equal(dialog.getAttribute('aria-modal'), 'true');
+  assert.ok(dialog.getAttribute('aria-describedby'), 'consequence is the accessible description');
+  const cancel = within(dialog).getByRole('button', { name: 'Cancelar' });
+  const confirm = within(dialog).getByRole('button', { name: 'Retirar' });
+  assert.ok(document.activeElement === cancel, 'focus starts on the safe choice');
+  confirm.focus();
+  fireEvent.keyDown(confirm, { key: 'Tab' });
+  assert.ok(document.activeElement === cancel, 'Tab from the last control wraps to the first');
+  fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true });
+  assert.ok(document.activeElement === confirm, 'Shift+Tab from the first control wraps to the last');
+  fireEvent.keyDown(dialog, { key: 'Escape' });
+  assert.equal(cancelled, 1);
+  assert.equal(screen.queryByRole('alertdialog'), null);
+  assert.ok(document.activeElement === opener, 'focus returns to the element that opened it');
+});
+
+test('ConfirmDialog requires a reason when configured, trims it and sends it on confirm', () => {
+  const reasons = [];
+  render(h(ConfirmDialog, { open: true, title: 'Anular venta', description: 'Se devolverá el stock.', confirmLabel: 'Anular', reason: { label: 'Motivo', required: true, minLength: 3 }, onConfirm: (reason) => reasons.push(reason), onCancel: () => {} }));
+  const confirm = screen.getByRole('button', { name: 'Anular' });
+  assert.equal(confirm.disabled, true, 'blocked until the reason is long enough');
+  const field = screen.getByLabelText(/Motivo/);
+  assert.equal(field.getAttribute('aria-required'), 'true');
+  fireEvent.change(field, { target: { value: ' ab ' } });
+  assert.equal(confirm.disabled, true, 'two characters are not enough');
+  fireEvent.change(field, { target: { value: '  Error de venta  ' } });
+  assert.equal(confirm.disabled, false);
+  fireEvent.click(confirm);
+  assert.deepEqual(reasons, ['Error de venta']);
+});
+
+test('ConfirmDialog optional reason does not block, busy blocks everything, and an error is announced', () => {
+  let cancelled = 0;
+  const { rerender } = render(h(ConfirmDialog, { open: true, title: 'Archivar', description: 'x', confirmLabel: 'Archivar', reason: { label: 'Motivo' }, onConfirm: () => {}, onCancel: () => { cancelled += 1; } }));
+  assert.equal(screen.getByRole('button', { name: 'Archivar' }).disabled, false, 'optional reason never blocks');
+  rerender(h(ConfirmDialog, { open: true, title: 'Archivar', description: 'x', confirmLabel: 'Archivar', busy: true, error: 'No se pudo archivar.', onConfirm: () => {}, onCancel: () => { cancelled += 1; } }));
+  assert.equal(screen.getByRole('button', { name: 'Cancelar' }).disabled, true);
+  fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' });
+  fireEvent.mouseDown(document.querySelector('.ui-modal-backdrop'));
+  assert.equal(cancelled, 0, 'Escape and the backdrop do nothing while busy');
+  assert.equal(screen.getByRole('alert').textContent, 'No se pudo archivar.');
+});
+
+test('ConfirmDialog backdrop click cancels and a click inside the dialog does not', () => {
+  let cancelled = 0;
+  render(h(ConfirmDialog, { open: true, title: 'Archivar', description: 'x', confirmLabel: 'Archivar', onConfirm: () => {}, onCancel: () => { cancelled += 1; } }));
+  fireEvent.mouseDown(screen.getByRole('alertdialog'));
+  assert.equal(cancelled, 0);
+  fireEvent.mouseDown(document.querySelector('.ui-modal-backdrop'));
+  assert.equal(cancelled, 1);
+});
+
+test('SaveState keeps a live region mounted and says saving, saved or the error with an icon and text', () => {
+  const { rerender } = render(h(SaveState, { status: 'idle' }));
+  const region = document.querySelector('.ui-save-state');
+  assert.equal(region.getAttribute('role'), 'status');
+  assert.equal(region.textContent, '');
+  rerender(h(SaveState, { status: 'saving' }));
+  assert.equal(document.querySelector('.ui-save-state').textContent, 'Guardando…');
+  rerender(h(SaveState, { status: 'saved', savedLabel: 'Cambios guardados.' }));
+  assert.equal(document.querySelector('.ui-save-state').textContent, 'Cambios guardados.');
+  assert.ok(document.querySelector('.ui-save-state svg'), 'never color alone');
+  rerender(h(SaveState, { status: 'error', errorLabel: 'No se pudo guardar.' }));
+  const error = screen.getByRole('alert');
+  assert.equal(error.textContent, 'No se pudo guardar.');
+  assert.equal(error.getAttribute('aria-live'), 'assertive');
+});

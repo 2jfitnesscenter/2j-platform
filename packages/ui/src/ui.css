@@ -163,3 +163,13 @@
   .ui-button { transition: none; }
   .ui-spin { animation: none; }
 }
+
+/* ---------- Confirmation dialog and save state (RM-00-04) ---------- */
+.ui-confirm { width: min(100%, 30rem); }
+.ui-confirm-optional { color: var(--2j-color-text-secondary); font-weight: var(--2j-type-weight-regular); }
+.ui-confirm-hint { color: var(--2j-color-text-secondary); font-weight: var(--2j-type-weight-regular); }
+.ui-confirm-error { margin: 0 0 var(--2j-space-3); color: var(--2j-color-danger); font-size: var(--2j-type-size-sm); }
+.ui-confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--2j-space-2); margin-top: var(--2j-space-4); }
+.ui-save-state { display: inline-flex; align-items: center; gap: var(--2j-space-2); min-height: var(--2j-space-6); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.ui-save-state[data-status="saved"] { color: var(--2j-color-success); }
+.ui-save-state[data-status="error"] { color: var(--2j-color-danger); }

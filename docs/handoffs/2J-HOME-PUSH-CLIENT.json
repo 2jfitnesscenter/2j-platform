@@ -1,0 +1,66 @@
+{
+  "taskId": "2J-HOME-PUSH-CLIENT",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-HOME-PUSH-CLIENT",
+  "baseSha": "9c634bd68721d49762493e00cae6fd7ad0bf960c",
+  "implementationSha": "a9d8c935f3d591f70f973c8805b670b084e0f0d8",
+  "status": "local-review-ready",
+  "pullRequest": null,
+  "contractReference": {
+    "branch": "origin/agent/claude/2J-PUSH-INFRA",
+    "sha": "fc3b3ae51f3e03f7df977a10690ef8b6b940a27f",
+    "providerChecked": false,
+    "paths": [
+      "GET /api/me/push/config",
+      "PUT /api/me/push/consent",
+      "POST /api/me/push/subscriptions",
+      "DELETE /api/me/push/subscriptions"
+    ]
+  },
+  "changedFiles": [
+    "apps/client-app/public/service-worker.js",
+    "apps/client-app/public/push-sw-handlers.js",
+    "apps/client-app/src/client-app.tsx",
+    "apps/client-app/src/push/push-client.ts",
+    "apps/client-app/src/push/use-push-subscription.ts",
+    "apps/client-app/test/client-app.test.mjs",
+    "apps/client-app/test/push-client.test.mjs",
+    "apps/client-app/test/push-sw.test.mjs",
+    "docs/handoffs/2J-HOME-PUSH-CLIENT.md",
+    "docs/handoffs/2J-HOME-PUSH-CLIENT.json"
+  ],
+  "verification": {
+    "clientAppTests": { "passed": 25, "failed": 0 },
+    "clientAppTypecheck": "passed",
+    "clientAppBuild": "passed",
+    "diffCheck": "passed",
+    "distIncludesServiceWorkerHandler": true,
+    "lint": "not-run-no-script-defined",
+    "realPushProvider": "not-contacted",
+    "physicalDevice": "not-tested"
+  },
+  "platformApiChanged": false,
+  "platformMigrationChanged": false,
+  "capabilitiesContractChanged": false,
+  "bunkerChanged": false,
+  "productionChanged": false,
+  "deploymentPerformed": false,
+  "vapidKeysGenerated": false,
+  "pushEnabled": false,
+  "independentReview": "pending",
+  "independentQa": "pending",
+  "limitations": [
+    "Server implementation is only a local remote-tracking branch reference and is not integrated into this branch.",
+    "Real browser permission and push delivery require an authorized staging environment with server push enabled and VAPID configured.",
+    "When server push is disabled, logout removes the local browser subscription but cannot delete the server record because the existing server route returns 423."
+  ],
+  "nextSequence": [
+    "Integrate with Claude's server-side push draft after it is published and reviewed",
+    "Validate push in authorized staging/browser",
+    "Implement measurements against confirmed Platform contracts"
+  ],
+  "capabilitiesReferenceBranchUnchanged": {
+    "branch": "agent/codex/2J-CAPABILITIES-D40-D41",
+    "sha": "374c5599fa16621f79929f1a632b82113cf11994"
+  }
+}
