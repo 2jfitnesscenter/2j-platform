@@ -1,9 +1,10 @@
 # Mapeo del prototipo Base44 (`2j-fitness-admin`) contra Platform
 
 Estado: **baseline aprobado por el propietario (resoluciones de §3 a favor de D01–D274; sin copiar código ni datos de Base44). Pendiente de revisión de Work Platform. No se ha fusionado ni desplegado nada.**
-Prototipo analizado: `2jfitnesscenter/2j-fitness-admin`, rama por defecto, commit `73c58b5` (229 ficheros; 53 son componentes `ui/` genéricos de shadcn).
+Prototipo analizado: `2jfitnesscenter/2j-fitness-admin`, rama por defecto, commit `73c58b5` (229 ficheros; 53 son componentes `ui/` genéricos de shadcn). Revisado después hasta el commit `ccfffdb` (idéntico a la carpeta local del propietario `twoj-fitness-flow`): los 3 commits posteriores solo tocan el portal del socio (lista de espera y reservas, exportar a calendario), que no se adopta.
 Platform analizada: `main` en `519e5c1`.
 Decisiones de referencia: `REGISTRO-DECISIONES-2J.md` (D01–D274, A01–A33).
+Documentos del propietario posteriores (en su Escritorio, no en el repositorio): `UI-REFERENCIA-BASE44-A-PLATFORM.md` (mapa pantalla → ficheros, tokens, qué no adoptar, orden) y `PARIDAD-VISUAL-BASE44.md` (lista de paridad visual); decisiones A34–A50. Donde estas decisiones cambian lo escrito en este mapa, prevalecen y se ha corregido arriba (C-08, C-11).
 
 ## 0. Cómo leer este documento y qué NO está verificado
 
@@ -89,10 +90,10 @@ Cada fila es una contradicción o hueco **comprobado leyendo el código citado**
 | C-05 | Parcial cuenta como no pagado a efectos de bloqueo (`charge.status !== 'paid'`) | D99/D250: parcial no marca pagada hasta cubrir | Coincide |
 | C-06 | Los pagos se **rechazan o se devuelven** (`status: rejected`, `type: refund`); no existe «Anulado» | D252/D253: se **anula** un pago (no se borra), recalcula deuda y derechos, bloqueo inmediato si activó la cuota | Hueco. Falta anulación, bloqueo inmediato (D253), recuperación de reservas (D254–D255) |
 | C-07 | `registerPayment` permite **devoluciones dentro de la app** con permiso `finances.view` y la caja las resta del efectivo | D94: la devolución se hace fuera de Platform; D259–D262: saldo a favor y devoluciones solo en contabilidad (admin) | Contradice. Además la devolución se autoriza con `finances.view` (un permiso de lectura) sumado a `payments.register` |
-| C-08 | Caja: `cash_in`/`cash_out` manuales (`CashMovement`: aportes y retiradas) | D98: gastos y retiradas **no se registran** en Platform | Contradice |
+| C-08 | Caja: `cash_in`/`cash_out` manuales (`CashMovement`: aportes y retiradas) | D98 decía que gastos y retiradas no se registran. **Revertida por el propietario (A46–A50):** las retiradas y gastos de caja SE PERMITEN, con **motivo obligatorio**, justificante opcional y límite opcional sin valor por defecto | **Resuelta a favor del prototipo en este punto.** Se adopta el concepto (movimiento de caja con motivo) con las reglas de Platform: permiso, auditoría, vínculo al turno y entrada en el cierre. Aún no está en #97 ni en `economic_cash_adjustments` tal cual (que usa un único ajuste con motivo); diseño pendiente con la caja visual |
 | C-09 | Se bloquea el cobro sin caja abierta **solo para efectivo** | D113: bloquear cobros de **cualquier** método hasta abrir turno | Contradice en el prototipo. **Brecha verificada también en Platform `main`:** `apps/api/src/economics.ts` exige caja abierta solo cuando el cobro incluye `cash`. Corrección backend y tests por método en curso en el PR #97 (Codex) |
 | C-10 | Cierre de caja: nota opcional; descuadre genera notificación | D97: explicación **obligatoria**, queda pendiente de validación del admin; D111: recuento a ciegas | Hueco |
-| C-11 | Promociones generales con `auto_apply`, ámbito tienda/cuotas, mínimo, fechas | D93: solo descuentos **individuales** por cliente; sin promociones generales ni códigos | Contradice. No adoptar `Promotion` |
+| C-11 | Promociones generales con `auto_apply`, ámbito tienda/cuotas, mínimo, fechas | D93: solo descuentos **individuales** por cliente; sin promociones generales ni códigos | **Decisión A46:** el menú Promociones SE DEJA visible pero **sin efecto en precios** (D93 sigue vigente). No crear lógica de precios ni tabla `Promotion` |
 | C-12 | `Charge.invoice_number/invoice_status`, `invoice_prefix`; `Payments.jsx` emite factura con una escritura directa desde el navegador | D106/D107: ticket por defecto, factura solo a petición, **pendiente validación fiscal**; puerta fiscal `fiscal_legal_gate_open=false` | Contradice y es riesgo legal. En Platform existen `economic_invoice_series`, `economic_fiscal_documents` bajo la puerta fiscal |
 | C-13 | `registerSale` guarda `tax_amount: 0`; el IGIC de la tienda no se calcula | D169: IGIC según configuración fiscal | Hueco (error de importes) |
 | C-14 | Cancelación: horas por servicio, pero **consumo de la sesión tardía por ajuste global** `late_cancellation_consumes` | D87: plazo configurable por servicio; tardía libera plaza y consume | Parcial. Falta el consumo por servicio |
@@ -122,7 +123,7 @@ El prototipo guarda **documentos NoSQL planos con copias de nombres** (`client_n
 | `Contract` + `EntitlementPeriod` | `client_plan_assignments`, `assignment_contract_terms`, `assignment_entitlement_periods`, `client_entitlement_ledger` | Varios contratos por cliente frente a una cuota (D166); contador `sessions_used` frente a libro de movimientos | Solo datos de prueba. Los reales se asignan a mano (D141: de TIMP no se importan cuotas) |
 | `Charge` | `economic_charges` | `invoice_*` en el cobro; derivados (`paid_amount`, `net_paid`) guardados | Sin migración de datos |
 | `EconomicTransaction` | `economic_transactions`, `economic_payment_splits`, `economic_transfer_proofs` | Sin estado «Anulado»; devoluciones como tipo | Sin migración de datos |
-| `CashSession`, `CashMovement` | `economic_cash_sessions`, `economic_cash_adjustments` | Movimientos manuales (C-08) | Sin migración; descartar `CashMovement` |
+| `CashSession`, `CashMovement` | `economic_cash_sessions`, `economic_cash_adjustments` | Movimientos manuales (C-08) | Con A46–A50 los movimientos de caja se permiten con motivo; el diseño decide si se amplía `economic_cash_adjustments` o se crea una tabla de movimientos (probablemente con migración, en el diseño de caja) |
 | `Sale`, `SaleLine`, `Product`, `ProductVariant`, `InventoryMovement` | `store_sales`, `store_sale_lines`, `store_products`, `store_product_variants`, `store_inventory_movements` | Equivalentes casi 1 a 1; IGIC | Catálogo de productos se puede importar por script (datos no personales) |
 | `GymSession`, `Reservation`, `WaitlistEntry` | `calendar_sessions`, `calendar_reservations`, `calendar_waitlist_entries`, `recurring_session_templates`, `calendar_reservation_rights` | `booked_count` almacenado; sin recurrencias con excepciones | Solo datos de prueba |
 | `Service`, `Area` | `services`, `areas` | Equivalentes | Catálogo a mano |
@@ -169,7 +170,7 @@ Total aproximado: **50–80 días de ingeniería** repartidos en fases independi
 
 **Orden recomendado:** 0 → 1.1 (caja) → 2.8 (IGIC) → 1.3 → 2.4 → 2.5 → 2.6 → 2.7 → 2.9 → 1.2 → 3.
 
-**Qué no se adopta** (queda cubierto o prohibido): portal de socio Base44 (duplica Home), autenticación Base44/Google, `linkMemberAccount`, `bunkerCapabilities`, `Promotion`, factura interna, `CashMovement`, `TimeEntry` mutable, almacén `file_uri` de Base44, cualquier endpoint «Base44 functions».
+**Qué no se adopta** (queda cubierto o prohibido): portal de socio Base44 (duplica Home), autenticación Base44/Google, `linkMemberAccount`, `bunkerCapabilities`, `Promotion` como lógica de precios (el menú sí queda visible y sin efecto), factura interna, la idea de «un único cajón por día» (la sustituye el traspaso A39–A41), `TimeEntry` mutable, almacén `file_uri` de Base44, cualquier endpoint «Base44 functions».
 
 ## 6. Riesgos
 
