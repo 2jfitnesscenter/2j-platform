@@ -34,10 +34,10 @@ La identidad y el `clientId` se obtienen exclusivamente de la sesión Member. No
 
 - `status`: `pending | unpaid | partially_paid | paid | refunded | exempt | void | not_applicable`. `unpaid` significa que la fecha local de vencimiento ya pasó y sigue existiendo saldo; no es un cálculo del cliente.
 - `accessStatus`: `active | provisional | blocked_unpaid | ended | unavailable`; `unavailable` es un estado contractual inconsistente que Platform cierra de forma segura. Es la evaluación efectiva de acceso de Platform, no una deducción de Home.
-- `amountCents`, `paidCents` y `pendingAmountCents` son importes enteros en céntimos de euro. `pendingAmountCents` nunca es negativo. Para `refunded`, el neto pendiente es cero, aunque se conserva el historial de pagos y devoluciones en Platform.
+- `amountCents`, `paidCents` y `pendingAmountCents` son importes enteros en céntimos de euro. `paidCents` es el neto validado después de devoluciones; `pendingAmountCents` nunca es negativo. Para `refunded`, ambos netos son cero, aunque Platform conserva el historial inmutable de pagos y devoluciones.
 - `dueOn` es una fecha local de negocio (`YYYY-MM-DD`), inclusiva. No es una hora UTC.
 - `effectiveBlockAt` es el instante ISO 8601 exacto en que Platform aplica el bloqueo. Para `monthly_day10_v1`, el vencimiento es el día 10 y el bloqueo comienza a las 00:00 locales del día 11. La serialización muestra ese instante con su offset UTC real, que varía con el horario de verano.
-- `payments` contiene solo abonos confirmados que afectan a esta obligación. Los importes parciales se conservan como hechos separados; un justificante pendiente no es un pago confirmado.
+- `payments` contiene solo abonos confirmados que afectan a esta obligación, con importes originales e instante. Los importes parciales se conservan como hechos separados; un justificante pendiente no es un pago confirmado. El estado y `paidCents` ya reflejan devoluciones confirmadas.
 - Si la asignación no tiene obligación económica aplicable, `payment` es `null` o `status: not_applicable` de forma consistente para todas las asignaciones; se recomienda `null` para evitar objetos vacíos.
 
 El estado sale de los cargos y movimientos económicos autoritativos de Platform (D250), aplicando su semántica de pagos parciales, devolución completa, exención y anulación. El estado de acceso conserva las reglas D99/D103 y los términos congelados de la asignación. El cliente no calcula fechas, vencimientos, netos ni bloqueos.
