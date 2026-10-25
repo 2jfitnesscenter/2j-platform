@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Card, CardHeader, Icon, PageHeader, StatusChip, icons, type LucideIcon, type StatusTone } from '@2j/ui';
-import { useCommandCenter, type CommandCenterModel } from './app-shell.js';
+import { hasProfessionalRoute, useCommandCenter, type CommandCenterModel } from './app-shell.js';
 
 const pendingKinds = new Set(['sensitive_review', 'document_pending', 'consent_pending', 'overdue_checkin', 'pending_transfers']);
 
@@ -29,10 +29,10 @@ function ItemLink({ href, children, className = '' }: { href: string; children: 
 const quickActionIcons: Record<string, LucideIcon> = {
   'new-client': icons.UserRound,
   'new-reservation': icons.CalendarDays,
+  'new-sale': icons.ShoppingBag,
+  'assign-plan': icons.Ticket,
   'collect-payment': icons.Wallet,
   'send-message': icons.MessageSquare,
-  'record-absence': icons.Users,
-  cash: icons.ReceiptText,
 };
 
 /** Accesos rápidos del Resumen (paridad visual 2): solo los que el servidor concede a este perfil; cada uno abre su sección. */
@@ -78,8 +78,16 @@ function MetricTile({ metric }: { metric: Metric }) {
 }
 
 function buildMetrics(data: CommandCenterModel): Metric[] {
-  const { permissions, today } = data;
+  const { permissions, today, commercial } = data;
   const metrics: Metric[] = [];
+  // Orden y contenido como el Resumen de Base44: clientes, cuotas, reservas, ocupación, importes, transferencias, ventas, stock.
+  if (permissions.clients && data.clients) {
+    metrics.push({ id: 'clients', label: 'Clientes activos', value: String(data.clients.active), detail: `${data.clients.recentSignups} ${data.clients.recentSignups === 1 ? 'alta' : 'altas'} en 30 días`, href: '#clients' });
+  }
+  if (commercial?.plans) {
+    const soon = commercial.plans.expiringSoonCount;
+    metrics.push({ id: 'plans', label: 'Cuotas vigentes', value: String(commercial.plans.activeCount), detail: soon > 0 ? `${soon} ${soon === 1 ? 'vence' : 'vencen'} en 7 días` : 'Ninguna vence en 7 días', ...(soon > 0 ? { detailTone: 'warning' as const } : {}), href: '#clients' });
+  }
   if (permissions.calendar) {
     const free = Math.max(0, today.capacity - today.occupied);
     metrics.push({ id: 'bookings', label: 'Reservas hoy', value: String(today.occupied), detail: `${free} ${free === 1 ? 'plaza libre' : 'plazas libres'}`, href: '#calendar' });
@@ -89,8 +97,17 @@ function buildMetrics(data: CommandCenterModel): Metric[] {
     const overdue = Number(data.economics.overdueCount);
     metrics.push({ id: 'pending', label: 'Pendiente de cobro', value: money(Number(data.economics.pendingCents)), detail: overdue > 0 ? `${overdue} ${overdue === 1 ? 'cargo vencido' : 'cargos vencidos'}` : 'Sin cargos vencidos', ...(overdue > 0 ? { detailTone: 'danger' as const } : {}), href: '#economics' });
   }
-  if (permissions.clients && data.clients) {
-    metrics.push({ id: 'clients', label: 'Clientes activos', value: String(data.clients.active), detail: `${data.clients.recentSignups} ${data.clients.recentSignups === 1 ? 'alta' : 'altas'} en 30 días`, href: '#clients' });
+  if (commercial?.transfers) {
+    const pending = commercial.transfers.pendingCount;
+    metrics.push({ id: 'transfers', label: 'Transferencias por validar', value: String(pending), detail: pending > 0 ? 'Justificantes pendientes de revisión' : 'Nada pendiente', ...(pending > 0 ? { detailTone: 'warning' as const } : {}), href: '#economics' });
+  }
+  if (commercial?.storeSales) {
+    const count = commercial.storeSales.monthCount;
+    metrics.push({ id: 'store-sales', label: 'Ventas del mes', value: money(commercial.storeSales.monthTotalCents), detail: `${count} ${count === 1 ? 'operación' : 'operaciones'}`, href: '#store' });
+  }
+  if (commercial?.lowStock) {
+    const count = commercial.lowStock.count;
+    metrics.push({ id: 'low-stock', label: 'Productos con stock bajo', value: String(count), detail: count > 0 ? 'Revisa el inventario' : 'Stock suficiente', ...(count > 0 ? { detailTone: 'warning' as const } : {}), href: '#store' });
   }
   return metrics;
 }
@@ -183,7 +200,7 @@ export function CommandCenter() {
       title="Resumen"
       description={description}
       meta={updatedAt ? `Actualizado a las ${dateTime(updatedAt)} · hora de Canarias` : undefined}
-      actions={<Button icon={icons.RefreshCw} loading={refreshing} onClick={() => void reload()}>Actualizar</Button>}
+      actions={<>{hasProfessionalRoute('reports') && <Button href="#reports" icon={icons.ArrowUpRight}>Ver informes</Button>}<Button icon={icons.RefreshCw} loading={refreshing} onClick={() => void reload()}>Actualizar</Button></>}
     />
 
     <QuickActions actions={data.quickActions} />

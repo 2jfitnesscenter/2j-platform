@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, IconButton, PageHeader, SegmentedControl, icons } from '@2j/ui';
+import { clearDeepLink, readDeepLink } from './deep-link.js';
 import { ScheduleEditor, type ScheduleSubmitItem, type ScheduleSubmitResult } from './schedule-editor';
 import { serviceColorIndex, type ExistingGroup } from './schedule-logic';
 export { serviceColorIndex };
@@ -79,6 +80,9 @@ export function CalendarPage() {
   const [viewMode,setViewMode]=useState<'day'|'week'>(()=>typeof window!=='undefined'&&window.matchMedia?.('(max-width: 1120px)').matches?'day':'week');
   const [sessionFilter,setSessionFilter]=useState<CalendarFilter>('all');
   const [serviceFilter,setServiceFilter]=useState('');
+  // `#calendar?book=1` (ver deep-link.ts): la reserva se hace dentro del detalle de una sesión, así que se guía a elegirla.
+  const [bookHint,setBookHint]=useState(()=>readDeepLink(['book'] as const).book==='1');
+  useEffect(()=>{clearDeepLink(['book']);},[]);
   const [professionalFilter,setProfessionalFilter]=useState('');
   const [dialog, setDialog] = useState<'session' | 'template' | 'bulk-template' | null>(null);
   const dialogMode = dialog as 'session' | 'template' | 'bulk-template' | null;
@@ -150,6 +154,7 @@ export function CalendarPage() {
   }
 
   function openSession(session: Session, opener: HTMLElement | null = openerRef.current) {
+    setBookHint(false);
     document.querySelectorAll<HTMLDetailsElement>('.calendar-overflow[open]').forEach((details) => { details.open = false; });
     if (opener) openerRef.current = opener;
     setDialog(null); setSelectedSession(session); setAttendees(null); setAttendeeError(''); setClientId(''); setClientQuery(''); setActionError(''); setNotice(''); setMissingDocuments([]); setOverrideDocuments(false); setDocumentOverrideReason('');setBookingPreview(null);setOverrideDebt(false);setOverrideDebtReason('');
@@ -336,6 +341,7 @@ export function CalendarPage() {
     </section>;
   };
   return <div className="agenda-root" data-2j-design="v2"><main className="agenda-v2" id="calendar">
+      {bookHint && manage && <div className="inline-feedback" role="status">Elige una sesión de la agenda y añade al cliente desde su detalle. <button className="text-button" onClick={() => setBookHint(false)}>Entendido</button></div>}
       <PageHeader title="Agenda" description="Sesiones, espacios, plazas y lista de espera en hora local de Canarias." actions={manage ? <>
         <Button onClick={openScheduleEditor}>Configurar horarios</Button>
         <Button onClick={(event) => { openerRef.current = event.currentTarget; setDialog('template'); setActionError(''); setSelectedSession(null); }}>Nueva plantilla</Button>

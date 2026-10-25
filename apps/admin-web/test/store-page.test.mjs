@@ -23,3 +23,14 @@ test('POS retries keep the same idempotency key and a completed sale starts with
   await start();fireEvent.click(screen.getByRole('button',{name:'Confirmar venta'}));await screen.findByRole('alert');fireEvent.click(screen.getByRole('button',{name:'Confirmar venta'}));await waitFor(()=>assert.equal(saleCalls,2));assert.equal(keys[0],keys[1]);
   await start();fireEvent.click(screen.getByRole('button',{name:'Confirmar venta'}));await waitFor(()=>assert.equal(saleCalls,3));assert.notEqual(keys[1],keys[2]);
 });
+
+test('#store?sale=1 opens «Nueva venta en el centro» once and cleans the link; without it the workflows stay collapsed',async()=>{
+  globalThis.fetch=async(url)=>String(url).endsWith('/api/admin/store')?new Response(JSON.stringify(data)):new Response(JSON.stringify({items:[]}));
+  window.location.hash='#store?sale=1';
+  render(React.createElement(StorePage));await screen.findByRole('heading',{name:'Proteína'});
+  assert.equal(document.querySelectorAll('.store-workflow.store-pos[open]').length,1);
+  assert.equal(window.location.hash,'#store');
+  cleanup();
+  render(React.createElement(StorePage));await screen.findByRole('heading',{name:'Proteína'});
+  assert.equal(document.querySelectorAll('.store-workflow[open]').length,0);
+});

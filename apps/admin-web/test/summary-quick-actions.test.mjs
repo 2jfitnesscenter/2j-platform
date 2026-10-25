@@ -46,3 +46,40 @@ test('a profile without quick actions gets no empty strip, and an unsafe href is
   const nav = await screen.findByRole('navigation', { name: 'Accesos rápidos' });
   assert.deepEqual(within(nav).getAllByRole('link').map((link) => link.getAttribute('href')), ['#economics']);
 });
+
+test('quick actions use Base44 verbs and deep links, and the strip is exactly what the server grants', async () => {
+  serve({ ...model, quickActions: [
+    { id: 'new-client', label: 'Nuevo cliente', href: '#clients?new=1' },
+    { id: 'new-reservation', label: 'Crear reserva', href: '#calendar?book=1' },
+    { id: 'new-sale', label: 'Registrar venta', href: '#store?sale=1' },
+    { id: 'assign-plan', label: 'Asignar cuota', href: '#clients?intent=assign-plan' },
+    { id: 'collect-payment', label: 'Registrar pago', href: '#economics' },
+    { id: 'send-message', label: 'Enviar mensaje', href: '#clients?intent=message' },
+  ] });
+  window.location.hash = '#home'; mount();
+  const nav = await screen.findByRole('navigation', { name: 'Accesos rápidos' });
+  assert.deepEqual(within(nav).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')]), [
+    ['Nuevo cliente', '#clients?new=1'], ['Crear reserva', '#calendar?book=1'], ['Registrar venta', '#store?sale=1'],
+    ['Asignar cuota', '#clients?intent=assign-plan'], ['Registrar pago', '#economics'], ['Enviar mensaje', '#clients?intent=message'],
+  ]);
+});
+
+test('the commercial tiles appear in the Base44 order only for the blocks the API grants; Ver informes only exists once the shell has #reports', async () => {
+  serve({ ...model, permissions: { ...permissions, billing: true, transfers: true },
+    today: { ...model.today, sessionCount: 1, capacity: 10, occupied: 4 },
+    economics: { pendingCents: 5000, overdueCount: 0, collectedTodayCents: 0, cashSession: null },
+    commercial: { plans: { activeCount: 3, expiringSoonCount: 1 }, transfers: { pendingCount: 2 }, storeSales: { monthCount: 1, monthTotalCents: 3000 }, lowStock: { count: 0 } } });
+  window.location.hash = '#home'; mount();
+  const strip = await screen.findByRole('list', { name: 'Indicadores de hoy' });
+  assert.deepEqual([...strip.querySelectorAll('.summary-metric-label')].map((node) => node.textContent), ['Clientes activos', 'Cuotas vigentes', 'Reservas hoy', 'Ocupación hoy', 'Pendiente de cobro', 'Transferencias por validar', 'Ventas del mes', 'Productos con stock bajo']);
+  assert.ok(within(strip).getByText('1 vence en 7 días'));
+  assert.match(within(strip).getByText('1 vence en 7 días').className, /is-warning/);
+  assert.ok(within(strip).getByText('1 operación'));
+  assert.ok(within(strip).getByText('Stock suficiente'));
+  assert.equal(screen.queryByRole('link', { name: 'Ver informes' }), null, 'no #reports screen yet: the button stays hidden');
+  cleanup();
+  serve({ ...model, commercial: { plans: null, transfers: null, storeSales: null, lowStock: null } });
+  mount();
+  const limited = await screen.findByRole('list', { name: 'Indicadores de hoy' });
+  assert.deepEqual([...limited.querySelectorAll('.summary-metric-label')].map((node) => node.textContent), ['Clientes activos', 'Reservas hoy'], 'blocks without permission are not rendered');
+});

@@ -7,6 +7,7 @@ export {
   Activity,
   Archive,
   ArrowLeft,
+  ArrowUpRight,
   BellRing,
   Briefcase,
   CalendarCheck,
