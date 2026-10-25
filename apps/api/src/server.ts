@@ -24,6 +24,7 @@ import { registerMemberBookingCohortRoutes } from './member-booking-cohort.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
+import { registerReportRoutes } from './reports.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
@@ -331,6 +332,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
+  registerReportRoutes(app, client, authorizationResolver);
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
