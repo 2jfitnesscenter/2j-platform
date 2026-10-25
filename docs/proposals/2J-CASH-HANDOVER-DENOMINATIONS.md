@@ -39,7 +39,7 @@ Definir cómo se controla quién custodia el efectivo durante el horario del cen
 
 ## Vista diaria exclusiva del propietario
 
-Con permiso `owner.panel.read`, mostrar el detalle del día: apertura, cobros, devoluciones/anulaciones, traspasos, conteos por denominación, profesional custodio en cada intervalo, diferencias y estado equilibrado/no equilibrado. Los conteos y diferencias no se incluyen en rutas ni vistas accesibles al gerente o a profesionales sin ese permiso.
+Con permiso `owner.panel.read`, mostrar el detalle del día: apertura, cobros, devoluciones/anulaciones, traspasos, conteos por denominación, profesional custodio en cada intervalo, diferencias y estado equilibrado/no equilibrado. Solo el propietario puede consultar el conjunto de movimientos, los conteos de ambas partes de cada traspaso y las diferencias. Cada profesional puede introducir y confirmar su propio conteo, pero nunca ve el saldo esperado ni el conteo de la otra parte durante el proceso ciego. El gerente no recibe diferencias ni la vista diaria reservada al propietario.
 
 ## Olvido de cierre
 
