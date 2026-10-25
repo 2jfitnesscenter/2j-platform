@@ -26,14 +26,12 @@ async function client(lastName, firstName = 'Informe') {
   assert.equal(response.statusCode, 201, response.body);
   return response.json().id;
 }
-async function openCash() { await admin.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 0 } }); }
 async function charge(clientId, concept, amountCents) {
   const response = await post('/api/economics/charges', { clientId, concept, amountCents, dueOn: '2099-12-10' });
   assert.equal(response.statusCode, 201, response.body);
   return response.json().id;
 }
 async function pay(chargeId, method, amountCents) {
-  await openCash();
   const response = await post('/api/economics/payments', { chargeId, splits: [{ method, amountCents }] });
   assert.equal(response.statusCode, 201, response.body);
   return response.json().id;
