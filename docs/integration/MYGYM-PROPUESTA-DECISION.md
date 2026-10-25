@@ -1,6 +1,6 @@
 # Propuesta de decisión: «Mi gimnasio» (MyGym)
 
-Estado: **propuesta para que el propietario la apruebe, cambie o rechace. No se implementa nada hasta su respuesta.**
+Estado: **el propietario ha elegido la opción A (panel de resultados de solo lectura) el 25 oct 2026.** Pendiente: sus respuestas a las preguntas 2 y 3 de la sección 4 y la asignación de número de decisión. **No se implementa nada hasta cerrar eso y la revisión de Work Platform.**
 Origen: pantalla `MyGym` del prototipo Base44 (`2j-fitness-admin`, commit `73c58b5`). Referencia: `docs/integration/BASE44-PROTOTYPE-MAPPING.md` (#95).
 
 ## 1. Aviso importante: lo que el prototipo llama «Mi gimnasio» no es un panel de resultados
