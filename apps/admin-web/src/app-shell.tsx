@@ -29,6 +29,7 @@ const routes={
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},
   services:{id:'services',label:'Servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
+  timeclock:{id:'timeclock',label:'Fichaje',href:'#timeclock',permission:'staff',icon:icons.Clock},
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
@@ -41,6 +42,7 @@ const navSections:NavSection[]=[
   {id:'clients',label:'Clientes',icon:icons.Users,route:routes.clients},
   {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes.calendar,routes.services]},
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
+  {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
   {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.store,routes.news,routes['notification-settings']]},
 ];
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */

@@ -33,6 +33,8 @@ export {
   LayoutDashboard,
   Layers,
   LayoutGrid,
+  LogIn,
+  LogOut,
   Menu,
   MessageSquare,
   Newspaper,
