@@ -150,6 +150,9 @@ button:focus-visible,a:focus-visible,select:focus-visible { outline:3px solid va
 .membership-payment-state p { display:flex; flex-wrap:wrap; gap:4px; margin:0; line-height:1.45; }
 .membership-payment-state p strong { color:var(--2j-color-text-primary); font-size:11px; }
 .membership-payment-state small { line-height:1.4; }
+.membership-partial-payments { display:grid; gap:5px; padding-top:6px; border-top:1px solid var(--2j-color-border); }
+.membership-partial-payments>strong { color:var(--2j-color-text-primary); font-size:11px; }
+.membership-partial-payments p { justify-content:space-between; }
 .membership-payment-state.is-pending { border-color:color-mix(in srgb,var(--2j-color-warning) 38%,var(--2j-color-border)); }
 .membership-payment-state.is-blocked { border-color:color-mix(in srgb,var(--2j-color-danger) 46%,var(--2j-color-border)); background:color-mix(in srgb,var(--2j-color-danger) 8%,var(--2j-color-surface)); }
 .payment-blocked-pill { background:color-mix(in srgb,var(--2j-color-danger) 12%,var(--2j-color-surface-subtle)); color:var(--2j-color-danger); }

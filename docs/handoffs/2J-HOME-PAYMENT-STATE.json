@@ -20,6 +20,7 @@
     ],
     "serverRemainsAuthority": true,
     "homeCalculatesPaymentOrAccess": false,
+    "partialPaymentEventsRendered": true,
     "writesAdded": false,
     "syntheticFixtureClearlyLabeled": true,
     "runtimeStagingVerified": false

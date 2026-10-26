@@ -112,6 +112,10 @@ function MembershipPaymentState({ payment, previewMode }: { payment: MembershipP
     {pending && <p>Importe pendiente <strong>{formatMemberMoney(payment.pendingAmountCents)}</strong></p>}
     {dueOn && <p>Vencimiento <strong>{dueOn}</strong></p>}
     {blockAt && <p>{blocked ? 'Acceso bloqueado desde' : 'Si sigue pendiente, el acceso se bloqueará'} <strong>{blockAt} · hora de Canarias</strong></p>}
+    {payment.status === 'partially_paid' && payment.payments.length > 0 && <div className="membership-partial-payments"><strong>Abonos registrados</strong>{payment.payments.map((item, index) => {
+      const occurredAt = formatMemberPaymentDate(item.occurredAt);
+      return occurredAt ? <p key={`${item.occurredAt}-${index}`}><span>{occurredAt}</span><strong>{formatMemberMoney(item.amountCents)}</strong></p> : null;
+    })}</div>}
     <small>{previewMode ? 'Ejemplo ficticio · no refleja una cuenta real.' : 'Estado calculado por Platform.'}</small>
   </div>;
 }

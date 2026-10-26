@@ -13,6 +13,7 @@
 - Home solo formatea los valores recibidos de `GET /api/me/membership`; no calcula saldos, fechas límite, bloqueo ni derechos y no escribe datos.
 - El modo sintético muestra una cuota mensual ficticia para revisión visual, identificada como ejemplo y sin llamadas al API.
 - Los estados distinguen pendiente, parcial, impagado, pagado, anulado, exento y reembolsado; acceso activo, provisional, bloqueado, programado, pausado, finalizado o no disponible.
+- En pagos parciales se muestran los abonos (importe y fecha) que devuelve Platform, además del importe pendiente.
 - `apps/client-app/src/styles.css`: tarjetas compactas compatibles con el tema grafito/lima y contraste de bloqueo para tema oscuro y claro.
 - `apps/client-app/test/client-app.test.mjs`: cubre importe/vencimiento/bloqueo de Canarias y estado recibido de Platform.
 - `docs/evidence/2J-HOME-PAYMENT-STATE/profile-payment-demo.png`: captura real del PWA local en modo DEMO.
