@@ -64,7 +64,7 @@ test('quick actions use Base44 verbs and deep links, and the strip is exactly wh
   ]);
 });
 
-test('the commercial tiles appear in the Base44 order only for the blocks the API grants; Ver informes only exists once the shell has #reports', async () => {
+test('the commercial tiles appear in the Base44 order only for the blocks the API grants; Ver informes links to #reports', async () => {
   serve({ ...model, permissions: { ...permissions, billing: true, transfers: true },
     today: { ...model.today, sessionCount: 1, capacity: 10, occupied: 4 },
     economics: { pendingCents: 5000, overdueCount: 0, collectedTodayCents: 0, cashSession: null },
@@ -76,7 +76,7 @@ test('the commercial tiles appear in the Base44 order only for the blocks the AP
   assert.match(within(strip).getByText('1 vence en 7 días').className, /is-warning/);
   assert.ok(within(strip).getByText('1 operación'));
   assert.ok(within(strip).getByText('Stock suficiente'));
-  assert.equal(screen.queryByRole('link', { name: 'Ver informes' }), null, 'no #reports screen yet: the button stays hidden');
+  assert.equal(screen.getByRole('link', { name: 'Ver informes' }).getAttribute('href'), '#reports', 'the shell has the #reports screen (Informes), so the button exists');
   cleanup();
   serve({ ...model, commercial: { plans: null, transfers: null, storeSales: null, lowStock: null } });
   mount();

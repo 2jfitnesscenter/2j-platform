@@ -94,6 +94,19 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
   .summary-team-stats { gap: var(--2j-space-3); }
 }
 @media (prefers-reduced-motion: reduce) { .summary-row { transition: none; } }
+.reports-page > .summary-metrics { margin-bottom: var(--2j-space-4); }
+.reports-filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--2j-space-3); padding: 0 var(--2j-space-5) var(--2j-space-4); }
+.reports-filters label { display: grid; gap: var(--2j-space-1); font-size: 12px; color: var(--2j-color-text-secondary); }
+.reports-filters input, .reports-filters select { min-height: 44px; padding: 0 var(--2j-space-3); border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font: inherit; }
+.reports-table-wrap { overflow-x: auto; }
+.reports-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.reports-table th, .reports-table td { padding: var(--2j-space-3) var(--2j-space-4); text-align: left; border-top: 1px solid var(--2j-color-border); vertical-align: middle; }
+.reports-table thead th { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--2j-color-text-secondary); background: var(--2j-color-surface-subtle); white-space: nowrap; }
+.reports-table tbody th { font-weight: 500; white-space: nowrap; }
+.reports-table .is-number { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.reports-table tr.is-voided td, .reports-table tr.is-voided th { color: var(--2j-color-text-secondary); text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); }
+.reports-table tr.is-voided td:nth-child(7) { text-decoration: none; }
+.reports-note { margin: 0; padding: var(--2j-space-3) var(--2j-space-5); font-size: 12px; color: var(--2j-color-text-secondary); border-top: 1px solid var(--2j-color-border); }
 .settings-panel { display: grid; gap: var(--2j-space-4); padding: var(--2j-space-5); }
 .settings-page .ui-tabs { padding: 0 var(--2j-space-5); border-bottom: 1px solid var(--2j-color-border); }
 .settings-notice { display: flex; gap: var(--2j-space-3); align-items: flex-start; padding: var(--2j-space-3) var(--2j-space-4); border-radius: var(--2j-radius-md); border: 1px solid var(--2j-color-border); background: var(--2j-color-surface-subtle); font-size: 14px; }
