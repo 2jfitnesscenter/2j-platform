@@ -94,6 +94,24 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
   .summary-team-stats { gap: var(--2j-space-3); }
 }
 @media (prefers-reduced-motion: reduce) { .summary-row { transition: none; } }
+.my-gym-panel { display: grid; gap: var(--2j-space-6); }
+.my-gym-panel section { display: grid; gap: var(--2j-space-4); }
+.my-gym-heading { margin: 0; font-size: var(--2j-type-size-lg, 18px); }
+.my-gym-note { margin: 0; color: var(--2j-color-text-secondary); font-size: 13px; }
+.my-gym-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--2j-space-4); }
+@media (max-width: 1023.98px) { .my-gym-columns { grid-template-columns: minmax(0, 1fr); } }
+.my-gym-row { grid-template-columns: minmax(0, 1fr) auto; min-height: 3rem; }
+.my-gym-empty { margin: 0; padding: var(--2j-space-4) var(--2j-space-5) var(--2j-space-5); color: var(--2j-color-text-secondary); font-size: 14px; }
+.my-gym-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.my-gym-table th, .my-gym-table td { padding: var(--2j-space-3) var(--2j-space-5); text-align: left; border-top: 1px solid var(--2j-color-border); }
+.my-gym-table thead th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--2j-color-text-secondary); background: var(--2j-color-surface-subtle); }
+.my-gym-table tbody th { font-weight: 500; }
+.my-gym-table td { font-variant-numeric: tabular-nums; }
+.my-gym-facts { margin: 0; padding: 0 var(--2j-space-5); display: grid; }
+.my-gym-facts > div { display: flex; justify-content: space-between; gap: var(--2j-space-4); padding: var(--2j-space-3) 0; border-top: 1px solid var(--2j-color-border); }
+.my-gym-facts dt { color: var(--2j-color-text-secondary); }
+.my-gym-facts dd { margin: 0; font-weight: 500; text-align: right; }
+.my-gym-notconnected { display: flex; gap: var(--2j-space-3); align-items: flex-start; margin: var(--2j-space-4) var(--2j-space-5) var(--2j-space-5); padding: var(--2j-space-3) var(--2j-space-4); border: 1px dashed var(--2j-color-border-strong, var(--2j-color-border)); border-radius: var(--2j-radius-md); font-size: 13px; color: var(--2j-color-text-secondary); }
 .activity-tabs { margin: 0 0 var(--2j-space-4); }
 .activity-filter { padding: 0 var(--2j-space-5) var(--2j-space-3); }
 .activity-filter label { display: grid; gap: var(--2j-space-1); max-width: 22rem; font-size: 12px; color: var(--2j-color-text-secondary); }

@@ -17,7 +17,7 @@ export type CommandCenterModel = {
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
 export const useProfessionalCapabilities = () => React.useContext(CommandContext).capabilities;
-export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;news?:boolean;store?:boolean;catalogPricingManage?:boolean};
+export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;catalogPricingManage?:boolean};
 export function ProfessionalCapabilitiesProvider({capabilities,children}:{capabilities:NavigationCapabilities|null;children:React.ReactNode}) {
   return <CommandContext.Provider value={{data:null,state:'loading',error:'',reload:()=>{},capabilities}}>{children}</CommandContext.Provider>;
 }
@@ -28,6 +28,7 @@ const routes={
   activity:{id:'activity',label:'Avisos y auditoría',href:'#activity',permission:'calendar',icon:icons.Activity},
   communications:{id:'communications',label:'Comunicación',href:'#communications',permission:'communications',icon:icons.MessageSquare},
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
+  'my-gym':{id:'my-gym',label:'Panel del centro',href:'#my-gym',permission:'ownerPanel',icon:icons.Dumbbell},
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},
   services:{id:'services',label:'Servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
   timeclock:{id:'timeclock',label:'Fichaje',href:'#timeclock',permission:'staff',icon:icons.Clock},
@@ -43,7 +44,7 @@ const navSections:NavSection[]=[
   {id:'home',label:'Resumen',icon:icons.LayoutDashboard,route:routes.home},
   {id:'activity',label:'Actividad',icon:icons.Activity,children:[routes.activity,routes.communications]},
   {id:'clients',label:'Clientes',icon:icons.Users,route:routes.clients},
-  {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes.calendar,routes.services]},
+  {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes['my-gym'],routes.calendar,routes.services]},
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
   {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
   {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.reports,routes.store,routes.news,routes.settings,routes['notification-settings']]},
