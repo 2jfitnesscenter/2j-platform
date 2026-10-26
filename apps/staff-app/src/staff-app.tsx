@@ -730,18 +730,24 @@ export function StaffApp() {
                     ["reserved", "attended", "no_show"].includes(r.status) && (
                       <div className="person-actions">
                         <button
-                          disabled={busy}
+                          className="attendance-mark is-present"
+                          disabled={busy || r.status === "attended"}
+                          aria-pressed={r.status === "attended"}
                           aria-label={`Marcar asistió: ${r.firstName}`}
+                          title="Asistió"
                           onClick={() => void attendance(r.id, "attended")}
                         >
-                          {r.status === "attended" ? "✓" : "Asistió"}
+                          <span aria-hidden="true">✓</span>
                         </button>
                         <button
-                          disabled={busy}
-                          aria-label={`Marcar no-show: ${r.firstName}`}
+                          className="attendance-mark is-absent"
+                          disabled={busy || r.status === "no_show"}
+                          aria-pressed={r.status === "no_show"}
+                          aria-label={`Marcar no asistió: ${r.firstName}`}
+                          title="No asistió"
                           onClick={() => void attendance(r.id, "no_show")}
                         >
-                          {r.status === "no_show" ? "✓" : "No-show"}
+                          <span aria-hidden="true">✗</span>
                         </button>
                       </div>
                     )}
@@ -1127,7 +1133,7 @@ function statusLabel(s: string) {
       {
         reserved: "Reservado",
         attended: "Asistió",
-        no_show: "No se presentó",
+        no_show: "No asistió",
         waiting: "En espera",
         cancelled: "Cancelada",
         cancelled_late: "Cancelación tardía",
