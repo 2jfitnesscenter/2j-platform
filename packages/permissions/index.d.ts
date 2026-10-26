@@ -4,6 +4,7 @@ export interface AuthorizationContext {
   readonly actorId: string;
   readonly role: ApprovedRole;
   readonly deniedPermissions?: readonly string[];
+  readonly explicitPermissions?: readonly string[];
 }
 
 export declare const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>>;
