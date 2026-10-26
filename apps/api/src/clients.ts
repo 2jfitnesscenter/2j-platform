@@ -30,6 +30,7 @@ const sectionDefinitions = [
   { id: 'plans', label: 'Cuotas', permission: 'entitlements.read', sourceLabel: 'Planes asignados' },
   { id: 'reservations', label: 'Reservas', permission: 'calendar.read', sourceLabel: 'Calendario' },
   { id: 'payments', label: 'Pagos', permission: 'billing.read-basic', sourceLabel: 'Pagos' },
+  { id: 'purchases', label: 'Compras', permission: 'store.sales.read', sourceLabel: 'Tienda' },
   { id: 'documents', label: 'Documentos/Formularios', permission: 'documents.read', sourceLabel: 'Documentos y formularios' },
   { id: 'messages', label: 'Mensajes', permission: 'communication.read', sourceLabel: 'Comunicación' },
   { id: 'followup', label: 'Seguimiento', permission: 'followup.read', sourceLabel: 'Seguimiento' },
@@ -215,13 +216,19 @@ export function registerClientRoutes(
         });
         summary.plans = { access: 'available', dataState: 'ready', data: assignments };
       }
+      if (can(context, 'store.sales.read')) {
+        const purchases = await database`SELECT s.id,s.created_at AS "createdAt",s.status,s.payment_state AS "paymentState",s.payment_method AS "paymentMethod",s.total_cents AS "totalCents",
+          COALESCE(jsonb_agg(jsonb_build_object('productName',l.product_name_snapshot,'variantLabel',l.variant_label_snapshot,'quantity',l.quantity) ORDER BY l.id) FILTER(WHERE l.id IS NOT NULL),'[]'::jsonb) AS lines
+          FROM store_sales s LEFT JOIN store_sale_lines l ON l.sale_id=s.id WHERE s.client_id=${params.data.clientId} GROUP BY s.id ORDER BY s.created_at DESC,s.id DESC LIMIT 30`;
+        summary.purchases = { access: 'available', dataState: 'ready', data: purchases };
+      }
       return {
         client,
         capabilities: { manage: can(context, 'clients.manage'), readEntitlements:can(context,'entitlements.read'),manageCatalogPrice:can(context,'catalog.pricing.manage'), assignPlans: can(context, 'entitlements.manage'), collectPayments: can(context, 'billing.payments.manage'), pauseEntitlements:can(context,'entitlements.pause'),cancelEntitlements:can(context,'entitlements.cancel'),adjustEntitlements:can(context,'entitlements.adjust'),renewEntitlements:can(context,'entitlements.renew') },
         summary,
         reservations,
         waitlistEntries,
-        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) ? 'ready' : 'not_connected' })),
+        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) || (section.id === 'purchases' && can(context, 'store.sales.read')) ? 'ready' : 'not_connected' })),
         history: events.map((event) => ({ id: event.id, eventType: event.eventType, actorLabel: actorLabel(event.actorRole), occurredAt: event.occurredAt })),
       };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId' }, 'client detail failed'); return reply.code(500).send({ error: 'internal_error' }); }

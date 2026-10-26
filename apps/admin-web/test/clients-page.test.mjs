@@ -467,6 +467,47 @@ test('profile detail errors can be retried', async () => {
   assert.equal(attempts, 2);
 });
 
+const purchasesSection = { id: 'purchases', label: 'Compras', sourceLabel: 'Tienda', access: 'available', dataState: 'ready' };
+const profileWithPurchases = (data, access = 'available') => ({ ...profile, sections: [...sections.filter((section) => section.id !== 'payments'), { ...purchasesSection, access }], summary: { ...summary, purchases: { access, dataState: 'ready', data } } });
+
+test('Client 360 tabs follow the Base44 order (Resumen, Plan, Reservas, Compras…) and Compras lists the purchases with lines, total and state', async () => {
+  const sales = [
+    { id: 's-2', createdAt: '2026-10-24T10:00:00Z', status: 'completed', paymentState: 'paid', paymentMethod: 'cash', totalCents: '2500', lines: [{ productName: 'Proteína', variantLabel: 'Bote 300 g', quantity: 2 }] },
+    { id: 's-1', createdAt: '2026-10-20T10:00:00Z', status: 'voided', paymentState: 'pending', paymentMethod: null, totalCents: 1250, lines: [] },
+  ];
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profileWithPurchases(sales));
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  assert.deepEqual(screen.getAllByRole('tab').map((tab) => tab.textContent), ['Resumen', 'Plan y sesiones', 'Reservas', 'Compras', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']);
+  fireEvent.click(screen.getByRole('tab', { name: 'Compras' }));
+  const list = await screen.findByRole('list', { name: 'Compras del cliente' });
+  const rows = within(list).getAllByRole('listitem');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /2 × Proteína \(Bote 300 g\)/);
+  assert.match(rows[0].textContent, /25,00/);
+  assert.match(rows[0].textContent, /Efectivo/);
+  assert.match(rows[0].textContent, /Cobrada/);
+  assert.match(rows[1].textContent, /Venta sin líneas/);
+  assert.match(rows[1].textContent, /Anulada/);
+});
+
+test('Compras shows an empty state, and without store access the tab is not offered', async () => {
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profileWithPurchases([]));
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  fireEvent.click(screen.getByRole('tab', { name: 'Compras' }));
+  assert.ok(await screen.findByText('Sin compras registradas'));
+  cleanup();
+  window.location.hash = '#clients';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profileWithPurchases([], 'forbidden'));
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  assert.equal(screen.queryByRole('tab', { name: 'Compras' }), null);
+});
+
 test('#clients?new=1 opens «Nuevo cliente» once the list loads (only with permission) and cleans the link', async () => {
   window.location.hash = '#clients?new=1';
   globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
