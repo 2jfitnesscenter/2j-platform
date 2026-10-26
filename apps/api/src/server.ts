@@ -35,6 +35,8 @@ import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
+import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
+import { registerStoreMediaRoutes } from './store-media.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -219,6 +221,8 @@ export type ServerOptions = {
   /** Development/test only: lets the signed Training client talk to a loopback http origin. */
   trainingServiceAllowInsecureLoopback?: boolean;
   logger?: FastifyServerOptions['logger'];
+  /** Where product photos are stored. Defaults to the local filesystem provider (development and pilot). */
+  objectStorage?: ObjectStorage;
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
@@ -348,6 +352,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  registerStoreMediaRoutes(app, client, authorizationResolver, options.objectStorage ?? defaultObjectStorage());
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {

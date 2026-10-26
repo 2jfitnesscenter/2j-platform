@@ -21,7 +21,7 @@ function normalizeSale<T extends {totalCents?:unknown;subtotalCents?:unknown;lin
   return {...sale,...(sale.totalCents!==undefined?{totalCents:money(sale.totalCents)}:{}),...(sale.subtotalCents!==undefined?{subtotalCents:money(sale.subtotalCents)}:{}),...(sale.lines?{lines:sale.lines.map(line=>({...line,...(line.unitPriceCents!==undefined?{unitPriceCents:money(line.unitPriceCents)}:{}),...(line.lineTotalCents!==undefined?{lineTotalCents:money(line.lineTotalCents)}:{})}))}:{})};
 }
 
-async function staffContext(request: FastifyRequest, reply: any, resolve: (request: FastifyRequest) => Promise<AuthorizationContext | null>, permission: string) {
+export async function staffContext(request: FastifyRequest, reply: any, resolve: (request: FastifyRequest) => Promise<AuthorizationContext | null>, permission: string) {
   const actor = await resolve(request);
   if (!actor) { reply.code(401).send({ error: 'authentication_required' }); return null; }
   if (!can(actor, permission)) { reply.code(403).send({ error: 'permission_denied' }); return null; }
@@ -38,7 +38,7 @@ async function memberContext(request: FastifyRequest, reply: any, db: DB, resolv
   return clientId;
 }
 
-async function audit(tx: any, actorId: string, action: string, type: string, id: string, details: Record<string, unknown> = {}) {
+export async function audit(tx: any, actorId: string, action: string, type: string, id: string, details: Record<string, unknown> = {}) {
   await tx`INSERT INTO store_audit_events(actor_id,action,resource_type,resource_id,details) VALUES (${actorId},${action},${type},${id}::uuid,${JSON.stringify(details)}::jsonb)`;
 }
 
@@ -72,7 +72,9 @@ export function registerStoreRoutes(app: FastifyInstance, db: DB, resolveStaff: 
       FROM store_products p LEFT JOIN store_product_variants v ON v.product_id=p.id LEFT JOIN LATERAL(SELECT sum(m.quantity_delta)::int AS balance FROM store_inventory_movements m WHERE m.variant_id=v.id) stock ON true WHERE p.center_key=${centerKey} GROUP BY p.id ORDER BY p.updated_at DESC,p.id DESC LIMIT 500`;
     const movements = can(actor,'store.inventory.read') ? await db`SELECT m.id,m.variant_id AS "variantId",m.quantity_delta AS "quantityDelta",m.movement_type AS type,m.reason,m.occurred_at AS "occurredAt",p.name AS "productName",v.label AS "variantLabel" FROM store_inventory_movements m JOIN store_product_variants v ON v.id=m.variant_id JOIN store_products p ON p.id=v.product_id ORDER BY m.occurred_at DESC,m.id DESC LIMIT 100` : [];
     const sales = can(actor,'store.sales.read') ? await db`SELECT s.id,s.client_id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",s.status,s.payment_state AS "paymentState",s.payment_method AS "paymentMethod",s.total_cents AS "totalCents",s.created_at AS "createdAt",s.created_by AS "createdBy",COALESCE(jsonb_agg(jsonb_build_object('productName',l.product_name_snapshot,'variantLabel',l.variant_label_snapshot,'quantity',l.quantity,'unitPriceCents',l.unit_price_cents,'lineTotalCents',l.line_total_cents) ORDER BY l.id) FILTER(WHERE l.id IS NOT NULL),'[]'::jsonb) AS lines FROM store_sales s JOIN clients c ON c.id=s.client_id LEFT JOIN store_sale_lines l ON l.sale_id=s.id WHERE s.center_key=${centerKey} GROUP BY s.id,c.first_name,c.last_name ORDER BY s.created_at DESC,s.id DESC LIMIT 200` : [];
-    const visibleProducts=products.map((product:any)=>({...product,variants:product.variants.map((variant:any)=>can(actor,'store.inventory.read')?variant:{...variant,stock:null})}));
+    const mediaRows=await db`SELECT id,product_id AS "productId",position,is_primary AS "isPrimary",mime_type AS "mimeType",size_bytes AS "sizeBytes" FROM store_product_media ORDER BY product_id,position`;
+    const mediaByProduct=new Map<string,any[]>();for(const row of mediaRows){const list=mediaByProduct.get(row.productId)??[];list.push({id:row.id,position:row.position,isPrimary:row.isPrimary,mimeType:row.mimeType,sizeBytes:row.sizeBytes});mediaByProduct.set(row.productId,list);}
+    const visibleProducts=products.map((product:any)=>({...product,media:mediaByProduct.get(product.id)??[],variants:product.variants.map((variant:any)=>can(actor,'store.inventory.read')?variant:{...variant,stock:null})}));
     return { products:visibleProducts, movements, sales:sales.map(normalizeSale), capabilities:{ manageCatalog:can(actor,'store.catalog.manage'),manageInventory:can(actor,'store.inventory.manage'),readInventory:can(actor,'store.inventory.read'),readSales:can(actor,'store.sales.read'),createSales:can(actor,'store.sales.create'),voidSales:can(actor,'store.sales.void') } };
   });
 
