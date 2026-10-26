@@ -100,7 +100,7 @@ test('draft plan can be activated from the catalog and the action disappears aft
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
     if (path.endsWith('/api/areas')) return response([area]);
-    if (path.endsWith('/api/services')) return response([service]);
+    if (path.split('?')[0].endsWith('/api/services')) return response([service]);
     if (path.endsWith(`/api/services/${service.id}/plans`)) return response(activationCount ? [activePlan] : [plan]);
     if (path.endsWith(`/api/plans/${plan.id}/activate`) && options.method === 'POST') { activationCount += 1; return response({ id: plan.id, status: 'active' }); }
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
@@ -125,7 +125,7 @@ test('service navigation filters a scannable plan table while details retain rig
   globalThis.fetch=async(url,options={})=>{
     const path=String(url);
     if(path.endsWith('/api/areas'))return response([area]);
-    if(path.endsWith('/api/services'))return response([fuerza,funcional]);
+    if(path.split('?')[0].endsWith('/api/services'))return response([fuerza,funcional]);
     if(path.endsWith(`/api/services/${fuerza.id}/plans`))return response([featured,{...draft,status:draftActivated?'active':'draft'}]);
     if(path.endsWith(`/api/services/${funcional.id}/plans`))return response([{...featured,id:'plan-funcional',name:'Funcional mensual',services:[{id:funcional.id,name:'Funcional',area:area.name}]}]);
     if(path.endsWith(`/api/plans/${draft.id}/activate`)&&options.method==='POST'){draftActivated=true;return response({id:draft.id,status:'active'});}
@@ -289,7 +289,7 @@ test('creating a plan without the currently selected service selects a service t
     const path = String(url);
     if (path.endsWith('/api/areas')) return response([area]);
     if (path.endsWith('/api/services') && options.method === 'POST') return response(service, 201);
-    if (path.endsWith('/api/services')) return response([service, second]);
+    if (path.split('?')[0].endsWith('/api/services')) return response([service, second]);
     if (path.endsWith('/api/plans') && options.method === 'POST') return response(secondPlan, 201);
     if (path.endsWith(`/api/services/${service.id}/plans`)) return response([]);
     if (path.endsWith(`/api/services/${second.id}/plans`)) return response([secondPlan]);
@@ -378,7 +378,7 @@ test('Planes y cuotas lists every plan of every service as a card (deduplicated)
   globalThis.fetch = async (url) => {
     const path = String(url); requested.push(path);
     if (path.endsWith('/api/areas')) return response([area]);
-    if (path.endsWith('/api/services')) return response([service, other]);
+    if (path.split('?')[0].endsWith('/api/services')) return response([service, other]);
     if (path.endsWith(`/api/services/${service.id}/plans`)) return response([shared, draft]);
     if (path.endsWith(`/api/services/${other.id}/plans`)) return response([shared]);
     throw new Error(`Unexpected request ${path}`);
@@ -402,7 +402,7 @@ test('Planes y cuotas lists every plan of every service as a card (deduplicated)
 });
 
 test('Nueva versión opens the version dialog prefilled; a profile without catalog permission gets an explanation and no plan data is requested', async () => {
-  globalThis.fetch = async (url) => { const path = String(url); if (path.endsWith('/api/areas')) return response([area]); if (path.endsWith('/api/services')) return response([service]); if (path.endsWith(`/api/services/${service.id}/plans`)) return response([{ ...plan, status: 'active', basePriceCents: 4000 }]); throw new Error(path); };
+  globalThis.fetch = async (url) => { const path = String(url); if (path.endsWith('/api/areas')) return response([area]); if (path.split('?')[0].endsWith('/api/services')) return response([service]); if (path.endsWith(`/api/services/${service.id}/plans`)) return response([{ ...plan, status: 'active', basePriceCents: 4000 }]); throw new Error(path); };
   renderPlans();
   const card = await screen.findByRole('article', { name: 'Funcional mensual' });
   fireEvent.click(within(card).getByRole('button', { name: 'Nueva versión' }));
@@ -410,7 +410,7 @@ test('Nueva versión opens the version dialog prefilled; a profile without catal
   assert.ok(within(dialog).getByDisplayValue('Funcional mensual'));
   cleanup();
   const requested = [];
-  globalThis.fetch = async (url) => { const path = String(url); requested.push(path); if (path.endsWith('/api/areas')) return response([area]); if (path.endsWith('/api/services')) return response([service]); throw new Error(path); };
+  globalThis.fetch = async (url) => { const path = String(url); requested.push(path); if (path.endsWith('/api/areas')) return response([area]); if (path.split('?')[0].endsWith('/api/services')) return response([service]); throw new Error(path); };
   renderPlans({ ...adminCapabilities, catalogPricingManage: false });
   assert.ok(await screen.findByText('Tu perfil no gestiona el catálogo de planes'));
   assert.equal(requested.some((path) => path.includes('/plans')), false);
