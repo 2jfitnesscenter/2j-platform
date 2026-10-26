@@ -33,8 +33,8 @@ export function registerActivityRoutes(app: FastifyInstance<any, any, any, any, 
         UNION ALL SELECT id, 'communication', occurred_at, actor_id, action, resource_type FROM communication_audit_events
         UNION ALL SELECT id, 'store', occurred_at, actor_id, action, resource_type FROM store_audit_events
       ) e
-      WHERE (${beforeAt ?? null}::timestamptz IS NULL OR (e.occurred_at, e.id) < (${beforeAt ?? null}::timestamptz, ${beforeId ?? null}::uuid))
-      ORDER BY e.occurred_at DESC, e.id DESC
+      WHERE (${beforeAt ?? null}::timestamptz IS NULL OR (date_trunc('milliseconds', e.occurred_at), e.id) < (${beforeAt ?? null}::timestamptz, ${beforeId ?? null}::uuid))
+      ORDER BY date_trunc('milliseconds', e.occurred_at) DESC, e.id DESC
       LIMIT ${limit + 1}`;
     const items = rows.slice(0, limit).map((row) => ({ id: row.id, area: row.area, occurredAt: new Date(row.occurredAt).toISOString(), actorId: row.actorId, action: row.action, resourceType: row.resourceType }));
     const last = items[items.length - 1];
