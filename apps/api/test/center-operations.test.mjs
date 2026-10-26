@@ -81,3 +81,84 @@ test('only the configured owner actor gets explicit owner-only A45 capabilities'
   assert.equal(contexts[0].statusCode, 200);
   assert.equal(contexts[1].statusCode, 403);
 });
+
+test('editing a selected opening-hours period preserves every future effective period', async () => {
+  const dateAt = offset => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  // Place this fixture after existing schedules so repeated runs against a reused synthetic DB stay isolated.
+  const [{ latestEffectiveFrom }] = await sql`SELECT max(valid_from)::text AS "latestEffectiveFrom" FROM center_opening_hours`;
+  const daysUntilLatest = latestEffectiveFrom ? Math.ceil((Date.parse(`${latestEffectiveFrom}T00:00:00Z`) - Date.now()) / 86_400_000) : 0;
+  const offset = Math.max(10_000, daysUntilLatest + 2);
+  const effectiveFrom = dateAt(offset);
+  const futureFrom = dateAt(offset + 10);
+  const weekday = new Date(`${effectiveFrom}T00:00:00Z`).getUTCDay();
+  const futureWeekday = new Date(`${futureFrom}T00:00:00Z`).getUTCDay();
+  assert.ok(futureFrom > effectiveFrom);
+
+  const initial = await owner.inject({ method: 'POST', url: '/api/center/opening-hours', payload: { effectiveFrom, intervals: [
+    { weekday, opensAt: '09:00', closesAt: '17:00' },
+  ] } });
+  assert.equal(initial.statusCode, 201, initial.body);
+  const future = await owner.inject({ method: 'POST', url: '/api/center/opening-hours', payload: { effectiveFrom: futureFrom, intervals: [
+    { weekday: futureWeekday, opensAt: '10:00', closesAt: '18:00' },
+  ] } });
+  assert.equal(future.statusCode, 201, future.body);
+  assert.equal(future.json().intervals[0].validUntil, null);
+
+  const revised = await owner.inject({ method: 'POST', url: '/api/center/opening-hours', payload: { effectiveFrom, intervals: [
+    { weekday, opensAt: '08:00', closesAt: '19:00' },
+  ] } });
+  assert.equal(revised.statusCode, 201, revised.body);
+  assert.equal(revised.json().intervals[0].validUntil, new Date(Date.parse(`${futureFrom}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10));
+
+  const currentAtStart = await owner.inject({ method: 'GET', url: `/api/center/opening-hours?date=${effectiveFrom}` });
+  assert.equal(currentAtStart.statusCode, 200, currentAtStart.body);
+  assert.equal(currentAtStart.json().intervals.length, 1);
+  assert.equal(currentAtStart.json().intervals[0].opensAt, '08:00:00');
+  const futureAtStart = await owner.inject({ method: 'GET', url: `/api/center/opening-hours?date=${futureFrom}` });
+  assert.equal(futureAtStart.statusCode, 200, futureAtStart.body);
+  assert.equal(futureAtStart.json().effectiveOn, futureFrom);
+  assert.equal(futureAtStart.json().intervals.length, 1);
+  assert.equal(futureAtStart.json().intervals[0].opensAt, '10:00:00');
+  assert.equal(futureAtStart.json().intervals[0].validFrom, futureFrom);
+});
+
+test('concurrent overlapping shift requests serialize and only one assignment is created', async () => {
+  const localDate = new Date(Date.now() + (1200 + Math.floor(Math.random() * 1000)) * 86_400_000).toISOString().slice(0, 10);
+  const staff = await owner.inject({ method: 'POST', url: '/api/staff', payload: {
+    firstName: 'A45', lastName: `Concurrent ${randomUUID().slice(0, 8)}`, displayName: `A45 Concurrent ${randomUUID().slice(0, 8)}`, baseRole: 'trainer',
+  } });
+  assert.equal(staff.statusCode, 201, staff.body);
+
+  let markLocked;
+  const acquired = new Promise(resolve => { markLocked = resolve; });
+  let unblock;
+  const gate = new Promise(resolve => { unblock = resolve; });
+  const lockProfessional = sql.begin(async tx => {
+    await tx`SELECT id FROM staff_professionals WHERE id=${staff.json().id} FOR UPDATE`;
+    markLocked();
+    await gate;
+  });
+  await acquired;
+
+  const makeShift = (startsAt, endsAt) => owner.inject({ method: 'POST', url: '/api/center/shifts', payload: {
+    professionalId: staff.json().id, localDate, startsAt, endsAt,
+  } });
+  const requests = [makeShift('09:00', '13:00'), makeShift('10:00', '14:00')];
+  let blocked = 0;
+  try {
+    for (let attempt = 0; attempt < 200 && blocked < 2; attempt += 1) {
+      const [row] = await sql`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%staff_professionals%'`;
+      blocked = row?.count ?? 0;
+      if (blocked < 2) await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  } finally {
+    unblock();
+  }
+
+  const responses = await Promise.all(requests);
+  await lockProfessional;
+  assert.equal(blocked, 2, 'both API transactions must be waiting on the professional row lock before release');
+  assert.deepEqual(responses.map(response => response.statusCode).sort(), [201, 409]);
+  const [rows] = await sql`SELECT count(*)::int AS count FROM staff_shift_assignments WHERE professional_id=${staff.json().id} AND local_date=${localDate}::date AND status='scheduled'`;
+  assert.equal(rows?.count, 1);
+});

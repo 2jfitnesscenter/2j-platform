@@ -61,9 +61,13 @@ export function registerCenterOperationsRoutes(app: FastifyInstance<any, any, an
     const context = await authorize(request, reply, resolveAuthorization, 'center.hours.manage');
     if (!context) return;
     reply.header('Cache-Control', 'no-store');
+    const query = z.object({ date }).strict().partial().safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: 'invalid_effective_date' });
     try {
-      const rows = await db`SELECT id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' ORDER BY weekday,opens_at,valid_from`;
-      return { timezone: 'Atlantic/Canary', intervals: rows };
+      const rows = query.data.date
+        ? await db`SELECT id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' AND valid_from<=${query.data.date}::date AND (valid_until IS NULL OR valid_until>=${query.data.date}::date) ORDER BY weekday,opens_at,valid_from`
+        : await db`SELECT id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' ORDER BY weekday,opens_at,valid_from`;
+      return { timezone: 'Atlantic/Canary', effectiveOn: query.data.date ?? null, intervals: rows };
     } catch (error) { return fail(reply, error); }
   });
 
@@ -75,12 +79,16 @@ export function registerCenterOperationsRoutes(app: FastifyInstance<any, any, an
     try {
       const rows = await db.begin(async tx => {
         await tx`SELECT pg_advisory_xact_lock(hashtext('2j-center-opening-hours'))`;
-        const oldRows = await tx`SELECT id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' AND (valid_until IS NULL OR valid_until>=${parsed.data.effectiveFrom}::date) FOR UPDATE`;
+        const oldRows = await tx`SELECT id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' AND ((valid_from<${parsed.data.effectiveFrom}::date AND (valid_until IS NULL OR valid_until>=${parsed.data.effectiveFrom}::date)) OR valid_from=${parsed.data.effectiveFrom}::date) FOR UPDATE`;
+        const [nextPeriod] = await tx`SELECT MIN(valid_from)::text AS "nextValidFrom" FROM center_opening_hours WHERE status='active' AND valid_from>${parsed.data.effectiveFrom}::date`;
+        const validUntil = nextPeriod?.nextValidFrom
+          ? new Date(Date.parse(`${nextPeriod.nextValidFrom}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10)
+          : null;
         const shortened = await tx`UPDATE center_opening_hours SET valid_until=${parsed.data.effectiveFrom}::date-1 WHERE status='active' AND valid_from<${parsed.data.effectiveFrom}::date AND (valid_until IS NULL OR valid_until>=${parsed.data.effectiveFrom}::date) RETURNING id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status`;
-        const archived = await tx`UPDATE center_opening_hours SET status='archived' WHERE status='active' AND valid_from>=${parsed.data.effectiveFrom}::date RETURNING id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status`;
+        const archived = await tx`UPDATE center_opening_hours SET status='archived' WHERE status='active' AND valid_from=${parsed.data.effectiveFrom}::date RETURNING id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status`;
         const created = [];
         for (const interval of parsed.data.intervals) {
-          const [row] = await tx`INSERT INTO center_opening_hours(weekday,opens_at,closes_at,valid_from,created_by) VALUES (${interval.weekday},${interval.opensAt},${interval.closesAt},${parsed.data.effectiveFrom},${context.actorId}) RETURNING id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status`;
+          const [row] = await tx`INSERT INTO center_opening_hours(weekday,opens_at,closes_at,valid_from,valid_until,created_by) VALUES (${interval.weekday},${interval.opensAt},${interval.closesAt},${parsed.data.effectiveFrom},${validUntil},${context.actorId}) RETURNING id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status`;
           if (!row) throw new Error('Opening hours insert returned no row');
           await tx`INSERT INTO staff_audit_events(actor_id,action,resource_type,resource_id,professional_id,details) VALUES (${context.actorId},'center.hours.created','center_opening_hours',${row.id},NULL,${JSON.stringify({ after: row })}::jsonb)`;
           created.push(row);

@@ -46,7 +46,7 @@ function OperationsSettings() {
     setState('loading');
     try {
       const [hoursResponse, staffResponse, shiftsResponse, coverageResponse] = await Promise.all([
-        fetch(`${apiUrl}/api/center/opening-hours`), fetch(`${apiUrl}/api/staff`),
+        fetch(`${apiUrl}/api/center/opening-hours?date=${effectiveFrom}`), fetch(`${apiUrl}/api/staff`),
         fetch(`${apiUrl}/api/center/shifts?from=${shiftDate}&to=${shiftDate}`), fetch(`${apiUrl}/api/center/coverage?date=${shiftDate}`),
       ]);
       if ([hoursResponse, shiftsResponse, coverageResponse].some(response => response.status === 401 || response.status === 403)) { setState('denied'); return; }
@@ -54,7 +54,7 @@ function OperationsSettings() {
       const [hours, staff, dayShifts, dayCoverage] = await Promise.all([hoursResponse.json(), staffResponse.json(), shiftsResponse.json(), coverageResponse.json()]);
       setIntervals(hours.intervals as OpeningInterval[]); setProfessionals(staff as Professional[]); setShifts(dayShifts.shifts as Shift[]); setCoverage(dayCoverage as Coverage); setState('ready');
     } catch { setState('error'); }
-  }, [shiftDate]);
+  }, [effectiveFrom, shiftDate]);
   React.useEffect(() => { void load(); }, [load]);
   const updateInterval = (index: number, key: 'opensAt' | 'closesAt', value: string) => setIntervals(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
   const saveHours = async (event: React.FormEvent) => {
@@ -87,7 +87,10 @@ function OperationsSettings() {
     <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Zona horaria Atlantic/Canary. Los turnos planifican cobertura; nunca crean ni modifican fichajes.</span></div>
     <form onSubmit={saveHours} className="settings-operation-form">
       <h3 className="settings-subtitle">Horario de apertura del centro</h3>
-      <label className="settings-field">Vigente desde<input type="date" value={effectiveFrom} onChange={event => setEffectiveFrom(event.target.value)} required /></label>
+      <label className="settings-field">Editar horario vigente en<input type="date" value={effectiveFrom} onChange={event => setEffectiveFrom(event.target.value)} required /></label>
+      <p className="settings-hint">Al seleccionar una fecha se carga solo el horario vigente ese día. El cambio respeta los periodos futuros ya programados.</p>
+      {intervals[0] && <p role="status">Periodo seleccionado: desde {intervals[0].validFrom}{intervals[0].validUntil ? ` hasta ${intervals[0].validUntil}` : ' sin fecha de fin'}. Los cambios empiezan el {effectiveFrom} y terminan antes del siguiente periodo programado.</p>}
+      {!intervals.length && <p role="status">No hay un horario configurado para el {effectiveFrom}. Puedes crear uno para esa fecha.</p>}
       {intervals.map((interval, index) => <div className="settings-row" key={interval.id || `${interval.weekday}-${index}`}>
         <strong>{WEEKDAYS[interval.weekday]}</strong><label>Abre<input aria-label={`${WEEKDAYS[interval.weekday]} abre`} type="time" value={interval.opensAt} onChange={event => updateInterval(index, 'opensAt', event.target.value)} required /></label><label>Cierra<input aria-label={`${WEEKDAYS[interval.weekday]} cierra`} type="time" value={interval.closesAt} onChange={event => updateInterval(index, 'closesAt', event.target.value)} required /></label>
         <Button type="button" variant="secondary" onClick={() => setIntervals(current => current.filter((_, itemIndex) => itemIndex !== index))}>Quitar tramo</Button>

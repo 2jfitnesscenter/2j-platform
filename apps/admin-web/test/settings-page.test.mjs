@@ -55,9 +55,10 @@ test('Configuración offers the seven Base44 tabs and the unconnected ones say s
 
 test('owner operations tab loads real Canary hours and offers audited shift management with server feedback', async () => {
   const calls = [];
+  const hoursDates = [];
   serve(async (path, init) => {
     if (path.includes('/api/settings/overview')) return response(overview);
-    if (path.includes('/api/center/opening-hours')) return response({ timezone: 'Atlantic/Canary', intervals: [{ id: 'hour-1', weekday: 1, opensAt: '09:00', closesAt: '17:00', validFrom: '2026-10-26', validUntil: null, status: 'active' }] });
+    if (path.includes('/api/center/opening-hours')) { hoursDates.push(new URL(path, 'http://localhost').searchParams.get('date')); return response({ timezone: 'Atlantic/Canary', intervals: [{ id: 'hour-1', weekday: 1, opensAt: '09:00', closesAt: '17:00', validFrom: '2026-10-26', validUntil: '2026-10-31', status: 'active' }] }); }
     if (path.includes('/api/center/shifts?')) return response({ timezone: 'Atlantic/Canary', shifts: [] });
     if (path.includes('/api/center/coverage?')) return response({ openingIntervals: [{ startsAt: '2026-10-26T09:00:00Z', endsAt: '2026-10-26T17:00:00Z' }], assignedShifts: [], staffingGaps: [{ startsAt: '2026-10-26T09:00:00Z', endsAt: '2026-10-26T17:00:00Z' }], cashCustody: { status: 'incomplete', reason: 'traspasos A39–A44', recordedSessions: [] } });
     if (path.includes('/api/staff')) return response([{ id: 'staff-1', displayName: 'Alex Rivera' }]);
@@ -68,6 +69,8 @@ test('owner operations tab loads real Canary hours and offers audited shift mana
   const panel = await openTab('Horario y turnos');
   assert.ok(await within(panel).findByText(/Zona horaria Atlantic\/Canary/));
   assert.ok(within(panel).getByRole('heading', { name: 'Horario de apertura del centro' }));
+  assert.ok(within(panel).getByText(/Periodo seleccionado: desde 2026-10-26 hasta 2026-10-31/));
+  assert.match(panel.textContent, /respeta los periodos futuros ya programados/);
   assert.ok(within(panel).getByLabelText('Lunes abre'));
   assert.match(panel.textContent, /Huecos de turnos asignados/);
   assert.match(panel.textContent, /Custodia de caja incompleta/);
@@ -75,6 +78,8 @@ test('owner operations tab loads real Canary hours and offers audited shift mana
   fireEvent.click(within(panel).getByRole('button', { name: 'Asignar turno' }));
   await waitFor(() => assert.ok(panel.textContent.includes('Turno asignado')));
   assert.ok(calls.some((call) => call.path.endsWith('/api/center/shifts') && call.method === 'POST'));
+  fireEvent.change(within(panel).getByLabelText('Editar horario vigente en'), { target: { value: '2026-10-28' } });
+  await waitFor(() => assert.equal(hoursDates.at(-1), '2026-10-28'));
 });
 
 test('Pagos shows the real economic rules read-only, Centro shows the fixed Canary timezone, and nothing fiscal is offered', async () => {
