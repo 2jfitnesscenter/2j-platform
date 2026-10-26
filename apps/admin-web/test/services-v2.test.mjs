@@ -145,6 +145,21 @@ test('Plans route deduplicates plans, keeps archived plans visible and allows re
   assert.ok(await screen.findByRole('article', { name: 'Plan histórico' }));
 
   cleanup();
+  const areaArchivedService = svc(4, { name: 'Servicio en espacio archivado' });
+  const areaArchivedPlan = plan({ id: 'area-archived-plan', name: 'Plan en espacio archivado', status: 'archived', services: [{ id: areaArchivedService.id, name: areaArchivedService.name, area: areaArchivedService.area, status: 'active', areaStatus: 'archived' }] });
+  globalThis.fetch = async (url) => {
+    const path = String(url);
+    if (path.endsWith('/api/areas')) return response([area]);
+    if (path.endsWith('/api/services?includeArchived=true')) return response([areaArchivedService]);
+    if (path.endsWith(`/api/services/${areaArchivedService.id}/plans?includeArchived=true`)) return response([areaArchivedPlan]);
+    throw new Error(`Unexpected ${path}`);
+  };
+  mount(admin, 'plans');
+  const archivedAreaCard = await screen.findByRole('article', { name: 'Plan en espacio archivado' });
+  assert.equal(within(archivedAreaCard).queryByRole('button', { name: 'Reactivar plan' }), null);
+  assert.ok(within(archivedAreaCard).getByText(/hay un servicio o área archivados/));
+
+  cleanup();
   const reactivatableService = svc(3, { name: 'Servicio reactivable' });
   let reactivatableArchived = true;
   const reactivatablePlan = () => plan({ id: 'reactivatable-plan', name: 'Plan reactivable', status: reactivatableArchived ? 'archived' : 'active', services: [{ id: reactivatableService.id, name: reactivatableService.name, area: reactivatableService.area, status: 'active' }] });

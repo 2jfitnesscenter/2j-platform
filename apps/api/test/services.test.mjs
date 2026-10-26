@@ -1930,7 +1930,11 @@ test('archiving a draft freezes its definition and preserves its current version
 });
 
 test('archived plans remain visible to catalog managers and can be reactivated without changing the frozen version', async () => {
-  const service = await createService();
+  const areaResponse = await app.inject({ method: 'POST', url: '/api/areas', payload: { name: `Área plan histórico ${randomUUID()}` } });
+  assert.equal(areaResponse.statusCode, 201, areaResponse.body);
+  const serviceResponse = await app.inject({ method: 'POST', url: '/api/services', payload: { name: `Servicio plan histórico ${randomUUID()}`, areaId: areaResponse.json().id, status: 'active' } });
+  assert.equal(serviceResponse.statusCode, 201, serviceResponse.body);
+  const service = serviceResponse.json();
   const { response: plan } = await createPlan([service.id]);
   const id = plan.json().id;
   assert.equal((await app.inject({ method: 'POST', url: `/api/plans/${id}/activate` })).statusCode, 200);
@@ -1941,7 +1945,9 @@ test('archived plans remain visible to catalog managers and can be reactivated w
   const trainerArchivedList = await clientsTrainerApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans?includeArchived=true` });
   assert.equal(normalList.json().some((item) => item.id === id), false);
   assert.equal(archivedList.statusCode, 200);
-  assert.equal(archivedList.json().find((item) => item.id === id)?.status, 'archived');
+  const listedPlan = archivedList.json().find((item) => item.id === id);
+  assert.equal(listedPlan?.status, 'archived');
+  assert.equal(listedPlan?.services[0]?.areaStatus, 'active');
   assert.equal(trainerArchivedList.statusCode, 403, 'archived catalog access requires pricing-management permission');
 
   const before = await sql`SELECT current_version AS version,(SELECT frozen_at FROM plan_versions WHERE plan_id=${id} AND version=plans.current_version) AS frozen_at FROM plans WHERE id=${id}`;
@@ -1951,6 +1957,7 @@ test('archived plans remain visible to catalog managers and can be reactivated w
   const after = await sql`SELECT current_version AS version,(SELECT frozen_at FROM plan_versions WHERE plan_id=${id} AND version=plans.current_version) AS frozen_at FROM plans WHERE id=${id}`;
   assert.deepEqual(after, before, 'reactivation preserves the version pointer and frozen definition');
   assert.equal((await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans` })).json().some((item) => item.id === id), true);
+
 });
 
 test('service right counts include only global or service-targeted rights', async () => {
