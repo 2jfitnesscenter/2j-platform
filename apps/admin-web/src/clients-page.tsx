@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, RefObject } from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, IconButton, PageHeader, SearchField, SegmentedControl, StatusChip, Tabs, icons } from '@2j/ui';
+import { clearDeepLink, readDeepLink } from './deep-link.js';
 import { ClientAvatar, SECTION_LABEL, SECTION_ORDER, chargeChip, clientPlanChip, euros, planStatusChip, reservationChip, reservationRightsLabel, rightLine } from './client-presenters.js';
 
 type Client = { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; birthDate?:string|null; status: 'active' | 'archived'; createdAt: string; updatedAt?: string };
@@ -82,6 +83,11 @@ export function ClientsPage() {
   const [documentBusy, setDocumentBusy] = useState(false);
   const [activeSection, setActiveSection] = useState('summary');
   const [showCreate, setShowCreate] = useState(false);
+  // Enlaces profundos del Resumen (ver deep-link.ts): se leen una vez y se retiran de la URL.
+  const [deepLink] = useState(() => readDeepLink(['new', 'intent'] as const));
+  useEffect(() => { clearDeepLink(['new', 'intent']); }, []);
+  const [intent, setIntent] = useState<'assign-plan' | 'message' | null>(deepLink.intent === 'assign-plan' || deepLink.intent === 'message' ? deepLink.intent : null);
+  const openNewFromLink = useRef(deepLink.new === '1');
   const [showEdit, setShowEdit] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState('');
@@ -284,6 +290,18 @@ export function ClientsPage() {
     if (window.location.hash.includes('tab=')) window.location.hash = `#clients?clientId=${profile.client.id}`;
   }, [profileState, profile, visibleSections, activeSection]);
 
+  useEffect(() => {
+    if (!intent || profileState !== 'ready' || !profile) return;
+    if (intent === 'assign-plan') { if (profile.capabilities.assignPlans && profile.client.status === 'active') startPlanSale(); }
+    else if (visibleSections.some((section) => section.id === 'messages')) selectSection('messages');
+    setIntent(null);
+  }, [intent, profileState, profile]);
+  useEffect(() => {
+    if (!openNewFromLink.current || listState !== 'ready') return;
+    openNewFromLink.current = false;
+    if (list.capabilities.manage) { opener.current = document.activeElement as HTMLElement | null; createKeyRef.current = createIdempotencyKey(); setShowCreate(true); }
+  }, [listState, list.capabilities.manage]);
+
   async function createClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
@@ -329,7 +347,7 @@ export function ClientsPage() {
     try {
       const response = await fetch(`${apiUrl}/api/clients/${selectedId}/plans`, { method:'POST', headers:{'content-type':'application/json','idempotency-key':planSaleKeyRef.current}, body:JSON.stringify(payload) });
       const result = await response.json().catch(()=>({}));
-      if (!response.ok) throw new Error(result.error==='price_override_forbidden'?'Tu perfil no puede modificar el precio de catálogo.':result.error==='catalog_price_required'?'Este plan necesita un precio base configurado por Administración antes de poder venderse.':response.status===403?'Tu perfil no tiene permiso para asignar y cobrar esta cuota.':result.error==='cash_session_required'?'Abre la caja antes de registrar un cobro en efectivo.':'No se pudo asignar la cuota.');
+      if (!response.ok) throw new Error(result.error==='price_override_forbidden'?'Tu perfil no puede modificar el precio de catálogo.':result.error==='catalog_price_required'?'Este plan necesita un precio base configurado por Administración antes de poder venderse.':response.status===403?'Tu perfil no tiene permiso para asignar y cobrar esta cuota.':result.error==='cash_session_required'?'Abre la caja antes de registrar cobros.':'No se pudo asignar la cuota.');
       planSaleKeyRef.current = null;
       planSalePayloadRef.current = null;
       setShowPlanDialog(false); setPlanOperation(null);setPlanOperationReason('');setActiveSection('plans'); setRefreshKey(value=>value+1); setProfileRetry(value=>value+1); setArchiveFeedback(collectNow?(planOperation?.kind==='renewal'?'Renovación y cobro registrados.':planOperation?.kind==='change'?'Cambio de plan y cobro registrados.':'Cuota asignada y cobro registrado.'):(planOperation?.kind==='renewal'?'Renovación guardada; el cargo queda pendiente.':planOperation?.kind==='change'?'Cambio de plan guardado; el cargo queda pendiente.':'Cuota asignada; el cargo queda pendiente.'));
@@ -415,6 +433,7 @@ export function ClientsPage() {
   return <main className="clients-v2" id="clients" data-2j-design="v2">
     {!selectedId && <>
       <PageHeader title="Clientes" description="Busca y abre perfiles del centro. La ficha reúne la información operativa autorizada." actions={list.capabilities.manage ? <Button variant="primary" icon={icons.Plus} onClick={openCreate}>Nuevo cliente</Button> : undefined} />
+      {intent && <div className="client-feedback" role="status"><Icon icon={icons.Users} size={20} />{intent === 'assign-plan' ? 'Elige un cliente para asignarle una cuota.' : 'Elige un cliente para escribirle un mensaje.'}<Button size="sm" variant="ghost" onClick={() => setIntent(null)}>Cancelar</Button></div>}
       <Card as="section" padding="none" className="clients-panel" aria-label="Listado de clientes" aria-busy={listBusy || loadingMore}>
         <div className="clients-toolbar">
           <SearchField label="Buscar cliente" placeholder="Nombre, email o teléfono…" value={query} onChange={setQuery} />

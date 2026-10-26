@@ -507,3 +507,54 @@ test('Compras shows an empty state, and without store access the tab is not offe
   await screen.findByRole('heading', { name: 'Marta Santos' });
   assert.equal(screen.queryByRole('tab', { name: 'Compras' }), null);
 });
+
+test('#clients?new=1 opens «Nuevo cliente» once the list loads (only with permission) and cleans the link', async () => {
+  window.location.hash = '#clients?new=1';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
+  render(React.createElement(ClientsPage));
+  assert.ok(await screen.findByRole('dialog', { name: 'Nuevo cliente' }));
+  assert.equal(window.location.hash, '#clients');
+  cleanup();
+  window.location.hash = '#clients?new=1';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse([client], { capabilities: { manage: false } })) : response(profile);
+  render(React.createElement(ClientsPage));
+  await screen.findByRole('link', { name: /Marta Santos/ });
+  assert.equal(screen.queryByRole('dialog', { name: 'Nuevo cliente' }), null);
+});
+
+test('#clients?intent=message guides to pick a client and opens the Mensajes tab on their profile; the guidance can be cancelled', async () => {
+  window.location.hash = '#clients?intent=message';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
+  render(React.createElement(ClientsPage));
+  assert.ok(await screen.findByText('Elige un cliente para escribirle un mensaje.'));
+  assert.equal(window.location.hash, '#clients');
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  await waitFor(() => assert.equal(screen.getByRole('tab', { name: 'Mensajes' }).getAttribute('aria-selected'), 'true'));
+  assert.equal(screen.queryByText('Elige un cliente para escribirle un mensaje.'), null);
+  cleanup();
+  window.location.hash = '#clients?intent=assign-plan';
+  render(React.createElement(ClientsPage));
+  assert.ok(await screen.findByText('Elige un cliente para asignarle una cuota.'));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+  assert.equal(screen.queryByText('Elige un cliente para asignarle una cuota.'), null);
+});
+
+test('#clients?intent=assign-plan opens the plan sale on the chosen active client when the profile can assign plans', async () => {
+  window.location.hash = '#clients?intent=assign-plan';
+  const assignable = { ...profile, capabilities: { manage: true, assignPlans: true } };
+  globalThis.fetch = async (url) => { const path = String(url); if (path.includes('/api/clients?')) return response(listResponse()); if (path.includes('/api/plans/assignable')) return response([]); return response(assignable); };
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  const dialog = await screen.findByRole('dialog');
+  assert.match(dialog.textContent, /cuota/i);
+  assert.equal(screen.queryByText('Elige un cliente para asignarle una cuota.'), null);
+});
+
+test('deep links survive React StrictMode (double-invoked initializers): #clients?new=1 still opens «Nuevo cliente»', async () => {
+  window.location.hash = '#clients?new=1';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
+  render(React.createElement(React.StrictMode, null, React.createElement(ClientsPage)));
+  assert.ok(await screen.findByRole('dialog', { name: 'Nuevo cliente' }));
+  assert.equal(window.location.hash, '#clients');
+});
