@@ -33,10 +33,10 @@ async function createService() {
   const result=await app.inject({method:'POST',url:'/api/services',payload:{name:`F1C2 ${randomUUID()}`,areaId:area.id,status:'active'}});
   assert.equal(result.statusCode,201,result.body);return result.json();
 }
-async function createContractPlan(service,{paymentBlock='enforce',unlimited=false}={}) {
+async function createContractPlan(service,{paymentBlock='enforce',unlimited=false,termKind='rolling_months'}={}) {
   const result=await app.inject({method:'POST',url:'/api/plans',headers:{'idempotency-key':randomUUID()},payload:{
     name:`F1C2 ${randomUUID()}`,serviceIds:[service.id],kind:'recurring',renewalCadence:'monthly',basePriceCents:5000,
-    termKind:'rolling_months',termMonths:3,paymentBlock,
+    termKind,...(termKind==='rolling_months'?{termMonths:3}:{}),paymentBlock,
     rights:[{rightType:'service_access',serviceId:service.id},unlimited
       ?{rightType:'sessions_quota',quotaScope:'shared',quantityRule:'unlimited'}
       :{rightType:'sessions_quota',quotaScope:'shared',weeklyFrequency:3,quantityRule:'weekday_ratio_v1'}],
@@ -70,6 +70,22 @@ function canaryMidnight(date) {
 
 async function assign(client,plan,assigned=utcDateOffset(-8)) {
   return coordinateContractAssignment(sql,{clientId:client.id,planId:plan.id,idempotencyKey:randomUUID(),contractStart:assigned,amountCents:5000},actor,new Date(`${assigned}T12:00:00Z`));
+}
+async function assignAt(client,plan,assigned,now) {
+  return coordinateContractAssignment(sql,{clientId:client.id,planId:plan.id,idempotencyKey:randomUUID(),contractStart:assigned,amountCents:5000},actor,now);
+}
+async function cloneAssignmentWithCharge(sourceAssignmentId,chargeId) {
+  const assignmentId=randomUUID(),idempotencyKey=randomUUID(),requestHash='c'.repeat(64);
+  await sql`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,status,idempotency_key,request_hash,created_by,sale_price_cents,snapshot)
+    SELECT ${assignmentId},client_id,plan_id,plan_version,${chargeId},starts_on,ends_on,status,${idempotencyKey},${requestHash},created_by,sale_price_cents,snapshot
+    FROM client_plan_assignments WHERE id=${sourceAssignmentId}`;
+  await sql`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
+    SELECT ${assignmentId},term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date
+    FROM assignment_contract_terms WHERE assignment_id=${sourceAssignmentId}`;
+  await sql`INSERT INTO client_plan_assignment_events(assignment_id,event_type,effective_on,actor_id,actor_role,idempotency_key,request_hash)
+    SELECT ${assignmentId},'activated',starts_on,created_by,'admin',${randomUUID()},${requestHash}
+    FROM client_plan_assignments WHERE id=${assignmentId}`;
+  return assignmentId;
 }
 async function createSession(service,{capacity=3,startsAt=futureSessionStart()}={}) {
   const result=await app.inject({method:'POST',url:'/api/calendar/sessions',payload:{serviceId:service.id,areaId:service.areaId,startsAt,durationMinutes:60,capacity}});
@@ -192,4 +208,124 @@ test('reservation evaluation share-lock serializes with payment writer without a
   releaseResolve();await booking;
   assert.equal((await pendingPayment).statusCode,201);
   assert.equal((await evaluate(client.id,service.id)).eligible,true,'next booking observes the committed full payment');
+});
+
+test('Member read contracts expose authoritative payment state and per-session waitlist eligibility without queue data',async()=>{
+  const memberA=await createClient(),memberB=await createClient(),memberC=await createClient(),memberD=await createClient(),holder=await createClient(),service=await createService();
+  const partialPlan=await createContractPlan(service,{paymentBlock:'off'}),partialAssignment=await assign(memberA,partialPlan);
+  const partialPayment=await recordPayment(partialAssignment.chargeId,2500);assert.equal(partialPayment.statusCode,201,partialPayment.body);
+  const suspendedPlan=await createContractPlan(service),suspendedAssignment=await assign(memberB,suspendedPlan);
+  const refundedPlan=await createContractPlan(service,{paymentBlock:'off'}),refundedAssignment=await assign(memberC,refundedPlan);
+  const refundedPayment=await recordPayment(refundedAssignment.chargeId,5000);assert.equal(refundedPayment.statusCode,201,refundedPayment.body);
+  const refundedTransaction=await refund(refundedPayment.json().id,5000);assert.equal(refundedTransaction.statusCode,201,refundedTransaction.body);
+  const refundLedger=await sql`SELECT kind,amount_cents AS "amountCents" FROM economic_transactions WHERE charge_id=${refundedAssignment.chargeId} ORDER BY created_at,id`;
+  assert.deepEqual(Array.from(refundLedger,row=>({kind:row.kind,amountCents:row.amountCents})),[{kind:'payment',amountCents:'5000'},{kind:'refund',amountCents:'5000'}]);
+  const holderPlan=await createContractPlan(service,{paymentBlock:'off'}),holderAssignment=await assign(holder,holderPlan);
+  const makeSession=hours=>createSession(service,{capacity:1,startsAt:futureSessionStart(hours)});
+  const bookedSession=await makeSession(24),availableSession=await makeSession(27),fullSession=await makeSession(30),waitlistedSession=await makeSession(33),suspendedSession=await makeSession(36),notAllowedSession=await makeSession(39);
+  const reserve=async(client,session,assignment)=>app.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,entitlementAssignmentId:assignment.assignmentId}});
+  assert.equal((await reserve(memberA,bookedSession,partialAssignment)).statusCode,201);
+  for(const session of [fullSession,waitlistedSession,suspendedSession,notAllowedSession]) assert.equal((await reserve(holder,session,holderAssignment)).statusCode,201);
+  const join=async(client,session,assignment)=>app.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/waitlist`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,entitlementAssignmentId:assignment.assignmentId}});
+  const waitingA=await join(memberA,waitlistedSession,partialAssignment);assert.equal(waitingA.statusCode,201,waitingA.body);
+  const waitingB=await join(memberB,suspendedSession,suspendedAssignment);assert.equal(waitingB.statusCode,201,waitingB.body);
+  let activeEligibilityEvaluations=0,maxEligibilityEvaluations=0;
+  const appA=buildServer(dbUrl,{clientAuthorizationResolver:async()=>({clientId:memberA.id}),bookingEligibilityResolver:async input=>{
+    activeEligibilityEvaluations++;maxEligibilityEvaluations=Math.max(maxEligibilityEvaluations,activeEligibilityEvaluations);
+    try { await new Promise(resolve=>setTimeout(resolve,5));return await evaluateBookingEligibility(input); }
+    finally { activeEligibilityEvaluations--; }
+  }});
+  const memberApp=clientId=>buildServer(dbUrl,{clientAuthorizationResolver:async()=>({clientId}),bookingEligibilityResolver:async input=>evaluateBookingEligibility(input)});
+  const appB=memberApp(memberB.id),appC=memberApp(memberC.id),appD=memberApp(memberD.id);
+  try {
+    const membership=await appA.inject({method:'GET',url:'/api/me/membership'});assert.equal(membership.statusCode,200,membership.body);
+    const payment=membership.json().assignments.find(item=>item.id===partialAssignment.assignmentId).payment;
+    assert.deepEqual({status:payment.status,amountCents:payment.amountCents,paidCents:payment.paidCents,pendingAmountCents:payment.pendingAmountCents,dueOn:payment.dueOn},
+      {status:'unpaid',amountCents:5000,paidCents:2500,pendingAmountCents:2500,dueOn:partialAssignment.dueOn});
+    assert.equal(payment.timezone,'Atlantic/Canary');assert.equal(payment.payments.length,1);assert.equal(payment.payments[0].amountCents,2500);
+    assert.equal('chargeId' in payment,false);assert.equal(JSON.stringify(membership.json()).includes(memberB.id),false);
+    const membershipB=await appB.inject({method:'GET',url:'/api/me/membership'});assert.equal(membershipB.statusCode,200,membershipB.body);
+    const blockedPayment=membershipB.json().assignments.find(item=>item.id===suspendedAssignment.assignmentId).payment;
+    assert.equal(blockedPayment.status,'unpaid');assert.equal(blockedPayment.accessStatus,'blocked_unpaid');
+    const blockDate=addDays(suspendedAssignment.dueOn,1);
+    const offset=blockDate>='2026-03-29'&&blockDate<'2026-10-25'?'+01:00':'+00:00';
+    assert.equal(blockedPayment.effectiveBlockAt,`${blockDate}T00:00:00${offset}`);
+    const from=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()),to=addDays(from,7);
+    const listA=await appA.inject({method:'GET',url:`/api/me/sessions?from=${from}&to=${to}`});assert.equal(listA.statusCode,200,listA.body);
+    assert.equal(maxEligibilityEvaluations,2,'one Member sessions read must leave at least eight connections in the ten-connection API pool');
+    const sessionsA=new Map(listA.json().sessions.map(item=>[item.id,item]));
+    assert.equal(sessionsA.get(bookedSession.id).availability.status,'booked');
+    assert.equal(sessionsA.get(availableSession.id).availability.status,'available');
+    assert.equal(sessionsA.get(fullSession.id).availability.status,'full');assert.equal(sessionsA.get(fullSession.id).availability.canJoinWaitlist,true);
+    assert.equal(sessionsA.get(waitlistedSession.id).availability.status,'waitlisted');
+    assert.equal(sessionsA.get(waitlistedSession.id).availability.canJoinWaitlist,false);
+    assert.equal(JSON.stringify(listA.json()).includes(waitingA.json().id),false);
+    assert.equal(JSON.stringify(listA.json()).toLowerCase().includes('queueposition'),false);
+    const waitlistedDetail=await appA.inject({method:'GET',url:`/api/me/sessions/${waitlistedSession.id}`});assert.equal(waitlistedDetail.statusCode,200,waitlistedDetail.body);
+    assert.deepEqual(waitlistedDetail.json().session.availability,sessionsA.get(waitlistedSession.id).availability);
+    assert.equal('eligibilityReason' in waitlistedDetail.json().session,false);
+    assert.equal(JSON.stringify(waitlistedDetail.json()).includes(waitingA.json().id),false);
+    assert.equal('myWaitlistId' in waitlistedDetail.json().session,false);
+    const listB=await appB.inject({method:'GET',url:`/api/me/sessions?from=${from}&to=${to}`});
+    assert.equal(listB.json().sessions.find(item=>item.id===suspendedSession.id).availability.status,'waitlist_suspended');
+    assert.equal(listB.json().sessions.find(item=>item.id===suspendedSession.id).availability.reason,null);
+    const suspendedDetail=await appB.inject({method:'GET',url:`/api/me/sessions/${suspendedSession.id}`});assert.equal(suspendedDetail.statusCode,200,suspendedDetail.body);
+    assert.deepEqual(suspendedDetail.json().session.availability,listB.json().sessions.find(item=>item.id===suspendedSession.id).availability);
+    const membershipC=await appC.inject({method:'GET',url:'/api/me/membership'});assert.equal(membershipC.statusCode,200,membershipC.body);
+    const refunded=membershipC.json().assignments.find(item=>item.id===refundedAssignment.assignmentId).payment;
+    assert.equal(refunded.status,'refunded');assert.equal(refunded.paidCents,0);assert.equal(refunded.pendingAmountCents,0);
+    const listD=await appD.inject({method:'GET',url:`/api/me/sessions?from=${from}&to=${to}`});
+    const denied=listD.json().sessions.find(item=>item.id===availableSession.id).availability;
+    assert.deepEqual(denied,{status:'not_allowed_by_plan',reason:'service_not_allowed',canJoinWaitlist:false});
+    const deniedDetail=await appD.inject({method:'GET',url:`/api/me/sessions/${availableSession.id}`});assert.equal(deniedDetail.statusCode,200,deniedDetail.body);
+    assert.deepEqual(deniedDetail.json().session.availability,denied);
+    const detailJson=JSON.stringify(deniedDetail.json());
+    for(const internalReason of ['eligibilityReason','debt_restriction','session_full','entitlement_required']) assert.equal(detailJson.includes(internalReason),false);
+  } finally { await Promise.all([appA.close(),appB.close(),appC.close(),appD.close()]); }
+});
+
+test('Member membership read reports Canary payment boundary and all contract payment states from a deterministic clock',async()=>{
+  const service=await createService(),plan=await createContractPlan(service,{termKind:'natural_month'});
+  const pendingClient=await createClient(),paidClient=await createClient(),partialClient=await createClient(),voidClient=await createClient(),exemptClient=await createClient(),mismatchClient=await createClient(),winterClient=await createClient();
+  const julyNow=new Date('2026-07-01T12:00:00Z');
+  const julyAssignment=client=>assignAt(client,plan,'2026-07-01',julyNow);
+  const pending=await julyAssignment(pendingClient),paid=await julyAssignment(paidClient),partial=await julyAssignment(partialClient),voided=await julyAssignment(voidClient),exemptSource=await julyAssignment(exemptClient),mismatchSource=await julyAssignment(mismatchClient);
+  const winter=await assignAt(winterClient,plan,'2026-11-01',new Date('2026-11-01T12:00:00Z'));
+  assert.equal(pending.dueOn,'2026-07-10');assert.equal(winter.dueOn,'2026-11-10');
+
+  assert.equal((await recordPayment(paid.chargeId,5000)).statusCode,201);
+  assert.equal((await recordPayment(partial.chargeId,2000)).statusCode,201);
+  assert.equal((await app.inject({method:'POST',url:`/api/economics/charges/${voided.chargeId}/void`,payload:{reason:'Anulación sintética para prueba'}})).statusCode,200);
+  const exemptChargeResponse=await app.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:exemptClient.id,planId:plan.id,concept:'Contrato exento de prueba',amountCents:5000,dueOn:exemptSource.dueOn,exemptReason:'Exención sintética para prueba'}});
+  assert.equal(exemptChargeResponse.statusCode,201,exemptChargeResponse.body);
+  const exemptAssignmentId=await cloneAssignmentWithCharge(exemptSource.assignmentId,exemptChargeResponse.json().id);
+  const secondPlan=await createContractPlan(service,{termKind:'natural_month'}),otherChargeAssignment=await assignAt(mismatchClient,secondPlan,'2026-07-01',julyNow);
+  const mismatchedAssignmentId=await cloneAssignmentWithCharge(mismatchSource.assignmentId,otherChargeAssignment.chargeId);
+
+  let now=new Date('2026-07-10T22:59:59Z'); // 23:59:59 Atlantic/Canary during summer time.
+  const memberApp=clientId=>buildServer(dbUrl,{clientAuthorizationResolver:async()=>({clientId}),memberNowProvider:()=>now,bookingEligibilityResolver:async input=>evaluateBookingEligibility(input)});
+  const apps=new Map([pendingClient,paidClient,partialClient,voidClient,exemptClient,mismatchClient,winterClient].map(client=>[client.id,memberApp(client.id)]));
+  const paymentFor=async(client,assignmentId)=>{
+    const response=await apps.get(client.id).inject({method:'GET',url:'/api/me/membership'});assert.equal(response.statusCode,200,response.body);
+    return response.json().assignments.find(item=>item.id===assignmentId)?.payment;
+  };
+  try {
+    const beforeBoundary=await paymentFor(pendingClient,pending.assignmentId);
+    assert.equal(beforeBoundary.status,'pending');assert.equal(beforeBoundary.accessStatus,'provisional');
+    assert.equal(beforeBoundary.dueOn,'2026-07-10');assert.equal(beforeBoundary.effectiveBlockAt,'2026-07-11T00:00:00+01:00');
+    const partialBeforeBoundary=await paymentFor(partialClient,partial.assignmentId);
+    assert.equal(partialBeforeBoundary.status,'partially_paid');assert.equal(partialBeforeBoundary.pendingAmountCents,3000);
+    now=new Date('2026-07-10T23:00:00Z'); // 00:00 Atlantic/Canary on day 11.
+    const atSummerBoundary=await paymentFor(pendingClient,pending.assignmentId);
+    assert.equal(atSummerBoundary.status,'unpaid');assert.equal(atSummerBoundary.accessStatus,'blocked_unpaid');
+    const paidState=await paymentFor(paidClient,paid.assignmentId);assert.equal(paidState.status,'paid');assert.equal(paidState.accessStatus,'active');
+    const partialOverdue=await paymentFor(partialClient,partial.assignmentId);
+    assert.equal(partialOverdue.status,'unpaid');assert.equal(partialOverdue.paidCents,2000);assert.equal(partialOverdue.pendingAmountCents,3000);
+    const voidState=await paymentFor(voidClient,voided.assignmentId);assert.equal(voidState.status,'void');assert.equal(voidState.accessStatus,'unavailable');
+    const exemptState=await paymentFor(exemptClient,exemptAssignmentId);assert.equal(exemptState.status,'exempt');assert.equal(exemptState.accessStatus,'active');
+    const mismatchState=await paymentFor(mismatchClient,mismatchedAssignmentId);assert.equal(mismatchState,null,'an assignment with a charge from another plan has no coherent payment object');
+    const winterState=await paymentFor(winterClient,winter.assignmentId);assert.equal(winterState.effectiveBlockAt,'2026-11-11T00:00:00+00:00');
+    now=new Date('2026-11-11T00:00:00Z');
+    const atWinterBoundary=await paymentFor(winterClient,winter.assignmentId);assert.equal(atWinterBoundary.status,'unpaid');assert.equal(atWinterBoundary.accessStatus,'blocked_unpaid');
+  } finally { await Promise.all([...apps.values()].map(instance=>instance.close())); }
 });
