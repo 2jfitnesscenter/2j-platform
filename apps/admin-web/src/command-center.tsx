@@ -26,6 +26,24 @@ function ItemLink({ href, children, className = '' }: { href: string; children: 
     : <div className={`${className} is-unlinked`}>{children}</div>;
 }
 
+const quickActionIcons: Record<string, LucideIcon> = {
+  'new-client': icons.UserRound,
+  'new-reservation': icons.CalendarDays,
+  'collect-payment': icons.Wallet,
+  'send-message': icons.MessageSquare,
+  'record-absence': icons.Users,
+  cash: icons.ReceiptText,
+};
+
+/** Accesos rápidos del Resumen (paridad visual 2): solo los que el servidor concede a este perfil; cada uno abre su sección. */
+function QuickActions({ actions }: { actions: CommandCenterModel['quickActions'] }) {
+  const usable = actions.filter(action => safeInternalHref(action.href));
+  if (usable.length === 0) return null;
+  return <nav className="summary-quick" aria-label="Accesos rápidos">
+    <ul>{usable.map(action => <li key={action.id}><a href={action.href}><Icon icon={quickActionIcons[action.id] ?? icons.ArrowLeft} size={16} />{action.label}</a></li>)}</ul>
+  </nav>;
+}
+
 type AttentionRow = { id: string; title: string; summary: string; href: string; ageAt: string | null; label: string; tone: StatusTone; icon: LucideIcon };
 const toneRank: Record<StatusTone, number> = { danger: 0, warning: 1, info: 2, success: 3, neutral: 4 };
 
@@ -167,6 +185,8 @@ export function CommandCenter() {
       meta={updatedAt ? `Actualizado a las ${dateTime(updatedAt)} · hora de Canarias` : undefined}
       actions={<Button icon={icons.RefreshCw} loading={refreshing} onClick={() => void reload()}>Actualizar</Button>}
     />
+
+    <QuickActions actions={data.quickActions} />
 
     {metrics.length > 0 && <ul className="summary-metrics" aria-label="Indicadores de hoy">{metrics.map(metric => <MetricTile key={metric.id} metric={metric} />)}</ul>}
 
