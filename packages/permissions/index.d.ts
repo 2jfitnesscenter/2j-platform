@@ -1,4 +1,4 @@
-export type ApprovedRole = 'admin' | 'trainer' | 'reception-management' | 'accountant';
+export type ApprovedRole = 'admin' | 'trainer' | 'reception-management' | 'accountant' | 'owner';
 
 export interface AuthorizationContext {
   readonly actorId: string;

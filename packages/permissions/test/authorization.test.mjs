@@ -90,11 +90,19 @@ test('Training suspension is Admin-only until a Trainer receives an explicit gra
 
 test('owner cash panel permission is an explicit server-side grant and never comes from Admin wildcard', () => {
   assert.equal(knownPermissions.has('owner.panel.read'), true);
-  for (const role of ['admin', 'trainer', 'reception-management', 'accountant']) {
+  for (const role of ['admin', 'trainer', 'reception-management', 'accountant', 'owner']) {
     assert.equal(can({ actorId: 'fixture', role }, 'owner.panel.read'), false, `${role} must not imply owner access`);
   }
   assert.equal(can({ actorId: 'fixture', role: 'admin', explicitPermissions: ['owner.panel.read'] }, 'owner.panel.read'), true);
   assert.equal(can({ actorId: 'fixture', role: 'admin', explicitPermissions: ['owner.panel.read'], deniedPermissions: ['owner.panel.read'] }, 'owner.panel.read'), false);
+});
+
+test('the owner authentication context receives no staff-role permissions', () => {
+  const owner = { actorId: 'owner-person', role: 'owner', explicitPermissions: ['owner.panel.read'] };
+  assert.equal(can(owner, 'owner.panel.read'), true);
+  for (const permission of ['identity.people.manage', 'staff.read', 'settings.manage', 'billing.cash.manage']) {
+    assert.equal(can(owner, permission), false, `${permission} must not be inherited by the owner-only context`);
+  }
 });
 
 test('runtime role matrix matches its reviewable JSON contract', async () => {

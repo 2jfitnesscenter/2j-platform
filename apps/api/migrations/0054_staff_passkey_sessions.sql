@@ -58,7 +58,7 @@ CREATE TABLE platform_staff_session_audit_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   person_id uuid NOT NULL REFERENCES platform_persons(id) ON DELETE RESTRICT,
   auth_subject_link_id uuid NOT NULL,
-  action text NOT NULL CHECK (action IN ('session.created','session.revoked','passkey.enrollment_issued','passkey.registered','passkey.login_rejected')),
+  action text NOT NULL CHECK (action IN ('session.created','session.revoked','passkey.enrollment_issued','passkey.enrollment_revoked','passkey.registered','passkey.login_rejected')),
   resource_id uuid,
   occurred_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (auth_subject_link_id,person_id) REFERENCES platform_person_auth_subjects(id,person_id) ON DELETE RESTRICT

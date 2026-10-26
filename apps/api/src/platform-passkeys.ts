@@ -213,6 +213,8 @@ export function registerPlatformPasskeyRoutes(app: FastifyInstance<any, any, any
       for (const row of sessions) await tx`INSERT INTO platform_member_session_audit_events(person_id,auth_subject_link_id,action) VALUES (${row.person_id},${row.auth_subject_link_id},'session.revoked')`;
       const staffSessions = await tx`UPDATE platform_staff_sessions s SET revoked_at=now() FROM platform_person_auth_subjects a WHERE a.id=s.auth_subject_link_id AND a.person_id=${params.data.personId}::uuid AND a.provider=${PROVIDER} AND s.revoked_at IS NULL RETURNING s.person_id,s.auth_subject_link_id`;
       for (const row of staffSessions) await tx`INSERT INTO platform_staff_session_audit_events(person_id,auth_subject_link_id,action) VALUES (${row.person_id},${row.auth_subject_link_id},'session.revoked')`;
+      const staffEnrollments = await tx`UPDATE platform_staff_passkey_enrollments SET consumed_at=now() WHERE person_id=${params.data.personId}::uuid AND consumed_at IS NULL RETURNING id,auth_subject_link_id`;
+      for (const enrollment of staffEnrollments) await tx`INSERT INTO platform_staff_session_audit_events(person_id,auth_subject_link_id,action,resource_id) VALUES (${params.data.personId}::uuid,${enrollment.auth_subject_link_id},'passkey.enrollment_revoked',${enrollment.id})`;
       await tx`UPDATE platform_passkey_enrollments SET consumed_at=now() WHERE person_id=${params.data.personId}::uuid AND consumed_at IS NULL`;
       for (const key of keys) await audit(tx as unknown as DB, params.data.personId, actor.actorId, 'passkey.revoked', key.id as string, { reason: body.data.reason });
       return keys.length;

@@ -149,9 +149,17 @@ test('staff passkey login is isolated, bound to an active staff facet and resolv
   const nextLogin = await post(staffApp, '/api/staff/auth/passkeys/login/verify', { challengeId: nextCeremony.json().challengeId, response: device.assert(nextCeremony.json().options.challenge, { origin: ORIGIN }) }, { origin: ORIGIN });
   assert.equal(nextLogin.statusCode, 200, nextLogin.body);
   const nextCookie = cookieOf(nextLogin);
+  // A previously issued, unused staff enrollment must die in the same revoke operation as passkeys.
+  const pending = await post(staffApp, `/api/platform/v1/persons/${personId}/staff-passkey-enrollments`, {}, { origin: ORIGIN });
+  assert.equal(pending.statusCode, 201, pending.body);
+  const pendingEnrollmentToken = pending.json().enrollmentToken;
   const revoked = await post(staffApp, `/api/platform/v1/persons/${personId}/passkeys/revoke`, { reason: 'dispositivo perdido' }, { origin: ORIGIN });
   assert.equal(revoked.statusCode, 200, revoked.body); assert.equal(revoked.json().revokedPasskeys, 1);
   assert.equal((await staffApp.inject({ method: 'GET', url: '/api/staff/auth/session', headers: { cookie: nextCookie } })).statusCode, 401, 'passkey revocation invalidates the staff session');
+  const pendingReplay = await post(staffApp, '/api/staff/auth/passkeys/register/options', { enrollmentToken: pendingEnrollmentToken }, { origin: STAFF_ORIGIN });
+  assert.equal(pendingReplay.statusCode, 401, 'passkey revocation invalidates pending staff enrollment tokens');
+  assert.equal((await sql`SELECT consumed_at IS NOT NULL AS consumed FROM platform_staff_passkey_enrollments WHERE person_id=${personId} AND token_hash=${createHash('sha256').update(pendingEnrollmentToken).digest('hex')}`)[0].consumed, true);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM platform_staff_session_audit_events WHERE person_id=${personId} AND action='passkey.enrollment_revoked'`)[0].n, 1);
   assert.equal((await sql`SELECT count(*)::int AS n FROM platform_staff_session_audit_events WHERE person_id=${personId} AND action IN ('session.created','session.revoked')`)[0].n, 4);
 });
 
@@ -169,8 +177,12 @@ test('only the explicitly configured owner person receives owner.panel.read and 
     const ceremony = (await post(ownerApp, '/api/staff/auth/passkeys/login/options', {}, { origin: STAFF_ORIGIN })).json();
     const login = await post(ownerApp, '/api/staff/auth/passkeys/login/verify', { challengeId: ceremony.challengeId, response: device.assert(ceremony.options.challenge) }, { origin: STAFF_ORIGIN });
     assert.equal(login.statusCode, 200, login.body);
-    const capabilities = await ownerApp.inject({ method: 'GET', url: '/api/session/capabilities', headers: { cookie: cookieOf(login) } });
-    assert.equal(capabilities.statusCode, 200); assert.equal(capabilities.json().ownerPanel, true);
+    const cookie = cookieOf(login);
+    const session = await ownerApp.inject({ method: 'GET', url: '/api/staff/auth/session', headers: { cookie } });
+    assert.equal(session.statusCode, 200); assert.equal(session.json().role, 'owner'); assert.equal(session.json().owner, true);
+    const capabilities = await ownerApp.inject({ method: 'GET', url: '/api/session/capabilities', headers: { cookie } });
+    assert.equal(capabilities.statusCode, 200); assert.equal(capabilities.json().ownerPanel, true); assert.equal(capabilities.json().staff, false);
+    assert.equal((await ownerApp.inject({ method: 'GET', url: '/api/staff/capabilities', headers: { cookie } })).statusCode, 403, 'owner identity does not inherit admin staff capabilities');
     assert.equal((await sql`SELECT count(*)::int AS n FROM platform_person_staff WHERE person_id=${ownerPersonId}`)[0].n, 0);
   } finally { await ownerApp.close(); }
 });

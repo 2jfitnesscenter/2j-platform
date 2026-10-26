@@ -2,7 +2,7 @@
 
 ## Estado
 
-Implementación en rama aislada `codex/PLATFORM-STAFF-LOGIN-IMPLEMENTATION`, basada en `origin/main` (`5e1d6b26079228aa13c5f32e37cd75199e7c1a7b`). Aún no se ha publicado ni fusionado.
+Implementación en la rama aislada y PR Draft #125, basada en `origin/main` (`5e1d6b26079228aa13c5f32e37cd75199e7c1a7b`). El PR sigue abierto y sin fusionar.
 
 Diseño aprobado por Juanjo el 26-10-2026. El cambio añade login separado para Admin Web y Staff App mediante passkeys WebAuthn con verificación de usuario obligatoria. La bandera `PLATFORM_STAFF_AUTH_ENABLED` permanece apagada por defecto y el servidor rechaza habilitarla fuera de `development`/`test`.
 
@@ -10,9 +10,11 @@ Diseño aprobado por Juanjo el 26-10-2026. El cambio añade login separado para 
 
 - La persona se resuelve en servidor desde una credencial passkey y su sujeto opaco Platform; no se busca ni empareja por correo o teléfono.
 - El personal debe tener una faceta activa y un vínculo consistente con su sujeto. El rol se lee del registro activo de personal; no lo elige el navegador.
-- El propietario se reconoce únicamente por el `PLATFORM_OWNER_PERSON_ID` configurado en servidor. Recibe `owner.panel.read` explícitamente y no por tener rol `admin`; su identidad puede carecer de faceta de personal.
+- El propietario se reconoce únicamente por el `PLATFORM_OWNER_PERSON_ID` configurado en servidor. Su contexto usa el rol interno `owner`, sin permisos heredados; solo recibe `owner.panel.read` explícitamente. No se expone como perfil asignable al personal y su identidad puede carecer de faceta de personal.
+- La identidad `owner` no hereda el comodín de `admin`: la prueba API confirma que no puede leer `/api/staff/capabilities`, y la matriz de permisos niega `identity.people.manage`, `staff.read`, `settings.manage` y `billing.cash.manage`.
 - El alta requiere un actor previamente autorizado con `identity.people.manage`, una persona Platform conocida y una credencial de enrolamiento de un solo uso. El enrolamiento no es autorregistro.
 - Las sesiones usan tokens aleatorios, solo su hash se persiste, cookie host-only `HttpOnly; SameSite=Lax`, vencimiento de 8 horas y revocación al invalidar passkeys.
+- Revocar las passkeys invalida en la misma transacción las sesiones y los enrolamientos pendientes de Platform Staff; cada enrolamiento invalidado deja auditoría `passkey.enrollment_revoked`. El endpoint de opciones rechaza después el token pendiente con `401 enrollment_invalid`.
 
 ## Datos y migración
 
@@ -30,14 +32,16 @@ Admin Web y Staff App muestran el login si el servidor devuelve 401. Todas las l
 - Antes de producción siguen pendientes: proveedor/flujo de identidad aprobado, recuperación y alta de passkeys adicional, política de MFA/passkeys, límites distribuidos y abuso, retención/limpieza, proxy HTTPS/cookies, revocación operativa, aceptación de seguridad y despliegue controlado.
 - No hay cambios en Home, Búnker/Training, DNS, infraestructura de producción ni secretos.
 
-## Verificación
+## Verificación previa al re-review de los P1
 
-- Suite completa sobre una base PostgreSQL sintética recién creada: **821/821** (API 367, Admin Web 323, Client App 45, Staff App 7, design tokens 6, domain 34, permissions 10, UI 18, auth 2, audit 3 y deploy-kit 6). Sin fallos ni pruebas omitidas.
-- API passkey focalizada: **9/9**; cubre enrolamiento, login, aislamiento de roles, propietario, replay, origen/RP y revocación.
-- `pnpm typecheck`: PASS (tareas Turbo 11/11; incluye builds previos de domain y permissions).
-- `pnpm build --force`: PASS (9/9 tareas ejecutadas).
-- `pnpm --filter @2j/api db:migrate` en PostgreSQL desechable: **51/51 migraciones verificadas**, segunda ejecución PASS, tablas de sesión/auditoría presentes.
+- Regresión de enrolamiento/revocación y propietario en `platform-passkeys.test.mjs`: **9/9** en PostgreSQL sintético; incluye rechazo del token pendiente, persistencia de invalidación y auditoría, rol `owner` y denegación de capacidades staff.
+- Suite API completa: **367/367**, sin fallos ni pruebas omitidas.
+- `pnpm --filter @2j/permissions test`: **11/11**.
+- `pnpm typecheck`: PASS (Turbo 11/11).
+- `pnpm build --force`: PASS (9/9 tareas).
+- Las pruebas API verificaron las migraciones en una base PostgreSQL desechable; no se tocó ninguna base real.
 - `git diff --check`: PASS.
-- Auditoría en el mismo umbral que CI (`pnpm audit --audit-level high`): PASS; 10 hallazgos existentes de severidad baja/moderada, cero altos. La ejecución más estricta `pnpm audit --prod` enumera esos mismos 10 hallazgos. No se modificaron dependencias.
+- No se repitió la suite completa de todos los paquetes ni la auditoría de dependencias en este delta acotado.
+- CI del SHA actualizado y re-review independiente de Work Búnker: **pendientes**.
 - Build de Admin mantiene avisos no bloqueantes existentes de tamaño de bundle y directivas `use client` de `lucide-react`.
-- Pendiente: CI de GitHub y revisión independiente sobre el SHA que se publique.
+- Pendiente antes de merge: CI verde en el nuevo SHA y re-review independiente PASS de Work Búnker sobre los dos P1. PR #125 sigue sin fusionar. No desplegar ni ejecutar migraciones en bases reales.

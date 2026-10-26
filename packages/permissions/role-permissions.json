@@ -139,7 +139,8 @@
       "billing.read-basic",
       "billing.read-tax",
       "billing.export"
-    ]
+    ],
+    "owner": []
   },
   "unresolved": [
     "Official fiscal-document issuance remains blocked behind a legal/fiscal gate; accountant has read/export access only",
