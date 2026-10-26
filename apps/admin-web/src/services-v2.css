@@ -1,0 +1,109 @@
+/* Espacios y servicios + Planes, Design System V2 (PILOT-04). Lives under <main data-2j-design="v2">.
+   Cards, buttons, chips, search, segmented control and the shared modal come from @2j/ui; the few legacy
+   class names that remain (catalog grid, panel headings, state panels, rights list) are restyled here. */
+
+.services-v2 { width: 100%; max-width: var(--2j-layout-content-max); margin: 0 auto; padding: var(--2j-space-8) var(--2j-space-8) var(--2j-space-12); display: grid; align-content: start; gap: var(--2j-space-4); color: var(--2j-color-text-primary); }
+.services-v2 > .ui-page-header { margin: 0; }
+@media (max-width: 1279.98px) { .services-v2 { padding: var(--2j-space-6) var(--2j-space-6) var(--2j-space-10); } }
+@media (max-width: 767.98px) { .services-v2 { padding: var(--2j-space-5) var(--2j-space-4) var(--2j-space-8); } .services-v2 .ui-page-actions { width: 100%; } .services-v2 .ui-page-actions > .ui-button { flex: 1 1 auto; } }
+.services-v2 > .ui-segmented { justify-self: start; max-width: 100%; overflow-x: auto; }
+.services-notice { margin: 0; padding: var(--2j-space-3) var(--2j-space-4); border-radius: var(--2j-radius-md); background: var(--2j-color-success-soft); color: var(--2j-color-success-ink); font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-medium); }
+
+/* ---------- Master / detail ---------- */
+.services-v2 .catalog { display: grid; grid-template-columns: minmax(16rem, 0.7fr) minmax(0, 1.7fr); gap: var(--2j-space-4); align-items: start; }
+@media (max-width: 1023.98px) { .services-v2 .catalog { grid-template-columns: minmax(0, 1fr); } }
+.services-v2 .panel-heading, .services-v2 .detail-heading { min-height: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--2j-space-3); padding: var(--2j-space-5) var(--2j-space-5) var(--2j-space-3); }
+.services-v2 .detail-panel.ui-card { padding: 0; }
+.services-v2 .detail-panel .detail-heading { padding-top: var(--2j-space-5); }
+.services-v2 .panel-heading h2, .services-v2 .detail-heading h2 { margin: 0; font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-semibold); letter-spacing: -0.01em; line-height: 1.45; }
+.services-v2 .panel-heading p, .services-v2 .detail-heading p { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); line-height: 1.5; }
+.services-v2 .detail-heading .eyebrow, .services-v2 .gym-area-heading .eyebrow { margin: 0 0 var(--2j-space-1); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); font-weight: var(--2j-type-weight-medium); letter-spacing: 0; text-transform: none; }
+.services-v2 .count { padding: 2px var(--2j-space-3); border-radius: var(--2j-radius-pill); background: var(--2j-color-neutral-soft); color: var(--2j-color-neutral-ink); font-size: var(--2j-type-size-xs); font-weight: var(--2j-type-weight-medium); white-space: nowrap; }
+.services-v2 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--2j-space-3); padding: 0 var(--2j-space-5) var(--2j-space-3); }
+.services-v2 .toolbar .ui-search { flex: 1 1 12rem; }
+.services-v2 .filter-label { display: flex; align-items: center; gap: var(--2j-space-2); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.services-v2 .filter-label select { min-height: var(--2j-control-md); padding: 0 var(--2j-space-8) 0 var(--2j-space-3); border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font: inherit; font-size: var(--2j-type-size-sm); }
+.services-v2 .filter-label select:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+@media (max-width: 767.98px) { .services-v2 .panel-heading, .services-v2 .detail-heading { padding-inline: var(--2j-space-4); } .services-v2 .toolbar { padding-inline: var(--2j-space-4); } .services-v2 .detail-heading { flex-direction: column; } }
+
+/* ---------- Service list ---------- */
+.service-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--2j-color-border); }
+.service-list > li + li { border-top: 1px solid var(--2j-color-border); }
+.service-row { width: 100%; min-height: 4rem; display: flex; align-items: center; gap: var(--2j-space-3); padding: var(--2j-space-3) var(--2j-space-5); border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.service-row:hover { background: var(--2j-color-surface-subtle); }
+.service-row.selected { background: var(--2j-color-brand-soft); box-shadow: inset 3px 0 0 var(--2j-color-brand); }
+.service-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: -2px; }
+.service-row .service-mark { width: 2.25rem; height: 2.25rem; flex: 0 0 auto; display: grid; place-items: center; border: 0; border-radius: var(--2j-radius-md); background: var(--2j-color-surface-subtle); color: var(--2j-color-text-secondary); }
+.service-row.selected .service-mark { background: var(--2j-color-surface); color: var(--2j-color-brand-ink); }
+.service-row-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.service-row-copy strong { overflow: hidden; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.service-row-copy small { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.service-warn { color: var(--2j-color-warning-ink); font-weight: var(--2j-type-weight-semibold); }
+.service-row > svg:last-child { flex: 0 0 auto; color: var(--2j-color-text-secondary); }
+@media (max-width: 767.98px) { .service-row { padding-inline: var(--2j-space-4); } }
+
+/* ---------- Detail, areas, states ---------- */
+.services-v2 .gym-service-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--2j-space-3); margin: var(--2j-space-4) var(--2j-space-5); }
+.services-v2 .gym-service-facts > div { display: grid; gap: var(--2j-space-1); padding: var(--2j-space-3) var(--2j-space-4); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); }
+.services-v2 .gym-service-facts dt { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.services-v2 .gym-service-facts dd { margin: 0; }
+.services-v2 .field-note, .services-v2 .form-note { margin: 0 var(--2j-space-5) var(--2j-space-5); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.services-v2 .gym-section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--2j-space-3); }
+.services-v2 .gym-section-heading h2 { margin: 0; font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-semibold); }
+.services-v2 .gym-section-heading p { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.services-v2 .gym-area-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: var(--2j-space-4); }
+.services-v2 .gym-area-card { padding: var(--2j-space-5); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-lg); background: var(--2j-color-surface); }
+.services-v2 .gym-area-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--2j-space-3); padding-bottom: var(--2j-space-3); border-bottom: 1px solid var(--2j-color-border); }
+.services-v2 .gym-area-heading h3 { margin: 0; font-size: var(--2j-type-size-md); font-weight: var(--2j-type-weight-semibold); overflow-wrap: anywhere; }
+.services-v2 .gym-area-services { padding-top: var(--2j-space-3); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.services-v2 .gym-area-services strong { color: var(--2j-color-text-primary); font-size: var(--2j-type-size-xs); }
+.services-v2 .gym-area-services ul { display: grid; gap: var(--2j-space-2); margin: var(--2j-space-3) 0 0; padding: 0; list-style: none; }
+.services-v2 .gym-area-services li { display: flex; align-items: center; justify-content: space-between; gap: var(--2j-space-3); }
+.services-v2 .state-panel, .services-v2 .detail-state { min-height: 14rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--2j-space-2); padding: var(--2j-space-8) var(--2j-space-5); border-top: 1px solid var(--2j-color-border); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); text-align: center; }
+.services-v2 .gym-areas .state-panel { border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-lg); background: var(--2j-color-surface); }
+.services-v2 .state-panel strong, .services-v2 .detail-state strong { color: var(--2j-color-text-primary); font-size: var(--2j-type-size-md); }
+.services-v2 .state-icon { width: 3rem; height: 3rem; display: grid; place-items: center; border-radius: var(--2j-radius-pill); background: var(--2j-color-surface-subtle); color: var(--2j-color-text-secondary); }
+.services-v2 .error-panel strong, .services-v2 .detail-error strong { color: var(--2j-color-danger-ink); }
+
+/* ---------- Plan cards ---------- */
+.plan-content { padding: 0 var(--2j-space-5) var(--2j-space-5); }
+.plan-cards { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--2j-space-4); }
+.plan-card { display: grid; gap: var(--2j-space-3); }
+.plan-card-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--2j-space-3); }
+.plan-card-head h3 { margin: 0; font-size: var(--2j-type-size-md); font-weight: var(--2j-type-weight-semibold); }
+.plan-card-head p { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.plan-card-side { display: flex; align-items: center; gap: var(--2j-space-3); }
+.plan-price { font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-bold); font-variant-numeric: tabular-nums; }
+.plan-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--2j-space-4); margin: 0; }
+.plan-facts > div { min-width: 0; display: grid; gap: 2px; }
+.plan-facts dt { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.plan-facts dd { margin: 0; font-size: var(--2j-type-size-sm); overflow-wrap: anywhere; }
+.plan-row-actions { display: flex; flex-wrap: wrap; gap: var(--2j-space-2); padding-top: var(--2j-space-3); border-top: 1px solid var(--2j-color-border); }
+.plan-detail-expanded { display: grid; gap: var(--2j-space-3); padding-top: var(--2j-space-2); }
+.services-v2 .service-chip { display: inline-flex; align-items: center; gap: var(--2j-space-2); padding: var(--2j-space-1) var(--2j-space-3); border: 0; border-radius: var(--2j-radius-pill); background: var(--2j-color-surface-subtle); font-size: var(--2j-type-size-xs); }
+.services-v2 .service-chip span { color: var(--2j-color-text-secondary); }
+.services-v2 .rights-block { padding: var(--2j-space-3) 0 0; border-top: 1px solid var(--2j-color-border); }
+.services-v2 .rights-title { display: flex; align-items: center; gap: var(--2j-space-2); color: var(--2j-color-text-primary); font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-semibold); }
+.services-v2 .rights-block li { font-size: var(--2j-type-size-xs); }
+.services-v2 .rights-block li strong { font-size: var(--2j-type-size-sm); }
+.plan-legacy-note { margin: 0; padding: var(--2j-space-3); border-radius: var(--2j-radius-md); background: var(--2j-color-info-soft); color: var(--2j-color-info-ink); font-size: var(--2j-type-size-xs); line-height: 1.5; }
+.plan-detail-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--2j-space-3); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+@media (max-width: 767.98px) { .plan-content { padding-inline: var(--2j-space-4); } .plan-facts { grid-template-columns: minmax(0, 1fr); gap: var(--2j-space-3); } }
+
+/* ---------- Dialogs (shared modal; plan form keeps its own inner classes) ---------- */
+.ui-modal.plan-dialog { width: min(100%, 44rem); }
+.ui-modal > .eyebrow { margin: 0 0 var(--2j-space-1); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); font-weight: var(--2j-type-weight-medium); letter-spacing: 0; text-transform: none; }
+.ui-modal > h2 { margin: 0 var(--2j-space-10) var(--2j-space-1) 0; font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-semibold); letter-spacing: -0.01em; line-height: 1.45; }
+.ui-modal > p { margin: 0 0 var(--2j-space-4); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); line-height: 1.5; }
+.ui-modal fieldset { display: grid; gap: var(--2j-space-3); min-width: 0; margin: 0; padding: var(--2j-space-4); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); }
+.ui-modal legend { padding: 0 var(--2j-space-2); font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-semibold); }
+.ui-modal .field-note, .ui-modal .field-error, .ui-modal small { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.ui-modal .field-error { color: var(--2j-color-danger-ink); }
+
+/* Plan form: five blocks (datos, servicios, frecuencia / sesiones, accesos, vigencia) + natural-language summary */
+.ui-modal .plan-block > legend { font-size: var(--2j-type-size-xs); font-weight: var(--2j-type-weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; color: var(--2j-color-text-secondary); }
+.ui-modal .plan-notice { display: grid; gap: var(--2j-space-1); padding: var(--2j-space-3) var(--2j-space-4); border-radius: var(--2j-radius-md); background: var(--2j-color-warning-soft); color: var(--2j-color-warning-ink); font-size: var(--2j-type-size-sm); }
+.ui-modal .plan-notice strong { font-weight: var(--2j-type-weight-semibold); }
+.ui-modal .plan-legacy-readout { display: grid; gap: var(--2j-space-2); }
+.ui-modal .plan-legacy-readout ul { margin: 0; padding-left: var(--2j-space-5); font-size: var(--2j-type-size-sm); }
+.ui-modal .plan-readout { margin: 0; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-medium); }
