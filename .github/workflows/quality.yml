@@ -1,10 +1,21 @@
 name: Quality and security
 
+# Minutes budget (see docs/runbooks/ci-minutes.md):
+# - CI runs once per change: on pull requests and on main. Pushes to agent/** branches do NOT run it a second time
+#   (a branch without a pull request is not tested until one is opened).
+# - A newer push to the same pull request cancels the run it supersedes.
+# - A change that only touches docs/, tasks/ or *.md skips install, tests, build and audit (the job still reports as passed;
+#   the secret scan always runs).
 on:
   push:
-    branches: [main, "agent/**"]
+    branches: [main]
   pull_request:
     branches: [main, "agent/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -32,20 +43,43 @@ jobs:
       DATABASE_URL: postgres://2j_local:2j_local_dev_only@127.0.0.1:5432/2j_platform
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          # Two commits: the merge commit and its first parent, enough to list what the change touches.
+          fetch-depth: 2
+      - name: Decide whether code changed
+        id: scope
+        run: |
+          code=true
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && git rev-parse --verify -q HEAD^1 >/dev/null; then
+            changed="$(git diff --name-only HEAD^1 HEAD)"
+            if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -v -E '^(docs/|tasks/)|\.md$' | grep -q .; then
+              code=false
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Code changed: $code"
+      - if: steps.scope.outputs.code == 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 10.34.6
           run_install: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - if: steps.scope.outputs.code == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @2j/api db:migrate
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
-      - run: pnpm audit --audit-level high
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm --filter @2j/api db:migrate
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm typecheck
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm test
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm build
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm audit --audit-level high
 
   secrets:
     name: secret scan
@@ -58,5 +92,12 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.2"
+          cache: false
+      # The scanner is compiled from source on every run unless its build is cached; the key pins the scanner commit and Go version.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: gitleaks-83d9cd68-go1.26.2-${{ runner.os }}
       - run: go run github.com/zricethezav/gitleaks/v8@83d9cd684c87d95d656c1458ef04895a7f1cbd8e git --redact --no-banner .
-
