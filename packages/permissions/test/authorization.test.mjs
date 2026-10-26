@@ -88,6 +88,15 @@ test('Training suspension is Admin-only until a Trainer receives an explicit gra
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'training.suspension.manage'), false);
 });
 
+test('owner cash panel permission is an explicit server-side grant and never comes from Admin wildcard', () => {
+  assert.equal(knownPermissions.has('owner.panel.read'), true);
+  for (const role of ['admin', 'trainer', 'reception-management', 'accountant']) {
+    assert.equal(can({ actorId: 'fixture', role }, 'owner.panel.read'), false, `${role} must not imply owner access`);
+  }
+  assert.equal(can({ actorId: 'fixture', role: 'admin', explicitPermissions: ['owner.panel.read'] }, 'owner.panel.read'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin', explicitPermissions: ['owner.panel.read'], deniedPermissions: ['owner.panel.read'] }, 'owner.panel.read'), false);
+});
+
 test('runtime role matrix matches its reviewable JSON contract', async () => {
   const contract = JSON.parse(await readFile(new URL('../role-permissions.json', import.meta.url), 'utf8'));
   assert.deepEqual(contract.roles, rolePermissions);

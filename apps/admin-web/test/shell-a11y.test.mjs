@@ -32,7 +32,7 @@ test('the skip link is the first focusable element, moves focus to the page cont
 });
 
 // Placeholders that prompt for text end with an ellipsis (Web Interface Guidelines). Values, numbers and states are exempt.
-const EXEMPT_VALUES = new Set(['0,00', 'Ej. 2 o -1', 'Sin precio definido', 'Sin caducidad']);
+const EXEMPT_VALUES = new Set(['0,00', 'Ej. 2 o -1', 'Sin precio definido', 'Sin caducidad', 'Ej. 908', 'Ej. 18', '0']);
 // Files owned by the stacked pilot PRs #50-#52; their placeholders are handled once those land (see docs/handoffs/RM-00-02.md).
 const DEFERRED_FILES = new Set(['calendar-page.tsx', 'services-page.tsx', 'store-page.tsx']);
 test('text placeholders end with an ellipsis', () => {
