@@ -33,8 +33,8 @@ function initialFetch({ plans = [], onPlanCreate = () => response(plan, 201), on
 }
 
 const adminCapabilities = { calendar: true, clients: true, communications: true, billing: true, staff: true, catalogPricingManage: true };
-function renderServices(capabilities = adminCapabilities) {
-  return render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities }, React.createElement(ServicesPage)));
+function renderServices(capabilities = adminCapabilities, section = 'services') {
+  return render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities }, React.createElement(ServicesPage, { section })));
 }
 
 async function openPlanDialog() {
@@ -53,17 +53,29 @@ test('renders the catalog with understandable product terms and noninteractive f
   assert.equal(screen.queryByText('session_pack'), null);
 });
 
+test('Espacios route opens a dedicated screen without service or plan tabs', async () => {
+  initialFetch();
+  renderServices(adminCapabilities, 'areas');
+  assert.ok(await screen.findByRole('heading', { level: 1, name: 'Espacios' }));
+  assert.ok(screen.getByRole('region', { name: 'Espacios del centro' }));
+  assert.equal(screen.queryByRole('button', { name: 'Servicios' }), null);
+  assert.equal(screen.queryByRole('button', { name: 'Planes' }), null);
+  assert.ok(screen.getByRole('button', { name: 'Nuevo espacio' }));
+});
+
+test('Servicios route remains separate and exposes service and plan views only', async () => {
+  initialFetch();
+  renderServices();
+  assert.ok(await screen.findByRole('heading', { name: 'Servicios' }));
+  assert.ok(screen.getByRole('button', { name: 'Planes' }));
+  assert.equal(screen.queryByRole('button', { name: 'Áreas' }), null);
+});
+
 test('Trainer receives operational areas and services without commercial configuration or prices', async () => {
   initialFetch({ plans: [plan] });
   const trainerCapabilities = { calendar: true, clients: true, communications: true, billing: false, staff: true, catalogPricingManage: false };
-  renderServices(trainerCapabilities);
-  await screen.findByRole('heading', { name: service.name });
-  assert.ok(screen.getByRole('button', { name: 'Servicios' }));
-  assert.ok(screen.getByRole('button', { name: 'Áreas' }));
-  assert.equal(screen.queryByRole('button', { name: 'Planes' }), null);
-  assert.equal(screen.queryByRole('button', { name: /nuevo servicio/i }), null);
-  fireEvent.click(screen.getByRole('button', { name: 'Áreas' }));
-  assert.ok(await screen.findByRole('heading', { name: 'Áreas' }));
+  renderServices(trainerCapabilities, 'areas');
+  assert.ok(await screen.findByRole('heading', { level: 1, name: 'Espacios' }));
   assert.ok(screen.getByText(area.name));
   assert.equal(screen.queryByRole('button', { name: 'Archivar' }), null);
   assert.equal(screen.queryByText(/Precio base/), null);
@@ -72,9 +84,8 @@ test('Trainer receives operational areas and services without commercial configu
 test('areas are data-driven for more than three areas and show associated service state', async () => {
   const spaces = ['North room', 'Studio 2', 'Yoga loft', 'Functional floor', 'Recovery room'].map((name, index) => ({ id: index === 0 ? area.id : `area-${index}`, name }));
   initialFetch({ onAreaList: () => response(spaces) });
-  renderServices();
-  await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Áreas' }));
+  renderServices(adminCapabilities, 'areas');
+  await screen.findByRole('heading', { level: 1, name: 'Espacios' });
   for (const space of spaces) assert.ok(await screen.findByRole('heading', { name: space.name }));
   assert.ok(screen.getAllByText('Sin servicios asociados.').length >= 4);
   assert.ok(screen.getByText('Entrenamiento funcional'));
@@ -84,13 +95,12 @@ test('areas are data-driven for more than three areas and show associated servic
 test('Admin creates an operational area through the existing API and receives inline success feedback', async () => {
   let posted;
   initialFetch({ onAreaCreate: (_url, options) => { posted = JSON.parse(options.body); return response({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', name: posted.name }, 201); } });
-  renderServices();
-  await screen.findByRole('heading', { name: service.name });
-  fireEvent.click(screen.getByRole('button', { name: 'Áreas' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Nueva área' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Nueva área' });
-  fireEvent.change(within(dialog).getByLabelText('Nombre del área'), { target: { value: '  Yoga loft  ' } });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Crear área' }));
+  renderServices(adminCapabilities, 'areas');
+  await screen.findByRole('heading', { level: 1, name: 'Espacios' });
+  fireEvent.click(screen.getByRole('button', { name: 'Nuevo espacio' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Nuevo espacio' });
+  fireEvent.change(within(dialog).getByLabelText('Nombre del espacio'), { target: { value: '  Yoga loft  ' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Crear espacio' }));
   assert.ok(await screen.findByRole('status'));
   assert.deepEqual(posted, { name: 'Yoga loft' });
 });

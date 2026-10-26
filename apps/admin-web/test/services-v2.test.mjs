@@ -27,7 +27,7 @@ const serve = ({ services = [svc(1)], plans = [plan()], onPost } = {}) => {
     throw new Error(`Unexpected ${path}`);
   };
 };
-const mount = (caps) => render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities: caps }, React.createElement(ServicesPage)));
+const mount = (caps, section = 'services') => render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities: caps }, React.createElement(ServicesPage, { section })));
 const admin = { calendar: true, clients: true, communications: true, billing: true, staff: true, catalogPricingManage: true };
 const trainer = { calendar: true, clients: true, communications: true, billing: false, staff: true, catalogPricingManage: false };
 
@@ -101,15 +101,17 @@ test('a draft plan can be activated once; primary action only on drafts', async 
   await waitFor(() => assert.ok(posts.some((path) => /plans\/plan-1\/activate$/.test(path))));
 });
 
-test('Trainer without commercial permission sees services and areas but no plans tab and no create actions', async () => {
+test('Trainer sees separate service and spaces screens without commercial controls', async () => {
   serve();
   mount(trainer);
   await screen.findByRole('list', { name: 'Servicios' });
   assert.ok(screen.queryByRole('button', { name: 'Planes' }) === null);
   assert.ok(screen.queryByRole('button', { name: 'Nuevo servicio' }) === null);
-  fireEvent.click(screen.getByRole('button', { name: 'Áreas' }));
-  assert.ok(screen.queryByRole('button', { name: 'Nueva área' }) === null);
   assert.ok(screen.queryByText('Sin planes vinculados') === null, 'commercial hints stay hidden');
+  cleanup(); serve(); mount(trainer, 'areas');
+  await screen.findByRole('heading', { level: 1, name: 'Espacios' });
+  assert.ok(screen.queryByRole('button', { name: 'Servicios' }) === null);
+  assert.ok(screen.queryByRole('button', { name: 'Nuevo espacio' }) === null);
 });
 
 test('Admin: one primary action per view and the service dialog stays short (name, area, state)', async () => {
