@@ -1,6 +1,6 @@
 # Propuesta de decisión: «Mi gimnasio» (MyGym)
 
-Estado: **el propietario ha elegido la opción A (panel de resultados de solo lectura) el 25 oct 2026.** Respuestas recibidas: pregunta 2 (la diferencia de caja la ve solo el propietario) y pregunta 3 («añadir todo lo estándar en apps de gestión de gimnasios», recogido en §2). **Fase 2 aceptada por el propietario con los valores por defecto propuestos** (umbrales de ocupación baja y stock bajo, semanas sin asistencia y definición de baja, tal como están en §2.3–§2.4 y §4). Pendiente: asignación de número de decisión, revisión de Work Platform (la aclaración de la sección 7 ya está resuelta). **No se implementa nada hasta cerrar eso.** Solo documento: sin código ni migraciones.
+Estado: **la opción A (panel de resultados de solo lectura) está aprobada en A36.** A38 reserva los importes y diferencias de caja a la identidad del propietario. A51 establece las cuatro pestañas (Panel, Datos del negocio, Novedades y Consentimientos). **Fase 2 está aceptada con los valores por defecto propuestos** (umbrales de ocupación baja y stock bajo, semanas sin asistencia y definición de baja). Revisión de Work Platform pendiente. Solo documento: sin código ni migraciones.
 Origen: pantalla `MyGym` del prototipo Base44 (`2j-fitness-admin`, commit `73c58b5`). Referencia: `docs/integration/BASE44-PROTOTYPE-MAPPING.md` (#95).
 
 ## 1. Aviso importante: lo que el prototipo llama «Mi gimnasio» no es un panel de resultados
@@ -13,7 +13,7 @@ Una pantalla de entrada para el propietario que responde a «¿cómo va el centr
 
 ### 2.1 Reglas comunes
 
-- **Permiso único: `owner.panel.read`.** Concedido solo al perfil de administración (que ya tiene `*`). Ningún otro perfil lo recibe, y el endpoint no depende de otros permisos de lectura: quien lo tiene ve el panel completo. Consecuencia a tener presente: si hubiera varias cuentas con perfil de administración, todas ven el panel (incluida la diferencia de caja). Nunca debe concederse a entrenadores, recepción o contabilidad.
+- **Permiso único: `owner.panel.read`.** Se concede únicamente a la identidad autenticada configurada del propietario; nunca por el rol genérico `admin` ni por el comodín `*`. La resolución usa una coincidencia exacta de actor de confianza y el valor no procede de la petición. El endpoint no depende de otros permisos de lectura: quien recibe este permiso ve el panel completo. Nunca se concede a encargados, entrenadores, recepción o contabilidad.
 - **Solo agregados.** Cada tarjeta muestra contadores e importes. Las listas (máximo 10 filas) muestran nombre y motivo, nunca teléfono, correo, DNI ni dirección, y enlazan a la ficha, que aplica sus propios permisos.
 - **Sin datos de salud, notas internas ni mensajes.** Ningún indicador usa `health`, evaluaciones, mediciones, notas ni cuerpo de mensajes.
 - **Importes y fechas** en euros y hora de Canarias; los importes cobrados, netos de devoluciones.
@@ -83,7 +83,7 @@ Salud, mediciones, evaluaciones, notas internas, cuerpo de mensajes, documentos 
 
 1. Confirmar que acepta el reparto en fases (§2.6) y que la Fase 1 sale primero.
 2. Definir para la fase 2: qué cuenta como «baja», cuántas semanas sin asistencia marcan riesgo (2 o 3) y los umbrales de ocupación baja y stock bajo (o aceptar los valores por defecto propuestos).
-3. Confirmar que, mientras haya más de una cuenta de administración, todas pueden ver la diferencia de caja (o pedir un perfil «propietario» separado).
+3. Cerrado por A38: solo la identidad del propietario puede ver importes/diferencias de caja; ni otras cuentas de administración ni el encargado los reciben.
 4. Logotipos y colores del prototipo: ya confirmado que pueden reutilizarse; se aplicarán a través del sistema de diseño de Platform, no copiando el CSS.
 
 ## 5. Opción B (descartada por ahora): centro de ajustes
@@ -92,11 +92,11 @@ Agrupar datos del negocio, novedades, consentimientos, día de pago y avisos en 
 
 ## 6. Siguiente paso
 
-Respuestas a §4 → número de decisión en el registro → revisión de Work Platform → implementación de la Fase 1 en un PR aparte, pequeño y con tests. Mientras tanto: nada que implementar.
+Las decisiones de producto citadas están cerradas (A36, A38, A51); sigue la revisión de Work Platform. La implementación de la Fase 1 va en un PR aparte, pequeño y con tests.
 
 ## 7. Aclaración resuelta: la lista de paridad visual
 
 **Decidido por el propietario:** `/mi-gimnasio` tendrá **cuatro pestañas**: Panel (opción A) primero y después Datos del negocio, Novedades y Consentimientos.
 
 
-La lista del propietario (`PARIDAD-VISUAL-BASE44.md`, A46–A50) define `/mi-gimnasio` con las tres pestañas del prototipo (Datos del negocio / Novedades / Consentimientos) y remite a este documento «opción A». Son dos cosas distintas (ver §1 y §5). Propuesta aceptada: `/mi-gimnasio` tiene **cuatro pestañas**, la primera **«Panel»** (la opción A de este documento, solo con `owner.panel.read`) y después las tres del prototipo. Las tres pestañas de ajustes reutilizan lo que ya existe en Platform (novedades, ajustes) y no incluyen consentimientos de salud ni datos fiscales hasta cerrar D33 y la validación fiscal.
+La lista del propietario (`PARIDAD-VISUAL-BASE44.md`, A51) define `/mi-gimnasio` con **cuatro pestañas**: Panel (opción A) primero, después Datos del negocio, Novedades y Consentimientos. A46 corresponde a Promociones; A47 a gastos/retiradas; A48 a perfiles; A49 al justificante opcional; y A50 al límite opcional. La pestaña Panel usa `owner.panel.read` solo para la identidad del propietario. Las tres pestañas de ajustes reutilizan lo que ya existe en Platform (novedades, ajustes) y no incluyen consentimientos de salud ni datos fiscales hasta cerrar D33 y la validación fiscal.
