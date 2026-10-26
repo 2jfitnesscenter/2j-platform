@@ -187,6 +187,51 @@ test('only the explicitly configured owner person receives owner.panel.read and 
   } finally { await ownerApp.close(); }
 });
 
+test('passkey revocation serializes with an in-flight registration and revokes its newly inserted credential', async () => {
+  actor = { actorId: 'qa-admin', role: 'admin' };
+  const personId = await createPerson();
+  const staff = await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,status,base_role,auth_actor_id,created_by) VALUES ('Race','Trainer','Race Trainer','active','trainer',NULL,'staff-auth-test') RETURNING id`;
+  await sql`INSERT INTO platform_person_staff(person_id,professional_id,linked_by) VALUES (${personId},${staff[0].id},'staff-auth-test')`;
+  const issued = await post(staffApp, `/api/platform/v1/persons/${personId}/staff-passkey-enrollments`, {}, { origin: ORIGIN });
+  assert.equal(issued.statusCode, 201, issued.body);
+  const enrollmentToken = issued.json().enrollmentToken;
+  const [enrollment] = await sql`SELECT id,auth_subject_link_id FROM platform_staff_passkey_enrollments WHERE token_hash=${createHash('sha256').update(enrollmentToken).digest('hex')}`;
+
+  let signalRegistrationReady;
+  const registrationReady = new Promise(resolve => { signalRegistrationReady = resolve; });
+  let releaseRegistration;
+  const registrationRelease = new Promise(resolve => { releaseRegistration = resolve; });
+  const credentialId = b64(randomBytes(32));
+  const registration = sql.begin(async tx => {
+    const claimed = await tx`UPDATE platform_staff_passkey_enrollments SET consumed_at=now() WHERE id=${enrollment.id} AND consumed_at IS NULL RETURNING id`;
+    assert.equal(claimed.length, 1);
+    await tx`INSERT INTO platform_passkeys(person_id,auth_subject_link_id,credential_id,public_key,rp_id) VALUES (${personId},${enrollment.auth_subject_link_id},${credentialId},${Buffer.alloc(32, 7)},${RP_ID})`;
+    signalRegistrationReady();
+    await registrationRelease;
+  });
+  await registrationReady;
+
+  let revokePromise;
+  try {
+    revokePromise = post(staffApp, `/api/platform/v1/persons/${personId}/passkeys/revoke`, { reason: 'concurrent registration test' }, { origin: ORIGIN });
+    let revokeWaitingOnEnrollment = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const [waiting] = await sql`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE '%platform_staff_passkey_enrollments%') AS waiting`;
+      if (waiting.waiting) { revokeWaitingOnEnrollment = true; break; }
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(revokeWaitingOnEnrollment, true, 'revocation must serialize behind the registration transaction holding the enrollment row');
+  } finally {
+    releaseRegistration();
+  }
+  await registration;
+  const revoked = await revokePromise;
+  assert.equal(revoked.statusCode, 200, revoked.body);
+  assert.equal(revoked.json().revokedPasskeys, 1);
+  const [key] = await sql`SELECT status FROM platform_passkeys WHERE credential_id=${credentialId}`;
+  assert.equal(key.status, 'revoked', 'the credential committed by the in-flight registration is revoked before revocation completes');
+});
+
 test('enrollment is admin-issued, single-use, hash-only; registration verifies a real WebAuthn attestation bound to rpId and origin', async () => {
   const personId = await createPerson();
   actor = { actorId: 'qa-trainer', role: 'trainer' };

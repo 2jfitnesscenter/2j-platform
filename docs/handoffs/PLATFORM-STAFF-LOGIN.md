@@ -14,7 +14,7 @@ Diseño aprobado por Juanjo el 26-10-2026. El cambio añade login separado para 
 - La identidad `owner` no hereda el comodín de `admin`: la prueba API confirma que no puede leer `/api/staff/capabilities`, y la matriz de permisos niega `identity.people.manage`, `staff.read`, `settings.manage` y `billing.cash.manage`.
 - El alta requiere un actor previamente autorizado con `identity.people.manage`, una persona Platform conocida y una credencial de enrolamiento de un solo uso. El enrolamiento no es autorregistro.
 - Las sesiones usan tokens aleatorios, solo su hash se persiste, cookie host-only `HttpOnly; SameSite=Lax`, vencimiento de 8 horas y revocación al invalidar passkeys.
-- Revocar las passkeys invalida en la misma transacción las sesiones y los enrolamientos pendientes de Platform Staff; cada enrolamiento invalidado deja auditoría `passkey.enrollment_revoked`. El endpoint de opciones rechaza después el token pendiente con `401 enrollment_invalid`.
+- Revocar las passkeys invalida en la misma transacción las sesiones y los enrolamientos pendientes de Platform Staff; cada enrolamiento invalidado deja auditoría `passkey.enrollment_revoked`. El endpoint de opciones rechaza después el token pendiente con `401 enrollment_invalid`. La operación consume/bloquea primero los enrolamientos y luego revoca las credenciales, serializándose también con una alta de passkey que ya hubiera reclamado su token.
 
 ## Datos y migración
 
@@ -34,14 +34,14 @@ Admin Web y Staff App muestran el login si el servidor devuelve 401. Todas las l
 
 ## Verificación previa al re-review de los P1
 
-- Regresión de enrolamiento/revocación y propietario en `platform-passkeys.test.mjs`: **9/9** en PostgreSQL sintético; incluye rechazo del token pendiente, persistencia de invalidación y auditoría, rol `owner` y denegación de capacidades staff.
-- Suite API completa: **367/367**, sin fallos ni pruebas omitidas.
+- Regresión de enrolamiento/revocación y propietario en `platform-passkeys.test.mjs`: **10/10** en PostgreSQL sintético; incluye rechazo del token pendiente, persistencia de invalidación y auditoría, rol `owner`, denegación de capacidades staff y revocación serializada contra una inscripción concurrente.
+- Suite API completa en el delta final: **368/368**, sin fallos ni pruebas omitidas.
 - `pnpm --filter @2j/permissions test`: **11/11**.
 - `pnpm typecheck`: PASS (Turbo 11/11).
 - `pnpm build --force`: PASS (9/9 tareas).
 - Las pruebas API verificaron las migraciones en una base PostgreSQL desechable; no se tocó ninguna base real.
 - `git diff --check`: PASS.
 - No se repitió la suite completa de todos los paquetes ni la auditoría de dependencias en este delta acotado.
-- CI del SHA actualizado y re-review independiente de Work Búnker: **pendientes**.
+- CI del SHA final tras publicar el cierre de carrera y re-review independiente de Work Búnker: **pendientes**.
 - Build de Admin mantiene avisos no bloqueantes existentes de tamaño de bundle y directivas `use client` de `lucide-react`.
-- Pendiente antes de merge: CI verde en el nuevo SHA y re-review independiente PASS de Work Búnker sobre los dos P1. PR #125 sigue sin fusionar. No desplegar ni ejecutar migraciones en bases reales.
+- Pendiente antes de merge: publicar el cierre de la carrera, CI verde en el SHA final y re-review independiente PASS de Work Búnker sobre ambos P1 y la carrera. PR #125 sigue sin fusionar. No desplegar ni ejecutar migraciones en bases reales.
