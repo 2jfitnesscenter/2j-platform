@@ -472,9 +472,15 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       return result.row;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
-  app.get('/api/services', async (_request, reply) => {
+  app.get('/api/services', async (request, reply) => {
+    const includeArchived = (request.query as { includeArchived?: string }).includeArchived === 'true';
+    if (includeArchived) {
+      const context = await authorizationResolver(request);
+      if (!context) return reply.code(401).send({ error: 'authentication_required' });
+      if (!can(context, 'catalog.pricing.manage')) return reply.code(403).send({ error: 'permission_denied' });
+    }
     try {
-      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",s.cancellation_window_minutes AS "cancellationWindowMinutes",s.late_cancellation_policy AS "lateCancellationPolicy",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE s.status <> 'archived' GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
+      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",s.cancellation_window_minutes AS "cancellationWindowMinutes",s.late_cancellation_policy AS "lateCancellationPolicy",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE (${includeArchived} OR s.status <> 'archived') GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/services', async (request, reply) => {
@@ -518,13 +524,13 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.get('/api/services/:serviceId/plans', async (request, reply) => {
     const context = await authorizationResolver(request);
     if (!context) return reply.code(401).send({ error: 'authentication_required' });
-    if (!can(context, 'calendar.read')) return reply.code(403).send({ error: 'permission_denied' });
+    if (!can(context, 'calendar.read') && !can(context, 'catalog.pricing.manage')) return reply.code(403).send({ error: 'permission_denied' });
     const { serviceId } = request.params as { serviceId: string };
     if (!uuid.safeParse(serviceId).success) return reply.code(400).send({ error: 'invalid_service_id' });
     try {
       const [service] = await client`SELECT id,status FROM services WHERE id=${serviceId}`;
       if (!service) return reply.code(404).send({ error: 'service_not_found' });
-      if (service.status === 'archived') return reply.code(409).send({ error: 'service_archived' });
+      if (service.status === 'archived' && !can(context, 'catalog.pricing.manage')) return reply.code(409).send({ error: 'service_archived' });
       const plans = await listPlans(client, serviceId);
       if (can(context, 'catalog.pricing.manage')) return plans;
       return plans.map((plan) => {
@@ -695,7 +701,7 @@ function normalizePlanContract(plan: {termKind?:string|null|undefined;termMonths
 async function listPlans(client: SqlClient, serviceId: string) {
   const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",v.term_kind AS "termKind",v.term_months AS "termMonths",v.max_span_days AS "maxSpanDays",v.payment_rule AS "paymentRule",v.payment_block AS "paymentBlock" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
   return Promise.all(plans.map(async (plan) => {
-    const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
+  const services = await client`SELECT s.id,s.name,s.status,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
     const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",quantity_rule AS "quantityRule",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
     const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${plan.id} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
     return { ...plan, services, rights, modules };

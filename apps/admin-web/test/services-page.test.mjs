@@ -25,7 +25,7 @@ function initialFetch({ plans = [], onPlanCreate = () => response(plan, 201), on
     if (path.endsWith('/api/areas') && options.method === 'POST') return onAreaCreate(url, options);
     if (path.endsWith('/api/areas')) return onAreaList();
     if (path.endsWith('/api/services') && options.method === 'POST') return response(service, 201);
-    if (path.endsWith('/api/services')) return onServiceList();
+    if (path.split('?')[0].endsWith('/api/services')) return onServiceList();
     if (path.endsWith('/api/plans') && options.method === 'POST') return onPlanCreate(url, options);
     if (path.endsWith(`/api/services/${service.id}/plans`)) return response(plans);
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
