@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button, Card, EmptyState, Icon, PageHeader, StatusChip, Tabs, icons } from '@2j/ui';
 import { Modal } from './modal.js';
+import { clearDeepLink, readDeepLink } from './deep-link.js';
 import { VariantBuilder } from './store-variant-builder.js';
 import { PendingPhotos, PhotoManager, ProductGallery, photoUrl, uploadPhotos, type Media } from './store-photos.js';
 import { catalogPriceText } from './store-media.js';
@@ -23,7 +24,7 @@ export function StorePage(){
   const [productId,setProductId]=React.useState('');const [builder,setBuilder]=React.useState<BuilderState>(emptyBuilder());const draftProductId=React.useRef<string|null>(null);const creatingRef=React.useRef(false);const [saleProductId,setSaleProductId]=React.useState('');const [saleSize,setSaleSize]=React.useState('');const [saleFlavor,setSaleFlavor]=React.useState<string|null>(null);const [saleLabelVariant,setSaleLabelVariant]=React.useState('');
   const [stockVariant,setStockVariant]=React.useState('');const [movementType,setMovementType]=React.useState<'opening'|'restock'|'adjustment_in'|'adjustment_out'>('restock');const [movementQuantity,setMovementQuantity]=React.useState('');const [movementReason,setMovementReason]=React.useState('');
   const [clientQuery,setClientQuery]=React.useState('');const [clients,setClients]=React.useState<Client[]>([]);const [clientId,setClientId]=React.useState('');const [quantity,setQuantity]=React.useState('1');const [lines,setLines]=React.useState<Array<{variantId:string;quantity:number}>>([]);const [paymentState,setPaymentState]=React.useState<'paid'|'pending'>('paid');const [paymentMethod,setPaymentMethod]=React.useState<'cash'|'card'|'transfer'|'other'>('cash');const [busy,setBusy]=React.useState(false);
-  const [lineError,setLineError]=React.useState('');const [tab,setTab]=React.useState<'catalog'|'inventory'|'sales'>('catalog');const [modal,setModal]=React.useState<'product'|'variants'|'stock'|'sale'|'media'|'detail'|null>(null);const [mediaProductId,setMediaProductId]=React.useState('');const [pendingPhotos,setPendingPhotos]=React.useState<File[]>([]);
+  const [lineError,setLineError]=React.useState('');const [tab,setTab]=React.useState<'catalog'|'inventory'|'sales'>('catalog');const [modal,setModal]=React.useState<'product'|'variants'|'stock'|'sale'|'media'|'detail'|null>(()=>readDeepLink(['sale'] as const).sale==='1'?'sale':null);React.useEffect(()=>{clearDeepLink(['sale']);},[]);const [mediaProductId,setMediaProductId]=React.useState('');const [pendingPhotos,setPendingPhotos]=React.useState<File[]>([]);
   const saleIdempotency=React.useRef<{fingerprint:string;key:string}|null>(null);
   const load=React.useCallback(async()=>{setState('loading');setError('');try{const fresh=await request<StoreData>('/api/admin/store');setData({...fresh,products:fresh.products.map(product=>({...product,variants:sortVariants(product.variants)}))});setState('ready');}catch(cause){setError(labels[cause instanceof Error?cause.message:'']??'No se ha podido cargar la tienda.');setState('error');}},[]);
   React.useEffect(()=>{void load();},[load]);

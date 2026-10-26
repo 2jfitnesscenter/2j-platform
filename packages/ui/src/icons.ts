@@ -8,6 +8,7 @@ export {
   Archive,
   ArrowLeft,
   ArrowRight,
+  ArrowUpRight,
   BellRing,
   Briefcase,
   CalendarCheck,
