@@ -6,3 +6,5 @@ apps/client-app/dist-demo/
 .env.*
 !.env.example
 work/
+
+.local-object-storage/

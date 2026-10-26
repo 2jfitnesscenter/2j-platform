@@ -36,6 +36,8 @@ import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
+import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
+import { registerStoreMediaRoutes } from './store-media.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -173,8 +175,12 @@ export function parseTrustedProxies(value: unknown): string[] {
 
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
+  /** Exact trusted identity subject granted the owner-only panel capability. Never derived from request input or role. */
+  ownerActorId?: string | null;
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
+  /** Injectable clock for deterministic Member read-contract tests; defaults to the system clock. */
+  memberNowProvider?: () => Date;
   memberPilotAuthEnabled?: boolean;
   memberPilotBookingEnabled?: boolean;
   memberPilotCohortManagementEnabled?: boolean;
@@ -216,6 +222,8 @@ export type ServerOptions = {
   /** Development/test only: lets the signed Training client talk to a loopback http origin. */
   trainingServiceAllowInsecureLoopback?: boolean;
   logger?: FastifyServerOptions['logger'];
+  /** Where product photos are stored. Defaults to the local filesystem provider (development and pilot). */
+  objectStorage?: ObjectStorage;
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
@@ -247,7 +255,16 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   if (options.trainingServiceAllowInsecureLoopback && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Insecure loopback Training calls are restricted to development/test environments.');
   const { client } = createDatabase(databaseUrl);
   const trainingCapabilitiesKeys = options.trainingCapabilitiesKeys ?? parseInternalServiceKeys(process.env.PLATFORM_INTERNAL_SERVICE_KEYS);
-  const authorizationResolver = options.authorizationResolver ?? (async () => null);
+  const baseAuthorizationResolver = options.authorizationResolver ?? (async () => null);
+  if (options.ownerActorId != null && !/^[^\u0000-\u001f\u007f]{1,120}$/.test(options.ownerActorId.trim())) {
+    throw new Error('ownerActorId must be a trusted non-empty identity subject of at most 120 characters.');
+  }
+  const ownerActorId = options.ownerActorId?.trim() || null;
+  const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
+    const context = await baseAuthorizationResolver(request);
+    if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
+    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read'])] };
+  };
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
   const trainingSummaryAdapter = options.trainingSummaryEnabled === true && options.trainingServiceCallsEnabled === true
@@ -318,7 +335,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     return Boolean(row);
   };
   registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver, allowMemberBooking);
-  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter);
+  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter, options.memberNowProvider);
   registerMemberBookingCohortRoutes(app, client, authorizationResolver, options.memberPilotCohortManagementEnabled === true);
   const pushEnabled = options.pushEnabled === true;
   const vapid = { publicKey: options.pushVapidPublicKey ?? process.env.PUSH_VAPID_PUBLIC_KEY ?? '', privateKey: process.env.PUSH_VAPID_PRIVATE_KEY ?? '', subject: process.env.PUSH_VAPID_SUBJECT ?? '' };
@@ -337,6 +354,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  registerStoreMediaRoutes(app, client, authorizationResolver, options.objectStorage ?? defaultObjectStorage());
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
@@ -713,6 +731,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   if (localDemoClientId && !z.string().uuid().safeParse(localDemoClientId).success) throw new Error('LOCAL_DEMO_CLIENT_ID must be a client UUID.');
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
+    ownerActorId: process.env.PLATFORM_OWNER_ACTOR_ID ?? null,
     memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
     memberPilotBookingEnabled: process.env.PILOT_MEMBER_BOOKING_ENABLED === 'true',
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
