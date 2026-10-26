@@ -14,18 +14,21 @@
       "apps/client-app/src/client-app.tsx",
       "apps/client-app/src/styles.css",
       "apps/client-app/test/client-app.test.mjs",
+      "docs/evidence/2J-HOME-PAYMENT-STATE/profile-payment-demo.png",
       "docs/handoffs/2J-HOME-PAYMENT-STATE.md",
       "docs/handoffs/2J-HOME-PAYMENT-STATE.json"
     ],
     "serverRemainsAuthority": true,
     "homeCalculatesPaymentOrAccess": false,
     "writesAdded": false,
+    "syntheticFixtureClearlyLabeled": true,
     "runtimeStagingVerified": false
   },
   "validation": {
     "clientTests": "46/46",
     "typecheck": "pass",
     "build": "pass",
+    "demoBuild": "pass",
     "diffCheck": "pass"
   },
   "relatedWork": {

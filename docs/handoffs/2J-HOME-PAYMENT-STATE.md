@@ -11,9 +11,11 @@
 
 - `apps/client-app/src/client-app.tsx`: añade el tipo opcional `Assignment.payment` y presenta estado de pago, acceso, importe pendiente, vencimiento y bloqueo efectivo en «Tus cuotas».
 - Home solo formatea los valores recibidos de `GET /api/me/membership`; no calcula saldos, fechas límite, bloqueo ni derechos y no escribe datos.
+- El modo sintético muestra una cuota mensual ficticia para revisión visual, identificada como ejemplo y sin llamadas al API.
 - Los estados distinguen pendiente, parcial, impagado, pagado, anulado, exento y reembolsado; acceso activo, provisional, bloqueado, programado, pausado, finalizado o no disponible.
 - `apps/client-app/src/styles.css`: tarjetas compactas compatibles con el tema grafito/lima y contraste de bloqueo para tema oscuro y claro.
 - `apps/client-app/test/client-app.test.mjs`: cubre importe/vencimiento/bloqueo de Canarias y estado recibido de Platform.
+- `docs/evidence/2J-HOME-PAYMENT-STATE/profile-payment-demo.png`: captura real del PWA local en modo DEMO.
 
 ## Contrato usado
 
@@ -24,13 +26,13 @@
 - `pnpm --filter @2j/client-app test`: 46/46.
 - `pnpm --filter @2j/client-app typecheck`: correcto.
 - `pnpm --filter @2j/client-app build`: correcto.
+- `pnpm --filter @2j/client-app build:demo`: correcto; sin backend ni API.
 - `git diff --check`: correcto.
 - Verificado con respuestas sintéticas en pruebas; no se probó una sesión autenticada contra staging.
 
 ## Límites y siguientes pasos
 
-- Este cambio está solo en la rama local y aún no tiene commit publicado ni PR.
-- Mantener como Draft al publicarlo; no fusionar ni desplegar sin autorización.
+- Esta rama es local salvo que se publique mediante un Draft PR autorizado; no fusionar ni desplegar.
 - Los puntos 3–8 del gap check siguen aplazados hasta que el propietario pruebe staging.
 - Mediciones siguen bloqueadas a la espera del contrato de Platform.
 - No se cambió la identidad, la API, las reglas de negocio, pagos ni reservas.

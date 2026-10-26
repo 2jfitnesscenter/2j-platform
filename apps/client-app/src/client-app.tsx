@@ -102,7 +102,7 @@ function formatMemberPaymentDate(value: string | null, dateOnly = false) {
   if (Number.isNaN(parsed.getTime())) return null;
   return new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', dateStyle: 'medium', ...(dateOnly ? {} : { timeStyle: 'short' }) }).format(parsed);
 }
-function MembershipPaymentState({ payment }: { payment: MembershipPayment }) {
+function MembershipPaymentState({ payment, previewMode }: { payment: MembershipPayment; previewMode: boolean }) {
   const dueOn = formatMemberPaymentDate(payment.dueOn, true);
   const blockAt = formatMemberPaymentDate(payment.effectiveBlockAt);
   const blocked = payment.accessStatus === 'blocked_unpaid';
@@ -112,7 +112,7 @@ function MembershipPaymentState({ payment }: { payment: MembershipPayment }) {
     {pending && <p>Importe pendiente <strong>{formatMemberMoney(payment.pendingAmountCents)}</strong></p>}
     {dueOn && <p>Vencimiento <strong>{dueOn}</strong></p>}
     {blockAt && <p>{blocked ? 'Acceso bloqueado desde' : 'Si sigue pendiente, el acceso se bloqueará'} <strong>{blockAt} · hora de Canarias</strong></p>}
-    <small>Estado calculado por Platform.</small>
+    <small>{previewMode ? 'Ejemplo ficticio · no refleja una cuenta real.' : 'Estado calculado por Platform.'}</small>
   </div>;
 }
 const keyFor = (operation: string) => {
@@ -177,6 +177,9 @@ const makeHubPreview = (now = new Date()) => {
   const bookingDay = startsToday ? dateKey(now) : addCanaryDays(now, 1);
   const startsAt = previewDateTime(new Date(`${bookingDay}T12:00:00Z`), 17);
   const tomorrow = addCanaryDays(new Date(`${bookingDay}T12:00:00Z`), 1);
+  const nextPeriodStart = shiftMonthKey(`${dateKey(now).slice(0, 7)}-01`, 1);
+  const paymentDueOn = `${nextPeriodStart.slice(0, 7)}-10`;
+  const paymentBlockOn = shiftDateKey(paymentDueOn, 1);
   const ids = {
     client: 'd0700000-0000-4000-8000-000000000001', service: 'd0700000-0000-4000-8000-000000000801', strength: 'd0700000-0000-4000-8000-000000000802', pilates: 'd0700000-0000-4000-8000-000000000803',
     session: 'd0700000-0000-4000-8000-000000000201', reservation: 'd0700000-0000-4000-8000-000000000301',
@@ -191,7 +194,10 @@ const makeHubPreview = (now = new Date()) => {
   return {
     profile: { id: ids.client, firstName: 'María', lastName: 'González', email: 'maria.gonzalez@example.test', phone: null, status: 'active' } satisfies ClientProfile,
     services: [{ id: ids.service, name: 'Fuerza funcional' }, { id: ids.strength, name: 'Acondicionamiento' }, { id: ids.pilates, name: 'Pilates' }] satisfies MemberBookingService[],
-    membership: [{ id: ids.plan, planName: 'Bono piloto · 12 sesiones', kind: 'session_pack', status: 'active', startsOn: dateKey(now), endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', serviceId: ids.service, serviceName: 'Fuerza funcional', serviceStatus: 'active', quantity: 12, balance: 8 }], modules: [{ module: 'training', accessLevel: 'read' }] }] satisfies Assignment[],
+    membership: [
+      { id: ids.plan, planName: 'Bono piloto · 12 sesiones', kind: 'session_pack', status: 'active', startsOn: dateKey(now), endsOn: null, lastEvent: 'activated', rights: [{ rightType: 'sessions_quota', serviceId: ids.service, serviceName: 'Fuerza funcional', serviceStatus: 'active', quantity: 12, balance: 8 }], modules: [{ module: 'training', accessLevel: 'read' }] },
+      { id: 'd0840000-0000-4000-8000-000000000106', planName: 'Cuota mensual · ejemplo', kind: 'monthly', status: 'active', startsOn: dateKey(now), endsOn: null, lastEvent: 'activated', rights: [], modules: [], payment: { status: 'pending', accessStatus: 'provisional', amountCents: 4500, paidCents: 0, pendingAmountCents: 4500, dueOn: paymentDueOn, effectiveBlockAt: previewDateTime(new Date(`${paymentBlockOn}T12:00:00Z`), 0), timezone: 'Atlantic/Canary', payments: [] } },
+    ] satisfies Assignment[],
     reservations: [{ id: ids.reservation, status: 'reserved', sessionId: ids.session, startsAt, durationMinutes: 45, serviceName: 'Fuerza funcional', areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] satisfies Booking[],
     waitlist: [] as Booking[],
     sessions: [
@@ -874,8 +880,8 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
           {hasActiveMembership&&<section className="profile-section" aria-labelledby="profile-bookings-title"><div className="section-heading"><div><p className="eyebrow">TU ACTIVIDAD</p><h2 id="profile-bookings-title">Mis reservas</h2></div></div><button className="profile-link-card" type="button" onClick={() => setView('bookings')}><span><strong>Próximas e historial</strong><small>{upcomingAgenda.length ? `${upcomingAgenda.length} ${upcomingAgenda.length === 1 ? 'elemento próximo' : 'elementos próximos'}` : 'Consulta y gestiona tu actividad'}</small></span><span aria-hidden="true">→</span></button></section>}
 
           <section className="profile-section" aria-labelledby="profile-membership-title"><div className="section-heading"><div><p className="eyebrow">CUOTAS Y SALDO</p><h2 id="profile-membership-title">Tus cuotas</h2></div></div>
-          {activeMembership.length ? activeMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ' · Sin fecha de fin'}</span>{plan.rights.filter(right => right.rightType === 'sessions_quota').map((right,index) => <span key={`${right.rightType}-${index}`}>Saldo de sesiones: {right.balance ?? 0} disponibles</span>)}{plan.payment && <MembershipPaymentState payment={plan.payment}/>}</div><span className={`active-pill${plan.payment?.accessStatus === 'blocked_unpaid' ? ' payment-blocked-pill' : ''}`}>{plan.payment ? memberAccessStatusLabel(plan.payment.accessStatus) : 'Activa'}</span></article>) : <section className="empty-card profile-empty"><h3>No tienes ninguna cuota activa.</h3><p>Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.</p></section>}
-          {otherMembership.length > 0 && <><h3 className="profile-subheading">Otras cuotas</h3>{otherMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ''}</span>{plan.payment && <MembershipPaymentState payment={plan.payment}/>}</div><span className="active-pill muted-pill">{plan.payment ? memberAccessStatusLabel(plan.payment.accessStatus) : plan.status === 'paused' ? 'En pausa' : plan.status === 'scheduled' ? 'Programada' : plan.status === 'expired' ? 'Finalizada' : plan.status === 'cancelled' ? 'Cancelada' : 'Inactiva'}</span></article>)}</>}
+          {activeMembership.length ? activeMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ' · Sin fecha de fin'}</span>{plan.rights.filter(right => right.rightType === 'sessions_quota').map((right,index) => <span key={`${right.rightType}-${index}`}>Saldo de sesiones: {right.balance ?? 0} disponibles</span>)}{plan.payment && <MembershipPaymentState payment={plan.payment} previewMode={previewMode}/>}</div><span className={`active-pill${plan.payment?.accessStatus === 'blocked_unpaid' ? ' payment-blocked-pill' : ''}`}>{plan.payment ? memberAccessStatusLabel(plan.payment.accessStatus) : 'Activa'}</span></article>) : <section className="empty-card profile-empty"><h3>No tienes ninguna cuota activa.</h3><p>Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.</p></section>}
+          {otherMembership.length > 0 && <><h3 className="profile-subheading">Otras cuotas</h3>{otherMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ''}</span>{plan.payment && <MembershipPaymentState payment={plan.payment} previewMode={previewMode}/>}</div><span className="active-pill muted-pill">{plan.payment ? memberAccessStatusLabel(plan.payment.accessStatus) : plan.status === 'paused' ? 'En pausa' : plan.status === 'scheduled' ? 'Programada' : plan.status === 'expired' ? 'Finalizada' : plan.status === 'cancelled' ? 'Cancelada' : 'Inactiva'}</span></article>)}</>}
           </section>
 
           <section className="profile-section" aria-labelledby="profile-services-title"><div className="section-heading"><div><p className="eyebrow">MIS SERVICIOS</p><h2 id="profile-services-title">Servicios asociados</h2></div></div>
