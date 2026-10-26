@@ -35,7 +35,18 @@ type FormAssignment = { id: string; status: string; required: boolean; dueAt: st
 type FormField = { id: string; label: string; type: string; required: boolean; options?: string[] };
 type FormDetail = FormAssignment & { description: string; sensitivity: string; fields: FormField[] };
 type Consent = { consentId: string; versionId: string; title: string; body: string; version: number; required: boolean; accepted: boolean };
-type Assignment = { id: string; planName: string; kind: string; status: string; startsOn: string; endsOn: string | null; lastEvent: string; rights: Array<{ rightType: string; serviceId?: string | null; serviceName?: string | null; serviceStatus?: string | null; quantity: number | null; balance: number | null }>; modules?: Array<{ module: string; accessLevel: string; capabilities?: string[] }> };
+type MembershipPayment = {
+  status: 'void' | 'exempt' | 'refunded' | 'paid' | 'unpaid' | 'partially_paid' | 'pending';
+  accessStatus: 'ended' | 'paused' | 'scheduled' | 'blocked_unpaid' | 'provisional' | 'unavailable' | 'active';
+  amountCents: number | null;
+  paidCents: number;
+  pendingAmountCents: number;
+  dueOn: string | null;
+  effectiveBlockAt: string | null;
+  timezone: 'Atlantic/Canary';
+  payments: Array<{ amountCents: number; occurredAt: string }>;
+};
+type Assignment = { id: string; planName: string; kind: string; status: string; startsOn: string; endsOn: string | null; lastEvent: string; rights: Array<{ rightType: string; serviceId?: string | null; serviceName?: string | null; serviceStatus?: string | null; quantity: number | null; balance: number | null }>; modules?: Array<{ module: string; accessLevel: string; capabilities?: string[] }>; payment?: MembershipPayment | null };
 type MembershipResponse = { asOf: string; timezone: string; assignments: Assignment[]; active: Assignment[]; trainingCapabilities?: TrainingCapabilities | null };
 type ApiState = { profile: ClientProfile; membership: { assignments: Assignment[]; active: Assignment[] }; bookings: { reservations: Booking[]; waitlist: Booking[] }; sessions: ClientSession[] };
 type MemberStoreVariant = { id:string; label:string; size:string|null; flavor:string|null; priceCents:number; availability:'disponible'|'pocas_unidades'|'agotado' };
@@ -82,6 +93,28 @@ const labels: Record<string, string> = {
   internal_error: 'Ahora no podemos consultar tu espacio.', database_unavailable: 'Ahora no podemos conectar con el centro.', authentication_required: 'Inicia sesión para continuar.',
 };
 const rightLabel = (rightType: string) => rightType === 'sessions_quota' ? 'Sesiones' : rightType === 'service_access' ? 'Acceso a servicio' : rightType === 'quota' ? 'Cuota' : 'Derecho';
+const memberPaymentStatusLabel = (status: MembershipPayment['status']) => ({ void: 'Anulada', exempt: 'Exenta', refunded: 'Reembolsada', paid: 'Pagada', unpaid: 'Impagada', partially_paid: 'Pago parcial', pending: 'Pendiente de pago' })[status];
+const memberAccessStatusLabel = (status: MembershipPayment['accessStatus']) => ({ ended: 'Periodo finalizado', paused: 'Cuota en pausa', scheduled: 'Pendiente de inicio', blocked_unpaid: 'Acceso bloqueado por impago', provisional: 'Acceso provisional', unavailable: 'Estado de acceso no disponible', active: 'Acceso activo' })[status];
+function formatMemberMoney(amountCents: number) { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(amountCents / 100); }
+function formatMemberPaymentDate(value: string | null, dateOnly = false) {
+  if (!value) return null;
+  const parsed = new Date(dateOnly ? `${value}T12:00:00.000Z` : value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', dateStyle: 'medium', ...(dateOnly ? {} : { timeStyle: 'short' }) }).format(parsed);
+}
+function MembershipPaymentState({ payment }: { payment: MembershipPayment }) {
+  const dueOn = formatMemberPaymentDate(payment.dueOn, true);
+  const blockAt = formatMemberPaymentDate(payment.effectiveBlockAt);
+  const blocked = payment.accessStatus === 'blocked_unpaid';
+  const pending = payment.pendingAmountCents > 0;
+  return <div className={`membership-payment-state${blocked ? ' is-blocked' : pending ? ' is-pending' : ''}`} aria-label={`Estado del pago: ${memberPaymentStatusLabel(payment.status)}. ${memberAccessStatusLabel(payment.accessStatus)}`}>
+    <div className="membership-payment-heading"><strong>{memberPaymentStatusLabel(payment.status)}</strong><span>{memberAccessStatusLabel(payment.accessStatus)}</span></div>
+    {pending && <p>Importe pendiente <strong>{formatMemberMoney(payment.pendingAmountCents)}</strong></p>}
+    {dueOn && <p>Vencimiento <strong>{dueOn}</strong></p>}
+    {blockAt && <p>{blocked ? 'Acceso bloqueado desde' : 'Si sigue pendiente, el acceso se bloqueará'} <strong>{blockAt} · hora de Canarias</strong></p>}
+    <small>Estado calculado por Platform.</small>
+  </div>;
+}
 const keyFor = (operation: string) => {
   const storageKey = `2j:${operation}:idempotency`;
   let key = sessionStorage.getItem(storageKey);
@@ -841,8 +874,8 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
           {hasActiveMembership&&<section className="profile-section" aria-labelledby="profile-bookings-title"><div className="section-heading"><div><p className="eyebrow">TU ACTIVIDAD</p><h2 id="profile-bookings-title">Mis reservas</h2></div></div><button className="profile-link-card" type="button" onClick={() => setView('bookings')}><span><strong>Próximas e historial</strong><small>{upcomingAgenda.length ? `${upcomingAgenda.length} ${upcomingAgenda.length === 1 ? 'elemento próximo' : 'elementos próximos'}` : 'Consulta y gestiona tu actividad'}</small></span><span aria-hidden="true">→</span></button></section>}
 
           <section className="profile-section" aria-labelledby="profile-membership-title"><div className="section-heading"><div><p className="eyebrow">CUOTAS Y SALDO</p><h2 id="profile-membership-title">Tus cuotas</h2></div></div>
-          {activeMembership.length ? activeMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ' · Sin fecha de fin'}</span>{plan.rights.filter(right => right.rightType === 'sessions_quota').map((right,index) => <span key={`${right.rightType}-${index}`}>Saldo de sesiones: {right.balance ?? 0} disponibles</span>)}</div><span className="active-pill">Activa</span></article>) : <section className="empty-card profile-empty"><h3>No tienes ninguna cuota activa.</h3><p>Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.</p></section>}
-          {otherMembership.length > 0 && <><h3 className="profile-subheading">Otras cuotas</h3>{otherMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ''}</span></div><span className="active-pill muted-pill">{plan.status === 'paused' ? 'En pausa' : plan.status === 'scheduled' ? 'Programada' : plan.status === 'expired' ? 'Finalizada' : plan.status === 'cancelled' ? 'Cancelada' : 'Inactiva'}</span></article>)}</>}
+          {activeMembership.length ? activeMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ' · Sin fecha de fin'}</span>{plan.rights.filter(right => right.rightType === 'sessions_quota').map((right,index) => <span key={`${right.rightType}-${index}`}>Saldo de sesiones: {right.balance ?? 0} disponibles</span>)}{plan.payment && <MembershipPaymentState payment={plan.payment}/>}</div><span className={`active-pill${plan.payment?.accessStatus === 'blocked_unpaid' ? ' payment-blocked-pill' : ''}`}>{plan.payment ? memberAccessStatusLabel(plan.payment.accessStatus) : 'Activa'}</span></article>) : <section className="empty-card profile-empty"><h3>No tienes ninguna cuota activa.</h3><p>Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.</p></section>}
+          {otherMembership.length > 0 && <><h3 className="profile-subheading">Otras cuotas</h3>{otherMembership.map(plan => <article className="plan-row" key={plan.id}><div><strong>{plan.planName}</strong><span>{plan.startsOn}{plan.endsOn ? ` · hasta ${plan.endsOn}` : ''}</span>{plan.payment && <MembershipPaymentState payment={plan.payment}/>}</div><span className="active-pill muted-pill">{plan.payment ? memberAccessStatusLabel(plan.payment.accessStatus) : plan.status === 'paused' ? 'En pausa' : plan.status === 'scheduled' ? 'Programada' : plan.status === 'expired' ? 'Finalizada' : plan.status === 'cancelled' ? 'Cancelada' : 'Inactiva'}</span></article>)}</>}
           </section>
 
           <section className="profile-section" aria-labelledby="profile-services-title"><div className="section-heading"><div><p className="eyebrow">MIS SERVICIOS</p><h2 id="profile-services-title">Servicios asociados</h2></div></div>
