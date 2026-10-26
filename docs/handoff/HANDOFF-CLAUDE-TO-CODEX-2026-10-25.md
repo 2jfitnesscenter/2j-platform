@@ -19,7 +19,7 @@ CI column is the last snapshot ("green" = quality + secret scan passed; #80 had 
 | #97 | Cash: require open shift (D113) | codex/2J-CASH-D113 / main | none reported (draft) | Work Platform (security/money) | fixes 3-5 + re-review pending; no production grant of `owner.panel.read`; conflicts with #52 in `store.ts` | Codex finishes; independent re-review |
 | #98 | Cash handover/denomination proposal | codex / main | n/a (draft) | Work Platform | waits for #97 | Review after #97 |
 | #99 | CI minute savings | claude/2J-CI-MINUTES / main | green | Work Platform (author is Claude) | needs independent review | Review; merge with owner OK; then measure 7 days |
-| #100 | Owner-assigned shifts design | codex / main | green (draft) | Work Platform | none known | Review |
+| #100 | Owner-assigned shifts design | codex / main | green (draft) | Work Platform | A45 approved; implementation waits for #97 integration | Implement only after #97 merges |
 | #102 / #103 / #104 | Codex parity versions (Resumen actions, Espacios/Servicios, asistencia) | codex / main | green (draft) | Work Platform | overlap with Claude #106 / #108 / #105 | Owner picks one version per screen; close the other |
 | #105 | Parity 1: attendance check/cross | claude / main | green | Work Platform | review | Review |
 | #106 | Parity 2: Resumen quick actions | claude / main | green | Work Platform | review; parent of #118 | Review; merge before #118 |
@@ -36,7 +36,7 @@ CI column is the last snapshot ("green" = quality + secret scan passed; #80 had 
 | #118 | Resumen 2b: verbs + deep links | claude / #106 | green | Work Platform | stacked on #106 | Merge after #106 |
 | #119 | Parity 12: Tienda figures + category filter | claude / #52 | green | Work Platform | stacked on #52 (which sits on #51) | Merge after #52 |
 | #120 | Parity 11: Configuracion tabs (read only) | claude / main | green | Work Platform | review | Review |
-| #121 | Parity 13: Mi gimnasio Panel (4 tabs) | claude / main | green | Work Platform | nobody holds `owner.panel.read` in production; copies the #97 permissions diff | Review; merge together with or after #97 |
+| #121 | Parity 13: Mi gimnasio Panel (4 tabs) | claude / main | green at prior head | Work Platform | fix in progress: exact trusted actor mapping for `owner.panel.read`; production identity must supply the matching authenticated actor ID | Re-review updated head; merge only after owner approval |
 
 ## 2. Merge order, stacks and migrations
 
@@ -51,7 +51,12 @@ CI column is the last snapshot ("green" = quality + secret scan passed; #80 had 
 The full A28-A53 log lives in the owner's decision records, not in this repo. Below is what Claude applied; check numbers against the owner's log.
 
 - A33: Claude Code may merge plan PRs only with green CI and the owner's say-so. Currently the owner said: do not merge anything.
-- A46-A50: cash withdrawals and expenses are allowed (reverts D98). D97 / D111 / the cash screen stay untouched until #97 merges.
+- A46: Promociones stays visible with no effect on prices (D93 remains).
+- A47: cash expenses/withdrawals are allowed with specific permission, type and mandatory reason.
+- A48: reusable permission profiles (D124).
+- A49: receipt/photo is optional.
+- A50: movement limit is optional and has no default value.
+- A45: owner-editable center opening hours, owner-assigned staff shifts (not inferred from classes), and owner-only coverage alerts comparing opening hours, assigned shifts and real cash-custody intervals. Implementation waits until #97 is merged.
 - A48 / D124: permissions by profiles.
 - A51: visual parity in the order of `PARIDAD-VISUAL-BASE44.md`, one PR per screen, before/after next to Base44. Claude does UI parity, Work Platform reviews, Codex owns cash.
 - D121 kept: no totals in Fichaje. Actividad has no read/unread state. Agenda keeps its time grid.
@@ -59,16 +64,16 @@ The full A28-A53 log lives in the owner's decision records, not in this repo. Be
 - Resumen "2b": quick actions with verbs and deep links.
 - Informes and Configuracion are taken from the Base44 prototype sources (UI only, labelled "no conectado" where no API exists).
 - MyGym: 4 tabs (Panel option A first, then Datos del negocio, Novedades, Consentimientos). No health or fiscal data until D33 and fiscal validation. Only the cash difference is owner-only.
-- GitHub: the owner will not pay for a plan; the repo stays public. Measure CI minutes for 7 days after #99; do NOT enable "skip CI after merge to main".
+- A53 / GitHub: the repository remains public for now. Measure Actions minutes for seven days after #99; no visibility change is authorized by this handoff. Do NOT enable "skip CI after merge to main".
 - A54+: none recorded by Claude after A53.
 
 ## 4. Open findings
 
-- #97: fixes 3, 4 and 5 (Codex decides) plus independent re-review. No production resolver grants `owner.panel.read` (finding M1).
+- #97: open and unmerged; current head includes D113 and denomination-based blind opening/closing counts. D97 explanation/admin validation, Staff integration and remaining cash workflow are still pending. No real identity provider is connected here.
 - #110: M1-M4 and 3 LOW; Codex fixes, Work Platform re-reviews. #116 depends on it.
 - #111: the audit endpoint needs a security review.
 - H13: reason mapping still open.
-- D111: blind count still open (Codex, after #97).
+- D111: denomination-based blind opening/closing counts are present in #97 but are not integrated until that PR merges. Handover denomination counts remain a later step.
 - `dashboard.test.mjs` "cash summary" is not idempotent on a reused database (totals accumulate); it passes on a fresh DB.
 
 ## 5. Rules
@@ -102,7 +107,7 @@ Local-only comparison boards (never commit them): `temp/parity-compare/` inside 
 
 ## 7. Next 10 actions (priority order)
 
-1. Codex: finish #97 fixes 3-5 and decide how `owner.panel.read` gets granted.
+1. Codex: complete #121's exact trusted actor mapping for `owner.panel.read`; the authenticated identity provider must pass the configured owner actor ID.
 2. Work Platform: independent re-review of #97 (security / money).
 3. Work Platform: independent review of #99; with owner OK merge it and start the 7-day CI measurement.
 4. Codex: fix #110 M1-M4 + 3 LOW; Work Platform re-reviews; then Work Home continues #116.
