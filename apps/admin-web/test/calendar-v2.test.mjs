@@ -173,3 +173,18 @@ test('Sala filter lists every area, narrows the agenda, combines with the others
   assert.equal(cardsIn('.week-view'), 3);
   assert.equal(screen.getByLabelText('Sala').value, '');
 });
+
+test('#calendar?book=1 guides to pick a session (booking happens in the session detail), shows only to profiles that can manage, and goes away once a session is opened', async () => {
+  wide(); serve([session(1)]);
+  window.location.hash = '#calendar?book=1';
+  await mount();
+  assert.ok(screen.getByText(/Elige una sesión de la agenda y añade al cliente/));
+  assert.equal(window.location.hash, '#calendar', 'the link is consumed');
+  fireEvent.click(document.querySelector('.week-view .session-card'));
+  await waitFor(() => assert.equal(screen.queryByText(/Elige una sesión de la agenda y añade al cliente/), null));
+  cleanup();
+  serve([session(1)], { ...capabilities, manage: false });
+  window.location.hash = '#calendar?book=1';
+  await mount();
+  assert.equal(screen.queryByText(/Elige una sesión de la agenda y añade al cliente/), null, 'no hint without permission to book');
+});

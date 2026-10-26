@@ -16,6 +16,7 @@ a.summary-metric-body:focus-visible { outline: 2px solid var(--2j-color-focus); 
 .summary-metric-label { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); line-height: 1.45; }
 .summary-metric-value { font-size: var(--2j-type-size-display); font-weight: var(--2j-type-weight-bold); line-height: 1.25; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .summary-metric-detail { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); line-height: 1.35; }
+.summary-metric-detail.is-warning { color: var(--2j-color-warning); font-weight: var(--2j-type-weight-semibold); }
 .summary-metric-detail.is-danger { color: var(--2j-color-danger-ink); font-weight: var(--2j-type-weight-semibold); }
 
 /* ---------- Two main columns ---------- */
@@ -93,3 +94,20 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
   .summary-team-stats { gap: var(--2j-space-3); }
 }
 @media (prefers-reduced-motion: reduce) { .summary-row { transition: none; } }
+.timeclock-page > .ui-card, .timeclock-page > .summary-card { margin-bottom: var(--2j-space-4); }
+.timeclock-head-actions { display: inline-flex; align-items: center; gap: var(--2j-space-3); flex-wrap: wrap; justify-content: flex-end; }
+.timeclock-filter { display: flex; flex-wrap: wrap; align-items: end; gap: var(--2j-space-3); padding: 0 var(--2j-space-5) var(--2j-space-4); }
+.timeclock-filter label { display: grid; gap: var(--2j-space-1); font-size: 12px; color: var(--2j-color-text-secondary); }
+.timeclock-filter input { min-height: 44px; padding: 0 var(--2j-space-3); border: 1px solid var(--2j-color-border-input); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font: inherit; }
+.timeclock-table-wrap { overflow-x: auto; }
+.timeclock-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.timeclock-table th, .timeclock-table td { padding: var(--2j-space-3) var(--2j-space-5); text-align: left; border-top: 1px solid var(--2j-color-border); vertical-align: middle; }
+.timeclock-table thead th { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--2j-color-text-secondary); background: var(--2j-color-surface-subtle); }
+.timeclock-table tbody th { font-weight: 500; white-space: nowrap; }
+.timeclock-table time { font-variant-numeric: tabular-nums; }
+.timeclock-table td small { display: block; color: var(--2j-color-text-secondary); font-size: 12px; }
+.summary-quick { margin: 0 0 var(--2j-space-4); }
+.summary-quick ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: var(--2j-space-2); }
+.summary-quick a { min-height: 44px; display: inline-flex; align-items: center; gap: var(--2j-space-2); padding: 0 var(--2j-space-4); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font-size: 14px; text-decoration: none; }
+.summary-quick a:hover { background: var(--2j-color-surface-subtle); }
+.summary-quick a svg { color: var(--2j-color-brand-strong); }

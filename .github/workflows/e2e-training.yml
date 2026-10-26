@@ -6,16 +6,34 @@ name: E2E Home-Platform-Búnker
 # checkout step only; the tests never see it. Pull requests from forks never get secrets, so the job is skipped for them.
 
 on:
+  # Only changes that can affect the SSO/link flow run it (admin-web, staff-app and docs-only changes do not), and only on pull requests that are
+  # not drafts: marking a draft as ready runs it. It no longer runs after every merge to main; a weekly run and workflow_dispatch cover main.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, "agent/**"]
-  push:
-    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "apps/client-app/**"
+      - "packages/**"
+      - "tooling/e2e/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".github/workflows/e2e-training.yml"
+  # main is re-checked once a week instead of after every merge (the pull request already ran it).
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch:
     inputs:
       bunker_ref:
         description: "Búnker branch/tag/SHA to test against"
         required: false
         default: ""
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -27,7 +45,7 @@ env:
 jobs:
   e2e:
     name: e2e (training SSO + link)
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
