@@ -1929,6 +1929,37 @@ test('archiving a draft freezes its definition and preserves its current version
   await assert.rejects(sql`UPDATE plans SET current_version=2 WHERE id=${plan.json().id}`, (error) => error.code === '55000');
 });
 
+test('archived plans remain visible to catalog managers and can be reactivated without changing the frozen version', async () => {
+  const areaResponse = await app.inject({ method: 'POST', url: '/api/areas', payload: { name: `Área plan histórico ${randomUUID()}` } });
+  assert.equal(areaResponse.statusCode, 201, areaResponse.body);
+  const serviceResponse = await app.inject({ method: 'POST', url: '/api/services', payload: { name: `Servicio plan histórico ${randomUUID()}`, areaId: areaResponse.json().id, status: 'active' } });
+  assert.equal(serviceResponse.statusCode, 201, serviceResponse.body);
+  const service = serviceResponse.json();
+  const { response: plan } = await createPlan([service.id]);
+  const id = plan.json().id;
+  assert.equal((await app.inject({ method: 'POST', url: `/api/plans/${id}/activate` })).statusCode, 200);
+  const archived = await app.inject({ method: 'POST', url: `/api/plans/${id}/archive` });
+  assert.equal(archived.statusCode, 200);
+  const normalList = await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
+  const archivedList = await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans?includeArchived=true` });
+  const trainerArchivedList = await clientsTrainerApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans?includeArchived=true` });
+  assert.equal(normalList.json().some((item) => item.id === id), false);
+  assert.equal(archivedList.statusCode, 200);
+  const listedPlan = archivedList.json().find((item) => item.id === id);
+  assert.equal(listedPlan?.status, 'archived');
+  assert.equal(listedPlan?.services[0]?.areaStatus, 'active');
+  assert.equal(trainerArchivedList.statusCode, 403, 'archived catalog access requires pricing-management permission');
+
+  const before = await sql`SELECT current_version AS version,(SELECT frozen_at FROM plan_versions WHERE plan_id=${id} AND version=plans.current_version) AS frozen_at FROM plans WHERE id=${id}`;
+  const reactivated = await app.inject({ method: 'POST', url: `/api/plans/${id}/activate` });
+  assert.equal(reactivated.statusCode, 200, reactivated.body);
+  assert.equal(reactivated.json().status, 'active');
+  const after = await sql`SELECT current_version AS version,(SELECT frozen_at FROM plan_versions WHERE plan_id=${id} AND version=plans.current_version) AS frozen_at FROM plans WHERE id=${id}`;
+  assert.deepEqual(after, before, 'reactivation preserves the version pointer and frozen definition');
+  assert.equal((await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans` })).json().some((item) => item.id === id), true);
+
+});
+
 test('service right counts include only global or service-targeted rights', async () => {
   const first = await createService();
   const second = await createService();
@@ -1944,17 +1975,23 @@ test('service right counts include only global or service-targeted rights', asyn
   assert.equal(byId.get(second.id).rightCount, 1);
 });
 
-test('archived services cannot be linked to new plans and plan reads report UUID and 404 errors', async () => {
+test('plans linked to archived services remain manageable but cannot be assigned to new plans', async () => {
   const service = await createService();
+  const plan = await createPlan([service.id]);
+  assert.equal(plan.response.statusCode, 201, plan.response.body);
   assert.equal((await app.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 200);
   const invalidId = await app.inject({ method: 'GET', url: '/api/services/not-a-uuid/plans' });
   const missing = await app.inject({ method: 'GET', url: `/api/services/${randomUUID()}/plans` });
   const archivedRead = await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
+  const trainerRead = await clientsTrainerApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
   const createArchived = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': randomUUID() }, payload: planPayload([service.id]) });
   assert.equal(invalidId.statusCode, 400);
   assert.deepEqual(invalidId.json(), { error: 'invalid_service_id' });
   assert.equal(missing.statusCode, 404);
-  assert.equal(archivedRead.statusCode, 409);
+  assert.equal(archivedRead.statusCode, 200, archivedRead.body);
+  assert.equal(archivedRead.json().some((item) => item.id === plan.response.json().id), true);
+  assert.equal(archivedRead.json()[0].services[0].status, 'archived');
+  assert.equal(trainerRead.statusCode, 409);
   assert.equal(createArchived.statusCode, 409);
 });
 

@@ -27,7 +27,7 @@ const serve = ({ services = [svc(1)], plans = [plan()], onPost } = {}) => {
     throw new Error(`Unexpected ${path}`);
   };
 };
-const mount = (caps) => render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities: caps }, React.createElement(ServicesPage)));
+const mount = (caps, section = 'services') => render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities: caps }, React.createElement(ServicesPage, { section })));
 const admin = { calendar: true, clients: true, communications: true, billing: true, staff: true, catalogPricingManage: true };
 const trainer = { calendar: true, clients: true, communications: true, billing: false, staff: true, catalogPricingManage: false };
 
@@ -101,15 +101,81 @@ test('a draft plan can be activated once; primary action only on drafts', async 
   await waitFor(() => assert.ok(posts.some((path) => /plans\/plan-1\/activate$/.test(path))));
 });
 
-test('Trainer without commercial permission sees services and areas but no plans tab and no create actions', async () => {
+test('Trainer sees separate service and spaces screens without commercial controls', async () => {
   serve();
   mount(trainer);
   await screen.findByRole('list', { name: 'Servicios' });
   assert.ok(screen.queryByRole('button', { name: 'Planes' }) === null);
   assert.ok(screen.queryByRole('button', { name: 'Nuevo servicio' }) === null);
-  fireEvent.click(screen.getByRole('button', { name: 'Áreas' }));
-  assert.ok(screen.queryByRole('button', { name: 'Nueva área' }) === null);
   assert.ok(screen.queryByText('Sin planes vinculados') === null, 'commercial hints stay hidden');
+  cleanup(); serve(); mount(trainer, 'areas');
+  await screen.findByRole('heading', { level: 1, name: 'Espacios' });
+  assert.ok(screen.queryByRole('button', { name: 'Servicios' }) === null);
+  assert.ok(screen.queryByRole('button', { name: 'Nuevo espacio' }) === null);
+});
+
+test('Plans route deduplicates plans, keeps archived plans visible and allows reactivation of their frozen version', async () => {
+  const active = svc(1);
+  const archivedService = svc(2, { status: 'archived', name: 'Servicio histórico' });
+  const currentPlan = plan({ id: 'current-plan', name: 'Plan vigente', services: [{ id: active.id, name: active.name, area: active.area, status: 'active' }] });
+  let archived = false;
+  const archivedPlan = () => plan({ id: 'archived-plan', name: 'Plan histórico', status: archived ? 'archived' : 'active', services: [{ id: archivedService.id, name: archivedService.name, area: archivedService.area, status: 'archived' }] });
+  const posts = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith('/api/areas')) return response([area]);
+    if (options.method === 'POST') { posts.push(path); if (path.endsWith('/archived-plan/archive')) archived = true; if (path.endsWith('/archived-plan/activate')) archived = false; return response({}, 200); }
+    if (path.endsWith('/api/services?includeArchived=true')) return response([active, archivedService]);
+    if (path.endsWith('/api/services')) return response([active]);
+    if (path.endsWith(`/api/services/${active.id}/plans?includeArchived=true`)) return response([currentPlan]);
+    if (path.endsWith(`/api/services/${archivedService.id}/plans?includeArchived=true`)) return response([currentPlan, archivedPlan()]);
+    throw new Error(`Unexpected ${path}`);
+  };
+  window.confirm = () => true;
+  mount(admin, 'plans');
+  assert.ok(await screen.findByRole('heading', { level: 1, name: 'Planes y cuotas' }));
+  assert.equal(document.querySelector('main').id, 'plans');
+  assert.equal(screen.queryByRole('navigation', { name: 'Vistas de Servicios' }), null);
+  assert.equal(within(await screen.findByRole('list', { name: 'Planes del servicio' })).getAllByRole('article').length, 2, 'a plan returned through multiple services is listed once');
+  const historical = await screen.findByRole('article', { name: 'Plan histórico' });
+  assert.ok(within(historical).getByText(/Archivado/));
+  assert.ok(within(historical).getByText(/servicio archivado/));
+  assert.equal(within(historical).queryByRole('button', { name: 'Reactivar plan' }), null, 'a plan tied to an archived service cannot be reactivated');
+  assert.equal(within(historical).queryByRole('button', { name: 'Nueva versión' }), null);
+  assert.ok(await screen.findByRole('article', { name: 'Plan histórico' }));
+
+  cleanup();
+  const areaArchivedService = svc(4, { name: 'Servicio en espacio archivado' });
+  const areaArchivedPlan = plan({ id: 'area-archived-plan', name: 'Plan en espacio archivado', status: 'archived', services: [{ id: areaArchivedService.id, name: areaArchivedService.name, area: areaArchivedService.area, status: 'active', areaStatus: 'archived' }] });
+  globalThis.fetch = async (url) => {
+    const path = String(url);
+    if (path.endsWith('/api/areas')) return response([area]);
+    if (path.endsWith('/api/services?includeArchived=true')) return response([areaArchivedService]);
+    if (path.endsWith(`/api/services/${areaArchivedService.id}/plans?includeArchived=true`)) return response([areaArchivedPlan]);
+    throw new Error(`Unexpected ${path}`);
+  };
+  mount(admin, 'plans');
+  const archivedAreaCard = await screen.findByRole('article', { name: 'Plan en espacio archivado' });
+  assert.equal(within(archivedAreaCard).queryByRole('button', { name: 'Reactivar plan' }), null);
+  assert.ok(within(archivedAreaCard).getByText(/hay un servicio o área archivados/));
+
+  cleanup();
+  const reactivatableService = svc(3, { name: 'Servicio reactivable' });
+  let reactivatableArchived = true;
+  const reactivatablePlan = () => plan({ id: 'reactivatable-plan', name: 'Plan reactivable', status: reactivatableArchived ? 'archived' : 'active', services: [{ id: reactivatableService.id, name: reactivatableService.name, area: reactivatableService.area, status: 'active' }] });
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith('/api/areas')) return response([area]);
+    if (path.endsWith('/api/services?includeArchived=true')) return response([reactivatableService]);
+    if (path.endsWith(`/api/services/${reactivatableService.id}/plans?includeArchived=true`)) return response([reactivatablePlan()]);
+    if (options.method === 'POST' && path.endsWith('/reactivatable-plan/activate')) { reactivatableArchived = false; return response(reactivatablePlan()); }
+    throw new Error(`Unexpected ${path}`);
+  };
+  mount(admin, 'plans');
+  const reactivatable = await screen.findByRole('article', { name: 'Plan reactivable' });
+  fireEvent.click(within(reactivatable).getByRole('button', { name: 'Reactivar plan' }));
+  await waitFor(() => assert.equal(reactivatableArchived, false));
+  assert.ok(await screen.findByText(/Plan reactivado con su versión congelada/));
 });
 
 test('Admin: one primary action per view and the service dialog stays short (name, area, state)', async () => {

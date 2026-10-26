@@ -28,7 +28,7 @@ test('Admin sees the six professional sections and only their existing authorize
   await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav=within(document.querySelector('.app-navigation'));
   for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
-  for(const label of ['Agenda','Servicios','Economía','Tienda','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
+  for(const label of ['Agenda','Espacios','Servicios','Economía','Tienda','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
   assert.ok(nav.getByRole('link',{name:/Comunicación/}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
   assert.ok(screen.getByText('2 mensajes sin leer'));
@@ -141,7 +141,15 @@ test('authorized hash deep links retain their current subnavigation and page con
   assert.equal(nav.getByRole('link',{name:'Servicios'}).getAttribute('aria-current'),'page');
   assert.ok(nav.getByRole('button',{name:'Mi gimnasio'}).closest('.app-nav-group').classList.contains('is-active'));
   assert.equal(getProfessionalPageContext('services').section,'Mi gimnasio');
+  assert.equal(getProfessionalPageContext('spaces').page,'Espacios');
   assert.equal(getProfessionalPageContext('notification-settings').page,'Ajustes de avisos');
+});
+
+test('Espacios and Servicios are separate destinations under Mi gimnasio',()=>{
+  const gym=getProfessionalNavigation({...capabilities,calendar:true}).find(item=>item.id==='gym');
+  assert.deepEqual(gym.children.map(route=>route.label),['Agenda','Espacios','Servicios']);
+  assert.equal(gym.children.find(route=>route.id==='spaces').href,'#spaces');
+  assert.equal(gym.children.find(route=>route.id==='services').href,'#services');
 });
 
 test('navigation introduces no Programación, Arena, or Athlete View destination',()=>{

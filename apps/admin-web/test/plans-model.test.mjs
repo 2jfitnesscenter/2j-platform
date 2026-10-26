@@ -38,7 +38,7 @@ function serve({ plans = [], onPlanPost } = {}) {
   };
   return posts;
 }
-const mount = (capabilities = admin) => render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities }, React.createElement(ServicesPage)));
+const mount = (capabilities = admin, section = 'services') => render(React.createElement(ProfessionalCapabilitiesProvider, { capabilities }, React.createElement(ServicesPage, { section })));
 async function openNewPlan() {
   await screen.findByRole('heading', { name: fuerza.name });
   fireEvent.click(screen.getByRole('button', { name: 'Planes' }));
@@ -243,43 +243,41 @@ test('a new version of a plain session pack opens in the pack form with its valu
   assert.equal(posts[0].body.rights.find((right) => right.rightType === 'sessions_quota').quantity, 12);
 });
 
-test('G: "Espacios" is not used as the main copy: header, tabs, area headings and navigation use Servicios / Áreas', async () => {
+test('G: Espacios and Servicios use separate route screens with the owner-approved labels', async () => {
   serve();
   mount();
   await screen.findByRole('heading', { name: fuerza.name });
-  assert.equal(screen.getByRole('heading', { level: 1 }).textContent, 'Servicios y planes');
-  const tabs = within(screen.getByRole('group', { name: 'Vistas de Mi gimnasio' }));
-  assert.deepEqual(tabs.getAllByRole('button').map((node) => node.textContent), ['Servicios', 'Áreas', 'Planes']);
-  assert.doesNotMatch(document.body.textContent, /Espacios?\b|espacios?\b/);
-  fireEvent.click(tabs.getByRole('button', { name: 'Áreas' }));
-  assert.ok(await screen.findByRole('heading', { name: 'Áreas' }));
-  assert.doesNotMatch(document.body.textContent, /Espacios?\b|espacios?\b/);
-  fireEvent.click(screen.getByRole('button', { name: 'Nueva área' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Nueva área' });
-  assert.doesNotMatch(dialog.textContent, /espacio/i);
+  assert.equal(screen.getByRole('heading', { level: 1 }).textContent, 'Servicios');
+  assert.equal(screen.queryByRole('button', { name: 'Áreas' }), null);
+  assert.ok(screen.getByRole('button', { name: 'Planes' }));
+  cleanup(); serve(); mount(admin, 'areas');
+  assert.equal((await screen.findByRole('heading', { level: 1 })).textContent, 'Espacios');
+  assert.equal(screen.queryByRole('button', { name: 'Servicios' }), null);
+  fireEvent.click(screen.getByRole('button', { name: 'Nuevo espacio' }));
+  assert.ok(await screen.findByRole('dialog', { name: 'Nuevo espacio' }));
 });
 
-test('H: areas still exist where they belong: the Áreas tab, the area on each service, the area filter and the service dialog', async () => {
+test('H: services retain their assigned area and areas are managed only on Espacios', async () => {
   serve();
   mount();
   await screen.findByRole('heading', { name: fuerza.name });
   assert.ok(screen.getByLabelText('Filtrar por área'));
   assert.equal(screen.getByText('Área', { selector: 'dt' }).nextSibling.textContent, 'El Búnker', 'detail: Servicio ≠ Área');
-  fireEvent.click(screen.getByRole('button', { name: 'Áreas' }));
+  cleanup(); serve(); mount(admin, 'areas');
   assert.ok(await screen.findByRole('heading', { name: 'El Búnker' })); assert.ok(screen.getByRole('heading', { name: 'La Sala' }));
-  assert.equal(screen.getAllByText('ÁREA ACTIVA').length, 2);
+  assert.equal(screen.getAllByText('ESPACIO ACTIVO').length, 2);
   assert.equal(document.querySelectorAll('.gym-area-card').length, 2);
-  fireEvent.click(screen.getByRole('button', { name: 'Servicios' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Nuevo servicio' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Nuevo servicio' });
-  assert.deepEqual([...within(dialog).getByLabelText('Área').options].map((node) => node.textContent), ['El Búnker', 'La Sala']);
+  assert.equal(screen.queryByRole('button', { name: 'Servicios' }), null);
 });
 
-test('Trainer sees Servicios y áreas, no plans and no plan form', async () => {
+test('Trainer sees Servicios without commercial plans, and a separate read-only Espacios screen', async () => {
   serve();
   mount(trainer);
   await screen.findByRole('heading', { name: fuerza.name });
-  assert.equal(screen.getByRole('heading', { level: 1 }).textContent, 'Servicios y áreas');
+  assert.equal(screen.getByRole('heading', { level: 1 }).textContent, 'Servicios');
   assert.equal(screen.queryByRole('button', { name: 'Planes' }), null);
   assert.equal(screen.queryByRole('button', { name: /nuevo plan/i }), null);
+  cleanup(); serve(); mount(trainer, 'areas');
+  assert.equal((await screen.findByRole('heading', { level: 1 })).textContent, 'Espacios');
+  assert.equal(screen.queryByRole('button', { name: 'Archivar' }), null);
 });

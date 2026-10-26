@@ -30,7 +30,9 @@ const routes={
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
   'my-gym':{id:'my-gym',label:'Panel del centro',href:'#my-gym',permission:'ownerPanel',icon:icons.Dumbbell},
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},
+  spaces:{id:'spaces',label:'Espacios',href:'#spaces',permission:'calendar',icon:icons.DoorOpen},
   services:{id:'services',label:'Servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
+  plans:{id:'plans',label:'Planes y cuotas',href:'#plans',permission:'catalogPricingManage',icon:icons.Ticket},
   timeclock:{id:'timeclock',label:'Fichaje',href:'#timeclock',permission:'staff',icon:icons.Clock},
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
@@ -44,10 +46,10 @@ const navSections:NavSection[]=[
   {id:'home',label:'Resumen',icon:icons.LayoutDashboard,route:routes.home},
   {id:'activity',label:'Actividad',icon:icons.Activity,children:[routes.activity,routes.communications]},
   {id:'clients',label:'Clientes',icon:icons.Users,route:routes.clients},
-  {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes['my-gym'],routes.calendar,routes.services]},
+  {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes['my-gym'],routes.calendar,routes.spaces,routes.services]},
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
   {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
-  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.reports,routes.store,routes.news,routes.settings,routes['notification-settings']]},
+  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.plans,routes.economics,routes.reports,routes.store,routes.news,routes.settings,routes['notification-settings']]},
 ];
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */
 export const hasProfessionalRoute = (id: string) => Object.hasOwn(routes, id);
