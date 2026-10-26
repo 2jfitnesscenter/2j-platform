@@ -46,6 +46,10 @@ test('commercial tiles: store sales of the month and low stock move with real da
   assert.equal(after.storeSales.monthCount, before.storeSales.monthCount + 1);
   assert.equal(after.storeSales.monthTotalCents, before.storeSales.monthTotalCents + 1500);
   assert.equal(after.lowStock.count, before.lowStock.count + 1, 'a tracked variant left with 3 units (<= 3) counts as low stock');
+  // D113 (#97): annulling a sale leaves a movement linked to an open shift, so the shift must exist first (already open is fine).
+  const zero = Object.fromEntries(['coin_0_01','coin_0_02','coin_0_05','coin_0_10','coin_0_20','coin_0_50','coin_1','coin_2','bill_5','bill_10','bill_20','bill_50','bill_100','bill_200','bill_500'].map((key) => [key, 0]));
+  const shift = await post('/api/economics/cash/open', { openingDenominations: zero });
+  assert.ok([201, 409].includes(shift.statusCode), shift.body);
   assert.equal((await post(`/api/admin/store/sales/${sale.json().id}/void`, { reason: 'Prueba' })).statusCode, 200);
   const voided = (await center()).commercial;
   assert.equal(voided.storeSales.monthCount, before.storeSales.monthCount, 'voided sales leave the month total');
