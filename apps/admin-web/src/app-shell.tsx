@@ -8,10 +8,11 @@ export type CommandCenterModel = {
   today: { sessionCount:number; upcomingCount:number; capacity:number; occupied:number; waitlistCount:number; unassignedCount:number; sessions:Array<{id:string;serviceName:string;professionalName:string|null;startsAt:string;occupied:number;capacity:number;free:number;waitlistCount:number;isNow:boolean;state:'upcoming'|'in_progress'|'finished'}>; nextSession:{id:string;serviceName:string;startsAt:string;professionalName:string|null}|null };
   clients: { active:number; recentSignups:number }|null;
   attention: Array<{id:string;kind:string;title:string;summary:string;href:string;ageAt:string|null}>;
-  economics: {pendingCents:number;overdueCount:number;collectedTodayCents:number;cashSession:{status:string;openingCents:number;expectedCents:number;countedCents:number|null;differenceCents:number|null}|null}|null;
+  economics: {pendingCents:number;overdueCount:number;collectedTodayCents:number;cashSession:{status:string;openingCents:number;expectedCents:number;countedCents:number|null;differenceCents?:number|null}|null}|null;
   team: {active:number;workingNow:number;activeAbsences:number;substitutions:number}|null;
   unread: number;
   quickActions: Array<{id:string;label:string;href:string}>;
+  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null };
 };
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
@@ -28,6 +29,7 @@ const routes={
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},
   services:{id:'services',label:'Servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
+  timeclock:{id:'timeclock',label:'Fichaje',href:'#timeclock',permission:'staff',icon:icons.Clock},
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
@@ -40,8 +42,11 @@ const navSections:NavSection[]=[
   {id:'clients',label:'Clientes',icon:icons.Users,route:routes.clients},
   {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes.calendar,routes.services]},
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
+  {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
   {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.store,routes.news,routes['notification-settings']]},
 ];
+/** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */
+export const hasProfessionalRoute = (id: string) => Object.hasOwn(routes, id);
 const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
 function hasNavigationCapability(route:NavRoute,capabilities:NavigationCapabilities|null){return route.permission===null||capabilities?.[route.permission]===true;}
 export function getProfessionalNavigation(capabilities:NavigationCapabilities|null,activeRoute=routeId()){

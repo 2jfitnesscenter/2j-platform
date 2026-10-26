@@ -146,7 +146,7 @@ test('authorized hash deep links retain their current subnavigation and page con
 
 test('navigation introduces no Programación, Arena, or Athlete View destination',()=>{
   const nav=getProfessionalNavigation({...capabilities,billing:true,news:true,store:true,notificationSettings:true});
-  assert.deepEqual(nav.map(item=>item.label),['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio']);
+  assert.deepEqual(nav.map(item=>item.label),['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Fichaje','Negocio']);
   assert.equal(JSON.stringify(nav).match(/Programación|Arena|Athlete View|Entrenamientos/g),null);
 });
 

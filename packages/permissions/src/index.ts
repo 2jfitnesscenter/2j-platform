@@ -4,6 +4,8 @@ export interface AuthorizationContext {
   readonly actorId: string;
   readonly role: ApprovedRole;
   readonly deniedPermissions?: readonly string[];
+  /** Explicit grants supplied only by a trusted server-side authorization resolver. */
+  readonly explicitPermissions?: readonly string[];
 }
 
 export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> = {
@@ -17,13 +19,15 @@ export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> 
 export const knownPermissions: ReadonlySet<string> = new Set([
   'clients.read', 'clients.manage', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'communication.send', 'communication.manage_templates', 'communication.internal_notes.read', 'communication.internal_notes.write', 'forms.read', 'forms.manage', 'forms.assign', 'forms.review', 'forms.responses.sensitive.read', 'consents.read', 'consents.manage', 'consents.accept.assisted', 'followup.read', 'followup.manage', 'documents.read', 'documents.manage', 'documents.requirement.override', 'news.read', 'news.manage', 'timeclock.read',
   'reservations.manage', 'reservations.attendance', 'billing.read-basic', 'billing.payments.manage', 'billing.cash.manage', 'billing.invoices.manage', 'billing.read-tax', 'billing.write-tax', 'billing.export', 'billing.validate_transfer', 'billing.debt.override', 'scheduling.override_capacity',
-  'entitlements.read', 'entitlements.manage', 'entitlements.adjust', 'entitlements.cancel', 'entitlements.pause', 'entitlements.renew', 'entitlements.recurrence.manage', 'catalog.pricing.manage', 'store.catalog.read', 'store.catalog.manage', 'store.inventory.read', 'store.inventory.manage', 'store.sales.read', 'store.sales.create', 'store.sales.void', 'staff.read', 'staff.profile.sensitive.read', 'staff.audit.read', 'staff.manage', 'staff.schedule.read', 'staff.schedule.manage', 'staff.schedule.override', 'staff.absence.read', 'staff.absence.manage', 'staff.substitution.manage', 'timeclock.self', 'timeclock.manage', 'timeclock.audit', 'staff.timeclock.correct', 'identity.people.manage', 'member.pilot.booking.manage', 'settings.manage', 'training.suspension.manage',
+  'entitlements.read', 'entitlements.manage', 'entitlements.adjust', 'entitlements.cancel', 'entitlements.pause', 'entitlements.renew', 'entitlements.recurrence.manage', 'catalog.pricing.manage', 'store.catalog.read', 'store.catalog.manage', 'store.inventory.read', 'store.inventory.manage', 'store.sales.read', 'store.sales.create', 'store.sales.void', 'staff.read', 'staff.profile.sensitive.read', 'staff.audit.read', 'staff.manage', 'staff.schedule.read', 'staff.schedule.manage', 'staff.schedule.override', 'staff.absence.read', 'staff.absence.manage', 'staff.substitution.manage', 'timeclock.self', 'timeclock.manage', 'timeclock.audit', 'staff.timeclock.correct', 'identity.people.manage', 'member.pilot.booking.manage', 'settings.manage', 'training.suspension.manage', 'owner.panel.read',
 ]);
 
 /** Deny-by-default. Client visibility must never replace this server check. */
 export function can(context: AuthorizationContext, permission: string): boolean {
   if (!knownPermissions.has(permission)) return false;
   if (context.deniedPermissions?.includes(permission)) return false;
+  // Owner-only access must never be implied by the generic admin wildcard.
+  if (permission === 'owner.panel.read') return context.explicitPermissions?.includes(permission) ?? false;
   if (!Object.hasOwn(rolePermissions, context.role)) return false;
   return rolePermissions[context.role]?.some((grant) => grant === '*' || grant === permission) ?? false;
 }

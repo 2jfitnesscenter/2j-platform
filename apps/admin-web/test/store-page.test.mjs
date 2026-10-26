@@ -348,3 +348,14 @@ test('the catalogue filters by category (Todo, Nutrición, Merchandising) and sa
   fireEvent.click(screen.getByRole('button',{name:'Todo'}));
   assert.equal(within(screen.getByRole('list',{name:'Productos'})).getAllByRole('article').length,1);
 });
+
+test('#store?sale=1 opens «Nueva venta en el centro» once (as a dialog) and cleans the link; without it no dialog is open',async()=>{
+  globalThis.fetch=async(url)=>String(url).endsWith('/api/admin/store')?new Response(JSON.stringify(data)):new Response(JSON.stringify({items:[]}));
+  window.location.hash='#store?sale=1';
+  render(React.createElement(StorePage));await screen.findByRole('heading',{name:'Proteína'});
+  await screen.findByRole('dialog',{name:'Nueva venta en el centro'});
+  assert.equal(window.location.hash,'#store');
+  cleanup();
+  render(React.createElement(StorePage));await screen.findByRole('heading',{name:'Proteína'});
+  assert.ok(screen.queryByRole('dialog')===null,'without the link no workflow dialog is open');
+});

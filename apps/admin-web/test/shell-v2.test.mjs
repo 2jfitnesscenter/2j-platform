@@ -135,7 +135,7 @@ test('Resumen metrics include occupancy, finance (with overdue tone) and clients
   mount();
   await screen.findByRole('heading', { name: 'Resumen' });
   const strip = screen.getByRole('list', { name: 'Indicadores de hoy' });
-  assert.deepEqual([...strip.querySelectorAll('.summary-metric-label')].map((node) => node.textContent), ['Reservas hoy', 'Ocupación hoy', 'Pendiente de cobro', 'Clientes activos']);
+  assert.deepEqual([...strip.querySelectorAll('.summary-metric-label')].map((node) => node.textContent), ['Clientes activos', 'Reservas hoy', 'Ocupación hoy', 'Pendiente de cobro']);
   assert.ok(within(strip).getByText('75 %'));
   assert.ok(within(strip).getByText('5 plazas libres'));
   assert.match(within(strip).getByText('2 cargos vencidos').className, /is-danger/);
