@@ -11,12 +11,14 @@ if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: Postgr
 const sql = postgres(process.env.DATABASE_URL, { max: 8, connect_timeout: 5 });
 await migrateDatabase(sql);
 const make = (role, actor = `dashboard-${role}-${randomUUID()}`) => buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: actor, role }) });
+const ownerActorId = 'dashboard-explicit-owner';
+const owner = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: ownerActorId, role: 'admin' }), ownerActorId });
 const admin = make('admin');
 const trainer = make('trainer');
 const reception = make('reception-management');
 const accountant = make('accountant');
 const anonymous = buildServer(process.env.DATABASE_URL);
-after(async () => { await Promise.all([admin.close(), trainer.close(), reception.close(), accountant.close(), anonymous.close(), sql.end()]); });
+after(async () => { await Promise.all([admin.close(), owner.close(), trainer.close(), reception.close(), accountant.close(), anonymous.close(), sql.end()]); });
 
 test('Command Center denies anonymous access and filters each domain on the server by role capabilities', async () => {
   const denied = await anonymous.inject({ method: 'GET', url: '/api/dashboard/command-center' });
@@ -153,23 +155,25 @@ test('cash summary follows 2J-040 selection semantics and never fails with multi
   const [only] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
     VALUES (${today[0].day},1100,1100,1100,0,'closed','closed','qa','qa',now()+interval '10 seconds',now()+interval '11 seconds') RETURNING id`;
   let response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
+  assert.deepEqual(Object.keys(response.json().economics.cashSession).sort(), ['status']);
+  response = await owner.inject({method:'GET',url:'/api/dashboard/command-center'});
   assert.equal(response.statusCode,200,response.body);
   assert.equal(response.json().economics.cashSession.openingCents,1100);
   const [newer] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
     VALUES (${today[0].day},2200,2200,2200,0,'closed','closed','qa','qa',now()+interval '20 seconds',now()+interval '21 seconds') RETURNING id`;
-  response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
+  response = await owner.inject({method:'GET',url:'/api/dashboard/command-center'});
   assert.equal(response.statusCode,200,response.body);
   assert.equal(response.json().economics.cashSession.openingCents,2200);
   const [openToday] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by,opened_at)
     VALUES (${today[0].day},3300,'qa',now()+interval '30 seconds') RETURNING id`;
-  response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
+  response = await owner.inject({method:'GET',url:'/api/dashboard/command-center'});
   assert.equal(response.statusCode,200,response.body);
   assert.equal(response.json().economics.cashSession.status,'open');
   assert.equal(Number(response.json().economics.cashSession.openingCents),3300);
   await sql`UPDATE economic_cash_sessions SET status='closed',close_kind='closed',expected_cents=opening_cents,counted_cents=opening_cents,difference_cents=0,closed_by='qa',closed_at=now() WHERE id=${openToday.id}`;
   const [staleOpen] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by,opened_at)
     VALUES (${today[0].day}::date-1,4400,'qa',now()+interval '40 seconds') RETURNING id`;
-  response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
+  response = await owner.inject({method:'GET',url:'/api/dashboard/command-center'});
   assert.equal(response.statusCode,200,response.body);
   assert.equal(response.json().economics.cashSession.status,'open');
   assert.equal(Number(response.json().economics.cashSession.openingCents),4400);

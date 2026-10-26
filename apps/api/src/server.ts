@@ -173,6 +173,8 @@ export function parseTrustedProxies(value: unknown): string[] {
 
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
+  /** Exact trusted identity subject granted the owner-only panel capability. Never derived from request input or role. */
+  ownerActorId?: string | null;
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
   memberPilotAuthEnabled?: boolean;
@@ -247,7 +249,16 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   if (options.trainingServiceAllowInsecureLoopback && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Insecure loopback Training calls are restricted to development/test environments.');
   const { client } = createDatabase(databaseUrl);
   const trainingCapabilitiesKeys = options.trainingCapabilitiesKeys ?? parseInternalServiceKeys(process.env.PLATFORM_INTERNAL_SERVICE_KEYS);
-  const authorizationResolver = options.authorizationResolver ?? (async () => null);
+  const baseAuthorizationResolver = options.authorizationResolver ?? (async () => null);
+  if (options.ownerActorId != null && !/^[^\u0000-\u001f\u007f]{1,120}$/.test(options.ownerActorId.trim())) {
+    throw new Error('ownerActorId must be a trusted non-empty identity subject of at most 120 characters.');
+  }
+  const ownerActorId = options.ownerActorId?.trim() || null;
+  const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
+    const context = await baseAuthorizationResolver(request);
+    if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
+    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read'])] };
+  };
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
   const trainingSummaryAdapter = options.trainingSummaryEnabled === true && options.trainingServiceCallsEnabled === true
@@ -713,6 +724,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   if (localDemoClientId && !z.string().uuid().safeParse(localDemoClientId).success) throw new Error('LOCAL_DEMO_CLIENT_ID must be a client UUID.');
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
+    ownerActorId: process.env.PLATFORM_OWNER_ACTOR_ID ?? null,
     memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
     memberPilotBookingEnabled: process.env.PILOT_MEMBER_BOOKING_ENABLED === 'true',
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
