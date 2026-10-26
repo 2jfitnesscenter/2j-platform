@@ -47,6 +47,7 @@ export {
   RefreshCw,
   RotateCcw,
   Search,
+  Settings,
   ShieldCheck,
   ShoppingBag,
   Ticket,

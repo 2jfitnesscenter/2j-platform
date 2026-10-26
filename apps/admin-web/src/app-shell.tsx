@@ -34,6 +34,7 @@ const routes={
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
+  settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
   'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
@@ -43,7 +44,7 @@ const navSections:NavSection[]=[
   {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes.calendar,routes.services]},
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
   {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
-  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.store,routes.news,routes['notification-settings']]},
+  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.economics,routes.store,routes.news,routes.settings,routes['notification-settings']]},
 ];
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */
 export const hasProfessionalRoute = (id: string) => Object.hasOwn(routes, id);

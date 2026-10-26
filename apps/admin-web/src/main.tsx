@@ -20,6 +20,7 @@ import { CommunicationsPage } from './communications-page.js';
 import { AppShell, getProfessionalPageContext } from './app-shell.js';
 import { CommandCenter } from './command-center.js';
 import { NotificationSettings } from './notification-settings.js';
+import { SettingsPage } from './settings-page.js';
 import { NewsPage } from './news-page.js';
 import { StorePage } from './store-page.js';
 import { usePageResetOnModuleChange } from './route-focus.js';
@@ -33,7 +34,7 @@ function App() {
   }, []);
   React.useEffect(() => { document.title = `${getProfessionalPageContext(route).page} · 2J Platform`; }, [route]);
   usePageResetOnModuleChange(route);
-  const page = route === 'store' ? <StorePage/> : route === 'news' ? <NewsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
+  const page = route === 'store' ? <StorePage/> : route === 'news' ? <NewsPage/> : route === 'settings' ? <SettingsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }
 
