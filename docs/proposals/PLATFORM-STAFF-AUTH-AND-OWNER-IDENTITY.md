@@ -1,6 +1,6 @@
 # Propuesta: autenticación de personal y vínculo de identidad del propietario
 
-**Estado:** propuesta de diseño; no implementada.  
+**Estado:** propuesta de diseño; no implementada.
 **Alcance:** login de Admin/Trainer en Platform y asignación segura de `owner.panel.read`.
 **No autoriza:** despliegue, migraciones en una base real, alta de credenciales reales ni cambios de DNS.
 
