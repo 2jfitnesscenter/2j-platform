@@ -37,7 +37,7 @@ function App() {
   }, []);
   React.useEffect(() => { document.title = `${getProfessionalPageContext(route).page} · 2J Platform`; }, [route]);
   usePageResetOnModuleChange(route);
-  const page = route === 'store' ? <StorePage/> : route === 'activity' ? <ActivityPage/> : route === 'news' ? <NewsPage/> : route === 'settings' ? <SettingsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'my-gym' ? <MyGymPage/> : route === 'reports' ? <ReportsPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'spaces' ? <ServicesPage section="areas"/> : route === 'services' ? <ServicesPage section="services"/> : <CommandCenter/>;
+  const page = route === 'store' ? <StorePage/> : route === 'activity' ? <ActivityPage/> : route === 'news' ? <NewsPage/> : route === 'settings' ? <SettingsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'my-gym' ? <MyGymPage/> : route === 'reports' ? <ReportsPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'spaces' ? <ServicesPage section="areas"/> : route === 'services' ? <ServicesPage section="services"/> : route === 'plans' ? <ServicesPage section="plans"/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }
 

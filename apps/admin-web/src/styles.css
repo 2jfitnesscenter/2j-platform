@@ -639,3 +639,17 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .attendance-btn.is-absent[aria-pressed="true"] { border-color: var(--2j-color-danger); color: var(--2j-color-danger); background: color-mix(in srgb, var(--2j-color-danger) 14%, transparent); }
 .attendance-btn.is-reopen { border-style: dashed; }
 @media (max-width: 767.98px) { .attendee-actions .attendance-toggle { grid-column: 1 / -1; } }
+.plan-cards-section { margin-top: 12px; }
+.plan-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; }
+.plan-cards .plan-card { height: 100%; display: grid; align-content: start; gap: 14px; padding: 18px; }
+.plan-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.plan-card-head h3 { margin: 0; }
+.plan-card-head p { margin: 4px 0 0; color: var(--2j-color-text-secondary); font-size: 13px; }
+.plan-card-side { display: grid; justify-items: end; gap: 7px; }
+.plan-price { font-size: 20px; white-space: nowrap; }
+.plan-facts { display: grid; gap: 10px; margin: 0; }
+.plan-facts > div { display: grid; grid-template-columns: minmax(76px, .55fr) minmax(0, 1fr); gap: 8px; }
+.plan-facts dt { color: var(--2j-color-text-secondary); font-size: 13px; }
+.plan-facts dd { margin: 0; color: var(--2j-color-text-primary); font-size: 14px; }
+.plan-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--2j-color-border); }
+@media (max-width: 640px) { .plan-cards .plan-card { padding: 14px; } .plan-facts > div { grid-template-columns: 1fr; gap: 3px; } }
