@@ -1,3 +1,4 @@
+import { apiFetch } from './api-fetch.js';
 import { useCallback, useEffect, useState } from "react";
 
 type InboxItem = {
@@ -26,7 +27,7 @@ type Thread = {
   internalNotes: { id: string; body: string; actorLabel?: string; createdAt: string }[];
 };
 type MessageTemplate = { id:string; name:string; body:string; status:string };
-const api = import.meta.env?.VITE_API_URL ?? "http://127.0.0.1:3100";
+const api = import.meta.env?.VITE_API_URL ?? "http://localhost:3100";
 const uuid = () => crypto.randomUUID();
 export function CommunicationsPage() {
   const [items, setItems] = useState<InboxItem[]>([]),
@@ -45,7 +46,7 @@ export function CommunicationsPage() {
     setLoading(true);
     setError("");
     try {
-      const r = await fetch(`${api}/api/communications/inbox`);
+      const r = await apiFetch(`${api}/api/communications/inbox`);
       if (!r.ok)
         throw new Error(
           r.status === 401
@@ -55,7 +56,7 @@ export function CommunicationsPage() {
               : "No se pudo cargar la bandeja.",
         );
       setItems((await r.json()) as InboxItem[]);
-      const templateResponse = await fetch(`${api}/api/communications/templates`);
+      const templateResponse = await apiFetch(`${api}/api/communications/templates`);
       if (templateResponse.ok) setTemplates(((await templateResponse.json()) as MessageTemplate[]).filter((item)=>item.status==='active'));
     } catch (e) {
       setError(
@@ -75,7 +76,7 @@ export function CommunicationsPage() {
       setThreadLoading(true);
       setFeedback("");
       try {
-        const r = await fetch(
+        const r = await apiFetch(
           `${api}/api/clients/${item.clientId}/conversation`,
         );
         if (!r.ok) throw new Error("No se pudo abrir la conversación.");
@@ -86,7 +87,7 @@ export function CommunicationsPage() {
           data.messages
             .filter((m) => m.senderKind === "client" && !m.readByCenter)
             .map((m) =>
-              fetch(`${api}/api/communications/messages/${m.id}/read`, {
+              apiFetch(`${api}/api/communications/messages/${m.id}/read`, {
                 method: "POST",
               }),
             ),
@@ -114,7 +115,7 @@ export function CommunicationsPage() {
       const path = internal
         ? `/api/clients/${selected.clientId}/internal-notes`
         : `/api/clients/${selected.clientId}/messages`;
-      const response = await fetch(`${api}${path}`, {
+      const response = await apiFetch(`${api}${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -138,7 +139,7 @@ export function CommunicationsPage() {
   async function markUnread(messageId: string) {
     if (!selected) return;
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${api}/api/communications/messages/${messageId}/unread`,
         { method: "POST" },
       );

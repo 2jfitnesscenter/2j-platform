@@ -1,3 +1,4 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, EmptyState, Icon, PageHeader, SegmentedControl, StatusChip, Tabs, icons } from '@2j/ui';
 import { Modal } from './modal.js';
@@ -7,13 +8,13 @@ import { PendingPhotos, PhotoManager, ProductGallery, photoUrl, uploadPhotos, ty
 import { catalogPriceText } from './store-media.js';
 import { creatable, emptyBuilder, sortVariants, planVariants, plannedReady, productOptions, resolveVariant, sellStep, type BuilderState, type ExistingVariant, type PlannedVariant, type SellVariant } from './store-variants.js';
 
-const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 type Variant={id:string;sku:string|null;label:string;size:string|null;flavor:string|null;priceCents:number|string;active:boolean;stockTracked:boolean;stock:number};
 type Product={id:string;category:'nutrition'|'merchandising';name:string;description:string;active:boolean;variants:Variant[];media?:Media[]};
 type Sale={id:string;clientId:string;firstName:string;lastName:string;status:string;paymentState:string;paymentMethod:string|null;totalCents:number|string;createdAt:string;lines:Array<{productName:string;variantLabel:string;quantity:number;lineTotalCents:number}>};
 type StoreData={products:Product[];movements:Array<{id:string;quantityDelta:number;type:string;reason:string;occurredAt:string;productName:string;variantLabel:string}>;sales:Sale[]};
 type Client={id:string;firstName:string;lastName:string;email:string|null;status:string};
-async function request<T>(path:string,init?:RequestInit):Promise<T>{const response=await fetch(`${api}${path}`,{...init,headers:{'content-type':'application/json',...init?.headers},cache:'no-store'});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error??'No se pudo completar la operación.');return body as T;}
+async function request<T>(path:string,init?:RequestInit):Promise<T>{const response=await apiFetch(`${api}${path}`,{...init,headers:{'content-type':'application/json',...init?.headers},cache:'no-store'});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error??'No se pudo completar la operación.');return body as T;}
 const euro=(cents:number|string)=>new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(Number(cents)/100);
 const key=()=>globalThis.crypto?.randomUUID?.()??'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,char=>{const random=Math.random()*16|0;return(char==='x'?random:(random&3|8)).toString(16);});
 const labels:Record<string,string>={member_not_found:'El cliente no está disponible.',variant_not_found:'La variante ya no está disponible.',product_inactive:'Activa el producto antes de registrar la venta.',variant_inactive:'Activa la variante antes de registrar la venta.',insufficient_stock:'No hay unidades suficientes para completar la venta.',idempotency_conflict:'La solicitud cambió. Actualiza la página e inténtalo de nuevo.',sale_already_voided:'La venta ya está anulada.',sku_conflict:'Ese código interno ya está en uso.',permission_denied:'No tienes permiso para gestionar la tienda.',internal_error:'No se pudo guardar. Inténtalo de nuevo.'};

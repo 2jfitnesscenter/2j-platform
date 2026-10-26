@@ -1,7 +1,8 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, PageHeader, StatusChip, icons, type StatusTone } from '@2j/ui';
 
-const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
 type SaleRow = { id: string; kind: 'plan' | 'charge' | 'store'; occurredAt: string; clientName: string; concept: string; soldCents: number; collectedCents: number; status: string; methods: string[]; invoice: 'issued' | 'none' };
 type Totals = { soldCents: number; collectedCents: number; pendingCents: number; voidedCount: number; voidedCents: number; rowCount: number };
@@ -42,7 +43,7 @@ export function ReportsPage() {
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
     try {
-      const response = await fetch(`${apiUrl}/api/reports/sales?${queryOf(filters)}`, signal ? { signal } : undefined);
+      const response = await apiFetch(`${apiUrl}/api/reports/sales?${queryOf(filters)}`, signal ? { signal } : undefined);
       if (response.status === 403 || response.status === 401) { setState({ status: 'denied' }); return; }
       if (!response.ok) throw new Error(String(response.status));
       setState({ status: 'ready', data: await response.json() as SalesResponse });

@@ -1,7 +1,8 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, PageHeader, StatusChip, icons } from '@2j/ui';
 
-const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
 type ClockEvent = { id: string; eventType: 'clock_in' | 'clock_out'; effectiveOccurredAt: string; origin: string };
 type SelfClock = { openShift: boolean; lastEvent: { eventType: 'clock_in' | 'clock_out'; occurredAt: string } | null; history: ClockEvent[] };
@@ -41,7 +42,7 @@ export function TimeClockPage() {
 
   const load = React.useCallback(async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/timeclock/self`);
+      const response = await apiFetch(`${apiUrl}/api/timeclock/self`);
       if (response.status === 404) { setState({ status: 'unlinked' }); return; }
       if (response.status === 403 || response.status === 401) { setState({ status: 'denied' }); return; }
       if (!response.ok) throw new Error(String(response.status));
@@ -55,7 +56,7 @@ export function TimeClockPage() {
   async function punch(kind: 'clock-in' | 'clock-out') {
     setBusy(true); setError(''); setNotice('');
     try {
-      const response = await fetch(`${apiUrl}/api/timeclock/${kind}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'web' }) });
+      const response = await apiFetch(`${apiUrl}/api/timeclock/${kind}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'web' }) });
       if (!response.ok) { const body = await readJson(response) as { error?: string }; throw new Error(body.error === 'shift_already_open' ? 'Ya tienes una jornada abierta.' : body.error === 'no_open_shift' ? 'No tienes una jornada abierta.' : 'No se pudo fichar. Inténtalo de nuevo.'); }
       setNotice(kind === 'clock-in' ? 'Entrada registrada.' : 'Salida registrada.');
       await load();
