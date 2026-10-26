@@ -316,6 +316,39 @@ test('cancelling a sale and opening a new one starts from an empty order: no sta
   assert.equal(within(again).getByLabelText('Estado de pago').value,'paid');
 });
 
+const merch={id:'p2',category:'merchandising',name:'Camiseta 2J',description:'Algodón',active:true,variants:[{id:'v20',sku:'TEE-M',label:'Talla M',size:'M',flavor:null,priceCents:'1800',active:true,stockTracked:true,stock:2},{id:'v21',sku:'TEE-L',label:'Talla L',size:'L',flavor:null,priceCents:'1800',active:false,stockTracked:true,stock:9}]};
+const kpiStore={products:[{...protein,variants:[{...protein.variants[0],stock:10}]},merch],movements:[],sales:[]};
+
+test('Tienda shows the four Base44 figures computed only from the API data: products, active variants, inventory value and low-stock references',async()=>{
+  await open(kpiStore);
+  const list=screen.getByRole('list',{name:'Resumen de la tienda'});
+  const items=within(list).getAllByRole('listitem').map(item=>item.textContent);
+  assert.equal(items.length,4);
+  assert.match(items[0],/Productos2/);
+  assert.match(items[1],/Variantes activas2/);
+  assert.match(items[2],/Valor del inventario/);
+  assert.match(items[2],/286,00/,'10 × 25,00 + 2 × 18,00; the inactive variant does not count');
+  assert.match(items[3],/Referencias con stock bajo1/);
+  assert.match(items[3],/3 uds\. o menos/);
+});
+
+test('the catalogue filters by category (Todo, Nutrición, Merchandising) and says so when a category has no products',async()=>{
+  await open(kpiStore);
+  const grid=()=>screen.getByRole('list',{name:'Productos'});
+  assert.equal(within(grid()).getAllByRole('article').length,2);
+  fireEvent.click(screen.getByRole('button',{name:'Merchandising'}));
+  assert.deepEqual(within(grid()).getAllByRole('article').map(card=>card.getAttribute('aria-label')),['Camiseta 2J']);
+  fireEvent.click(screen.getByRole('button',{name:'Nutrición'}));
+  assert.deepEqual(within(grid()).getAllByRole('article').map(card=>card.getAttribute('aria-label')),['Proteína']);
+  cleanup();
+  await open({products:[{...protein}],movements:[],sales:[]});
+  fireEvent.click(screen.getByRole('button',{name:'Merchandising'}));
+  assert.ok(screen.getByText('No hay productos en esta categoría'));
+  assert.equal(screen.queryByText('Aún no hay productos'),null,'a filtered-empty category is not an empty catalogue');
+  fireEvent.click(screen.getByRole('button',{name:'Todo'}));
+  assert.equal(within(screen.getByRole('list',{name:'Productos'})).getAllByRole('article').length,1);
+});
+
 test('#store?sale=1 opens «Nueva venta en el centro» once (as a dialog) and cleans the link; without it no dialog is open',async()=>{
   globalThis.fetch=async(url)=>String(url).endsWith('/api/admin/store')?new Response(JSON.stringify(data)):new Response(JSON.stringify({items:[]}));
   window.location.hash='#store?sale=1';

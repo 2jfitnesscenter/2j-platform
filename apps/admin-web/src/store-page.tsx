@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Card, EmptyState, Icon, PageHeader, StatusChip, Tabs, icons } from '@2j/ui';
+import { Button, Card, EmptyState, Icon, PageHeader, SegmentedControl, StatusChip, Tabs, icons } from '@2j/ui';
 import { Modal } from './modal.js';
 import { clearDeepLink, readDeepLink } from './deep-link.js';
 import { VariantBuilder } from './store-variant-builder.js';
@@ -25,6 +25,7 @@ export function StorePage(){
   const [stockVariant,setStockVariant]=React.useState('');const [movementType,setMovementType]=React.useState<'opening'|'restock'|'adjustment_in'|'adjustment_out'>('restock');const [movementQuantity,setMovementQuantity]=React.useState('');const [movementReason,setMovementReason]=React.useState('');
   const [clientQuery,setClientQuery]=React.useState('');const [clients,setClients]=React.useState<Client[]>([]);const [clientId,setClientId]=React.useState('');const [quantity,setQuantity]=React.useState('1');const [lines,setLines]=React.useState<Array<{variantId:string;quantity:number}>>([]);const [paymentState,setPaymentState]=React.useState<'paid'|'pending'>('paid');const [paymentMethod,setPaymentMethod]=React.useState<'cash'|'card'|'transfer'|'other'>('cash');const [busy,setBusy]=React.useState(false);
   const [lineError,setLineError]=React.useState('');const [tab,setTab]=React.useState<'catalog'|'inventory'|'sales'>('catalog');const [modal,setModal]=React.useState<'product'|'variants'|'stock'|'sale'|'media'|'detail'|null>(()=>readDeepLink(['sale'] as const).sale==='1'?'sale':null);React.useEffect(()=>{clearDeepLink(['sale']);},[]);const [mediaProductId,setMediaProductId]=React.useState('');const [pendingPhotos,setPendingPhotos]=React.useState<File[]>([]);
+  const [categoryFilter,setCategoryFilter]=React.useState<'all'|'nutrition'|'merchandising'>('all');
   const saleIdempotency=React.useRef<{fingerprint:string;key:string}|null>(null);
   const load=React.useCallback(async()=>{setState('loading');setError('');try{const fresh=await request<StoreData>('/api/admin/store');setData({...fresh,products:fresh.products.map(product=>({...product,variants:sortVariants(product.variants)}))});setState('ready');}catch(cause){setError(labels[cause instanceof Error?cause.message:'']??'No se ha podido cargar la tienda.');setState('error');}},[]);
   React.useEffect(()=>{void load();},[load]);
@@ -78,7 +79,18 @@ export function StorePage(){
   const editProduct=async(product:Product)=>{const nextName=window.prompt('Nombre del producto',product.name);if(nextName===null)return;const nextDescription=window.prompt('Descripción',product.description);if(nextDescription===null)return;setBusy(true);try{await request(`/api/admin/store/products/${product.id}`,{method:'PATCH',body:JSON.stringify({name:nextName,description:nextDescription})});setNotice('Producto actualizado.');await load();}catch(cause){fail(cause);}finally{setBusy(false);}};
   const editVariant=async(variant:Variant)=>{const nextLabel=window.prompt('Nombre de la variante',variant.label);if(nextLabel===null)return;const rawPrice=window.prompt('Precio final en euros',String((Number(variant.priceCents)/100).toFixed(2)).replace('.',','));if(rawPrice===null)return;const cents=Math.round(Number(rawPrice.replace(',','.'))*100);if(!Number.isSafeInteger(cents)||cents<0){setError('Introduce un precio válido en euros.');return;}const nextSize=window.prompt('Talla o formato (vacío si no aplica)',variant.size??'');if(nextSize===null)return;const nextFlavor=window.prompt('Sabor (vacío si no aplica)',variant.flavor??'');if(nextFlavor===null)return;const nextSku=window.prompt('SKU o código interno (vacío si no aplica)',variant.sku??'');if(nextSku===null)return;setBusy(true);try{await request(`/api/admin/store/variants/${variant.id}`,{method:'PATCH',body:JSON.stringify({label:nextLabel,priceCents:cents,size:nextSize||null,flavor:nextFlavor||null,sku:nextSku||null})});setNotice('Variante actualizada.');await load();}catch(cause){fail(cause);}finally{setBusy(false);}};
   const toggleVariant=async(variant:Variant)=>{setBusy(true);try{await request(`/api/admin/store/variants/${variant.id}`,{method:'PATCH',body:JSON.stringify({active:!variant.active})});setNotice(variant.active?'Variante desactivada.':'Variante activada.');await load();}catch(cause){fail(cause);}finally{setBusy(false);}};
-  const productCards = data?.products ?? [];
+  const allProducts = data?.products ?? [];
+  const catalogEmpty = allProducts.length === 0;
+  const productCards = categoryFilter === 'all' ? allProducts : allProducts.filter(product => product.category === categoryFilter);
+  /** Paridad visual 12 (Base44, captura 13): cifras de la tienda calculadas solo con lo que ya devuelve la API. El umbral de stock bajo es fijo (3 uds.): Platform aún no guarda umbral por variante. */
+  const LOW_STOCK_UNITS = 3;
+  const trackedActive = allProducts.flatMap(product => product.variants.filter(variant => variant.active && variant.stockTracked));
+  const storeKpis = [
+    { id: 'products', label: 'Productos', value: String(allProducts.length), detail: `${allProducts.filter(product => product.active).length} activos` },
+    { id: 'variants', label: 'Variantes activas', value: String(allProducts.reduce((sum, product) => sum + product.variants.filter(variant => variant.active).length, 0)), detail: 'En el catálogo' },
+    { id: 'value', label: 'Valor del inventario', value: euro(trackedActive.reduce((sum, variant) => sum + Math.max(0, variant.stock) * Number(variant.priceCents), 0)), detail: 'Stock × PVP de las variantes con control de stock' },
+    { id: 'low', label: 'Referencias con stock bajo', value: String(trackedActive.filter(variant => variant.stock <= LOW_STOCK_UNITS).length), detail: `${LOW_STOCK_UNITS} uds. o menos` },
+  ];
   const inventoryRows = data?.products.flatMap(product => product.variants.map(variant => ({ product, variant }))) ?? [];
   const sellProducts = (data?.products ?? []).filter(item => item.active && item.variants.some(variant => variant.active));
   const saleProduct = sellProducts.find(item => item.id === saleProductId);
@@ -104,12 +116,13 @@ export function StorePage(){
     {state === 'loading' && !data && <Card><EmptyState role="status">Cargando tienda…</EmptyState></Card>}
     {state === 'error' && <Card><EmptyState tone="danger" icon={icons.TriangleAlert} title="No se pudo cargar la tienda" action={<Button onClick={() => void load()}>Reintentar</Button>} /></Card>}
     {data && <>
+      <ul className="store-kpis" aria-label="Resumen de la tienda">{storeKpis.map(item => <li key={item.id}><Card padding="none" className="store-kpi"><span className="store-kpi-label">{item.label}</span><strong className="store-kpi-value">{item.value}</strong><small>{item.detail}</small></Card></li>)}</ul>
       <Tabs label="Secciones de la tienda" items={tabItems} value={tab} onChange={id => setTab(id as typeof tab)} panelId="store-panel" idPrefix="store-tab" />
       <div id="store-panel" role="tabpanel" aria-labelledby={`store-tab-${tab}`} className="store-panel" tabIndex={0}>
 
-        {tab === 'catalog' && (productCards.length === 0
+        {tab === 'catalog' && (catalogEmpty
           ? <Card><EmptyState icon={icons.ShoppingBag} title="Aún no hay productos" action={<Button variant="primary" icon={icons.Plus} onClick={() => openModal('product')}>Añadir producto</Button>}>Crea el primer producto para empezar el catálogo.</EmptyState></Card>
-          : <ul className="product-grid" aria-label="Productos">{productCards.map(product => {
+          : <><div className="store-category-filter"><SegmentedControl label="Categoría" value={categoryFilter} onChange={setCategoryFilter} options={[{ value: 'all', label: 'Todo' }, { value: 'nutrition', label: 'Nutrición' }, { value: 'merchandising', label: 'Merchandising' }]} /></div>{productCards.length === 0 ? <Card><EmptyState icon={icons.ShoppingBag} title="No hay productos en esta categoría" /></Card> : <ul className="product-grid" aria-label="Productos">{productCards.map(product => {
             const active = product.variants.filter(variant => variant.active);
             const prices = active.map(variant => Number(variant.priceCents));
             const price = catalogPriceText(prices, euro);
@@ -128,7 +141,7 @@ export function StorePage(){
                 {product.variants.length > 0 && <details className="product-variants"><summary>Variantes ({product.variants.length})</summary><ul>{product.variants.map(variant => <li key={variant.id}><div className="variant-main"><strong>{variant.label}</strong><small>{[variant.sku, variant.size, variant.flavor].filter(Boolean).join(' · ') || 'Sin código'}</small></div><span className="variant-price">{euro(variant.priceCents)}</span><span className="variant-stock">{variant.stockTracked ? `${variant.stock} uds.` : 'Sin control de unidades'}</span><StatusChip tone={variant.active ? 'success' : 'neutral'}>{variant.active ? 'Activa' : 'Inactiva'}</StatusChip><div className="variant-actions"><Button size="sm" variant="ghost" disabled={busy} onClick={() => void editVariant(variant)}>Editar</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => void toggleVariant(variant)}>{variant.active ? 'Desactivar' : 'Activar'}</Button></div></li>)}</ul></details>}
               </div>
             </Card></li>;
-          })}</ul>)}
+          })}</ul>}</>)}
 
         {tab === 'inventory' && <div className="store-stack">
           <Card as="section" padding="none" aria-labelledby="inventory-title"><div className="store-card-head"><h2 id="inventory-title">Inventario por variante</h2></div>
