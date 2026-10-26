@@ -9,7 +9,7 @@ const statusLabel:Record<NewsStatus,string> = {draft:'Borrador',published:'Publi
 const actionLabel:Record<string,string> = {'news.created':'Creada','news.updated':'Editada','news.published':'Publicada','news.withdrawn':'Retirada','news.featured':'Destacada','news.unfeatured':'Ya no destacada'};
 const dateLabel=(value:string|null)=>value?new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',dateStyle:'medium',timeStyle:'short'}).format(new Date(value)):'Sin publicar';
 
-export function NewsPage() {
+export function NewsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [items,setItems]=React.useState<NewsItem[]>([]);
   const [loading,setLoading]=React.useState(true);
   const [saving,setSaving]=React.useState(false);
@@ -56,8 +56,9 @@ export function NewsPage() {
     catch{setError('No se pudo cargar el historial de esta noticia.');}
   };
 
-  return <main className="page-content center-news-page">
-    <div className="page-heading"><div><p className="eyebrow">CONTENIDO DEL CENTRO</p><h1>Noticias</h1><p>Publica información útil para los miembros desde Inicio.</p></div><button type="button" className="button primary" onClick={()=>{reset();setMessage('');setError('');document.getElementById('center-news-title')?.focus();}}>Nueva noticia</button></div>
+  const Root = embedded ? 'div' : 'main';
+  return <Root className="page-content center-news-page">
+    <div className="page-heading"><div><p className="eyebrow">CONTENIDO DEL CENTRO</p>{embedded ? <h2>Noticias</h2> : <h1>Noticias</h1>}<p>Publica información útil para los miembros desde Inicio.</p></div><button type="button" className="button primary" onClick={()=>{reset();setMessage('');setError('');document.getElementById('center-news-title')?.focus();}}>Nueva noticia</button></div>
     <div className="center-news-layout">
       <form className="panel center-news-editor" onSubmit={event=>void save(event)} aria-label={editing?'Editar noticia':'Nueva noticia'}>
         <div className="panel-heading"><div><h2>{editing?'Editar noticia':'Crear borrador'}</h2><p>Texto sencillo, sin imágenes ni formato enriquecido.</p></div></div>
@@ -83,5 +84,5 @@ export function NewsPage() {
       </section>
     </div>
   <ConfirmDialog open={withdrawTarget!==null} title={withdrawTarget?`Retirar «${withdrawTarget.title}»`:'Retirar noticia'} description="Dejará de aparecer a los miembros y se conservará en el historial." confirmLabel="Retirar noticia" busy={withdrawBusy} onCancel={()=>setWithdrawTarget(null)} onConfirm={()=>{const item=withdrawTarget;if(!item)return;setWithdrawBusy(true);void mutate(item,'withdraw').finally(()=>{setWithdrawBusy(false);setWithdrawTarget(null);});}}/>
-  </main>;
+  </Root>;
 }

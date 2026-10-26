@@ -126,10 +126,10 @@ test('navigation capabilities remain authorized and independent of Command Cente
     reception.inject({method:'GET',url:'/api/session/capabilities'}),
     accountant.inject({method:'GET',url:'/api/session/capabilities'}),
   ]);
-  assert.deepEqual(adminCaps.json(),{calendar:true,clients:true,communications:true,billing:true,staff:true,news:true,notificationSettings:true,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:true,paymentsManage:true,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:true,catalogPricingManage:true,store:true});
-  assert.deepEqual(trainerCaps.json(),{calendar:true,clients:true,communications:true,billing:false,staff:true,news:false,notificationSettings:false,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:false,paymentsManage:false,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:true,catalogPricingManage:false,store:false});
-  assert.deepEqual(receptionCaps.json(),{calendar:true,clients:true,communications:true,billing:true,staff:true,news:false,notificationSettings:false,reservationManage:true,attendanceManage:false,entitlementsRead:true,entitlementsManage:true,paymentsManage:false,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:false,catalogPricingManage:false,store:false});
-  assert.deepEqual(accountantCaps.json(),{calendar:false,clients:false,communications:false,billing:true,staff:false,news:false,notificationSettings:false,reservationManage:false,attendanceManage:false,entitlementsRead:false,entitlementsManage:false,paymentsManage:false,communicationSend:false,documentsRead:false,timeclockSelf:false,capacityOverride:false,catalogPricingManage:false,store:false});
+  assert.deepEqual(adminCaps.json(),{calendar:true,clients:true,communications:true,billing:true,staff:true,ownerPanel:false,news:true,notificationSettings:true,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:true,paymentsManage:true,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:true,catalogPricingManage:true,store:true});
+  assert.deepEqual(trainerCaps.json(),{calendar:true,clients:true,communications:true,billing:false,staff:true,ownerPanel:false,news:false,notificationSettings:false,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:false,paymentsManage:false,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:true,catalogPricingManage:false,store:false});
+  assert.deepEqual(receptionCaps.json(),{calendar:true,clients:true,communications:true,billing:true,staff:true,ownerPanel:false,news:false,notificationSettings:false,reservationManage:true,attendanceManage:false,entitlementsRead:true,entitlementsManage:true,paymentsManage:false,communicationSend:true,documentsRead:true,timeclockSelf:true,capacityOverride:false,catalogPricingManage:false,store:false});
+  assert.deepEqual(accountantCaps.json(),{calendar:false,clients:false,communications:false,billing:true,staff:false,ownerPanel:false,news:false,notificationSettings:false,reservationManage:false,attendanceManage:false,entitlementsRead:false,entitlementsManage:false,paymentsManage:false,communicationSend:false,documentsRead:false,timeclockSelf:false,capacityOverride:false,catalogPricingManage:false,store:false});
   assert.equal(adminCaps.headers['cache-control'],'no-store');
 });
 
@@ -149,32 +149,46 @@ test('direct business API routes stay fail-closed when a Trainer lacks business 
 });
 
 test('cash summary follows 2J-040 selection semantics and never fails with multiple sessions per day', async () => {
-  const today = await sql`SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS day`;
-  const [only] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
-    VALUES (${today[0].day},1100,1100,1100,0,'closed','closed','qa','qa',now()+interval '10 seconds',now()+interval '11 seconds') RETURNING id`;
-  let response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
+  const denominationsForEuros=(euros)=>({coin_0_01:0,coin_0_02:0,coin_0_05:0,coin_0_10:0,coin_0_20:0,coin_0_50:0,coin_1:euros,coin_2:0,bill_5:0,bill_10:0,bill_20:0,bill_50:0,bill_100:0,bill_200:0,bill_500:0});
+  const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`dashboard_cash_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';const adminSql=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
+  let testSql,testApp;
+  try {
+    await adminSql.unsafe(`CREATE DATABASE "${databaseName}"`);sourceUrl.pathname=`/${databaseName}`;
+    testSql=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});await migrateDatabase(testSql);
+    testApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'dashboard-cash-isolated',role:'admin'})});
+    const today=await testSql`SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS day`;
+    const [only]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,expected_cents,counted_cents,counted_denominations,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
+      VALUES (${today[0].day},1100,${testSql.json(denominationsForEuros(11))},1100,1100,${testSql.json(denominationsForEuros(11))},0,'closed','closed','qa','qa',now()-interval '30 seconds',now()-interval '29 seconds') RETURNING id`;
+    let response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
+    assert.equal(response.statusCode,200,response.body);assert.equal(Number(response.json().economics.cashSession.openingCents),1100);
+    const [newer]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,expected_cents,counted_cents,counted_denominations,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
+      VALUES (${today[0].day},2200,${testSql.json(denominationsForEuros(22))},2200,2200,${testSql.json(denominationsForEuros(22))},0,'closed','closed','qa','qa',now()-interval '20 seconds',now()-interval '19 seconds') RETURNING id`;
+    response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
+    assert.equal(response.statusCode,200,response.body);assert.equal(Number(response.json().economics.cashSession.openingCents),2200);
+    const [openToday]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,opened_by,opened_at) VALUES (${today[0].day},3300,${testSql.json(denominationsForEuros(33))},'qa',now()-interval '10 seconds') RETURNING id`;
+    response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
+    assert.equal(response.statusCode,200,response.body);assert.equal(response.json().economics.cashSession.status,'open');
+    assert.equal(Number(response.json().economics.cashSession.openingCents),3300);
+    await testSql`UPDATE economic_cash_sessions SET status='closed',close_kind='closed',expected_cents=opening_cents,counted_cents=opening_cents,counted_denominations=opening_denominations,difference_cents=0,closed_by='qa',closed_at=now() WHERE id=${openToday.id}`;
+    const [staleOpen]=await testSql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opening_denominations,opened_by,opened_at) VALUES (${today[0].day}::date-1,4400,${testSql.json(denominationsForEuros(44))},'qa',now()-interval '40 seconds') RETURNING id`;
+    response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
+    assert.equal(response.statusCode,200,response.body);assert.equal(response.json().economics.cashSession.status,'open');
+    assert.equal(Number(response.json().economics.cashSession.openingCents),4400);
+    assert.ok(only.id&&newer.id&&staleOpen.id);
+  } finally { await testApp?.close();await testSql?.end();await adminSql.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await adminSql.end(); }
+});
+
+test('Command Center keeps legitimate null cash fields while hiding only owner-only difference', async () => {
+  let [session]=await sql`SELECT id FROM economic_cash_sessions WHERE status='open' AND local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date LIMIT 1`;
+  if(!session) [session]=await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,0,'dashboard-null-fixture') RETURNING id`;
+  const response=await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
   assert.equal(response.statusCode,200,response.body);
-  assert.equal(response.json().economics.cashSession.openingCents,1100);
-  const [newer] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,opened_at,closed_at)
-    VALUES (${today[0].day},2200,2200,2200,0,'closed','closed','qa','qa',now()+interval '20 seconds',now()+interval '21 seconds') RETURNING id`;
-  response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
-  assert.equal(response.statusCode,200,response.body);
-  assert.equal(response.json().economics.cashSession.openingCents,2200);
-  const [openToday] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by,opened_at)
-    VALUES (${today[0].day},3300,'qa',now()+interval '30 seconds') RETURNING id`;
-  response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
-  assert.equal(response.statusCode,200,response.body);
-  assert.equal(response.json().economics.cashSession.status,'open');
-  assert.equal(Number(response.json().economics.cashSession.openingCents),3300);
-  await sql`UPDATE economic_cash_sessions SET status='closed',close_kind='closed',expected_cents=opening_cents,counted_cents=opening_cents,difference_cents=0,closed_by='qa',closed_at=now() WHERE id=${openToday.id}`;
-  const [staleOpen] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by,opened_at)
-    VALUES (${today[0].day}::date-1,4400,'qa',now()+interval '40 seconds') RETURNING id`;
-  response = await admin.inject({method:'GET',url:'/api/dashboard/command-center'});
-  assert.equal(response.statusCode,200,response.body);
-  assert.equal(response.json().economics.cashSession.status,'open');
-  assert.equal(Number(response.json().economics.cashSession.openingCents),4400);
-  assert.ok(only.id && newer.id && staleOpen.id);
-  await sql`UPDATE economic_cash_sessions SET status='late_close',close_kind='late_close',expected_cents=opening_cents,counted_cents=opening_cents,difference_cents=0,closed_by='qa',closed_at=now() WHERE id=${staleOpen.id}`;
+  const cash=response.json().economics.cashSession;
+  assert.equal(cash.status,'open');
+  assert.equal(Object.hasOwn(cash,'countedCents'),true);
+  assert.equal(cash.countedCents,null);
+  assert.equal(Object.hasOwn(cash,'differenceCents'),false);
 });
 
 test('open timeclock attention uses effective timestamps and only flags an open shift from a prior local day', async () => {
