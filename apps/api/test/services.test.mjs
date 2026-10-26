@@ -1944,17 +1944,23 @@ test('service right counts include only global or service-targeted rights', asyn
   assert.equal(byId.get(second.id).rightCount, 1);
 });
 
-test('archived services cannot be linked to new plans and plan reads report UUID and 404 errors', async () => {
+test('plans linked to archived services remain manageable but cannot be assigned to new plans', async () => {
   const service = await createService();
+  const plan = await createPlan([service.id]);
+  assert.equal(plan.response.statusCode, 201, plan.response.body);
   assert.equal((await app.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 200);
   const invalidId = await app.inject({ method: 'GET', url: '/api/services/not-a-uuid/plans' });
   const missing = await app.inject({ method: 'GET', url: `/api/services/${randomUUID()}/plans` });
   const archivedRead = await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
+  const trainerRead = await clientsTrainerApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
   const createArchived = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': randomUUID() }, payload: planPayload([service.id]) });
   assert.equal(invalidId.statusCode, 400);
   assert.deepEqual(invalidId.json(), { error: 'invalid_service_id' });
   assert.equal(missing.statusCode, 404);
-  assert.equal(archivedRead.statusCode, 409);
+  assert.equal(archivedRead.statusCode, 200, archivedRead.body);
+  assert.equal(archivedRead.json().some((item) => item.id === plan.response.json().id), true);
+  assert.equal(archivedRead.json()[0].services[0].status, 'archived');
+  assert.equal(trainerRead.statusCode, 409);
   assert.equal(createArchived.statusCode, 409);
 });
 
