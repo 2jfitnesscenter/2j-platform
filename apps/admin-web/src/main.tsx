@@ -8,6 +8,7 @@ import './shell-v2.css';
 import './summary-v2.css';
 import './clients-v2.css';
 import './agenda-v2.css';
+import './services-v2.css';
 import { ServicesPage } from './services-page.js';
 import { ClientsPage } from './clients-page.js';
 import { CalendarPage } from './calendar-page.js';
