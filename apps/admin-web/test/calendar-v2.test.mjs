@@ -152,6 +152,28 @@ test('manage: exactly one primary action in the header and the toolbar keeps key
   assert.ok(screen.getByRole('button', { name: 'Hoy' }));
 });
 
+test('Sala filter lists every area, narrows the agenda, combines with the others and the filters follow the Base44 order (Servicio, Sala, Profesional, estado)', async () => {
+  const studio = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'El Estudio' };
+  wide();
+  const later = (hours) => new Date(Date.parse(startsAt) + hours * 60 * 60_000).toISOString();
+  const sessions = [session(1), session(2, { areaId: studio.id, areaName: studio.name, startsAt: later(2) }), session(3, { areaId: studio.id, areaName: studio.name, serviceId: 'service-1', serviceName: 'Servicio 1', startsAt: later(4) })];
+  const services = [{ id: 'service-1', name: 'Servicio 1', areaId: area.id }, { id: 'service-2', name: 'Servicio 2', areaId: studio.id }];
+  globalThis.fetch = async (url) => String(url).includes('/api/calendar/week') ? response({ ...baseData, areas: [area, studio], sessions, services }) : response({});
+  await mount();
+  const labels = [...document.querySelectorAll('.calendar-filter-bar label')].map((label) => label.textContent);
+  assert.deepEqual(labels.slice(0, 4), ['Servicio', 'Sala', 'Profesional', 'Filtrar sesiones']);
+  const select = screen.getByLabelText('Sala');
+  assert.deepEqual([...select.options].map((option) => option.textContent), ['Todas las salas', 'La Sala', 'El Estudio']);
+  assert.equal(cardsIn('.week-view'), 3);
+  fireEvent.change(select, { target: { value: studio.id } });
+  assert.equal(cardsIn('.week-view'), 2, 'only the sessions of that room');
+  fireEvent.change(screen.getByLabelText('Servicio'), { target: { value: 'service-1' } });
+  assert.equal(cardsIn('.week-view'), 1, 'room combines with service');
+  fireEvent.click(screen.getByRole('button', { name: 'Limpiar filtros' }));
+  assert.equal(cardsIn('.week-view'), 3);
+  assert.equal(screen.getByLabelText('Sala').value, '');
+});
+
 test('#calendar?book=1 guides to pick a session (booking happens in the session detail), shows only to profiles that can manage, and goes away once a session is opened', async () => {
   wide(); serve([session(1)]);
   window.location.hash = '#calendar?book=1';

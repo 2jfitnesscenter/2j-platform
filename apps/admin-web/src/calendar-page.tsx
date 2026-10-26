@@ -15,9 +15,10 @@ type Attendee = { id: string; clientId: string; firstName: string; lastName: str
 type CalendarConfirmation = { title: string; message: string; confirmLabel: string; tone?: 'danger' | 'primary'; action: () => void };
 type CalendarData = { weekStart: string; timezone: 'Atlantic/Canary'; sessions: Session[]; currentProfessionalId?:string|null; professionals:{id:string;displayName:string;calendarColor:string|null}[]; areas: { id: string; name: string }[]; services: { id: string; name: string; areaId: string }[]; templates: { id: string; serviceId: string; serviceName: string; areaId: string; areaName: string; professionalId?:string|null;professionalName?:string|null;weekday: number; localStartTime: string; durationMinutes: number; capacity: number; startsOn: string; endsOn: string | null }[]; capabilities: { manage: boolean; attendance: boolean; overrideCapacity: boolean;overrideAvailability:boolean;overrideDocuments:boolean;overrideDebt:boolean } };
 export type CalendarFilter = 'all'|'upcoming'|'mine'|'full'|'waitlist'|'cancelled';
-export function filterCalendarSessions<T extends {status:string;startsAt:string;serviceId:string;professionalId?:string|null;capacity:number;occupiedCount:number;waitlistCount:number}>(sessions:T[], filter:CalendarFilter, currentProfessionalId:string|null|undefined, now=Date.now(), serviceId='', professionalId='') {
+export function filterCalendarSessions<T extends {status:string;startsAt:string;serviceId:string;areaId?:string;professionalId?:string|null;capacity:number;occupiedCount:number;waitlistCount:number}>(sessions:T[], filter:CalendarFilter, currentProfessionalId:string|null|undefined, now=Date.now(), serviceId='', professionalId='', areaId='') {
   return sessions.filter(session => {
     if (serviceId && session.serviceId!==serviceId) return false;
+    if (areaId && session.areaId!==areaId) return false;
     if (professionalId && session.professionalId!==professionalId) return false;
     if (filter==='cancelled') return session.status==='cancelled';
     if (filter==='all') return true;
@@ -81,6 +82,7 @@ export function CalendarPage() {
   const [viewMode,setViewMode]=useState<'day'|'week'>(()=>typeof window!=='undefined'&&window.matchMedia?.('(max-width: 1120px)').matches?'day':'week');
   const [sessionFilter,setSessionFilter]=useState<CalendarFilter>('all');
   const [serviceFilter,setServiceFilter]=useState('');
+  const [areaFilter,setAreaFilter]=useState('');
   // `#calendar?book=1` (ver deep-link.ts): la reserva se hace dentro del detalle de una sesión, así que se guía a elegirla.
   const [bookHint,setBookHint]=useState(()=>readDeepLink(['book'] as const).book==='1');
   useEffect(()=>{clearDeepLink(['book']);},[]);
@@ -139,8 +141,8 @@ export function CalendarPage() {
 
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(week, index)), [week]);
   const sessionsFor = (day: Date) => (data?.sessions ?? []).filter((session) => canaryDateKey(new Date(session.startsAt)) === dateKey(day));
-  const visibleSessionsFor = (day:Date) => filterCalendarSessions(sessionsFor(day),sessionFilter,data?.currentProfessionalId,Date.now(),serviceFilter,professionalFilter);
-  const hasActiveCalendarFilters=sessionFilter!=='all'||Boolean(serviceFilter)||Boolean(professionalFilter);
+  const visibleSessionsFor = (day:Date) => filterCalendarSessions(sessionsFor(day),sessionFilter,data?.currentProfessionalId,Date.now(),serviceFilter,professionalFilter,areaFilter);
+  const hasActiveCalendarFilters=sessionFilter!=='all'||Boolean(serviceFilter)||Boolean(areaFilter)||Boolean(professionalFilter);
   const currentDay = weekDays[selectedDay] ?? weekDays[0]!;
   const weekLabel = `${new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short' }).format(week)} – ${new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short', year: 'numeric' }).format(weekDays[6]!)}`;
 
@@ -358,10 +360,11 @@ export function CalendarPage() {
         {state === 'error' && <div className="calendar-state error-panel" role="alert"><strong>No se pudo cargar la semana</strong><span>{error}</span><Button onClick={() => setRetry((value) => value + 1)}>Reintentar</Button></div>}
         {state === 'ready' && <>
           <div className="calendar-filter-bar" aria-label="Filtros de agenda">
-            <div className="calendar-filter-field"><label htmlFor="calendar-filter">Filtrar sesiones</label><select id="calendar-filter" value={sessionFilter} onChange={event=>setSessionFilter(event.target.value as CalendarFilter)}><option value="all">Todas</option><option value="upcoming">Próximas</option>{data?.currentProfessionalId&&<option value="mine">Mis sesiones</option>}<option value="full">Completas</option><option value="waitlist">Con espera</option><option value="cancelled">Canceladas</option></select></div>
             <div className="calendar-filter-field"><label htmlFor="calendar-service-filter">Servicio</label><select id="calendar-service-filter" value={serviceFilter} onChange={event=>setServiceFilter(event.target.value)}><option value="">Todos los servicios</option>{data?.services?.map(service=><option key={service.id} value={service.id}>{service.name}</option>)}</select></div>
+            <div className="calendar-filter-field"><label htmlFor="calendar-area-filter">Sala</label><select id="calendar-area-filter" value={areaFilter} onChange={event=>setAreaFilter(event.target.value)}><option value="">Todas las salas</option>{data?.areas?.map(area=><option key={area.id} value={area.id}>{area.name}</option>)}</select></div>
             <div className="calendar-filter-field"><label htmlFor="calendar-professional-filter">Profesional</label><select id="calendar-professional-filter" value={professionalFilter} onChange={event=>setProfessionalFilter(event.target.value)}><option value="">Todos los profesionales</option>{data?.professionals?.map(professional=><option key={professional.id} value={professional.id}>{professional.displayName}</option>)}</select></div>
-            {hasActiveCalendarFilters&&<Button className="calendar-filter-reset" onClick={()=>{setSessionFilter('all');setServiceFilter('');setProfessionalFilter('');}}>Limpiar filtros</Button>}
+            <div className="calendar-filter-field"><label htmlFor="calendar-filter">Filtrar sesiones</label><select id="calendar-filter" value={sessionFilter} onChange={event=>setSessionFilter(event.target.value as CalendarFilter)}><option value="all">Todas</option><option value="upcoming">Próximas</option>{data?.currentProfessionalId&&<option value="mine">Mis sesiones</option>}<option value="full">Completas</option><option value="waitlist">Con espera</option><option value="cancelled">Canceladas</option></select></div>
+            {hasActiveCalendarFilters&&<Button className="calendar-filter-reset" onClick={()=>{setSessionFilter('all');setServiceFilter('');setAreaFilter('');setProfessionalFilter('');}}>Limpiar filtros</Button>}
           </div>
           <div className={`week-strip ${viewMode==='day'?'is-visible':''}`} role="tablist" aria-label="Días de la semana">{weekDays.map((day, index) => <button key={dateKey(day)} id={`calendar-day-tab-${index}`} role="tab" tabIndex={selectedDay === index ? 0 : -1} aria-selected={selectedDay === index} aria-label={`${dayNames[index]} ${dayMonthDate.format(day)}${index === todayIndex && dateKey(day) === canaryDateKey(new Date()) ? ', hoy' : ''}`} className={selectedDay === index ? 'selected' : ''} onClick={() => setSelectedDay(index)} onKeyDown={(event) => { const next = event.key === 'ArrowRight' ? (index + 1) % 7 : event.key === 'ArrowLeft' ? (index + 6) % 7 : event.key === 'Home' ? 0 : event.key === 'End' ? 6 : -1; if (next >= 0) { event.preventDefault(); setSelectedDay(next); document.getElementById(`calendar-day-tab-${next}`)?.focus(); } }}><span>{dayNames[index]}</span><strong>{new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric' }).format(day)}</strong><small>{visibleSessionsFor(day).length}</small></button>)}</div>
           <div className={`week-grid ${viewMode==='day'?'day-view':'week-view'}`} aria-label={viewMode==='day'?`Sesiones de ${dayNames[selectedDay]} ${dayMonthDate.format(currentDay)}`:`Sesiones de la semana ${weekLabel}`}><div className="calendar-time-axis" aria-hidden="true">{Array.from({length:16},(_,index)=><span key={index} style={{gridRow:'span 2'}}>{`${String(index+6).padStart(2,'0')}:00`}</span>)}</div>{weekDays.map(renderDayColumn)}</div>
