@@ -64,7 +64,7 @@ function PlanCatalog({plans,activatingPlanId,archivingPlanId,onActivate,onVersio
     <div className="plan-card-head"><div><h3>{plan.name}</h3><p>{kindLabel[plan.kind]} · Versión {plan.currentVersion??1}</p></div><div className="plan-card-side"><StatusChip tone={statusTone[plan.status]}>{statusLabel[plan.status]}</StatusChip><strong className="plan-price">{price(plan)}</strong></div></div>
     <dl className="plan-facts"><div><dt>{plan.kind==='session_pack'?'Sesiones':'Cuota actual'}</dt><dd>{planQuotaSummary(plan)}</dd></div><div><dt>Vigencia</dt><dd>{planPeriodSummary(plan)}</dd></div><div><dt>Servicios</dt><dd>{plan.services.map(item=>`${item.name}${item.status==='archived'?' · Archivado':''}`).join(', ')||'—'}</dd></div></dl>
     {hasArchivedService(plan)&&<p className="field-note">Este plan conserva el historial del servicio archivado; puedes consultar y archivar su definición.</p>}
-    <div className="plan-row-actions"><Button size="sm" variant="ghost" aria-expanded={expandedPlanId===plan.id} onClick={()=>setExpandedPlanId(current=>current===plan.id?null:plan.id)}>{expandedPlanId===plan.id?'Ocultar':'Detalles'}</Button>{plan.status==='draft'&&!hasArchivedService(plan)&&<Button size="sm" variant="primary" disabled={activatingPlanId!==null} loading={activatingPlanId===plan.id} onClick={()=>onActivate(plan)}>{activatingPlanId===plan.id?'Activando…':'Activar plan'}</Button>}{plan.status!=='archived'&&!hasArchivedService(plan)&&<Button size="sm" variant="ghost" onClick={event=>onVersion(plan,event)}>Nueva versión</Button>}{plan.status!=='archived'&&<Button size="sm" variant="ghost" disabled={archivingPlanId!==null} loading={archivingPlanId===plan.id} onClick={()=>onArchive(plan)}>{archivingPlanId===plan.id?'Archivando…':'Archivar plan'}</Button>}</div>
+    <div className="plan-row-actions"><Button size="sm" variant="ghost" aria-expanded={expandedPlanId===plan.id} onClick={()=>setExpandedPlanId(current=>current===plan.id?null:plan.id)}>{expandedPlanId===plan.id?'Ocultar':'Detalles'}</Button>{(plan.status==='draft'||plan.status==='archived')&&!hasArchivedService(plan)&&<Button size="sm" variant="primary" disabled={activatingPlanId!==null} loading={activatingPlanId===plan.id} onClick={()=>onActivate(plan)}>{activatingPlanId===plan.id?'Activando…':plan.status==='archived'?'Reactivar plan':'Activar plan'}</Button>}{plan.status!=='archived'&&!hasArchivedService(plan)&&<Button size="sm" variant="ghost" onClick={event=>onVersion(plan,event)}>Nueva versión</Button>}{plan.status!=='archived'&&<Button size="sm" variant="ghost" disabled={archivingPlanId!==null} loading={archivingPlanId===plan.id} onClick={()=>onArchive(plan)}>{archivingPlanId===plan.id?'Archivando…':'Archivar plan'}</Button>}</div>
     {expandedPlanId===plan.id&&<section aria-label={`Detalles de ${plan.name}`}>{details(plan)}</section>}
   </Card></li>)}</ul>;
 }
@@ -154,7 +154,7 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
       if (!servicesResponse.ok) throw new Error();
       const allServices = await servicesResponse.json() as Service[];
       const lists = await Promise.all(allServices.map(async (item) => {
-        const response = await fetch(`${apiUrl}/api/services/${item.id}/plans`);
+        const response = await fetch(`${apiUrl}/api/services/${item.id}/plans?includeArchived=true`);
         if (!response.ok) throw new Error();
         return await response.json() as Plan[];
       }));
@@ -165,14 +165,15 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
     } catch { setPlans([]); setPlansError('No se pudieron cargar los planes.'); setPlansState('error'); }
   }
   async function activatePlan(plan: Plan) {
-    if (!canManageCatalog || plan.status !== 'draft' || activatingPlanId || plan.services.some(service => service.status === 'archived')) return;
-    if (!window.confirm('Al activar el plan, esta versión quedará disponible para asignarla a clientes.')) return;
+    if (!canManageCatalog || !['draft', 'archived'].includes(plan.status) || activatingPlanId || plan.services.some(service => service.status === 'archived')) return;
+    const reactivating = plan.status === 'archived';
+    if (!window.confirm(reactivating ? '¿Reactivar este plan? Se volverá a ofrecer su versión congelada a nuevas contrataciones.' : 'Al activar el plan, esta versión quedará disponible para asignarla a clientes.')) return;
     setActivatingPlanId(plan.id); setPlanActionFeedback('');
     try {
       const response = await fetch(`${apiUrl}/api/plans/${plan.id}/activate`, { method: 'POST' });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message ?? ({ service_not_active: 'Activa todos los servicios incluidos antes de activar este plan.', plan_not_found: 'No se encontró el plan.' } as Record<string, string>)[body.error] ?? 'No se pudo activar el plan.');
-      setPlanActionFeedback('Plan activado y disponible para asignarlo a clientes.');
+      setPlanActionFeedback(reactivating ? 'Plan reactivado con su versión congelada y disponible para nuevas contrataciones.' : 'Plan activado y disponible para asignarlo a clientes.');
       await (section === 'plans' ? loadAllPlans() : selectedId ? loadPlans(selectedId) : Promise.resolve());
     } catch (cause) { setPlanActionFeedback(cause instanceof Error ? cause.message : 'No se pudo activar el plan.'); }
     finally { setActivatingPlanId(null); }
