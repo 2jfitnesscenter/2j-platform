@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, RefObject } from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, IconButton, PageHeader, SearchField, SegmentedControl, StatusChip, Tabs, icons } from '@2j/ui';
+import { clearDeepLink, readDeepLink } from './deep-link.js';
 import { ClientAvatar, SECTION_LABEL, SECTION_ORDER, chargeChip, clientPlanChip, euros, planStatusChip, reservationChip, reservationRightsLabel, rightLine } from './client-presenters.js';
 
 type Client = { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; birthDate?:string|null; status: 'active' | 'archived'; createdAt: string; updatedAt?: string };
@@ -26,7 +27,7 @@ type FollowupItem = { id:string; name:string; status:string; dueAt:string|null; 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 const statusLabel = { active: 'Activo', archived: 'Archivado' };
 const moduleLabels: Record<string, string> = { reservations: 'Reservas', training: 'Entrenamiento', nutrition: 'Nutrición', health: 'Salud', clients: 'Clientes', communication: 'Comunicación' };
-const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'documents', 'messages', 'followup', 'history']);
+const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'purchases', 'documents', 'messages', 'followup', 'history']);
 
 function displayName(client: Client) { return `${client.firstName} ${client.lastName}`; }
 function dateLabel(value: string) { return new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(value)); }
@@ -37,6 +38,25 @@ function createIdempotencyKey() {
 function localDateKey() { return new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); }
 function plusLocalDays(value:string,days:number){const parts=value.split('-').map(Number);const next=new Date(Date.UTC(parts[0]??1970,(parts[1]??1)-1,(parts[2]??1)+days));return next.toISOString().slice(0,10);}
 function euroToCents(value:string) { const normalized=value.trim().replace(',','.'); if(!/^\d+(\.\d{1,2})?$/.test(normalized))return null; const cents=Math.round(Number(normalized)*100); return Number.isSafeInteger(cents)&&cents>0?cents:null; }
+
+type PurchaseRow = { id: string; createdAt: string; status: string; paymentState: string; paymentMethod: string | null; totalCents: number | string; lines: Array<{ productName: string; variantLabel: string; quantity: number }> };
+const purchaseDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short', year: 'numeric' });
+const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', other: 'Otro' };
+
+/** Compras de tienda del cliente (paridad visual 5; D49: compras consultables sin cuota). */
+function PurchasesPanel({ sales }: { sales: PurchaseRow[] }) {
+  return <Card as="section" aria-labelledby="client-purchases-title">
+    <CardHeader title="Compras" titleId="client-purchases-title" level={2} description="Ventas de tienda registradas a este cliente (las 30 más recientes)." />
+    {sales.length === 0
+      ? <EmptyState icon={icons.ShoppingBag} title="Sin compras registradas">Cuando se registre una venta de tienda a este cliente aparecerá aquí.</EmptyState>
+      : <ul className="client-purchases" aria-label="Compras del cliente">{sales.map((sale) => <li key={sale.id}>
+        <span className="client-purchase-copy"><strong>{sale.lines.map((line) => `${line.quantity} × ${line.productName} (${line.variantLabel})`).join(', ') || 'Venta sin líneas'}</strong>
+          <small>{purchaseDate.format(new Date(sale.createdAt))}{sale.paymentMethod ? ` · ${methodLabel[sale.paymentMethod] ?? sale.paymentMethod}` : ''}</small></span>
+        <span className="client-purchase-meta"><strong>{euros(Number(sale.totalCents))}</strong>
+          <StatusChip tone={sale.status === 'voided' ? 'neutral' : sale.paymentState === 'paid' ? 'success' : 'warning'}>{sale.status === 'voided' ? 'Anulada' : sale.paymentState === 'paid' ? 'Cobrada' : 'Pendiente de cobro'}</StatusChip></span>
+      </li>)}</ul>}
+  </Card>;
+}
 
 export function ClientsPage() {
   const [query, setQuery] = useState('');
@@ -63,6 +83,11 @@ export function ClientsPage() {
   const [documentBusy, setDocumentBusy] = useState(false);
   const [activeSection, setActiveSection] = useState('summary');
   const [showCreate, setShowCreate] = useState(false);
+  // Enlaces profundos del Resumen (ver deep-link.ts): se leen una vez y se retiran de la URL.
+  const [deepLink] = useState(() => readDeepLink(['new', 'intent'] as const));
+  useEffect(() => { clearDeepLink(['new', 'intent']); }, []);
+  const [intent, setIntent] = useState<'assign-plan' | 'message' | null>(deepLink.intent === 'assign-plan' || deepLink.intent === 'message' ? deepLink.intent : null);
+  const openNewFromLink = useRef(deepLink.new === '1');
   const [showEdit, setShowEdit] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState('');
@@ -265,6 +290,18 @@ export function ClientsPage() {
     if (window.location.hash.includes('tab=')) window.location.hash = `#clients?clientId=${profile.client.id}`;
   }, [profileState, profile, visibleSections, activeSection]);
 
+  useEffect(() => {
+    if (!intent || profileState !== 'ready' || !profile) return;
+    if (intent === 'assign-plan') { if (profile.capabilities.assignPlans && profile.client.status === 'active') startPlanSale(); }
+    else if (visibleSections.some((section) => section.id === 'messages')) selectSection('messages');
+    setIntent(null);
+  }, [intent, profileState, profile]);
+  useEffect(() => {
+    if (!openNewFromLink.current || listState !== 'ready') return;
+    openNewFromLink.current = false;
+    if (list.capabilities.manage) { opener.current = document.activeElement as HTMLElement | null; createKeyRef.current = createIdempotencyKey(); setShowCreate(true); }
+  }, [listState, list.capabilities.manage]);
+
   async function createClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
@@ -310,7 +347,7 @@ export function ClientsPage() {
     try {
       const response = await fetch(`${apiUrl}/api/clients/${selectedId}/plans`, { method:'POST', headers:{'content-type':'application/json','idempotency-key':planSaleKeyRef.current}, body:JSON.stringify(payload) });
       const result = await response.json().catch(()=>({}));
-      if (!response.ok) throw new Error(result.error==='price_override_forbidden'?'Tu perfil no puede modificar el precio de catálogo.':result.error==='catalog_price_required'?'Este plan necesita un precio base configurado por Administración antes de poder venderse.':response.status===403?'Tu perfil no tiene permiso para asignar y cobrar esta cuota.':result.error==='cash_session_required'?'Abre la caja antes de registrar un cobro en efectivo.':'No se pudo asignar la cuota.');
+      if (!response.ok) throw new Error(result.error==='price_override_forbidden'?'Tu perfil no puede modificar el precio de catálogo.':result.error==='catalog_price_required'?'Este plan necesita un precio base configurado por Administración antes de poder venderse.':response.status===403?'Tu perfil no tiene permiso para asignar y cobrar esta cuota.':result.error==='cash_session_required'?'Abre la caja antes de registrar cobros.':'No se pudo asignar la cuota.');
       planSaleKeyRef.current = null;
       planSalePayloadRef.current = null;
       setShowPlanDialog(false); setPlanOperation(null);setPlanOperationReason('');setActiveSection('plans'); setRefreshKey(value=>value+1); setProfileRetry(value=>value+1); setArchiveFeedback(collectNow?(planOperation?.kind==='renewal'?'Renovación y cobro registrados.':planOperation?.kind==='change'?'Cambio de plan y cobro registrados.':'Cuota asignada y cobro registrado.'):(planOperation?.kind==='renewal'?'Renovación guardada; el cargo queda pendiente.':planOperation?.kind==='change'?'Cambio de plan guardado; el cargo queda pendiente.':'Cuota asignada; el cargo queda pendiente.'));
@@ -396,6 +433,7 @@ export function ClientsPage() {
   return <main className="clients-v2" id="clients" data-2j-design="v2">
     {!selectedId && <>
       <PageHeader title="Clientes" description="Busca y abre perfiles del centro. La ficha reúne la información operativa autorizada." actions={list.capabilities.manage ? <Button variant="primary" icon={icons.Plus} onClick={openCreate}>Nuevo cliente</Button> : undefined} />
+      {intent && <div className="client-feedback" role="status"><Icon icon={icons.Users} size={20} />{intent === 'assign-plan' ? 'Elige un cliente para asignarle una cuota.' : 'Elige un cliente para escribirle un mensaje.'}<Button size="sm" variant="ghost" onClick={() => setIntent(null)}>Cancelar</Button></div>}
       <Card as="section" padding="none" className="clients-panel" aria-label="Listado de clientes" aria-busy={listBusy || loadingMore}>
         <div className="clients-toolbar">
           <SearchField label="Buscar cliente" placeholder="Nombre, email o teléfono…" value={query} onChange={setQuery} />
@@ -522,6 +560,7 @@ export function ClientsPage() {
             </Card>
           </div>}
 
+          {activeSection === 'purchases' && activeSectionData?.access === 'available' && <PurchasesPanel sales={(profile?.summary.purchases?.data as PurchaseRow[] | null) ?? []} />}
           {activeSection === 'messages' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-msg-title"><CardHeader title="Conversación del centro" titleId="client-msg-title" level={2} actions={<Button variant="ghost" size="sm" href="#communications">Abrir bandeja</Button>} />
             <dl className="client-dl"><div><dt>Mensajes sin leer</dt><dd>{Number((profile.summary.messages?.data as { unreadCount?: number } | null)?.unreadCount ?? 0)}</dd></div><div><dt>Último mensaje</dt><dd>{(profile.summary.messages?.data as { lastMessageAt?: string | null } | null)?.lastMessageAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Atlantic/Canary' }).format(new Date((profile.summary.messages?.data as { lastMessageAt: string }).lastMessageAt)) : 'Sin conversación'}</dd></div></dl>
           </Card>}

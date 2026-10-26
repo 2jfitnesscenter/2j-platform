@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Card, CardHeader, Icon, PageHeader, StatusChip, icons, type LucideIcon, type StatusTone } from '@2j/ui';
-import { useCommandCenter, type CommandCenterModel } from './app-shell.js';
+import { hasProfessionalRoute, useCommandCenter, type CommandCenterModel } from './app-shell.js';
 
 const pendingKinds = new Set(['sensitive_review', 'document_pending', 'consent_pending', 'overdue_checkin', 'pending_transfers']);
 
@@ -24,6 +24,24 @@ function ItemLink({ href, children, className = '' }: { href: string; children: 
   return safeInternalHref(href)
     ? <a className={className} href={href}>{children}</a>
     : <div className={`${className} is-unlinked`}>{children}</div>;
+}
+
+const quickActionIcons: Record<string, LucideIcon> = {
+  'new-client': icons.UserRound,
+  'new-reservation': icons.CalendarDays,
+  'new-sale': icons.ShoppingBag,
+  'assign-plan': icons.Ticket,
+  'collect-payment': icons.Wallet,
+  'send-message': icons.MessageSquare,
+};
+
+/** Accesos rápidos del Resumen (paridad visual 2): solo los que el servidor concede a este perfil; cada uno abre su sección. */
+function QuickActions({ actions }: { actions: CommandCenterModel['quickActions'] }) {
+  const usable = actions.filter(action => safeInternalHref(action.href));
+  if (usable.length === 0) return null;
+  return <nav className="summary-quick" aria-label="Accesos rápidos">
+    <ul>{usable.map(action => <li key={action.id}><a href={action.href}><Icon icon={quickActionIcons[action.id] ?? icons.ArrowLeft} size={16} />{action.label}</a></li>)}</ul>
+  </nav>;
 }
 
 type AttentionRow = { id: string; title: string; summary: string; href: string; ageAt: string | null; label: string; tone: StatusTone; icon: LucideIcon };
@@ -60,8 +78,16 @@ function MetricTile({ metric }: { metric: Metric }) {
 }
 
 function buildMetrics(data: CommandCenterModel): Metric[] {
-  const { permissions, today } = data;
+  const { permissions, today, commercial } = data;
   const metrics: Metric[] = [];
+  // Orden y contenido como el Resumen de Base44: clientes, cuotas, reservas, ocupación, importes, transferencias, ventas, stock.
+  if (permissions.clients && data.clients) {
+    metrics.push({ id: 'clients', label: 'Clientes activos', value: String(data.clients.active), detail: `${data.clients.recentSignups} ${data.clients.recentSignups === 1 ? 'alta' : 'altas'} en 30 días`, href: '#clients' });
+  }
+  if (commercial?.plans) {
+    const soon = commercial.plans.expiringSoonCount;
+    metrics.push({ id: 'plans', label: 'Cuotas vigentes', value: String(commercial.plans.activeCount), detail: soon > 0 ? `${soon} ${soon === 1 ? 'vence' : 'vencen'} en 7 días` : 'Ninguna vence en 7 días', ...(soon > 0 ? { detailTone: 'warning' as const } : {}), href: '#clients' });
+  }
   if (permissions.calendar) {
     const free = Math.max(0, today.capacity - today.occupied);
     metrics.push({ id: 'bookings', label: 'Reservas hoy', value: String(today.occupied), detail: `${free} ${free === 1 ? 'plaza libre' : 'plazas libres'}`, href: '#calendar' });
@@ -71,15 +97,24 @@ function buildMetrics(data: CommandCenterModel): Metric[] {
     const overdue = Number(data.economics.overdueCount);
     metrics.push({ id: 'pending', label: 'Pendiente de cobro', value: money(Number(data.economics.pendingCents)), detail: overdue > 0 ? `${overdue} ${overdue === 1 ? 'cargo vencido' : 'cargos vencidos'}` : 'Sin cargos vencidos', ...(overdue > 0 ? { detailTone: 'danger' as const } : {}), href: '#economics' });
   }
-  if (permissions.clients && data.clients) {
-    metrics.push({ id: 'clients', label: 'Clientes activos', value: String(data.clients.active), detail: `${data.clients.recentSignups} ${data.clients.recentSignups === 1 ? 'alta' : 'altas'} en 30 días`, href: '#clients' });
+  if (commercial?.transfers) {
+    const pending = commercial.transfers.pendingCount;
+    metrics.push({ id: 'transfers', label: 'Transferencias por validar', value: String(pending), detail: pending > 0 ? 'Justificantes pendientes de revisión' : 'Nada pendiente', ...(pending > 0 ? { detailTone: 'warning' as const } : {}), href: '#economics' });
+  }
+  if (commercial?.storeSales) {
+    const count = commercial.storeSales.monthCount;
+    metrics.push({ id: 'store-sales', label: 'Ventas del mes', value: money(commercial.storeSales.monthTotalCents), detail: `${count} ${count === 1 ? 'operación' : 'operaciones'}`, href: '#store' });
+  }
+  if (commercial?.lowStock) {
+    const count = commercial.lowStock.count;
+    metrics.push({ id: 'low-stock', label: 'Productos con stock bajo', value: String(count), detail: count > 0 ? 'Revisa el inventario' : 'Stock suficiente', ...(count > 0 ? { detailTone: 'warning' as const } : {}), href: '#store' });
   }
   return metrics;
 }
 
-function AttentionCard({ rows }: { rows: AttentionRow[] }) {
+export function AttentionCard({ rows, title = 'Requiere atención' }: { rows: AttentionRow[]; title?: string }) {
   return <Card as="section" padding="none" className="summary-card" aria-labelledby="summary-attention-title">
-    <div className="summary-card-head"><CardHeader title="Requiere atención" titleId="summary-attention-title" actions={<StatusChip tone={rows.length === 0 ? 'success' : rows.some(row => row.tone === 'danger') ? 'danger' : 'warning'} icon={null}>{rows.length}</StatusChip>} /></div>
+    <div className="summary-card-head"><CardHeader title={title} titleId="summary-attention-title" actions={<StatusChip tone={rows.length === 0 ? 'success' : rows.some(row => row.tone === 'danger') ? 'danger' : 'warning'} icon={null}>{rows.length}</StatusChip>} /></div>
     {rows.length === 0
       ? <div className="summary-empty"><span className="summary-empty-icon"><Icon icon={icons.CircleCheck} size={24} /></span><strong>Nada requiere tu atención.</strong><span>No hay incidencias en las áreas disponibles para tu perfil.</span></div>
       : <ul className="summary-list" aria-label="Elementos que requieren atención">{rows.map(row => <li key={row.id}>
@@ -131,6 +166,20 @@ function SessionsCard({ data }: { data: CommandCenterModel }) {
   </Card>;
 }
 
+/** What needs attention for this profile (shared by the Resumen and the Actividad screen). */
+export function attentionOf(data: CommandCenterModel) {
+  const permissions = data.permissions;
+  const canSeeAttention = permissions.calendar || permissions.billing || permissions.staff;
+  const canSeePending = permissions.communications || permissions.transfers || (permissions.documents && permissions.clients) || (permissions.followup && permissions.clients);
+  const attentionRows: AttentionRow[] = [
+    ...(canSeeAttention ? data.attention.filter(item => !pendingKinds.has(item.kind)) : []),
+    ...(canSeePending ? data.attention.filter(item => pendingKinds.has(item.kind)) : []),
+  ].map(item => ({ id: item.id, title: item.title, summary: item.summary, href: item.href, ageAt: item.ageAt, ...attentionPresentation(item.kind) }));
+  if (permissions.communications && data.unread > 0) attentionRows.push({ id: 'unread-messages', title: `${data.unread} ${data.unread === 1 ? 'mensaje sin leer' : 'mensajes sin leer'}`, summary: 'Hay conversaciones que esperan respuesta', href: '#communications', ageAt: null, label: 'Responder', tone: 'info', icon: icons.MessageSquare });
+  attentionRows.sort((a, b) => toneRank[a.tone] - toneRank[b.tone]);
+  return { canSeeAttention, canSeePending, rows: attentionRows };
+}
+
 export function CommandCenter() {
   const { data, state, error, reload } = useCommandCenter();
   const [updatedAt, setUpdatedAt] = React.useState<string | null>(null);
@@ -148,14 +197,7 @@ export function CommandCenter() {
   </main>;
 
   const permissions = data.permissions;
-  const canSeeAttention = permissions.calendar || permissions.billing || permissions.staff;
-  const canSeePending = permissions.communications || permissions.transfers || (permissions.documents && permissions.clients) || (permissions.followup && permissions.clients);
-  const attentionRows: AttentionRow[] = [
-    ...(canSeeAttention ? data.attention.filter(item => !pendingKinds.has(item.kind)) : []),
-    ...(canSeePending ? data.attention.filter(item => pendingKinds.has(item.kind)) : []),
-  ].map(item => ({ id: item.id, title: item.title, summary: item.summary, href: item.href, ageAt: item.ageAt, ...attentionPresentation(item.kind) }));
-  if (permissions.communications && data.unread > 0) attentionRows.push({ id: 'unread-messages', title: `${data.unread} ${data.unread === 1 ? 'mensaje sin leer' : 'mensajes sin leer'}`, summary: 'Hay conversaciones que esperan respuesta', href: '#communications', ageAt: null, label: 'Responder', tone: 'info', icon: icons.MessageSquare });
-  attentionRows.sort((a, b) => toneRank[a.tone] - toneRank[b.tone]);
+  const { canSeeAttention, canSeePending, rows: attentionRows } = attentionOf(data);
   const showAttention = canSeeAttention || canSeePending;
   const metrics = buildMetrics(data);
   const refreshing = state === 'loading';
@@ -165,8 +207,10 @@ export function CommandCenter() {
       title="Resumen"
       description={description}
       meta={updatedAt ? `Actualizado a las ${dateTime(updatedAt)} · hora de Canarias` : undefined}
-      actions={<Button icon={icons.RefreshCw} loading={refreshing} onClick={() => void reload()}>Actualizar</Button>}
+      actions={<>{hasProfessionalRoute('reports') && <Button href="#reports" icon={icons.ArrowUpRight}>Ver informes</Button>}<Button icon={icons.RefreshCw} loading={refreshing} onClick={() => void reload()}>Actualizar</Button></>}
     />
+
+    <QuickActions actions={data.quickActions} />
 
     {metrics.length > 0 && <ul className="summary-metrics" aria-label="Indicadores de hoy">{metrics.map(metric => <MetricTile key={metric.id} metric={metric} />)}</ul>}
 

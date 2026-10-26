@@ -44,9 +44,7 @@ test('Trainer sees only capability-allowed professional sections and no business
   for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
   assert.equal(nav.queryByRole('button',{name:'Negocio'}),null);
   for(const label of ['Economía','Tienda','Noticias','Ajustes de avisos'])assert.equal(nav.queryByRole('link',{name:label}),null);
-  assert.ok(nav.getByRole('link',{name:'Espacios'}));
   assert.ok(nav.getByRole('link',{name:'Servicios'}));
-  assert.equal(nav.queryByRole('link',{name:'Espacios y servicios'}),null,'the old combined entry is gone');
   assert.equal(screen.queryByText('Cobrado hoy'),null);
 });
 
@@ -56,7 +54,7 @@ test('groups disappear when no child is allowed and partial grants expose only t
   const partial={...none,clients:true,notificationSettings:true};
   const nav=getProfessionalNavigation(partial);
   assert.deepEqual(nav.map(item=>item.label),['Resumen','Clientes','Negocio']);
-  assert.deepEqual(nav.find(item=>item.id==='business').children.map(item=>item.label),['Ajustes de avisos']);
+  assert.deepEqual(nav.find(item=>item.id==='business').children.map(item=>item.label),['Configuración','Ajustes de avisos']);
 });
 
 test('global search opens with Ctrl+K, groups permitted results and closes with Escape', async () => {
@@ -109,10 +107,10 @@ test('permitted Communications navigation remains visible while moving between m
   const nav = document.querySelector('.app-navigation');
   assert.ok(within(nav).getByRole('button', { name: 'Actividad' }));
   assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
-  for (const label of ['Espacios', 'Servicios', 'Agenda', 'Clientes', 'Economía', 'Equipo']) {
-    const link = within(nav).getByRole('link', { name: new RegExp(`^${label}$`) });
+  for (const label of ['Servicios', 'Agenda', 'Clientes', 'Economía', 'Equipo']) {
+    const link = within(nav).getByRole('link', { name: new RegExp(label) });
     fireEvent.click(link);
-    await waitFor(() => assert.equal(within(nav).getByRole('link', { name: new RegExp(`^${label}$`) }).getAttribute('aria-current'), 'page'));
+    await waitFor(() => assert.equal(within(nav).getByRole('link', { name: new RegExp(label) }).getAttribute('aria-current'), 'page'));
     assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
   }
   assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
@@ -141,16 +139,22 @@ test('authorized hash deep links retain their current subnavigation and page con
   await screen.findByText('Página existente');
   const nav=within(document.querySelector('.app-navigation'));
   assert.equal(nav.getByRole('link',{name:'Servicios'}).getAttribute('aria-current'),'page');
-  assert.equal(nav.getByRole('link',{name:'Espacios'}).getAttribute('aria-current'),null);
   assert.ok(nav.getByRole('button',{name:'Mi gimnasio'}).closest('.app-nav-group').classList.contains('is-active'));
   assert.equal(getProfessionalPageContext('services').section,'Mi gimnasio');
-  assert.deepEqual(getProfessionalPageContext('spaces'),{section:'Mi gimnasio',page:'Espacios'});
+  assert.equal(getProfessionalPageContext('spaces').page,'Espacios');
   assert.equal(getProfessionalPageContext('notification-settings').page,'Ajustes de avisos');
+});
+
+test('Espacios and Servicios are separate destinations under Mi gimnasio',()=>{
+  const gym=getProfessionalNavigation({...capabilities,calendar:true}).find(item=>item.id==='gym');
+  assert.deepEqual(gym.children.map(route=>route.label),['Agenda','Espacios','Servicios']);
+  assert.equal(gym.children.find(route=>route.id==='spaces').href,'#spaces');
+  assert.equal(gym.children.find(route=>route.id==='services').href,'#services');
 });
 
 test('navigation introduces no Programación, Arena, or Athlete View destination',()=>{
   const nav=getProfessionalNavigation({...capabilities,billing:true,news:true,store:true,notificationSettings:true});
-  assert.deepEqual(nav.map(item=>item.label),['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio']);
+  assert.deepEqual(nav.map(item=>item.label),['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Fichaje','Negocio']);
   assert.equal(JSON.stringify(nav).match(/Programación|Arena|Athlete View|Entrenamientos/g),null);
 });
 
