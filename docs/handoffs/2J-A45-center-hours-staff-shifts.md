@@ -6,7 +6,7 @@ Implementación inicial de horario de apertura efectivo, turnos fechados asignad
 
 ## Implementado
 
-- Migración aditiva `0051_center_hours_staff_shifts.sql`; mantiene `Atlantic/Canary` como zona horaria de operación.
+- Migración aditiva `0053_center_hours_staff_shifts.sql`; se renumeró después de integrar #115 (0052). Mantiene `Atlantic/Canary` como zona horaria de operación.
 - `center_opening_hours` permite varios intervalos semanales por día y cambios con fecha efectiva. Las sustituciones conservan las versiones anteriores, las fechas futuras y registran snapshots anterior/nuevo en `staff_audit_events`.
 - `staff_shift_assignments` representa turnos concretos fechados, no disponibilidad de calendario (`staff_schedule_slots`), clases ni fichajes. Los turnos no generan ni corrigen eventos de reloj.
 - API owner-only para leer/guardar horario, crear/listar/cancelar turnos y consultar huecos de personal. La comprobación de solapes serializa la escritura por profesional.
@@ -22,12 +22,12 @@ No incluye recurrencia de turnos, reglas laborales, asistencia, alertas basadas 
 ## Validación local
 
 - `pnpm install --frozen-lockfile` completado; dependencias instaladas desde el lockfile.
-- Suite completa en PostgreSQL sintético limpio: PASS, 818/818 (tokens 6, dominio 34, permisos 11, UI 18, auth 2, audit 3, API 368, Admin 318, Client 45, Staff 7, deploy kit 6).
+- Suite completa en PostgreSQL sintético limpio, después de integrar #115: PASS, 829/829 (tokens 6, dominio 34, permisos 11, UI 18, auth 2, audit 3, API 369, Admin 322, Client 45, Staff 7, deploy kit 6).
 - `pnpm typecheck`: PASS, 11/11 tareas.
 - `pnpm build --force`: PASS, 9/9 tareas.
-- API/PostgreSQL sintético después del ajuste: 368/368; tests dirigidos de A45: 4/4 PASS, repetidos sobre la misma base para comprobar que la fixture tolera reuso.
-- Admin Web: suite completa PASS, 318/318; tests dirigidos de Configuración: 5/5 PASS.
-- `@2j/api db:migrate`: PASS, 50 migraciones checksummed, incluida `0051_center_hours_staff_shifts.sql` (el prefijo 0049 sigue libre; no se renumeraron migraciones previas).
+- API/PostgreSQL sintético después del ajuste: 369/369; tests dirigidos de A45: 4/4 PASS, repetidos sobre la misma base para comprobar que la fixture tolera reuso.
+- Admin Web: suite completa PASS, 322/322; tests dirigidos de Configuración: 5/5 PASS.
+- `@2j/api db:migrate`: PASS, 51 migraciones checksummed en base sintética limpia; A45 es `0053_center_hours_staff_shifts.sql`, a continuación de #115 (`0052`). No se renumeraron migraciones ya integradas.
 - `git diff --check`: PASS en el head candidato.
 
 ## Pendiente de cierre
