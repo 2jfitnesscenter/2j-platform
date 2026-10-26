@@ -72,7 +72,8 @@
     "store.inventory.manage",
     "store.sales.read",
     "store.sales.create",
-    "store.sales.void"
+    "store.sales.void",
+    "owner.panel.read"
   ],
   "roles": {
     "admin": [
