@@ -112,9 +112,9 @@ function buildMetrics(data: CommandCenterModel): Metric[] {
   return metrics;
 }
 
-function AttentionCard({ rows }: { rows: AttentionRow[] }) {
+export function AttentionCard({ rows, title = 'Requiere atención' }: { rows: AttentionRow[]; title?: string }) {
   return <Card as="section" padding="none" className="summary-card" aria-labelledby="summary-attention-title">
-    <div className="summary-card-head"><CardHeader title="Requiere atención" titleId="summary-attention-title" actions={<StatusChip tone={rows.length === 0 ? 'success' : rows.some(row => row.tone === 'danger') ? 'danger' : 'warning'} icon={null}>{rows.length}</StatusChip>} /></div>
+    <div className="summary-card-head"><CardHeader title={title} titleId="summary-attention-title" actions={<StatusChip tone={rows.length === 0 ? 'success' : rows.some(row => row.tone === 'danger') ? 'danger' : 'warning'} icon={null}>{rows.length}</StatusChip>} /></div>
     {rows.length === 0
       ? <div className="summary-empty"><span className="summary-empty-icon"><Icon icon={icons.CircleCheck} size={24} /></span><strong>Nada requiere tu atención.</strong><span>No hay incidencias en las áreas disponibles para tu perfil.</span></div>
       : <ul className="summary-list" aria-label="Elementos que requieren atención">{rows.map(row => <li key={row.id}>
@@ -166,6 +166,20 @@ function SessionsCard({ data }: { data: CommandCenterModel }) {
   </Card>;
 }
 
+/** What needs attention for this profile (shared by the Resumen and the Actividad screen). */
+export function attentionOf(data: CommandCenterModel) {
+  const permissions = data.permissions;
+  const canSeeAttention = permissions.calendar || permissions.billing || permissions.staff;
+  const canSeePending = permissions.communications || permissions.transfers || (permissions.documents && permissions.clients) || (permissions.followup && permissions.clients);
+  const attentionRows: AttentionRow[] = [
+    ...(canSeeAttention ? data.attention.filter(item => !pendingKinds.has(item.kind)) : []),
+    ...(canSeePending ? data.attention.filter(item => pendingKinds.has(item.kind)) : []),
+  ].map(item => ({ id: item.id, title: item.title, summary: item.summary, href: item.href, ageAt: item.ageAt, ...attentionPresentation(item.kind) }));
+  if (permissions.communications && data.unread > 0) attentionRows.push({ id: 'unread-messages', title: `${data.unread} ${data.unread === 1 ? 'mensaje sin leer' : 'mensajes sin leer'}`, summary: 'Hay conversaciones que esperan respuesta', href: '#communications', ageAt: null, label: 'Responder', tone: 'info', icon: icons.MessageSquare });
+  attentionRows.sort((a, b) => toneRank[a.tone] - toneRank[b.tone]);
+  return { canSeeAttention, canSeePending, rows: attentionRows };
+}
+
 export function CommandCenter() {
   const { data, state, error, reload } = useCommandCenter();
   const [updatedAt, setUpdatedAt] = React.useState<string | null>(null);
@@ -183,14 +197,7 @@ export function CommandCenter() {
   </main>;
 
   const permissions = data.permissions;
-  const canSeeAttention = permissions.calendar || permissions.billing || permissions.staff;
-  const canSeePending = permissions.communications || permissions.transfers || (permissions.documents && permissions.clients) || (permissions.followup && permissions.clients);
-  const attentionRows: AttentionRow[] = [
-    ...(canSeeAttention ? data.attention.filter(item => !pendingKinds.has(item.kind)) : []),
-    ...(canSeePending ? data.attention.filter(item => pendingKinds.has(item.kind)) : []),
-  ].map(item => ({ id: item.id, title: item.title, summary: item.summary, href: item.href, ageAt: item.ageAt, ...attentionPresentation(item.kind) }));
-  if (permissions.communications && data.unread > 0) attentionRows.push({ id: 'unread-messages', title: `${data.unread} ${data.unread === 1 ? 'mensaje sin leer' : 'mensajes sin leer'}`, summary: 'Hay conversaciones que esperan respuesta', href: '#communications', ageAt: null, label: 'Responder', tone: 'info', icon: icons.MessageSquare });
-  attentionRows.sort((a, b) => toneRank[a.tone] - toneRank[b.tone]);
+  const { canSeeAttention, canSeePending, rows: attentionRows } = attentionOf(data);
   const showAttention = canSeeAttention || canSeePending;
   const metrics = buildMetrics(data);
   const refreshing = state === 'loading';

@@ -25,6 +25,7 @@ type NavRoute = {id:string;label:string;href:string;permission:keyof NavigationC
 type NavSection = {id:string;label:string;icon:LucideIcon;route?:NavRoute;children?:NavRoute[]};
 const routes={
   home:{id:'home',label:'Resumen',href:'#home',permission:null,icon:icons.LayoutDashboard},
+  activity:{id:'activity',label:'Avisos y auditoría',href:'#activity',permission:'calendar',icon:icons.Activity},
   communications:{id:'communications',label:'Comunicación',href:'#communications',permission:'communications',icon:icons.MessageSquare},
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
   'my-gym':{id:'my-gym',label:'Panel del centro',href:'#my-gym',permission:'ownerPanel',icon:icons.Dumbbell},
@@ -41,7 +42,7 @@ const routes={
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
   {id:'home',label:'Resumen',icon:icons.LayoutDashboard,route:routes.home},
-  {id:'activity',label:'Actividad',icon:icons.Activity,children:[routes.communications]},
+  {id:'activity',label:'Actividad',icon:icons.Activity,children:[routes.activity,routes.communications]},
   {id:'clients',label:'Clientes',icon:icons.Users,route:routes.clients},
   {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes['my-gym'],routes.calendar,routes.services]},
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
