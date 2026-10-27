@@ -1,0 +1,32 @@
+{
+  "task": "2J-A58-cash-register-design",
+  "status": "draft-design-only",
+  "base": "5e1d6b26079228aa13c5f32e37cd75199e7c1a7b",
+  "ownerDecision": {
+    "oneRegisterPerCustodian": true,
+    "registersMayBeOpenSimultaneously": true,
+    "handoverIsPerRegister": true,
+    "sourceClarification": "Direct user instruction confirms defaults that attached A58 lists as pending confirmation."
+  },
+  "physicalRegisters": [
+    { "code": "bunker", "name": "Búnker" },
+    { "code": "sala", "name": "Sala" }
+  ],
+  "candidateMigration": "0055_cash_registers.sql",
+  "migrationCollisionCheck": {
+    "originMainLatest": "0052_reactivate_archived_plans.sql",
+    "pr124": "0053_center_hours_staff_shifts.sql",
+    "pr125": "0054_staff_passkey_sessions.sql",
+    "otherOpenPr0055Collision": false,
+    "recheckBeforeImplementation": true
+  },
+  "files": [
+    "docs/design/2J-A58-two-cash-registers.md",
+    "docs/handoffs/2J-A58-two-cash-registers.md",
+    "docs/handoffs/2J-A58-two-cash-registers.json"
+  ],
+  "implementationStarted": false,
+  "migrationCreatedOrApplied": false,
+  "productionTouched": false,
+  "independentReviewRequired": "Work Home or Work Búnker before merge"
+}
