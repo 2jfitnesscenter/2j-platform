@@ -22,16 +22,19 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details) VALUES (${context.actorId},${action},${type},${id},${clientId},${JSON.stringify(details)}::jsonb)`;
   }
   async function cashSnapshot(tx: any, sessionId: string) {
-    const [row] = await tx`SELECT s.id,s.register_id AS "registerId",r.code AS "registerCode",r.name AS "registerName",s.local_date AS "localDate",s.opening_cents AS "openingCents",s.opening_denominations AS "openingDenominations",s.status,s.opened_at AS "openedAt",s.opened_by AS "openedBy",s.closed_at AS "closedAt",s.closed_by AS "closedBy",s.expected_cents AS "frozenExpectedCents",s.counted_cents AS "countedCents",s.counted_denominations AS "countedDenominations",s.difference_cents AS "differenceCents",
+    const [row] = await tx`SELECT s.id,s.register_id AS "registerId",r.code AS "registerCode",r.name AS "registerName",s.local_date AS "localDate",COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint AS "openingCents",COALESCE(reopen.details->'openingDenominations',s.opening_denominations) AS "openingDenominations",s.status,s.opened_at AS "openedAt",s.opened_by AS "openedBy",s.closed_at AS "closedAt",s.closed_by AS "closedBy",s.expected_cents AS "frozenExpectedCents",s.counted_cents AS "countedCents",s.counted_denominations AS "countedDenominations",s.difference_cents AS "differenceCents",
       COALESCE(sum(ps.amount_cents) FILTER(WHERE et.kind='payment' AND ps.method='cash'),0)::bigint AS "cashPaymentsCents",
       COALESCE(sum(ps.amount_cents) FILTER(WHERE et.kind='refund' AND ps.method='cash'),0)::bigint AS "cashRefundsCents",
-      COALESCE((SELECT sum(sale.total_cents) FROM store_sales sale WHERE sale.cash_session_id=s.id AND sale.payment_state='paid' AND sale.payment_method='cash'),0)::bigint AS "cashStoreSalesCents",
-      COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id AND m.payment_method='cash'),0)::bigint AS "cashStoreRefundsCents",
-      COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id),0)::bigint AS "storeSaleAnnulmentsCents",
-      COALESCE((SELECT sum(a.amount_cents) FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id),0)::bigint AS "adjustmentsCents",
-      COALESCE((SELECT sum(o.amount_cents) FROM economic_cash_outflows o WHERE o.cash_session_id=s.id AND o.status='approved'),0)::bigint AS "outflowsCents"
-      FROM economic_cash_sessions s LEFT JOIN economic_cash_registers r ON r.id=s.register_id LEFT JOIN economic_transactions et ON et.cash_session_id=s.id LEFT JOIN economic_payment_splits ps ON ps.transaction_id=et.id WHERE s.id=${sessionId}
-      GROUP BY s.id,r.code,r.name`;
+      COALESCE((SELECT sum(sale.total_cents) FROM store_sales sale WHERE sale.cash_session_id=s.id AND sale.payment_state='paid' AND sale.payment_method='cash' AND (reopen.occurred_at IS NULL OR sale.created_at>=reopen.occurred_at)),0)::bigint AS "cashStoreSalesCents",
+      COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id AND m.payment_method='cash' AND (reopen.occurred_at IS NULL OR m.occurred_at>=reopen.occurred_at)),0)::bigint AS "cashStoreRefundsCents",
+      COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id AND (reopen.occurred_at IS NULL OR m.occurred_at>=reopen.occurred_at)),0)::bigint AS "storeSaleAnnulmentsCents",
+      COALESCE((SELECT sum(a.amount_cents) FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id AND (reopen.occurred_at IS NULL OR a.created_at>=reopen.occurred_at)),0)::bigint AS "adjustmentsCents",
+      COALESCE((SELECT sum(o.amount_cents) FROM economic_cash_outflows o WHERE o.cash_session_id=s.id AND o.status='approved' AND (reopen.occurred_at IS NULL OR o.created_at>=reopen.occurred_at)),0)::bigint AS "outflowsCents"
+      FROM economic_cash_sessions s LEFT JOIN economic_cash_registers r ON r.id=s.register_id
+      LEFT JOIN LATERAL(SELECT e.occurred_at,e.details FROM economic_audit_events e WHERE e.resource_type='cash_session' AND e.resource_id=s.id AND e.action='cash.reopened' ORDER BY e.occurred_at DESC,e.id DESC LIMIT 1) reopen ON true
+      LEFT JOIN economic_transactions et ON et.cash_session_id=s.id AND (reopen.occurred_at IS NULL OR et.created_at>=reopen.occurred_at)
+      LEFT JOIN economic_payment_splits ps ON ps.transaction_id=et.id WHERE s.id=${sessionId}
+      GROUP BY s.id,r.code,r.name,reopen.occurred_at,reopen.details`;
     if (!row) return null;
     const expectedCents = row.frozenExpectedCents == null
       ? Number(row.openingCents) + Number(row.cashPaymentsCents) + Number(row.cashStoreSalesCents) - Number(row.cashRefundsCents) - Number(row.cashStoreRefundsCents) + Number(row.adjustmentsCents) - Number(row.outflowsCents)
@@ -99,18 +102,18 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       const visible = items.filter(Boolean);
       return { items: visible, session: visible.at(-1) ?? null, timezone: 'Atlantic/Canary' };
     }
-    const [session] = await db`SELECT s.id,s.register_id AS "registerId",r.code AS "registerCode",r.name AS "registerName",s.local_date AS "localDate",s.status,s.opened_at AS "openedAt",s.closed_at AS "closedAt"
+    const [session] = await db`SELECT s.id,s.register_id AS "registerId",r.code AS "registerCode",r.name AS "registerName",s.local_date AS "localDate",s.status,s.opened_at AS "openedAt",s.closed_at AS "closedAt",c.started_at AS "custodyStartedAt",c.ended_at AS "custodyEndedAt"
       FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id JOIN economic_cash_registers r ON r.id=s.register_id
       WHERE c.actor_id=${context.actorId} AND c.ended_at IS NULL AND s.status='open' AND s.local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY c.started_at DESC LIMIT 1`;
-    const [lastHeld] = session ? [session] : await db`SELECT s.id,s.register_id AS "registerId",r.code AS "registerCode",r.name AS "registerName",s.local_date AS "localDate",s.status,s.opened_at AS "openedAt",s.closed_at AS "closedAt"
+    const [lastHeld] = session ? [session] : await db`SELECT s.id,s.register_id AS "registerId",r.code AS "registerCode",r.name AS "registerName",s.local_date AS "localDate",s.status,s.opened_at AS "openedAt",s.closed_at AS "closedAt",c.started_at AS "custodyStartedAt",c.ended_at AS "custodyEndedAt"
       FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id JOIN economic_cash_registers r ON r.id=s.register_id
       WHERE c.actor_id=${context.actorId} AND s.local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY c.started_at DESC LIMIT 1`;
     if(!lastHeld)return {items:[],session:null,timezone:'Atlantic/Canary'};
     const [transactions,sales,annulments,outflows]=await Promise.all([
-      db`SELECT t.id,t.kind,s.method,s.amount_cents AS "amountCents",t.created_at AS "occurredAt" FROM economic_transactions t JOIN economic_payment_splits s ON s.transaction_id=t.id WHERE t.cash_session_id=${lastHeld.id} ORDER BY t.created_at,t.id,s.method`,
-      db`SELECT id,'store_sale'::text AS kind,payment_method AS method,total_cents AS "amountCents",created_at AS "occurredAt" FROM store_sales WHERE cash_session_id=${lastHeld.id} ORDER BY created_at,id`,
-      db`SELECT id,movement_type AS kind,payment_method AS method,amount_cents AS "amountCents",occurred_at AS "occurredAt" FROM store_sale_cash_movements WHERE cash_session_id=${lastHeld.id} ORDER BY occurred_at,id`,
-      db`SELECT id,movement_type AS kind,amount_cents AS "amountCents",reason,status,receipt_bytes IS NOT NULL AS "hasReceipt",created_at AS "occurredAt" FROM economic_cash_outflows WHERE cash_session_id=${lastHeld.id} ORDER BY created_at,id`,
+      db`SELECT t.id,t.kind,s.method,s.amount_cents AS "amountCents",t.created_at AS "occurredAt" FROM economic_transactions t JOIN economic_payment_splits s ON s.transaction_id=t.id WHERE t.cash_session_id=${lastHeld.id} AND t.actor_id=${context.actorId} AND t.created_at>=${lastHeld.custodyStartedAt} AND t.created_at<COALESCE(${lastHeld.custodyEndedAt},'infinity'::timestamptz) ORDER BY t.created_at,t.id,s.method`,
+      db`SELECT id,'store_sale'::text AS kind,payment_method AS method,total_cents AS "amountCents",created_at AS "occurredAt" FROM store_sales WHERE cash_session_id=${lastHeld.id} AND created_by=${context.actorId} AND created_at>=${lastHeld.custodyStartedAt} AND created_at<COALESCE(${lastHeld.custodyEndedAt},'infinity'::timestamptz) ORDER BY created_at,id`,
+      db`SELECT id,movement_type AS kind,payment_method AS method,amount_cents AS "amountCents",occurred_at AS "occurredAt" FROM store_sale_cash_movements WHERE cash_session_id=${lastHeld.id} AND actor_id=${context.actorId} AND occurred_at>=${lastHeld.custodyStartedAt} AND occurred_at<COALESCE(${lastHeld.custodyEndedAt},'infinity'::timestamptz) ORDER BY occurred_at,id`,
+      db`SELECT id,movement_type AS kind,amount_cents AS "amountCents",reason,status,receipt_bytes IS NOT NULL AS "hasReceipt",created_at AS "occurredAt" FROM economic_cash_outflows WHERE cash_session_id=${lastHeld.id} AND actor_id=${context.actorId} AND created_at>=${lastHeld.custodyStartedAt} AND created_at<COALESCE(${lastHeld.custodyEndedAt},'infinity'::timestamptz) ORDER BY created_at,id`,
     ]);
     const movements=[...transactions,...sales,...annulments,...outflows].sort((a:any,b:any)=>new Date(a.occurredAt).getTime()-new Date(b.occurredAt).getTime()||String(a.id).localeCompare(String(b.id)));
     const visibleSession=session?{...session,movements}:{...blindCashSnapshot(await cashSnapshot(db,lastHeld.id)),...lastHeld,movements};
@@ -162,6 +165,8 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         if (!register) return { error: 'cash_register_not_found' as const };
         const [open] = await tx`SELECT id,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE register_id=${register.id} AND status='open' LIMIT 1 FOR UPDATE`;
         if (open) return { error: open.isToday ? 'cash_already_open' as const : 'cash_session_previous_day_requires_owner_resolution' as const };
+        const [usedToday] = await tx`SELECT id FROM economic_cash_sessions WHERE register_id=${register.id} AND local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date LIMIT 1 FOR UPDATE`;
+        if (usedToday) return { error: 'cash_register_already_used_today' as const };
         const [row] = await tx`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},(now() AT TIME ZONE 'Atlantic/Canary')::date,${openingCents},${JSON.stringify(parsed.data.openingDenominations)}::jsonb,${context.actorId}) RETURNING id,register_id AS "registerId",local_date AS "localDate",status,opened_at AS "openedAt"`;
         if (!row) throw new Error('cash session insert returned no row');
         await tx`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${row.id},${person.id},${context.actorId})`;
@@ -172,7 +177,45 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       return reply.code(201).send({ ...result.row, openingCents, openingDenominations: parsed.data.openingDenominations });
     } catch (error) {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
-      return reply.code(code === '23505' ? 409 : 500).send({ error: code === '23505' ? 'cash_session_exists' : 'cash_open_failed' });
+      const constraint=typeof error==='object'&&error&&'constraint'in error?String(error.constraint):'';
+      const uniqueViolation=constraint==='economic_cash_one_session_per_register_day'||(typeof error==='object'&&error&&'message'in error&&String(error.message).includes('economic_cash_one_session_per_register_day'));
+      return reply.code(code === '23505' ? 409 : 500).send({ error: code === '23505'&&uniqueViolation ? 'cash_register_already_used_today' : code === '23505' ? 'cash_session_exists' : 'cash_open_failed' });
+    }
+  });
+
+  app.post('/api/economics/cash/:sessionId/owner-reopen',async(request,reply)=>{
+    const context=await auth(request,reply,'owner.panel.read');if(!context)return;
+    const params=z.object({sessionId:uuid}).safeParse(request.params);
+    const body=z.object({custodianActorId:z.string().trim().min(1).max(120),openingDenominations:cashDenominationsSchema}).strict().safeParse(request.body);
+    if(!params.success||!body.success)return reply.code(400).send({error:'validation_error'});
+    const openingCents=cashDenominationsToCents(body.data.openingDenominations);
+    try{
+      const result=await db.begin(async tx=>{
+        await tx`SELECT pg_advisory_xact_lock(hashtext('2j-economic-register-operations'))`;
+        const [session]=await tx`SELECT id,register_id AS "registerId",local_date AS "localDate",status,opened_by AS "openedBy" FROM economic_cash_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
+        if(!session)return {error:'cash_session_not_found'} as const;
+        if(!session.registerId)return {error:'cash_legacy_session_requires_owner_resolution'} as const;
+        if(session.localDate!==(await tx`SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS date`)[0]?.date)return {error:'cash_reopen_today_only'} as const;
+        if(!['closed','late_close'].includes(session.status))return {error:'cash_session_not_closed'} as const;
+        const [custodian]=await tx`SELECT id,auth_actor_id AS "actorId" FROM staff_professionals WHERE auth_actor_id=${body.data.custodianActorId} AND status='active' FOR UPDATE`;
+        if(!custodian)return {error:'staff_account_unlinked'} as const;
+        const [clock]=await tx`SELECT e.event_type AS "eventType" FROM staff_timeclock_events e LEFT JOIN LATERAL(SELECT corrected_occurred_at FROM staff_timeclock_corrections c WHERE c.event_id=e.id ORDER BY c.revision DESC LIMIT 1)c ON true WHERE e.professional_id=${custodian.id} ORDER BY COALESCE(c.corrected_occurred_at,e.occurred_at) DESC,e.id DESC LIMIT 1`;
+        if(clock?.eventType!=='clock_in')return {error:'cash_custodian_not_clocked_in'} as const;
+        const [held]=await tx`SELECT id FROM economic_cash_custodies WHERE actor_id=${custodian.actorId} AND ended_at IS NULL FOR UPDATE`;
+        if(held)return {error:'already_holds_register'} as const;
+        await audit(tx,context,'cash.reopened','cash_session',session.id,null,{registerId:session.registerId,localDate:String(session.localDate),custodianActorId:custodian.actorId,openingCents,openingDenominations:body.data.openingDenominations});
+        const [reopened]=await tx`UPDATE economic_cash_sessions SET status='open',closed_at=NULL,closed_by=NULL,expected_cents=NULL,counted_cents=NULL,counted_denominations=NULL,difference_cents=NULL,close_kind=NULL WHERE id=${session.id} AND status IN ('closed','late_close') RETURNING id,register_id AS "registerId",local_date AS "localDate",status`;
+        if(!reopened)return {error:'cash_session_not_closed'} as const;
+        await tx`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${session.id},${custodian.id},${custodian.actorId})`;
+        const [register]=await tx`SELECT code,name FROM economic_cash_registers WHERE id=${session.registerId}`;
+        if(!register)throw new Error('cash register missing for physical cash session');
+        return {id:reopened.id,registerId:reopened.registerId,registerCode:register.code,registerName:register.name,localDate:reopened.localDate,status:reopened.status,openingCents,openingDenominations:body.data.openingDenominations} as const;
+      });
+      if('error'in result)return reply.code(result.error==='cash_session_not_found'?404:result.error==='staff_account_unlinked'?404:409).send({error:result.error});
+      return reply.send(result);
+    }catch(error){
+      const code=typeof error==='object'&&error&&'code'in error?String(error.code):'';
+      return reply.code(code==='55000'?409:code==='23505'?409:500).send({error:code==='55000'?'cash_transition_invalid':code==='23505'?'already_holds_register':'cash_reopen_failed'});
     }
   });
   const closeBody = z.object({ countedDenominations: cashDenominationsSchema }).strict();
@@ -481,12 +524,17 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
           if (Number(balance?.cents ?? 0) + Number(proof.amountCents) > Number(charge.amountCents)) return { error: 'amount_exceeds_balance' as const };
           transactionId = randomUUID();
           const requestHash = createHash('sha256').update(`proof:${proof.id}:${proof.amountCents}`).digest('hex');
+          const [updated] = await tx`UPDATE economic_transfer_proofs SET status='validated',reviewed_by=${context.actorId},reviewed_at=now(),decision_note=${body.data.note ?? null},transaction_id=${transactionId} WHERE id=${proof.id} AND status='pending_validation' RETURNING id`;
+          if (!updated) return { error: 'proof_already_reviewed' as const };
           await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${transactionId},${charge.id},${charge.clientId},'payment',${proof.amountCents},'Justificante de transferencia validado',${context.actorId},${proof.id},${requestHash},NULL)`;
           await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${transactionId},'transfer',${proof.amountCents})`;
           await audit(tx, context, 'payment.transfer_validated', 'transaction', transactionId, charge.clientId, { amountCents: proof.amountCents, proofId: proof.id });
           await activateSettledEntitlementPeriods(tx,charge.id,context.actorId);
+        } else {
+          const [updated] = await tx`UPDATE economic_transfer_proofs SET status='rejected',reviewed_by=${context.actorId},reviewed_at=now(),decision_note=${body.data.note ?? null} WHERE id=${proof.id} AND status='pending_validation' RETURNING id`;
+          if (!updated) return { error: 'proof_already_reviewed' as const };
         }
-        const [updated] = await tx`UPDATE economic_transfer_proofs SET status=${body.data.decision},reviewed_by=${context.actorId},reviewed_at=now(),decision_note=${body.data.note ?? null},transaction_id=${transactionId} WHERE id=${proof.id} RETURNING id,status,reviewed_at AS "reviewedAt"`;
+        const [updated] = await tx`SELECT id,status,reviewed_at AS "reviewedAt" FROM economic_transfer_proofs WHERE id=${proof.id}`;
         if (!updated) throw new Error('proof review update returned no row');
         await audit(tx, context, `transfer_proof.${body.data.decision}`, 'transfer_proof', proof.id, charge.clientId, { note: body.data.note ?? null });
         return updated;

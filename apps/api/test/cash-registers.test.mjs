@@ -38,6 +38,8 @@ test('two physical registers have isolated custodians, blind counts, handover an
   assert.equal((await trainerA.inject({method:'GET',url:'/api/economics/cash/day'})).statusCode,403,'global daily view is owner-only');
   const blockedHandover=await trainerA.inject({method:'POST',url:`/api/economics/cash/${sessionBunker}/handover`,payload:{incomingProfessionalId:personB.id,outgoingDenominations:count(5000)}});
   assert.equal(blockedHandover.statusCode,409);assert.equal(blockedHandover.json().error,'handover_recipient_holds_register','one person cannot hold two registers simultaneously');
+  const outgoingMovementId=randomUUID();
+  await sql`INSERT INTO economic_cash_outflows(id,cash_session_id,movement_type,amount_cents,reason,actor_id,status,approved_by,approved_at) VALUES (${outgoingMovementId},${sessionBunker},'expense',100,'Compra antes del traspaso','cash-trainer-a','approved','cash-trainer-a',now())`;
 
   const blindClose=await trainerB.inject({method:'POST',url:`/api/economics/cash/${sessionSala}/close`,payload:{countedDenominations:count(3000)}});
   assert.equal(blindClose.statusCode,200,blindClose.body);for(const key of ['expectedCents','differenceCents','openingCents'])assert.equal(Object.hasOwn(blindClose.json(),key),false,`cashier close must keep ${key} blind`);
@@ -51,6 +53,16 @@ test('two physical registers have isolated custodians, blind counts, handover an
   assert.equal(pendingHandover.json().items[0].id,handover.json().id);assert.equal(Object.hasOwn(pendingHandover.json().items[0],'outgoingDenominations'),false,'the receiver must not see the outgoing blind count');
   const received=await trainerB.inject({method:'POST',url:`/api/economics/cash/handovers/${handover.json().id}/confirm`,payload:{incomingDenominations:count(4900)}});
   assert.equal(received.statusCode,200,received.body);assert.equal('mismatch' in received.json(),false,'cashier response must not disclose owner-only mismatch');
+  const incomingMovementId=randomUUID();
+  await sql`INSERT INTO economic_cash_outflows(id,cash_session_id,movement_type,amount_cents,reason,actor_id,status,approved_by,approved_at) VALUES (${incomingMovementId},${sessionBunker},'withdrawal',200,'Retirada después del traspaso','cash-trainer-b','approved','cash-trainer-b',now())`;
+  const outgoingToday=await trainerA.inject({method:'GET',url:'/api/economics/cash/today'});
+  assert.equal(outgoingToday.statusCode,200,outgoingToday.body);
+  assert.ok(outgoingToday.json().session.movements.some(item=>item.id===outgoingMovementId),'outgoing custodian keeps their own movements');
+  assert.ok(!outgoingToday.json().session.movements.some(item=>item.id===incomingMovementId),'outgoing custodian cannot see movements after handover');
+  const incomingToday=await trainerB.inject({method:'GET',url:'/api/economics/cash/today'});
+  assert.equal(incomingToday.statusCode,200,incomingToday.body);
+  assert.ok(incomingToday.json().session.movements.some(item=>item.id===incomingMovementId),'incoming custodian sees movements from their custody interval');
+  assert.ok(!incomingToday.json().session.movements.some(item=>item.id===outgoingMovementId),'incoming custodian cannot see outgoing movements');
   const clockOutA=await trainerA.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}});
   assert.equal(clockOutA.statusCode,201,clockOutA.body,'outgoing trainer may clock out after handover');
   const clockOutBBlocked=await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}});
@@ -66,12 +78,35 @@ test('two physical registers have isolated custodians, blind counts, handover an
   assert.equal(nonOwnerDashboard.statusCode,200,nonOwnerDashboard.body);assert.equal(nonOwnerDashboard.json().economics.cashSession,null,'another actor gets no global cash snapshot');
   const finalClose=await trainerB.inject({method:'POST',url:`/api/economics/cash/${sessionBunker}/close`,payload:{countedDenominations:count(4900)}});
   assert.equal(finalClose.statusCode,200,finalClose.body);for(const key of ['expectedCents','differenceCents','openingCents','previousCloseCents'])assert.equal(Object.hasOwn(finalClose.json(),key),false);
+  const [register]=await sql`SELECT register_id AS id,local_date AS date FROM economic_cash_sessions WHERE id=${sessionBunker}`;
+  await assert.rejects(sql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},${register.date},2000,${sql.json(count(2000))},'cash-trainer-b')`,error=>error.code==='23505'&&error.message.includes('economic_cash_one_session_per_register_day'));
   assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,201);
   assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-in',payload:{origin:'web'}})).statusCode,201);
-  const reopen=await trainerB.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:count(2000)}});
-  assert.equal(reopen.statusCode,201,reopen.body);assert.equal(Number(reopen.json().openingCents),2000);
-  for(const key of ['expectedCents','differenceCents','previousCloseCents'])assert.equal(Object.hasOwn(reopen.json(),key),false,`opening response must not reveal ${key}`);
-  sessionBunker=reopen.json().id;
+  const duplicateDayOpen=await trainerB.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:count(2000)}});
+  assert.equal(duplicateDayOpen.statusCode,409);assert.equal(duplicateDayOpen.json().error,'cash_register_already_used_today');
+  const nonOwnerReopen=await plainAdmin.inject({method:'POST',url:`/api/economics/cash/${sessionBunker}/owner-reopen`,payload:{custodianActorId:'cash-trainer-b',openingDenominations:count(2000)}});
+  assert.equal(nonOwnerReopen.statusCode,403,'reopening an already closed register must be owner-only');
+  const ownerReopen=await owner.inject({method:'POST',url:`/api/economics/cash/${sessionBunker}/owner-reopen`,payload:{custodianActorId:'cash-trainer-b',openingDenominations:count(2000)}});
+  assert.equal(ownerReopen.statusCode,200,ownerReopen.body);assert.equal(ownerReopen.json().id,sessionBunker);assert.equal(ownerReopen.json().status,'open');
+  for(const key of ['expectedCents','differenceCents','previousCloseCents'])assert.equal(Object.hasOwn(ownerReopen.json(),key),false,`owner reopening must not expose cash expectations in the operational response`);
+  assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,409);
+  const [reopenAudit]=await sql`SELECT actor_id,details FROM economic_audit_events WHERE resource_id=${sessionBunker} AND action='cash.reopened' ORDER BY occurred_at DESC LIMIT 1`;
+  assert.equal(reopenAudit.actor_id,'cash-owner');assert.equal(reopenAudit.details.custodianActorId,'cash-trainer-b');
+});
+
+test('migration 0055 attaches the current-register guards to payments, paid store sales and store annulments',async()=>{
+  const [paymentTrigger]=await sql`SELECT t.tgname AS name,p.proname AS function FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid='economic_transactions'::regclass AND t.tgname='economic_transactions_cash_session_guard' AND NOT t.tgisinternal`;
+  assert.equal(paymentTrigger?.function,'economic_transaction_cash_session_guard');
+  const [saleTrigger]=await sql`SELECT t.tgname AS name,p.proname AS function FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid='store_sales'::regclass AND t.tgname='store_sale_payment_cash_session_guard' AND NOT t.tgisinternal`;
+  assert.equal(saleTrigger?.function,'store_sale_payment_requires_cash_session');
+  const [saleUpdateTrigger]=await sql`SELECT t.tgname AS name,p.proname AS function FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid='store_sales'::regclass AND t.tgname='store_sale_payment_cash_session_update_guard' AND NOT t.tgisinternal`;
+  assert.equal(saleUpdateTrigger?.function,'store_sale_payment_requires_cash_session','D113 guard also runs when a sale transitions into a paid state');
+  const [movementTrigger]=await sql`SELECT t.tgname AS name,p.proname AS function FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid='store_sale_cash_movements'::regclass AND t.tgname='store_sale_cash_movement_current_session' AND NOT t.tgisinternal`;
+  assert.equal(movementTrigger?.function,'store_sale_cash_movement_guard');
+  const [sessionDayIndex]=await sql`SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND tablename='economic_cash_sessions' AND indexname='economic_cash_one_session_per_register_day'`;
+  assert.match(sessionDayIndex?.indexdef??'',/UNIQUE.*\(register_id, local_date\)/i);
+  const [transferFk]=await sql`SELECT condeferrable FROM pg_constraint WHERE conrelid='economic_transfer_proofs'::regclass AND conname='economic_transfer_proofs_transaction_id_fkey'`;
+  assert.equal(transferFk?.condeferrable,true,'proof can bind to the transaction before that transaction is inserted within the same atomic review');
 });
 
 test('expenses require their dedicated permission, accept no receipt, and owner limit routes an over-limit movement to approval',async()=>{
@@ -93,7 +128,9 @@ test('expenses require their dedicated permission, accept no receipt, and owner 
   assert.equal(decision.statusCode,200,decision.body);assert.equal(decision.json().status,'approved');
   const ownerDay=await owner.inject({method:'GET',url:'/api/economics/cash/day'});
   assert.equal(ownerDay.statusCode,200,ownerDay.body);
-  assert.equal(Number(ownerDay.json().registers.find(row=>row.registerCode==='bunker'&&Number(row.openingCents)===2000).expectedCents),1800,'approved outflows reduce expected physical cash after the 2000-cent opening float and initial 100-cent expense');
+  const bunker=ownerDay.json().registers.find(row=>row.registerCode==='bunker');
+  assert.equal(Number(bunker.openingCents),2000,'owner reopening starts a new audited custody count without creating a second daily session');
+  assert.equal(Number(bunker.expectedCents),1800,'the reopened custody baseline includes only movements after the owner count');
 });
 
 test('legacy open sessions without a register fail closed until owner resolution and do not alter timeclock history',async()=>{

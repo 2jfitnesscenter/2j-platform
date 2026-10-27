@@ -158,6 +158,10 @@ test('owner cash summary separates physical registers and safely includes curren
     await adminSql.unsafe(`CREATE DATABASE "${databaseName}"`);sourceUrl.pathname=`/${databaseName}`;
     testSql=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});await migrateDatabase(testSql);
     testApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'dashboard-cash-isolated',role:'admin'}),ownerActorId:'dashboard-cash-isolated'});
+    await testSql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by)
+      VALUES ('Caja','Dashboard','Caja Dashboard','trainer','dashboard-cash-isolated','test')`;
+    const clockIn=await testApp.inject({method:'POST',url:'/api/timeclock/clock-in',payload:{origin:'web'}});
+    assert.equal(clockIn.statusCode,201,clockIn.body);
     const today=await testSql`SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS day`;
     const registers=await testSql`SELECT id,code FROM economic_cash_registers ORDER BY code`;
     const bunker=registers.find(row=>row.code==='bunker'),sala=registers.find(row=>row.code==='sala');
@@ -171,16 +175,18 @@ test('owner cash summary separates physical registers and safely includes curren
     await testSql`UPDATE economic_cash_sessions SET status='closed',close_kind='closed',expected_cents=2200,counted_cents=2200,counted_denominations=${testSql.json(denominationsForEuros(22))},difference_cents=0,closed_by='qa',closed_at=now()-interval '19 seconds' WHERE id=${newer.id}`;
     response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
     assert.equal(response.statusCode,200,response.body);assert.equal(response.json().economics.cashSession.registers.length,2);assert.ok(response.json().economics.cashSession.registers.some(row=>Number(row.openingCents)===2200));
-    const [openToday]=await testSql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by,opened_at) VALUES (${bunker.id},${today[0].day},3300,${testSql.json(denominationsForEuros(33))},'qa',now()-interval '10 seconds') RETURNING id`;
+    const openToday=await testApp.inject({method:'POST',url:`/api/economics/cash/${only.id}/owner-reopen`,payload:{custodianActorId:'dashboard-cash-isolated',openingDenominations:denominationsForEuros(33)}});
+    assert.equal(openToday.statusCode,200,openToday.body);
     response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
     assert.equal(response.statusCode,200,response.body);assert.equal(response.json().economics.cashSession.status,'open');
     assert.ok(response.json().economics.cashSession.registers.some(row=>row.status==='open'&&Number(row.openingCents)===3300));
-    await testSql`UPDATE economic_cash_sessions SET status='closed',close_kind='closed',expected_cents=opening_cents,counted_cents=opening_cents,counted_denominations=opening_denominations,difference_cents=0,closed_by='qa',closed_at=now() WHERE id=${openToday.id}`;
+    const openTodayClose=await testApp.inject({method:'POST',url:`/api/economics/cash/${only.id}/close`,payload:{countedDenominations:denominationsForEuros(33)}});
+    assert.equal(openTodayClose.statusCode,200,openTodayClose.body);
     const [staleOpen]=await testSql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by,opened_at) VALUES (${sala.id},${today[0].day}::date-1,4400,${testSql.json(denominationsForEuros(44))},'qa',now()-interval '40 seconds') RETURNING id`;
     response=await testApp.inject({method:'GET',url:'/api/dashboard/command-center'});
     assert.equal(response.statusCode,200,response.body);assert.equal(response.json().economics.cashSession.status,'open');
     assert.ok(response.json().economics.cashSession.registers.some(row=>row.status==='open'&&Number(row.openingCents)===4400));
-    assert.ok(only.id&&newer.id&&staleOpen.id);
+    assert.ok(only.id&&newer.id&&openToday.json().id===only.id&&staleOpen.id);
   } finally { await testApp?.close();await testSql?.end();await adminSql.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await adminSql.end(); }
 });
 

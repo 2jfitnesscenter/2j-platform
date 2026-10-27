@@ -19,8 +19,19 @@ ALTER TABLE economic_cash_sessions
 DROP INDEX economic_cash_one_open_session;
 CREATE UNIQUE INDEX economic_cash_one_open_session_per_register
   ON economic_cash_sessions(register_id) WHERE status='open' AND register_id IS NOT NULL;
+CREATE UNIQUE INDEX economic_cash_one_session_per_register_day
+  ON economic_cash_sessions(register_id,local_date) WHERE register_id IS NOT NULL;
 CREATE INDEX economic_cash_register_history_idx
   ON economic_cash_sessions(register_id,local_date DESC,opened_at DESC);
+
+-- A validated transfer is bound to its proof before the deferred payment guard
+-- evaluates the completed transaction at commit (D102; no drawer movement).
+ALTER TABLE economic_transfer_proofs
+  DROP CONSTRAINT economic_transfer_proofs_transaction_id_fkey;
+ALTER TABLE economic_transfer_proofs
+  ADD CONSTRAINT economic_transfer_proofs_transaction_id_fkey
+  FOREIGN KEY (transaction_id) REFERENCES economic_transactions(id) ON DELETE RESTRICT
+  DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE economic_cash_custodies (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -192,6 +203,25 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- Reattach the D113 guards to the replacement functions defined in this migration.
+DROP TRIGGER IF EXISTS economic_transactions_cash_session_guard ON economic_transactions;
+CREATE CONSTRAINT TRIGGER economic_transactions_cash_session_guard
+  AFTER INSERT ON economic_transactions DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION economic_transaction_cash_session_guard();
+
+DROP TRIGGER IF EXISTS store_sale_payment_cash_session_guard ON store_sales;
+CREATE TRIGGER store_sale_payment_cash_session_guard
+  BEFORE INSERT ON store_sales
+  FOR EACH ROW EXECUTE FUNCTION store_sale_payment_requires_cash_session();
+DROP TRIGGER IF EXISTS store_sale_payment_cash_session_update_guard ON store_sales;
+CREATE TRIGGER store_sale_payment_cash_session_update_guard
+  BEFORE UPDATE OF payment_state,cash_session_id,created_by ON store_sales
+  FOR EACH ROW EXECUTE FUNCTION store_sale_payment_requires_cash_session();
+
+DROP TRIGGER IF EXISTS store_sale_cash_movement_current_session ON store_sale_cash_movements;
+CREATE TRIGGER store_sale_cash_movement_current_session
+  BEFORE INSERT ON store_sale_cash_movements FOR EACH ROW EXECUTE FUNCTION store_sale_cash_movement_guard();
+
 CREATE OR REPLACE FUNCTION economic_cash_adjustment_register_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM economic_require_current_open_cash_session(NEW.cash_session_id,NEW.actor_id);
@@ -262,8 +292,22 @@ CREATE TRIGGER economic_cash_outflow_current_session
   BEFORE INSERT ON economic_cash_outflows FOR EACH ROW EXECUTE FUNCTION economic_cash_outflow_register_guard();
 
 CREATE OR REPLACE FUNCTION economic_cash_session_transition_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE reopen_audit boolean;
 BEGIN
   IF TG_OP='DELETE' THEN RAISE EXCEPTION 'cash sessions cannot be deleted' USING ERRCODE='55000'; END IF;
+  IF OLD.status IN ('closed','late_close') AND NEW.status='open' AND NEW.id=OLD.id
+    AND NEW.local_date=OLD.local_date AND NEW.register_id=OLD.register_id
+    AND NEW.opening_cents=OLD.opening_cents AND NEW.opening_denominations=OLD.opening_denominations
+    AND NEW.opened_by=OLD.opened_by AND NEW.opened_at=OLD.opened_at
+    AND NEW.closed_at IS NULL AND NEW.closed_by IS NULL AND NEW.expected_cents IS NULL
+    AND NEW.counted_cents IS NULL AND NEW.counted_denominations IS NULL
+    AND NEW.difference_cents IS NULL AND NEW.close_kind IS NULL THEN
+    SELECT EXISTS(SELECT 1 FROM economic_audit_events e WHERE e.resource_type='cash_session'
+      AND e.resource_id=OLD.id AND e.action='cash.reopened'
+      AND e.details ? 'openingDenominations' AND e.details ? 'custodianActorId') INTO reopen_audit;
+    IF reopen_audit THEN RETURN NEW; END IF;
+    RAISE EXCEPTION 'owner audit required to reopen cash session' USING ERRCODE='55000';
+  END IF;
   IF OLD.status<>'open' OR NEW.status NOT IN ('closed','late_close') OR NEW.id IS DISTINCT FROM OLD.id
     OR NEW.local_date IS DISTINCT FROM OLD.local_date OR NEW.register_id IS DISTINCT FROM OLD.register_id
     OR NEW.opening_cents IS DISTINCT FROM OLD.opening_cents OR NEW.opening_denominations IS DISTINCT FROM OLD.opening_denominations

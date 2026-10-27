@@ -139,7 +139,7 @@ test('store sale annulment is refused without a shift and appears as a linked mo
   await assert.rejects(sql`UPDATE store_sales SET status='voided',voided_at=now(),voided_by='qa-bypass' WHERE id=${created.json().id}`,{code:'23514'});
   const [unchanged]=await sql`SELECT status FROM store_sales WHERE id=${created.json().id}`;assert.equal(unchanged.status,'completed');
   const [none]=await sql`SELECT count(*)::int AS count FROM store_sale_cash_movements WHERE sale_id=${created.json().id}`;assert.equal(none.count,0);
-  const opened=await admin.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:cashCount(2000)}});assert.equal(opened.statusCode,201,opened.body);
+  const opened=await admin.inject({method:'POST',url:`/api/economics/cash/${saleCash.id}/owner-reopen`,payload:{custodianActorId:'store-test-admin',openingDenominations:cashCount(Number(saleCash.expectedCents))}});assert.equal(opened.statusCode,200,opened.body);
   const voided=await admin.inject({method:'POST',url:`/api/admin/store/sales/${created.json().id}/void`,payload:{reason:'Anulación con turno'}});assert.equal(voided.statusCode,200,voided.body);
   const [movement]=await sql`SELECT cash_session_id,payment_method,amount_cents FROM store_sale_cash_movements WHERE sale_id=${created.json().id}`;
   assert.equal(movement.cash_session_id,opened.json().id);assert.equal(movement.payment_method,'cash');assert.equal(Number(movement.amount_cents),Number(created.json().totalCents));
