@@ -9,8 +9,14 @@
     "sourceClarification": "Direct user instruction confirms defaults listed as pending in attached A58."
   },
   "physicalRegisters": [
-    { "code": "bunker", "name": "Búnker" },
-    { "code": "sala", "name": "Sala" }
+    {
+      "code": "bunker",
+      "name": "Búnker"
+    },
+    {
+      "code": "sala",
+      "name": "Sala"
+    }
   ],
   "candidateMigration": "0055_cash_registers.sql",
   "migrationCollisionCheck": {
@@ -27,7 +33,8 @@
     "Legacy open register_id NULL sessions block new operations until audited owner resolution with real count, reason and trainer notice; no timeclock mutation",
     "Clock-out blocked during active cash custody until close or completed handover, transactionally serialized",
     "Opening flow never reads or returns previous close or expected amount",
-    "Expenses/withdrawals: specific permission, mandatory type/reason, optional receipt, optional owner limit NULL by default and approval above configured limit"
+    "Expenses/withdrawals: specific permission, mandatory type/reason, optional receipt, optional owner limit NULL by default and approval above configured limit",
+    "Staff movement reads additionally filter by authenticated actor; no operations by previous/alternate custodians, with handover counts limited to the actor own side."
   ],
   "files": [
     "docs/design/2J-A58-two-cash-registers.md",
