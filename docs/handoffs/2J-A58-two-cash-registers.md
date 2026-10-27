@@ -1,10 +1,14 @@
 # Handoff — diseño de dos cajas A58
 
-- Estado: diseño documental Draft; no hay cambios de producto ejecutables.
-- Base: `5e1d6b26079228aa13c5f32e37cd75199e7c1a7b` (`origin/main`, 2026-10-27).
+- Estado: diseño documental Draft; se incorporaron P1/P2 de la revisión Work Home; re-revisión pendiente.
+- Base revisada: `origin/main` en `5e1d6b26079228aa13c5f32e37cd75199e7c1a7b` (2026-10-27).
 - Decisión directa del propietario confirma: cada persona custodia como máximo una caja; Búnker y Sala pueden estar abiertas simultáneamente con custodios distintos; handover por caja.
 - Modelo propuesto: catálogo `economic_cash_registers`; `economic_cash_sessions.register_id`; intervalos de custodia y handovers con conteos separados; ledger existente conectado por `cash_session_id`; sumario global desglosable por registro.
-- Migración candidata `0055_cash_registers.sql`; 0053 está en PR #124, 0054 en #125, y no se encontró 0055 en el resto de PRs abiertas. Revalidar antes de implementar.
-- Privacidad: solo `owner.panel.read` recibe diferencia, expected amounts o incidentes de conteo.
-- Tests/código/migraciones/despliegues: ninguno en este PR.
-- Revisora independiente requerida antes de merge: Work Home o Work Búnker.
+- Privacidad API: `owner.panel.read` recibe global, ambos registros, total, expected, counted, diferencias e incidencias. Personal queda restringido por servidor a un solo registro autorizado; sin agregados globales, cierres previos, diferencias ni movimientos del otro registro.
+- Legado: sesiones históricas no se asignan por suposición. Una sesión abierta sin register_id bloquea globalmente nuevas aperturas y movimientos; owner-only la resuelve con motivo, conteo real, auditoría y aviso al trainer, sin modificar fichajes.
+- A37: no se permite clock-out con custodia activa; debe cerrar o completar handover. Cierre/traspaso y clock-out requieren exclusión transaccional para cerrar carreras.
+- D111: el flujo de apertura no lee ni muestra cierre previo; 50 EUR es referencia, no precarga.
+- A47/A49/A50: gastos/retiradas con permiso específico, tipo y motivo obligatorios; justificante opcional; límite owner-configurable nulo por defecto; superar el límite requiere aprobación.
+- Candidata `0055_cash_registers.sql`: explorados los árboles de las 16 PR abiertas y `origin/main`; no existe otro `0055_*.sql`. #124 propone 0053 y #125 0054. Revalidar tras re-review y justo antes de crear el fichero.
+- Implementación y migración: todavía no iniciadas. Este PR solo cambia diseño/handoff documental. No se ejecutó DB.
+- Revisión independiente requerida: Work Home re-review del nuevo head; no merge antes de resultado aprobatorio.
