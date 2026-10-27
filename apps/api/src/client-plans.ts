@@ -105,7 +105,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
           AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version AND (s.status<>'active' OR a.status<>'active')) FOR SHARE OF p,v`;
         if (!plan) return { error: 'plan_unavailable' as const };
         if (plan.termKind != null) return { error: 'contract_terms_not_available' as const };
-        const cash = data.paymentAmountCents != null ? await lockOpenCashSession(tx) : null;
+        const cash = data.paymentAmountCents != null ? await lockOpenCashSession(tx, context.actorId) : null;
         if (cash && !cash.ok) return { error: cash.error };
         const concept = `${plan.name} · Cuota`;
         const [commercial]=await tx`SELECT

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
 process.env.NODE_ENV ??= 'test';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: dashboard commercial tests cannot be skipped.');
@@ -26,6 +27,9 @@ test('quick actions use Base44 verbs and deep links, each only with its permissi
     ['assign-plan', 'Asignar cuota', '#clients?intent=assign-plan'],
     ['collect-payment', 'Registrar pago', '#economics'],
     ['send-message', 'Enviar mensaje', '#clients?intent=message'],
+    ['timeclock-toggle', 'Fichar entrada/salida', '#timeclock?intent=toggle'],
+    ['open-cash', 'Abrir caja', '#economics?intent=open-cash'],
+    ['close-cash', 'Cerrar caja', '#economics?intent=close-cash'],
   ]);
   const trainerBody = await center(trainer);
   const allowed = new Set(trainerBody.quickActions.map((item) => item.id));
@@ -45,15 +49,18 @@ test('commercial tiles: store sales of the month and low stock move with real da
   const after = (await center()).commercial;
   assert.equal(after.storeSales.monthCount, before.storeSales.monthCount + 1);
   assert.equal(after.storeSales.monthTotalCents, before.storeSales.monthTotalCents + 1500);
-  assert.equal(after.lowStock.count, before.lowStock.count + 1, 'a tracked variant left with 3 units (<= 3) counts as low stock');
+  const [stockAfterSale] = await sql`SELECT COALESCE(sum(quantity_delta),0)::int AS quantity FROM store_inventory_movements WHERE variant_id=${variant.id}`;
+  assert.equal(stockAfterSale.quantity,3,'the test variant has three units after one sale from four');
+  assert.ok(after.lowStock.count >= before.lowStock.count, 'the sale can only maintain or increase the global low-stock count');
   // D113 (#97): annulling a sale leaves a movement linked to an open shift, so the shift must exist first (already open is fine).
-  const zero = Object.fromEntries(['coin_0_01','coin_0_02','coin_0_05','coin_0_10','coin_0_20','coin_0_50','coin_1','coin_2','bill_5','bill_10','bill_20','bill_50','bill_100','bill_200','bill_500'].map((key) => [key, 0]));
-  const shift = await post('/api/economics/cash/open', { openingDenominations: zero });
-  assert.ok([201, 409].includes(shift.statusCode), shift.body);
+  const shift = await ensureCashSessionForActor(sql, 'dashboard-commercial-admin');
+  assert.ok(shift.id);
   assert.equal((await post(`/api/admin/store/sales/${sale.json().id}/void`, { reason: 'Prueba' })).statusCode, 200);
   const voided = (await center()).commercial;
   assert.equal(voided.storeSales.monthCount, before.storeSales.monthCount, 'voided sales leave the month total');
-  assert.equal(voided.lowStock.count, before.lowStock.count, 'the units return to stock when a sale is voided (4 > 3: no longer low)');
+  const [stockAfterVoid] = await sql`SELECT COALESCE(sum(quantity_delta),0)::int AS quantity FROM store_inventory_movements WHERE variant_id=${variant.id}`;
+  assert.equal(stockAfterVoid.quantity,4,'void restores the test variant stock');
+  assert.equal(voided.lowStock.count, after.lowStock.count - 1, 'the test variant is no longer low stock after the void');
   const limited = (await center(trainer)).commercial;
   assert.equal(limited.storeSales, null, 'no store sales without store.sales.read');
   assert.equal(limited.lowStock, null, 'no stock without store.inventory.read');

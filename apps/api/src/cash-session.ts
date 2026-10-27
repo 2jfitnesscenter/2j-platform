@@ -19,12 +19,20 @@ export function cashDenominationsToCents(count: CashDenominations): number {
 }
 
 /** Locks and validates the only shift that may receive a collection today. */
-export async function lockOpenCashSession(tx: any) {
-  const [session] = await tx`SELECT id,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday"
-    FROM economic_cash_sessions WHERE status='open' ORDER BY opened_at LIMIT 1 FOR UPDATE`;
+export async function lockOpenCashSession(tx: any, actorId: string) {
+  await tx`SELECT pg_advisory_xact_lock(hashtext('2j-economic-register-operations'))`;
+  const [legacy] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND register_id IS NULL LIMIT 1`;
+  if (legacy) return { ok: false as const, error: 'cash_legacy_session_requires_owner_resolution' as const };
+  const [stale] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date LIMIT 1`;
+  if (stale) return { ok: false as const, error: 'cash_session_previous_day_requires_owner_resolution' as const };
+  const [session] = await tx`SELECT s.id,s.register_id AS "registerId",s.local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday"
+    FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id
+    WHERE c.actor_id=${actorId} AND c.ended_at IS NULL AND s.status='open'
+    ORDER BY c.started_at DESC LIMIT 1 FOR UPDATE OF c,s`;
   if (!session) return { ok: false as const, error: 'cash_session_required' as const };
   if (!session.isToday) return { ok: false as const, error: 'cash_session_previous_day_requires_owner_resolution' as const };
-  return { ok: true as const, id: String(session.id) };
+  return { ok: true as const, id: String(session.id), registerId: String(session.registerId) };
 }
 
 export const previousDayCashSessionMessage = 'Hay una caja abierta de un día anterior. El propietario debe resolverla antes de registrar cobros o anulaciones.';
+export const legacyCashSessionMessage = 'Hay una caja anterior sin registro asignado. El propietario debe resolverla antes de abrir o usar otra caja.';

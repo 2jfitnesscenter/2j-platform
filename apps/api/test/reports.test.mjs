@@ -4,11 +4,13 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
 process.env.NODE_ENV ??= 'test';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: report integration tests cannot be skipped.');
 const sql = postgres(process.env.DATABASE_URL, { max: 6, connect_timeout: 5 });
 await migrateDatabase(sql);
+await ensureCashSessionForActor(sql, 'reports-test-admin');
 const as = (role) => buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: `reports-test-${role}`, role }) });
 const admin = as('admin');
 const accountant = as('accountant');
