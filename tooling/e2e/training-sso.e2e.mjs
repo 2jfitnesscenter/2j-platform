@@ -180,6 +180,8 @@ before(async () => {
   };
   const plans = { full: await makePlan('full'), autonomous: await makePlan('autonomous') };
   const commercial = { fuerza: ['full', 0, true], otra: ['autonomous', 0, true], impago: ['full', 0, false], vencido: ['full', -1, true], outfull: ['full', 0, true] };
+  const [cashProfessional] = await state.sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('E2E','Admin','Admin E2E','admin','local-demo:admin','e2e-fixture') RETURNING id`;
+  await state.sql`INSERT INTO staff_timeclock_events(professional_id,event_type,origin,actor_id) VALUES (${cashProfessional.id},'clock_in','web','local-demo:admin')`;
   const cash = await padmin('POST', '/api/economics/cash/open', { registerCode: 'bunker', openingDenominations: emptyCashDenominations });
   assert.equal(cash.status, 201, `open synthetic cash session: ${cash.text}`);
 
