@@ -292,7 +292,7 @@ CREATE TRIGGER economic_cash_outflow_current_session
   BEFORE INSERT ON economic_cash_outflows FOR EACH ROW EXECUTE FUNCTION economic_cash_outflow_register_guard();
 
 CREATE OR REPLACE FUNCTION economic_cash_session_transition_guard() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE reopen_audit boolean;
+DECLARE reopen_audit boolean; reopen_actor text;
 BEGIN
   IF TG_OP='DELETE' THEN RAISE EXCEPTION 'cash sessions cannot be deleted' USING ERRCODE='55000'; END IF;
   IF OLD.status IN ('closed','late_close') AND NEW.status='open' AND NEW.id=OLD.id
@@ -302,8 +302,14 @@ BEGIN
     AND NEW.closed_at IS NULL AND NEW.closed_by IS NULL AND NEW.expected_cents IS NULL
     AND NEW.counted_cents IS NULL AND NEW.counted_denominations IS NULL
     AND NEW.difference_cents IS NULL AND NEW.close_kind IS NULL THEN
+    reopen_actor := NULLIF(current_setting('twoj.cash_reopen_actor',true),'');
     SELECT EXISTS(SELECT 1 FROM economic_audit_events e WHERE e.resource_type='cash_session'
       AND e.resource_id=OLD.id AND e.action='cash.reopened'
+      AND e.actor_id=reopen_actor AND reopen_actor IS NOT NULL
+      AND e.occurred_at >= clock_timestamp()-interval '5 minutes'
+      AND e.xmin::text=pg_current_xact_id()::text
+      AND e.details->>'registerId'=OLD.register_id::text
+      AND e.details->>'localDate'=OLD.local_date::text
       AND e.details ? 'openingDenominations' AND e.details ? 'custodianActorId') INTO reopen_audit;
     IF reopen_audit THEN RETURN NEW; END IF;
     RAISE EXCEPTION 'owner audit required to reopen cash session' USING ERRCODE='55000';

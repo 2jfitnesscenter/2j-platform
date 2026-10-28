@@ -92,6 +92,55 @@ test('two physical registers have isolated custodians, blind counts, handover an
   assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,409);
   const [reopenAudit]=await sql`SELECT actor_id,details FROM economic_audit_events WHERE resource_id=${sessionBunker} AND action='cash.reopened' ORDER BY occurred_at DESC LIMIT 1`;
   assert.equal(reopenAudit.actor_id,'cash-owner');assert.equal(reopenAudit.details.custodianActorId,'cash-trainer-b');
+  const closedAgain=await trainerB.inject({method:'POST',url:`/api/economics/cash/${sessionBunker}/close`,payload:{countedDenominations:count(2000)}});
+  assert.equal(closedAgain.statusCode,200,closedAgain.body);
+  await assert.rejects(sql`UPDATE economic_cash_sessions SET status='open',closed_at=NULL,closed_by=NULL,expected_cents=NULL,counted_cents=NULL,counted_denominations=NULL,difference_cents=NULL,close_kind=NULL WHERE id=${sessionBunker}`,error=>error.code==='55000','an audit row from a prior reopen cannot authorize a later transition');
+  const [closedSession]=await sql`SELECT register_id AS "registerId",local_date::text AS "localDate" FROM economic_cash_sessions WHERE id=${sessionBunker}`;
+  const forgedDetails={registerId:closedSession.registerId,localDate:closedSession.localDate,custodianActorId:'cash-trainer-b',openingCents:2000,openingDenominations:count(2000)};
+  await assert.rejects(sql.begin(async tx=>{
+    await tx`SELECT set_config('twoj.cash_reopen_actor','cash-owner',true)`;
+    await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,details) VALUES ('cash-someone-else','cash.reopened','cash_session',${sessionBunker},${tx.json(forgedDetails)})`;
+    await tx`UPDATE economic_cash_sessions SET status='open',closed_at=NULL,closed_by=NULL,expected_cents=NULL,counted_cents=NULL,counted_denominations=NULL,difference_cents=NULL,close_kind=NULL WHERE id=${sessionBunker}`;
+  }),error=>error.code==='55000','a fresh audit from a different actor cannot authorize this transition');
+  await assert.rejects(sql.begin(async tx=>{
+    await tx`SELECT set_config('twoj.cash_reopen_actor','cash-owner',true)`;
+    await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,occurred_at,details) VALUES ('cash-owner','cash.reopened','cash_session',${sessionBunker},clock_timestamp()-interval '6 minutes',${tx.json(forgedDetails)})`;
+    await tx`UPDATE economic_cash_sessions SET status='open',closed_at=NULL,closed_by=NULL,expected_cents=NULL,counted_cents=NULL,counted_denominations=NULL,difference_cents=NULL,close_kind=NULL WHERE id=${sessionBunker}`;
+  }),error=>error.code==='55000','a stale audit cannot authorize this transition');
+});
+
+test('owner reopen applies the same legacy and previous-day barriers as normal opening',async()=>{
+  assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,201);
+  assert.equal((await trainerA.inject({method:'POST',url:'/api/timeclock/clock-in',payload:{origin:'web'}})).statusCode,201);
+  const legacyDenominations=count(1000);
+  await sql`ALTER TABLE economic_cash_sessions DISABLE TRIGGER economic_cash_session_register_insert_guard`;
+  let legacy;
+  try{[legacy]=await sql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (NULL,(now() AT TIME ZONE 'Atlantic/Canary')::date,1000,${sql.json(legacyDenominations)},'legacy-cashier') RETURNING id`;}
+  finally{await sql`ALTER TABLE economic_cash_sessions ENABLE TRIGGER economic_cash_session_register_insert_guard`;}
+  const legacyBlocked=await owner.inject({method:'POST',url:`/api/economics/cash/${sessionSala}/owner-reopen`,payload:{custodianActorId:'cash-trainer-a',openingDenominations:count(1000)}});
+  assert.equal(legacyBlocked.statusCode,409);assert.equal(legacyBlocked.json().error,'cash_legacy_session_requires_owner_resolution');
+  const legacyResolved=await owner.inject({method:'POST',url:`/api/economics/cash/legacy/${legacy.id}/resolve`,payload:{countedDenominations:legacyDenominations,reason:'Resolver fixture sintético'}});
+  assert.equal(legacyResolved.statusCode,200,legacyResolved.body);
+
+  const [register]=await sql`SELECT id FROM economic_cash_registers WHERE code='sala'`;
+  const staleDenominations=count(1200);
+  const [stale]=await sql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},(now() AT TIME ZONE 'Atlantic/Canary')::date-1,1200,${sql.json(staleDenominations)},'cash-trainer-a') RETURNING id`;
+  await sql`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${stale.id},${personA.id},'cash-trainer-a')`;
+  const staleBlocked=await owner.inject({method:'POST',url:`/api/economics/cash/${sessionSala}/owner-reopen`,payload:{custodianActorId:'cash-trainer-a',openingDenominations:count(1000)}});
+  assert.equal(staleBlocked.statusCode,409);assert.equal(staleBlocked.json().error,'cash_session_previous_day_requires_owner_resolution');
+  const staleResolved=await owner.inject({method:'POST',url:`/api/economics/cash/${stale.id}/owner-resolve`,payload:{countedDenominations:staleDenominations,reason:'Resolver fixture de sesión anterior'}});
+  assert.equal(staleResolved.statusCode,200,staleResolved.body);
+
+  const reopened=await owner.inject({method:'POST',url:`/api/economics/cash/${sessionSala}/owner-reopen`,payload:{custodianActorId:'cash-trainer-a',openingDenominations:count(1000)}});
+  assert.equal(reopened.statusCode,200,reopened.body);
+  const [auditRow]=await sql`SELECT actor_id FROM economic_audit_events WHERE resource_type='cash_session' AND resource_id=${sessionSala} AND action='cash.reopened' ORDER BY occurred_at DESC LIMIT 1`;
+  assert.equal(auditRow.actor_id,'cash-owner');
+  const salaClosed=await trainerA.inject({method:'POST',url:`/api/economics/cash/${sessionSala}/close`,payload:{countedDenominations:count(1000)}});
+  assert.equal(salaClosed.statusCode,200,salaClosed.body);
+  assert.equal((await trainerA.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,201);
+  assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-in',payload:{origin:'web'}})).statusCode,201);
+  const bunkerReopened=await owner.inject({method:'POST',url:`/api/economics/cash/${sessionBunker}/owner-reopen`,payload:{custodianActorId:'cash-trainer-b',openingDenominations:count(2000)}});
+  assert.equal(bunkerReopened.statusCode,200,bunkerReopened.body,'restore the fixture state expected by subsequent cash tests');
 });
 
 test('migration 0055 attaches the current-register guards to payments, paid store sales and store annulments',async()=>{

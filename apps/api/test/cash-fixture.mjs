@@ -16,12 +16,13 @@ export async function ensureCashSessionForActor(sql, actorId) {
     let [session]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND register_id IS NOT NULL
       AND local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY opened_at LIMIT 1`;
     if(!session){
-      [session]=await tx`SELECT id,status FROM economic_cash_sessions WHERE register_id IS NOT NULL
+      [session]=await tx`SELECT id,status,register_id AS "registerId",local_date::text AS "localDate" FROM economic_cash_sessions WHERE register_id IS NOT NULL
         AND local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY opened_at DESC LIMIT 1 FOR UPDATE`;
       if(session){
         if(!['closed','late_close'].includes(session.status)) throw new Error('unexpected current-day cash session state in test fixture');
+        await tx`SELECT set_config('twoj.cash_reopen_actor','test-fixture-owner',true)`;
         await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,details)
-          VALUES ('test-fixture-owner','cash.reopened','cash_session',${session.id},${tx.json({custodianActorId:actorId,openingCents:0,openingDenominations:zeroCount,reason:'Synthetic test fixture reset'})})`;
+          VALUES ('test-fixture-owner','cash.reopened','cash_session',${session.id},${tx.json({registerId:session.registerId,localDate:session.localDate,custodianActorId:actorId,openingCents:0,openingDenominations:zeroCount,reason:'Synthetic test fixture reset'})})`;
         await tx`UPDATE economic_cash_sessions SET status='open',closed_at=NULL,closed_by=NULL,expected_cents=NULL,counted_cents=NULL,counted_denominations=NULL,difference_cents=NULL,close_kind=NULL WHERE id=${session.id}`;
       }else{
         const [register]=await tx`SELECT id FROM economic_cash_registers WHERE code='bunker'`;

@@ -192,6 +192,10 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     try{
       const result=await db.begin(async tx=>{
         await tx`SELECT pg_advisory_xact_lock(hashtext('2j-economic-register-operations'))`;
+        const [legacy]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND register_id IS NULL LIMIT 1 FOR UPDATE`;
+        if(legacy)return {error:'cash_legacy_session_requires_owner_resolution'} as const;
+        const [stale]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date LIMIT 1 FOR UPDATE`;
+        if(stale)return {error:'cash_session_previous_day_requires_owner_resolution'} as const;
         const [session]=await tx`SELECT id,register_id AS "registerId",local_date AS "localDate",status,opened_by AS "openedBy" FROM economic_cash_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
         if(!session)return {error:'cash_session_not_found'} as const;
         if(!session.registerId)return {error:'cash_legacy_session_requires_owner_resolution'} as const;
@@ -203,6 +207,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         if(clock?.eventType!=='clock_in')return {error:'cash_custodian_not_clocked_in'} as const;
         const [held]=await tx`SELECT id FROM economic_cash_custodies WHERE actor_id=${custodian.actorId} AND ended_at IS NULL FOR UPDATE`;
         if(held)return {error:'already_holds_register'} as const;
+        await tx`SELECT set_config('twoj.cash_reopen_actor',${context.actorId},true)`;
         await audit(tx,context,'cash.reopened','cash_session',session.id,null,{registerId:session.registerId,localDate:String(session.localDate),custodianActorId:custodian.actorId,openingCents,openingDenominations:body.data.openingDenominations});
         const [reopened]=await tx`UPDATE economic_cash_sessions SET status='open',closed_at=NULL,closed_by=NULL,expected_cents=NULL,counted_cents=NULL,counted_denominations=NULL,difference_cents=NULL,close_kind=NULL WHERE id=${session.id} AND status IN ('closed','late_close') RETURNING id,register_id AS "registerId",local_date AS "localDate",status`;
         if(!reopened)return {error:'cash_session_not_closed'} as const;
