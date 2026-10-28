@@ -1,5 +1,6 @@
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, PageHeader, StatusChip, icons } from '@2j/ui';
+import { clearDeepLink, readDeepLink } from './deep-link.js';
 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 
@@ -38,6 +39,8 @@ export function TimeClockPage() {
   const [error, setError] = React.useState('');
   const [from, setFrom] = React.useState('');
   const [to, setTo] = React.useState('');
+  const pendingToggle = React.useRef(readDeepLink(['intent'] as const).intent === 'toggle');
+  React.useEffect(() => { clearDeepLink(['intent']); }, []);
 
   const load = React.useCallback(async () => {
     try {
@@ -56,11 +59,17 @@ export function TimeClockPage() {
     setBusy(true); setError(''); setNotice('');
     try {
       const response = await fetch(`${apiUrl}/api/timeclock/${kind}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'web' }) });
-      if (!response.ok) { const body = await readJson(response) as { error?: string }; throw new Error(body.error === 'shift_already_open' ? 'Ya tienes una jornada abierta.' : body.error === 'no_open_shift' ? 'No tienes una jornada abierta.' : 'No se pudo fichar. Inténtalo de nuevo.'); }
+      if (!response.ok) { const body = await readJson(response) as { error?: string }; throw new Error(body.error === 'shift_already_open' ? 'Ya tienes una jornada abierta.' : body.error === 'no_open_shift' ? 'No tienes una jornada abierta.' : body.error === 'cash_register_must_be_closed_or_handed_over' ? 'Antes de fichar la salida, cierra la caja o entrégasela a otra persona que ya haya fichado.' : 'No se pudo fichar. Inténtalo de nuevo.'); }
       setNotice(kind === 'clock-in' ? 'Entrada registrada.' : 'Salida registrada.');
       await load();
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo fichar.'); } finally { setBusy(false); }
   }
+
+  React.useEffect(() => {
+    if (state.status !== 'ready' || !pendingToggle.current) return;
+    pendingToggle.current = false;
+    void punch(state.data.openShift ? 'clock-out' : 'clock-in');
+  }, [state]);
 
   const header = <PageHeader title="Fichaje" description="Registro horario del equipo en hora de Canarias. Los fichajes quedan registrados y no se pueden borrar." actions={<Button icon={icons.RefreshCw} onClick={() => void load()}>Actualizar</Button>} />;
   if (state.status === 'loading') return <main className="summary timeclock-page" id="timeclock" data-2j-design="v2">{header}<Card className="summary-state" role="status"><span className="spinner" /> Cargando tu fichaje…</Card></main>;

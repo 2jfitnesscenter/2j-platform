@@ -17,6 +17,7 @@ import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifec
 import { activateSettledEntitlementPeriods, materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
 import { signedRequestSignature } from '../src/internal-service-auth.ts';
 import { canaryBusinessDate, proratedSessionsForPayment } from '@2j/domain';
+import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
 
@@ -44,16 +45,14 @@ const trainingCapabilitiesApp = buildServer(process.env.DATABASE_URL, { training
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
 const cashDenominationKeys=['coin_0_01','coin_0_02','coin_0_05','coin_0_10','coin_0_20','coin_0_50','coin_1','coin_2','bill_5','bill_10','bill_20','bill_50','bill_100','bill_200','bill_500'];
 function cashCount(cents){return Object.fromEntries(cashDenominationKeys.map((key,index)=>[key,index===0?cents:0]));}
-async function expectedCashCents(database,sessionId){const [row]=await database`SELECT s.opening_cents
-  +COALESCE((SELECT sum(CASE WHEN t.kind='payment' THEN p.amount_cents ELSE -p.amount_cents END) FROM economic_transactions t JOIN economic_payment_splits p ON p.transaction_id=t.id WHERE t.cash_session_id=s.id AND p.method='cash'),0)
-  +COALESCE((SELECT sum(x.total_cents) FROM store_sales x WHERE x.cash_session_id=s.id AND x.payment_state='paid' AND x.payment_method='cash'),0)
-  -COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id AND m.payment_method='cash'),0)
-  +COALESCE((SELECT sum(a.amount_cents) FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id),0) AS total
-  FROM economic_cash_sessions s WHERE s.id=${sessionId}`;return Number(row.total);}
-beforeEach(async () => {
-  const [session] = await sql`SELECT id FROM economic_cash_sessions WHERE status='open' LIMIT 1`;
-  if (!session) await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,0,'qa-cash-fixture')`;
-});
+async function expectedCashCents(database,sessionId){const [row]=await database`SELECT COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint
+  +COALESCE((SELECT sum(CASE WHEN t.kind='payment' THEN p.amount_cents ELSE -p.amount_cents END) FROM economic_transactions t JOIN economic_payment_splits p ON p.transaction_id=t.id WHERE t.cash_session_id=s.id AND p.method='cash' AND (reopen.occurred_at IS NULL OR t.created_at>=reopen.occurred_at)),0)
+  +COALESCE((SELECT sum(x.total_cents) FROM store_sales x WHERE x.cash_session_id=s.id AND x.payment_state='paid' AND x.payment_method='cash' AND (reopen.occurred_at IS NULL OR x.created_at>=reopen.occurred_at)),0)
+  -COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id AND m.payment_method='cash' AND (reopen.occurred_at IS NULL OR m.occurred_at>=reopen.occurred_at)),0)
+  +COALESCE((SELECT sum(a.amount_cents) FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id AND (reopen.occurred_at IS NULL OR a.created_at>=reopen.occurred_at)),0)
+  -COALESCE((SELECT sum(o.amount_cents) FROM economic_cash_outflows o WHERE o.cash_session_id=s.id AND o.status='approved' AND (reopen.occurred_at IS NULL OR o.created_at>=reopen.occurred_at)),0) AS total
+  FROM economic_cash_sessions s LEFT JOIN LATERAL(SELECT occurred_at,details FROM economic_audit_events WHERE resource_type='cash_session' AND resource_id=s.id AND action='cash.reopened' ORDER BY occurred_at DESC,id DESC LIMIT 1) reopen ON true WHERE s.id=${sessionId}`;return Number(row.total);}
+beforeEach(async () => { await ensureCashSessionForActor(sql,'qa-admin'); });
 after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), ownerPanelApp.close(), configuredOwnerPanelApp.close(), nonOwnerPanelApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
 
 function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
@@ -422,7 +421,11 @@ test('0037 upgrades the checksummed current-main schema once and preserves legac
     const upgradedApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'migration-flow-test',role:'admin'})});
     try{
       await upgradedApp.ready();
-      await upgradeDb`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date,0,'migration-flow-test')`;
+      const [cashProfessional]=await upgradeDb`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('Migración','Caja','migration-flow-test','admin','migration-flow-test','test-fixture') RETURNING id`;
+      const [cashRegister]=await upgradeDb`SELECT id FROM economic_cash_registers WHERE code='bunker'`;
+      const zeroDenominations={coin_0_01:0,coin_0_02:0,coin_0_05:0,coin_0_10:0,coin_0_20:0,coin_0_50:0,coin_1:0,coin_2:0,bill_5:0,bill_10:0,bill_20:0,bill_50:0,bill_100:0,bill_200:0,bill_500:0};
+      const [cashSession]=await upgradeDb`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${cashRegister.id},(now() AT TIME ZONE 'Atlantic/Canary')::date,0,${upgradeDb.json(zeroDenominations)},'migration-flow-test') RETURNING id`;
+      await upgradeDb`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${cashSession.id},${cashProfessional.id},'migration-flow-test')`;
       const paymentKey=randomUUID();
       const paymentResponse=await upgradedApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':paymentKey},payload:{chargeId:legacyPendingChargeId,splits:[{method:'card',amountCents:8000}]}});
       assert.equal(paymentResponse.statusCode,201,paymentResponse.body);
@@ -2261,8 +2264,8 @@ test('D113 gates payment collection and D102 transfer validation remains indepen
   assert.equal(transferTransaction.kind, 'payment');
   assert.equal(transferTransaction.cash_session_id, null, 'D102 transfer validation is not attributed to a cash shift');
 
-  const reopened = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingDenominations: cashCount(0) } });
-  assert.equal(reopened.statusCode, 201, reopened.body);
+  const reopened = await ownerPanelApp.inject({ method: 'POST', url: `/api/economics/cash/${open.json().session.id}/owner-reopen`, payload: { custodianActorId:'qa-admin', openingDenominations: cashCount(0) } });
+  assert.equal(reopened.statusCode, 200, reopened.body);
   const paid = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 1000 }] } });
   assert.equal(paid.statusCode, 201, paid.body);
   const [linked] = await sql`SELECT cash_session_id FROM economic_transactions WHERE id=${paid.json().id}`;
@@ -2286,8 +2289,8 @@ test('D113 requires an open shift for every refund method and links the refund t
   const [noRefunds] = await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE refund_of=${payment.json().id}`;
   assert.equal(noRefunds.count, 0);
 
-  const opened = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingDenominations: cashCount(0) } });
-  assert.equal(opened.statusCode, 201, opened.body);
+  const opened = await ownerPanelApp.inject({ method: 'POST', url: `/api/economics/cash/${current.json().session.id}/owner-reopen`, payload: { custodianActorId:'qa-admin', openingDenominations: cashCount(0) } });
+  assert.equal(opened.statusCode, 200, opened.body);
   const refund = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: payment.json().id, amountCents: 500, method: 'card', note: 'D113 tarjeta con caja abierta' } });
   assert.equal(refund.statusCode, 201, refund.body);
   const [linked] = await sql`SELECT cash_session_id FROM economic_transactions WHERE id=${refund.json().id}`;
@@ -2340,7 +2343,7 @@ test('cash difference is returned only to an explicit owner.panel.read grant', a
   const genericOverview = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/overview' });
   assert.equal(genericOverview.json().capabilities.ownerPanelRead, false);
   const ownerCash = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
-  assert.equal(Number(ownerCash.json().session.differenceCents), 77);
+  assert.equal(Number(ownerCash.json().items.find(item=>item.id===current.json().session.id).differenceCents), 77);
   const ownerOverview = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/overview' });
   assert.equal(ownerOverview.json().capabilities.ownerPanelRead, true);
   const genericDashboard = await clientsAdminApp.inject({ method: 'GET', url: '/api/dashboard/command-center' });
@@ -2413,9 +2416,9 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   assert.equal(priorOpenCash.json().session.status, 'open');
   const priorClose = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${priorOpenCash.json().session.id}/close`, payload: { countedDenominations: cashCount(await expectedCashCents(sql, priorOpenCash.json().session.id)) } });
   assert.equal(priorClose.statusCode, 200, priorClose.body);
-  const opened = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingDenominations: cashCount(20000) } });
-  assert.equal(opened.statusCode, 201, opened.body);
-  const secondOpen = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingDenominations: cashCount(1000) } });
+  const opened = await ownerPanelApp.inject({ method: 'POST', url: `/api/economics/cash/${priorOpenCash.json().session.id}/owner-reopen`, payload: { custodianActorId:'qa-admin', openingDenominations: cashCount(20000) } });
+  assert.equal(opened.statusCode, 200, opened.body);
+  const secondOpen = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { registerCode:'bunker', openingDenominations: cashCount(1000) } });
   assert.equal(secondOpen.statusCode, 409);
   const cashCharge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'Pago en caja QA', amountCents: 8000, dueOn: '2099-12-10' } });
   const cashPayment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: cashCharge.json().id, splits: [{ method: 'cash', amountCents: 3000 }, { method: 'card', amountCents: 2000 }] } });
@@ -2424,24 +2427,24 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   assert.equal(cashRefund.statusCode, 201, cashRefund.body);
   const [cashLinks] = await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE id IN (${cashPayment.json().id}::uuid,${cashRefund.json().id}::uuid) AND cash_session_id=${opened.json().id}`;
   assert.equal(cashLinks.count, 2);
-  const adjustment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/adjustments', payload: { amountCents: 300, reason: 'Cambio de apertura QA' } });
+  const adjustment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/outflows', payload: { movementType:'expense', amountCents: 300, reason: 'Gasto de apertura QA' } });
   assert.equal(adjustment.statusCode, 201, adjustment.body);
   const liveCash = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
-  assert.equal(await expectedCashCents(sql, opened.json().id), 22800);
+  assert.equal(await expectedCashCents(sql, opened.json().id), 22200);
   assert.equal(Object.hasOwn(liveCash.json().session,'expectedCents'),false,'cashier read must not disclose the expected amount');
   const closed = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${opened.json().id}/close`, payload: { countedDenominations: cashCount(23000) } });
   assert.equal(closed.statusCode, 200, closed.body);
   assert.equal(closed.json().status, 'closed');
-  assert.equal(await expectedCashCents(sql,opened.json().id), 22800);
+  assert.equal(await expectedCashCents(sql,opened.json().id), 22200);
   assert.equal(Object.hasOwn(closed.json(), 'differenceCents'), false, 'cash difference is not returned to the generic admin role');
   const ownerClosedCash = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
-  assert.equal(Number(ownerClosedCash.json().session.differenceCents), 200);
+  assert.equal(Number(ownerClosedCash.json().session.differenceCents), 800);
   const duplicateClose = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/close', payload: { countedDenominations: cashCount(27000) } });
   assert.equal(duplicateClose.statusCode, 409);
   const [immutableCash] = await sql`SELECT expected_cents,difference_cents FROM economic_cash_sessions WHERE id=${opened.json().id}`;
   await assert.rejects(sql`UPDATE economic_cash_sessions SET counted_cents=1 WHERE id=${opened.json().id}`, { code: '55000' });
-  assert.equal(Number(immutableCash.expected_cents), 22800);
-  assert.equal(Number(immutableCash.difference_cents), 200);
+  assert.equal(Number(immutableCash.expected_cents), 22200);
+  assert.equal(Number(immutableCash.difference_cents), 800);
 });
 
 test('previous-day open cash blocks collection and requires owner resolution without changing clock records', async () => {
@@ -2455,11 +2458,12 @@ test('previous-day open cash blocks collection and requires owner resolution wit
     const client=(await testApp.inject({method:'POST',url:'/api/clients',headers:{'idempotency-key':randomUUID()},payload:{firstName:'Caja',lastName:'Ayer',email:null,phone:null}})).json();
     const charge=await testApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Cobro bloqueado por caja anterior',amountCents:1000,dueOn:'2099-12-10'}});
     assert.equal(charge.statusCode,201,charge.body);
-    const [session]=await testDb`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date-1,5000,'qa-stale-shift') RETURNING id,local_date`;
+    const [bunker]=await testDb`SELECT id FROM economic_cash_registers WHERE code='bunker'`;
+    const [session]=await testDb`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${bunker.id},(now() AT TIME ZONE 'Atlantic/Canary')::date-1,5000,${testDb.json(cashCount(5000))},'qa-stale-shift') RETURNING id,local_date`;
     const payment=await testApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'cash',amountCents:500}]}});
     assert.equal(payment.statusCode,409,payment.body);assert.equal(payment.json().error,'cash_session_previous_day_requires_owner_resolution');
     assert.match(payment.json().message,/propietario debe resolverla/i);
-    const opened=await testApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingDenominations:cashCount(0)}});
+    const opened=await testApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:cashCount(0)}});
     assert.equal(opened.statusCode,409,opened.body);assert.equal(opened.json().error,'cash_session_previous_day_requires_owner_resolution');
     const close=await testApp.inject({method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedDenominations:cashCount(5000)}});
     assert.equal(close.statusCode,409,close.body);assert.equal(close.json().error,'cash_session_previous_day_requires_owner_resolution');
@@ -2483,9 +2487,11 @@ test('D111 opening and closing store denomination counts while never exposing ex
     testDb=postgres(sourceUrl.toString(),{max:3,connect_timeout:5});await migrateDatabase(testDb);
     cashierApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'qa-cashier',role:'admin'})});
     ownerApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'qa-cash-owner',role:'admin'}),ownerActorId:'qa-cash-owner'});
+    const [cashierProfessional]=await testDb`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('QA','Cajero','QA Cajero','trainer','qa-cashier','test') RETURNING id`;
+    await cashierApp.inject({method:'POST',url:'/api/timeclock/clock-in',payload:{origin:'web'}});
     const rejectedLegacyAmount=await cashierApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingCents:1400}});
     assert.equal(rejectedLegacyAmount.statusCode,400);
-    const opened=await cashierApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingDenominations:denominations}});
+    const opened=await cashierApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:denominations}});
     assert.equal(opened.statusCode,201,opened.body);assert.equal(Number(opened.json().openingCents),1400);
     assert.deepEqual(opened.json().openingDenominations,denominations);
     const cashierRead=await cashierApp.inject({method:'GET',url:'/api/economics/cash/today'});
@@ -2538,8 +2544,8 @@ test('economic history rejects truncate and destructive row changes', async () =
   const client=created.json();
   const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Histórico protegido',amountCents:2000,dueOn:'2099-12-10'}});
   const series=await clientsAdminApp.inject({method:'POST',url:'/api/economics/invoice-series',payload:{name:`SER-${randomUUID()}`,prefix:'QA'}});
-  const [session]=await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,closed_at) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date-10,0,0,0,0,'closed','closed','qa-guard','qa-guard',now()) RETURNING id`;
-  await sql`INSERT INTO economic_cash_adjustments(cash_session_id,amount_cents,reason,actor_id) VALUES (${session.id},100,'Movimiento de fixture','qa-guard')`;
+  const session=await ensureCashSessionForActor(sql,'qa-admin');
+  await sql`INSERT INTO economic_cash_adjustments(cash_session_id,amount_cents,reason,actor_id) VALUES (${session.id},100,'Movimiento de fixture','qa-admin')`;
   const [proof]=await sql`INSERT INTO economic_transfer_proofs(charge_id,amount_cents,content_type,file_name,file_bytes,sha256,submitted_by) VALUES (${charge.json().id},100,'application/pdf','fixture.pdf',${Buffer.from('%PDF-1.7')},${createHash('sha256').update('fixture').digest('hex')},'qa-uploader') RETURNING id`;
   const payment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'card',amountCents:2000}]}});
   assert.equal(payment.statusCode,201,payment.body);
@@ -2567,7 +2573,7 @@ test('accountant is economic/fiscal read-only and upload limits stay route-speci
   assert.equal((await clientsAccountantApp.inject({method:'GET',url:'/api/economics/fiscal-export'})).statusCode,200);
   assert.equal((await clientsAccountantApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'card',amountCents:100}]}})).statusCode,403);
   assert.equal((await clientsAccountantApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingDenominations:cashCount(100)}})).statusCode,403);
-  const tooLargeNormal=await clientsAdminApp.inject({method:'POST',url:'/api/economics/cash/open',headers:{'content-type':'application/json'},payload:{openingDenominations:cashCount(1),padding:'x'.repeat(20000)}});
+  const tooLargeNormal=await clientsAdminApp.inject({method:'POST',url:'/api/economics/cash/open',headers:{'content-type':'application/json'},payload:{registerCode:'bunker',openingDenominations:cashCount(1),padding:'x'.repeat(20000)}});
   assert.equal(tooLargeNormal.statusCode,413);
   const proofBytes=Buffer.concat([Buffer.from('%PDF-1.7\n'),Buffer.alloc(20000,65)]);
   const acceptedLargeProof=await clientsAdminApp.inject({method:'POST',url:'/api/economics/transfer-proofs',payload:{chargeId:charge.json().id,amountCents:100,contentType:'application/pdf',fileName:'large-fixture.pdf',base64:proofBytes.toString('base64')}});

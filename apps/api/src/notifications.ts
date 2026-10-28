@@ -7,7 +7,7 @@ import type { ClientAuthorizationContext } from './communications.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
 type Tx = TransactionSql<Record<string, unknown>>;
-export const notificationEventTypes = ['booking.confirmed','booking.cancelled','waitlist.joined','waitlist.promoted','message.created','reminder.booking','entitlement.expiring','entitlement.low_balance','document.pending','staff.substitution','staff.transfer_pending','staff.timeclock_update'] as const;
+export const notificationEventTypes = ['booking.confirmed','booking.cancelled','waitlist.joined','waitlist.promoted','message.created','reminder.booking','entitlement.expiring','entitlement.low_balance','document.pending','staff.substitution','staff.transfer_pending','staff.timeclock_update','staff.cash_legacy_resolved'] as const;
 export type NotificationEventType = typeof notificationEventTypes[number];
 
 /** Call from the domain transaction. A rollback therefore removes the event as well. */
@@ -34,6 +34,7 @@ const labels: Record<NotificationEventType, { type: string; title: string; body:
   'staff.substitution': { type:'staff_substitution', title:'Cambio de cobertura', body:'Hay una actualización sobre una cobertura de equipo.', deeplink:'/agenda' },
   'staff.transfer_pending': { type:'staff_transfer_pending', title:'Validación pendiente', body:'Hay una operación pendiente de revisión en Gestión.', deeplink:'/economics' },
   'staff.timeclock_update': { type:'staff_timeclock_update', title:'Fichaje actualizado', body:'Se ha actualizado un registro de tu jornada.', deeplink:'/team' },
+  'staff.cash_legacy_resolved': { type:'staff_cash_legacy_resolved', title:'Caja anterior resuelta', body:'El propietario ha resuelto una caja anterior pendiente.', deeplink:'/economics' },
 };
 
 /** Durable, replay-safe dispatcher. Delivery here means persisted in-app inbox, never provider push. */

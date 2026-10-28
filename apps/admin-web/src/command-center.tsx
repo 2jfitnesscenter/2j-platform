@@ -33,6 +33,9 @@ const quickActionIcons: Record<string, LucideIcon> = {
   'assign-plan': icons.Ticket,
   'collect-payment': icons.Wallet,
   'send-message': icons.MessageSquare,
+  'timeclock-toggle': icons.Clock,
+  'open-cash': icons.Wallet,
+  'close-cash': icons.ReceiptText,
 };
 
 /** Accesos rápidos del Resumen (paridad visual 2): solo los que el servidor concede a este perfil; cada uno abre su sección. */

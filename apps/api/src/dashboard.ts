@@ -176,13 +176,25 @@ export function registerDashboardRoutes(
         ) SELECT
           COALESCE(sum(balance) FILTER (WHERE state='pending'),0)::bigint AS "pendingCents",
           count(*) FILTER (WHERE state='pending' AND balance>0 AND due_on < (now() AT TIME ZONE ${zone})::date)::int AS "overdueCount",
-          COALESCE((SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint FROM economic_transactions WHERE created_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone}) AND created_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})),0)::bigint AS "collectedTodayCents",
-          CASE WHEN ${permissions.cash} THEN COALESCE((SELECT jsonb_build_object('status',s.status,'openingCents',s.opening_cents,'expectedCents',COALESCE(s.expected_cents,s.opening_cents+COALESCE(cash.amount,0)+COALESCE(adj.amount,0)),'countedCents',s.counted_cents,'differenceCents',s.difference_cents) - CASE WHEN ${permissions.ownerPanel} THEN ARRAY[]::text[] ELSE ARRAY['expectedCents','differenceCents']::text[] END
-            FROM economic_cash_sessions s
-            LEFT JOIN LATERAL (SELECT COALESCE(sum(CASE WHEN t.kind='payment' THEN ps.amount_cents ELSE -ps.amount_cents END),0)::bigint AS amount FROM economic_transactions t JOIN economic_payment_splits ps ON ps.transaction_id=t.id WHERE t.cash_session_id=s.id AND ps.method='cash') cash ON true
-            LEFT JOIN LATERAL (SELECT COALESCE(sum(amount_cents),0)::bigint AS amount FROM economic_cash_adjustments WHERE cash_session_id=s.id) adj ON true
-            WHERE s.status='open' OR s.local_date=(now() AT TIME ZONE ${zone})::date
-            ORDER BY (s.status='open') DESC,s.opened_at DESC LIMIT 1),'null'::jsonb) ELSE 'null'::jsonb END AS "cashSession"
+          CASE WHEN ${permissions.ownerPanel} THEN COALESCE((SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint FROM economic_transactions WHERE created_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone}) AND created_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})),0)::bigint ELSE NULL END AS "collectedTodayCents",
+          CASE WHEN ${permissions.ownerPanel} THEN COALESCE((SELECT jsonb_build_object(
+              'registers',COALESCE(jsonb_agg(jsonb_build_object('registerId',r.id,'registerCode',r.code,'registerName',r.name,'status',s.status,'openingCents',COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint,'expectedCents',COALESCE(s.expected_cents,COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint+COALESCE(cash.payments,0)+COALESCE(sales.amount,0)-COALESCE(cash.refunds,0)-COALESCE(sales.refunds,0)+COALESCE(adjustments.amount,0)-COALESCE(outflows.amount,0)),'countedCents',s.counted_cents,'differenceCents',s.difference_cents) ORDER BY r.code,s.opened_at),'[]'::jsonb),
+              'expectedCents',COALESCE(sum(COALESCE(s.expected_cents,COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint+COALESCE(cash.payments,0)+COALESCE(sales.amount,0)-COALESCE(cash.refunds,0)-COALESCE(sales.refunds,0)+COALESCE(adjustments.amount,0)-COALESCE(outflows.amount,0))),0)::bigint,
+              'countedCents',CASE WHEN bool_and(s.status<>'open') THEN COALESCE(sum(s.counted_cents),0)::bigint ELSE NULL END,
+              'differenceCents',CASE WHEN bool_and(s.status<>'open') THEN COALESCE(sum(s.difference_cents),0)::bigint ELSE NULL END,
+              'status',CASE WHEN bool_or(s.status='open') THEN 'open' ELSE 'closed' END)
+            FROM economic_cash_sessions s JOIN economic_cash_registers r ON r.id=s.register_id
+            LEFT JOIN LATERAL (SELECT occurred_at,details FROM economic_audit_events WHERE resource_type='cash_session' AND resource_id=s.id AND action='cash.reopened' ORDER BY occurred_at DESC,id DESC LIMIT 1) reopen ON true
+            LEFT JOIN LATERAL (SELECT COALESCE(sum(ps.amount_cents) FILTER(WHERE t.kind='payment'),0)::bigint payments,COALESCE(sum(ps.amount_cents) FILTER(WHERE t.kind='refund'),0)::bigint refunds FROM economic_transactions t JOIN economic_payment_splits ps ON ps.transaction_id=t.id WHERE t.cash_session_id=s.id AND ps.method='cash' AND (reopen.occurred_at IS NULL OR t.created_at>=reopen.occurred_at)) cash ON true
+            LEFT JOIN LATERAL (SELECT COALESCE((SELECT sum(total_cents) FROM store_sales sale WHERE sale.cash_session_id=s.id AND sale.status='completed' AND sale.payment_state='paid' AND sale.payment_method='cash' AND (reopen.occurred_at IS NULL OR sale.created_at>=reopen.occurred_at)),0)::bigint amount,COALESCE((SELECT sum(amount_cents) FROM store_sale_cash_movements movement WHERE movement.cash_session_id=s.id AND movement.payment_method='cash' AND (reopen.occurred_at IS NULL OR movement.occurred_at>=reopen.occurred_at)),0)::bigint refunds) sales ON true
+            LEFT JOIN LATERAL (SELECT COALESCE(sum(a.amount_cents),0)::bigint amount FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id AND (reopen.occurred_at IS NULL OR a.created_at>=reopen.occurred_at)) adjustments ON true
+            LEFT JOIN LATERAL (SELECT COALESCE(sum(amount_cents),0)::bigint amount FROM economic_cash_outflows WHERE cash_session_id=s.id AND status='approved' AND (reopen.occurred_at IS NULL OR created_at>=reopen.occurred_at)) outflows ON true
+            WHERE s.status='open' OR s.local_date=(now() AT TIME ZONE ${zone})::date),'null'::jsonb)
+            WHEN ${permissions.cash} THEN COALESCE((SELECT jsonb_build_object('registerCode',r.code,'registerName',r.name,'status',s.status)
+              FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id JOIN economic_cash_registers r ON r.id=s.register_id
+              WHERE c.actor_id=${context.actorId} AND s.local_date=(now() AT TIME ZONE ${zone})::date
+              ORDER BY c.started_at DESC LIMIT 1),'null'::jsonb)
+            ELSE 'null'::jsonb END AS "cashSession"
           FROM charge_balances` : Promise.resolve(null),
         permissions.staff ? db`SELECT
           count(*) FILTER (WHERE p.status='active' AND latest.event_type='clock_in' AND (latest.at AT TIME ZONE ${zone})::date=(now() AT TIME ZONE ${zone})::date)::int AS "workingNow",
@@ -261,7 +273,10 @@ export function registerDashboardRoutes(
         ...(can(context, 'entitlements.manage') ? [{ id: 'assign-plan', label: 'Asignar cuota', href: '#clients?intent=assign-plan' }] : []),
         ...(can(context, 'billing.payments.manage') ? [{ id: 'collect-payment', label: 'Registrar pago', href: '#economics' }] : []),
         ...(canSend ? [{ id: 'send-message', label: 'Enviar mensaje', href: '#clients?intent=message' }] : []),
-      ].slice(0, 6);
+        ...(can(context, 'timeclock.self') ? [{ id: 'timeclock-toggle', label: 'Fichar entrada/salida', href: '#timeclock?intent=toggle' }] : []),
+        ...(can(context, 'billing.cash.manage') ? [{ id: 'open-cash', label: 'Abrir caja', href: '#economics?intent=open-cash' }] : []),
+        ...(can(context, 'billing.cash.manage') ? [{ id: 'close-cash', label: 'Cerrar caja', href: '#economics?intent=close-cash' }] : []),
+      ];
       return {
         timezone: zone,
         permissions,

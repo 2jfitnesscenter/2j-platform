@@ -143,13 +143,33 @@ export const economicPaymentSplits = pgTable('economic_payment_splits', {
   transactionId: uuid('transaction_id').notNull().references(()=>economicTransactions.id,{onDelete:'restrict'}), method: text('method').notNull(), amountCents: bigint('amount_cents',{mode:'number'}).notNull(),
 }, (table)=>[primaryKey({columns:[table.transactionId,table.method]}),check('economic_payment_splits_method',sql`${table.method} IN ('cash','card','transfer','direct_debit','other')`),check('economic_payment_splits_amount_positive',sql`${table.amountCents}>0`)]);
 
+export const economicCashRegisters = pgTable('economic_cash_registers', {
+  id: uuid('id').defaultRandom().primaryKey(), code: text('code').notNull(), name: text('name').notNull(), active: boolean('active').notNull().default(true), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(),
+}, (table)=>[uniqueIndex('economic_cash_registers_code_key').on(table.code),check('economic_cash_registers_code',sql`${table.code} IN ('bunker','sala')`)]);
+
 export const economicCashSessions = pgTable('economic_cash_sessions', {
-  id: uuid('id').defaultRandom().primaryKey(), localDate: date('local_date').notNull(), openingCents: bigint('opening_cents',{mode:'number'}).notNull(), openingDenominations: jsonb('opening_denominations'), expectedCents: bigint('expected_cents',{mode:'number'}), countedCents: bigint('counted_cents',{mode:'number'}), countedDenominations: jsonb('counted_denominations'), differenceCents: bigint('difference_cents',{mode:'number'}), status: text('status').notNull().default('open'), closeKind: text('close_kind'), openedBy: text('opened_by').notNull(), openedAt: timestamp('opened_at',{withTimezone:true}).notNull().defaultNow(), closedBy: text('closed_by'), closedAt: timestamp('closed_at',{withTimezone:true}),
+  id: uuid('id').defaultRandom().primaryKey(), registerId: uuid('register_id').references(()=>economicCashRegisters.id,{onDelete:'restrict'}), localDate: date('local_date').notNull(), openingCents: bigint('opening_cents',{mode:'number'}).notNull(), openingDenominations: jsonb('opening_denominations'), expectedCents: bigint('expected_cents',{mode:'number'}), countedCents: bigint('counted_cents',{mode:'number'}), countedDenominations: jsonb('counted_denominations'), differenceCents: bigint('difference_cents',{mode:'number'}), status: text('status').notNull().default('open'), closeKind: text('close_kind'), openedBy: text('opened_by').notNull(), openedAt: timestamp('opened_at',{withTimezone:true}).notNull().defaultNow(), closedBy: text('closed_by'), closedAt: timestamp('closed_at',{withTimezone:true}),
 }, (table)=>[check('economic_cash_sessions_status',sql`${table.status} IN ('open','closed','late_close')`)]);
+
+export const economicCashCustodies = pgTable('economic_cash_custodies', {
+  id: uuid('id').defaultRandom().primaryKey(), cashSessionId: uuid('cash_session_id').notNull().references(()=>economicCashSessions.id,{onDelete:'restrict'}), professionalId: uuid('professional_id').notNull().references(()=>staffProfessionals.id,{onDelete:'restrict'}), actorId: text('actor_id').notNull(), startedAt: timestamp('started_at',{withTimezone:true}).notNull().defaultNow(), endedAt: timestamp('ended_at',{withTimezone:true}), endedReason: text('ended_reason'), endedBy: text('ended_by'),
+}, (table)=>[index('economic_cash_custodies_session_idx').on(table.cashSessionId,table.startedAt),index('economic_cash_custodies_actor_idx').on(table.actorId,table.startedAt.desc())]);
+
+export const economicCashHandovers = pgTable('economic_cash_handovers', {
+  id: uuid('id').defaultRandom().primaryKey(), cashSessionId: uuid('cash_session_id').notNull().references(()=>economicCashSessions.id,{onDelete:'restrict'}), outgoingCustodyId: uuid('outgoing_custody_id').notNull().references(()=>economicCashCustodies.id,{onDelete:'restrict'}), outgoingActorId: text('outgoing_actor_id').notNull(), incomingProfessionalId: uuid('incoming_professional_id').notNull().references(()=>staffProfessionals.id,{onDelete:'restrict'}), incomingActorId: text('incoming_actor_id').notNull(), outgoingDenominations: jsonb('outgoing_denominations'), incomingDenominations: jsonb('incoming_denominations'), outgoingConfirmedAt: timestamp('outgoing_confirmed_at',{withTimezone:true}), incomingConfirmedAt: timestamp('incoming_confirmed_at',{withTimezone:true}), completedAt: timestamp('completed_at',{withTimezone:true}), mismatch: boolean('mismatch'), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(),
+}, (table)=>[index('economic_cash_handovers_session_idx').on(table.cashSessionId,table.createdAt)]);
 
 export const economicCashAdjustments = pgTable('economic_cash_adjustments', {
   id: uuid('id').defaultRandom().primaryKey(), cashSessionId: uuid('cash_session_id').notNull().references(()=>economicCashSessions.id,{onDelete:'restrict'}), amountCents: bigint('amount_cents',{mode:'number'}).notNull(), reason: text('reason').notNull(), actorId: text('actor_id').notNull(), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(),
 }, (table)=>[index('economic_cash_adjustments_session_idx').on(table.cashSessionId,table.createdAt),check('economic_cash_adjustments_nonzero',sql`${table.amountCents}<>0`)]);
+
+export const economicCashOutflows = pgTable('economic_cash_outflows', {
+  id: uuid('id').defaultRandom().primaryKey(), cashSessionId: uuid('cash_session_id').notNull().references(()=>economicCashSessions.id,{onDelete:'restrict'}), movementType: text('movement_type').notNull(), amountCents: bigint('amount_cents',{mode:'number'}).notNull(), reason: text('reason').notNull(), receiptContentType: text('receipt_content_type'), receiptFileName: text('receipt_file_name'), receiptBytes: customType<{data:Buffer;driverData:Buffer}>({dataType:()=> 'bytea'})('receipt_bytes'), actorId: text('actor_id').notNull(), status: text('status').notNull().default('approved'), approvedBy: text('approved_by'), approvedAt: timestamp('approved_at',{withTimezone:true}), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(),
+}, (table)=>[index('economic_cash_outflows_session_idx').on(table.cashSessionId,table.createdAt)]);
+
+export const economicCashSettings = pgTable('economic_cash_settings', {
+  singleton: boolean('singleton').primaryKey().notNull().default(true), outflowLimitCents: bigint('outflow_limit_cents',{mode:'number'}), updatedBy: text('updated_by'), updatedAt: timestamp('updated_at',{withTimezone:true}).notNull().defaultNow(),
+}, (table)=>[check('economic_cash_settings_singleton',sql`${table.singleton}`),check('economic_cash_settings_outflow_limit',sql`${table.outflowLimitCents} IS NULL OR ${table.outflowLimitCents} BETWEEN 1 AND 100000000000`)]);
 
 const bytea = customType<{data:Buffer;driverData:Buffer}>({dataType:()=> 'bytea'});
 export const economicTransferProofs = pgTable('economic_transfer_proofs', {

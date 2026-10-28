@@ -8,7 +8,7 @@ export type CommandCenterModel = {
   today: { sessionCount:number; upcomingCount:number; capacity:number; occupied:number; waitlistCount:number; unassignedCount:number; sessions:Array<{id:string;serviceName:string;professionalName:string|null;startsAt:string;occupied:number;capacity:number;free:number;waitlistCount:number;isNow:boolean;state:'upcoming'|'in_progress'|'finished'}>; nextSession:{id:string;serviceName:string;startsAt:string;professionalName:string|null}|null };
   clients: { active:number; recentSignups:number }|null;
   attention: Array<{id:string;kind:string;title:string;summary:string;href:string;ageAt:string|null}>;
-  economics: {pendingCents:number;overdueCount:number;collectedTodayCents:number;cashSession:{status:string;openingCents:number;expectedCents:number;countedCents:number|null;differenceCents?:number|null}|null}|null;
+  economics: {pendingCents:number;overdueCount:number;collectedTodayCents:number|null;cashSession:{status:string;openingCents?:number;expectedCents?:number;countedCents:number|null;differenceCents?:number|null;registers?:Array<{registerCode:string;registerName:string;status:string;openingCents:number;expectedCents:number;countedCents:number|null;differenceCents:number|null}>}|null}|null;
   team: {active:number;workingNow:number;activeAbsences:number;substitutions:number}|null;
   unread: number;
   quickActions: Array<{id:string;label:string;href:string}>;
