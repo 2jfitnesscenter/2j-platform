@@ -74,10 +74,10 @@ test('a profile without audit permission gets a clear message instead of an erro
   assert.ok(screen.getByRole('button', { name: 'Reintentar' }));
 });
 
-test('the navigation has an Actividad group with Avisos y auditoría and Comunicación', async () => {
+test('the navigation has an Actividad group with Avisos y auditoría and Mensajes', async () => {
   serve(); window.location.hash = '#activity'; mount();
   await screen.findByRole('heading', { name: 'Actividad' });
   const nav = within(document.querySelector('.app-navigation'));
   assert.equal(nav.getByRole('link', { name: 'Avisos y auditoría' }).getAttribute('aria-current'), 'page');
-  assert.ok(nav.getByRole('link', { name: /Comunicación/ }));
+  assert.ok(nav.getByRole('link', { name: /Mensajes/ }));
 });
