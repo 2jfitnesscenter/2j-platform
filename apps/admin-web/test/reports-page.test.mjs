@@ -96,3 +96,60 @@ test('the navigation lists Informes inside Negocio for profiles with billing acc
   const nav = within(document.querySelector('.app-navigation'));
   assert.equal(nav.getByRole('link', { name: 'Informes' }).getAttribute('aria-current'), 'page');
 });
+
+const summaryBody = (extra = {}) => ({
+  currency: 'EUR', timezone: 'Atlantic/Canary', from: '2026-05-01', to: '2026-10-29',
+  monthly: [{ month: '2026-09', soldCents: 120000, collectedCents: 90000 }, { month: '2026-10', soldCents: 80000, collectedCents: 60000 }],
+  overdue: { cents: 25000, count: 4 }, averageFee: { cents: 4500, count: 30 },
+  occupancy: { sessions: 20, capacity: 160, occupied: 120, rate: 0.75 }, attendance: { attended: 90, noShow: 10, rate: 0.9 },
+  reservationsByService: [{ name: 'Funcional', count: 70 }, { name: 'Yoga', count: 50 }],
+  feesByPlan: [{ name: 'Mensual', count: 20, soldCents: 90000 }], collectedByMethod: [{ method: 'card', cents: 100000 }, { method: 'cash', cents: 50000 }],
+  capabilities: { export: true }, ...extra,
+});
+const serveSummary = (summary) => {
+  const urls = serve(() => response(sales([row(1)])));
+  const base = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { if (String(url).includes('/api/reports/summary')) { urls.push(String(url)); return summary(String(url)); } return base(url, init); };
+  return urls;
+};
+
+test('A59: the Resumen tab shows financial and operational KPIs and accessible SVG charts next to the sales list', async () => {
+  const urls = serveSummary(() => response(summaryBody()));
+  window.location.hash = '#reports'; mount();
+  const tabs = await screen.findByRole('tablist', { name: 'Secciones de informes' });
+  assert.deepEqual(within(tabs).getAllByRole('tab').map((tab) => tab.textContent), ['Ventas', 'Resumen']);
+  await screen.findByRole('table', { name: 'Ventas del periodo' });
+  fireEvent.click(within(tabs).getByRole('tab', { name: 'Resumen' }));
+  const kpis = await screen.findByRole('list', { name: 'Indicadores del periodo' });
+  assert.match(kpis.textContent, /Vencido sin cobrar/); assert.match(kpis.textContent, /250,00/); assert.match(kpis.textContent, /4 cuotas y cargos vencidos/);
+  assert.match(kpis.textContent, /Cuota media/); assert.match(kpis.textContent, /45,00/);
+  assert.match(kpis.textContent, /75 %/); assert.match(kpis.textContent, /120 de 160 plazas/);
+  assert.match(kpis.textContent, /90 %/); assert.match(kpis.textContent, /90 asistencias y 10 ausencias/);
+  for (const name of ['Ingresos mensuales', 'Reservas por servicio', 'Cuotas por plan', 'Cobros por método']) {
+    assert.ok(screen.getByRole('heading', { name }), name);
+    assert.ok(screen.getAllByRole('img').some((svg) => svg.getAttribute('aria-label')?.startsWith(name)), `${name} chart has a text alternative`);
+    assert.ok(screen.getByRole('table', { name }), `${name} has an equivalent table`);
+  }
+  assert.match(screen.getByRole('table', { name: 'Reservas por servicio' }).textContent, /Funcional.*70/);
+  assert.equal(document.querySelectorAll('svg.reports-chart-svg').length, 4);
+  assert.ok(urls.some((url) => /\/api\/reports\/summary\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/.test(url)));
+  const link = screen.getByRole('link', { name: 'Exportar Excel' });
+  assert.ok(link.getAttribute('href').includes('/api/reports/export.xlsx?from='));
+  assert.ok(!/Cliente \d/.test(document.body.textContent), 'no personal data in the summary');
+});
+
+test('A59: without billing.export there is no Excel link, a bad range blocks the request and a failure offers retry', async () => {
+  let fail = true;
+  const urls = serveSummary(() => (fail ? response({}, 500) : response(summaryBody({ capabilities: { export: false } }))));
+  window.location.hash = '#reports'; mount();
+  fireEvent.click(await screen.findByRole('tab', { name: 'Resumen' }));
+  assert.ok(await screen.findByText('No se pudo cargar el resumen'));
+  fail = false; fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+  await screen.findByRole('list', { name: 'Indicadores del periodo' });
+  assert.equal(screen.queryByRole('link', { name: 'Exportar Excel' }), null);
+  const before = urls.length;
+  fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2020-01-01' } });
+  assert.ok(await screen.findByText(/como máximo 366 días/));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(urls.length, before, 'a range over 366 days is never requested');
+});

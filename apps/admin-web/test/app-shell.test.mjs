@@ -21,15 +21,16 @@ const model = {
 };
 const capabilities = {calendar:true,clients:true,communications:true,billing:false,staff:true};
 
-test('Admin sees the six professional sections and only their existing authorized routes', async () => {
+test('Admin sees the three active groups (Operación, Comercial, Gestión) and only their existing authorized routes', async () => {
   const adminCapabilities={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true};
   globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : String(url).includes('/api/session/capabilities') ? response(adminCapabilities) : response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav=within(document.querySelector('.app-navigation'));
-  for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
-  for(const label of ['Agenda','Espacios','Servicios','Economía','Tienda','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
-  assert.ok(nav.getByRole('link',{name:/Comunicación/}));
+  for(const label of ['Operación','Comercial','Gestión'])assert.ok(nav.getByRole('button',{name:label}));
+  assert.equal(nav.queryByRole('button',{name:'Administración'}),null,'a group with no permitted child is not shown');
+  for(const label of ['Resumen','Avisos y auditoría','Fichaje','Agenda','Clientes','Espacios','Servicios','Economía','Tienda','Equipo','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
+  assert.ok(nav.getByRole('link',{name:/Mensajes/}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
   assert.ok(screen.getByText('2 mensajes sin leer'));
   assert.ok(screen.getByText('No hay sesiones programadas hoy'));
@@ -41,8 +42,9 @@ test('Trainer sees only capability-allowed professional sections and no business
   globalThis.fetch=async url=>String(url).includes('/api/session/capabilities')?response(trainerCapabilities):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   await screen.findByRole('heading',{name:'Próximas sesiones'});const nav=within(document.querySelector('.app-navigation'));
-  for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
-  assert.equal(nav.queryByRole('button',{name:'Negocio'}),null);
+  for(const label of ['Operación','Comercial','Gestión'])assert.ok(nav.getByRole('button',{name:label}));
+  for(const label of ['Resumen','Clientes','Equipo'])assert.ok(nav.getByRole('link',{name:label}));
+  assert.equal(nav.queryByRole('button',{name:'Administración'}),null);
   for(const label of ['Economía','Tienda','Noticias','Ajustes de avisos'])assert.equal(nav.queryByRole('link',{name:label}),null);
   assert.ok(nav.getByRole('link',{name:'Servicios'}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
@@ -50,11 +52,12 @@ test('Trainer sees only capability-allowed professional sections and no business
 
 test('groups disappear when no child is allowed and partial grants expose only their matching subnavigation',()=>{
   const none={calendar:false,clients:false,communications:false,billing:false,staff:false,notificationSettings:false,news:false,store:false};
-  assert.deepEqual(getProfessionalNavigation(none).map(item=>item.label),['Resumen']);
+  assert.deepEqual(getProfessionalNavigation(none).map(item=>item.label),['Operación']);
+  assert.deepEqual(getProfessionalNavigation(none)[0].children.map(item=>item.label),['Resumen']);
   const partial={...none,clients:true,notificationSettings:true};
   const nav=getProfessionalNavigation(partial);
-  assert.deepEqual(nav.map(item=>item.label),['Resumen','Clientes','Negocio']);
-  assert.deepEqual(nav.find(item=>item.id==='business').children.map(item=>item.label),['Configuración','Ajustes de avisos']);
+  assert.deepEqual(nav.map(item=>item.label),['Operación','Gestión']);
+  assert.deepEqual(nav.find(item=>item.id==='management').children.map(item=>item.label),['Configuración','Ajustes de avisos']);
 });
 
 test('global search opens with Ctrl+K, groups permitted results and closes with Escape', async () => {
@@ -105,18 +108,18 @@ test('permitted Communications navigation remains visible while moving between m
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav = document.querySelector('.app-navigation');
-  assert.ok(within(nav).getByRole('button', { name: 'Actividad' }));
-  assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
+  assert.ok(within(nav).getByRole('button', { name: 'Gestión' }));
+  assert.ok(within(nav).getByRole('link', { name: /Mensajes/ }));
   for (const label of ['Servicios', 'Agenda', 'Clientes', 'Economía', 'Equipo']) {
     const link = within(nav).getByRole('link', { name: new RegExp(label) });
     fireEvent.click(link);
     await waitFor(() => assert.equal(within(nav).getByRole('link', { name: new RegExp(label) }).getAttribute('aria-current'), 'page'));
-    assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
+    assert.ok(within(nav).getByRole('link', { name: /Mensajes/ }));
   }
-  assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
-  fireEvent.click(within(nav).getByRole('link', { name: /Comunicación/ }));
-  await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Comunicación/ }).getAttribute('aria-current'), 'page'));
-  assert.ok(within(nav).getByRole('button',{name:'Actividad'}).closest('.app-nav-group').classList.contains('is-active'));
+  assert.ok(within(nav).getByRole('link', { name: /Mensajes/ }));
+  fireEvent.click(within(nav).getByRole('link', { name: /Mensajes/ }));
+  await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Mensajes/ }).getAttribute('aria-current'), 'page'));
+  assert.ok(within(nav).getByRole('button',{name:'Gestión'}).closest('.app-nav-group').classList.contains('is-active'));
 });
 
 test('News management navigation is visible only when the server grants its capability', async()=>{
@@ -139,22 +142,22 @@ test('authorized hash deep links retain their current subnavigation and page con
   await screen.findByText('Página existente');
   const nav=within(document.querySelector('.app-navigation'));
   assert.equal(nav.getByRole('link',{name:'Servicios'}).getAttribute('aria-current'),'page');
-  assert.ok(nav.getByRole('button',{name:'Mi gimnasio'}).closest('.app-nav-group').classList.contains('is-active'));
-  assert.equal(getProfessionalPageContext('services').section,'Mi gimnasio');
+  assert.ok(nav.getByRole('button',{name:'Comercial'}).closest('.app-nav-group').classList.contains('is-active'));
+  assert.equal(getProfessionalPageContext('services').section,'Comercial');
   assert.equal(getProfessionalPageContext('spaces').page,'Espacios');
   assert.equal(getProfessionalPageContext('notification-settings').page,'Ajustes de avisos');
 });
 
-test('Espacios and Servicios are separate destinations under Mi gimnasio',()=>{
-  const gym=getProfessionalNavigation({...capabilities,calendar:true}).find(item=>item.id==='gym');
-  assert.deepEqual(gym.children.map(route=>route.label),['Agenda','Espacios','Servicios']);
+test('Espacios and Servicios are separate destinations under Comercial',()=>{
+  const gym=getProfessionalNavigation({...capabilities,calendar:true}).find(item=>item.id==='commercial');
+  assert.deepEqual(gym.children.map(route=>route.label),['Servicios','Espacios']);
   assert.equal(gym.children.find(route=>route.id==='spaces').href,'#spaces');
   assert.equal(gym.children.find(route=>route.id==='services').href,'#services');
 });
 
 test('navigation introduces no Programación, Arena, or Athlete View destination',()=>{
   const nav=getProfessionalNavigation({...capabilities,billing:true,news:true,store:true,notificationSettings:true});
-  assert.deepEqual(nav.map(item=>item.label),['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Fichaje','Negocio']);
+  assert.deepEqual(nav.map(item=>item.label),['Operación','Comercial','Gestión']);
   assert.equal(JSON.stringify(nav).match(/Programación|Arena|Athlete View|Entrenamientos/g),null);
 });
 
@@ -167,12 +170,12 @@ test('expanded navigation is the default and compact sidebar can expand without 
   const frame=document.querySelector('.app-frame');assert.equal(frame.classList.contains('is-rail'),false);
   fireEvent.click(screen.getByRole('button',{name:'Compactar menú'}));
   await waitFor(()=>assert.equal(frame.classList.contains('is-rail'),true));
-  const comm=screen.getByRole('button',{name:'Actividad'});assert.ok(comm);assert.equal(comm.getAttribute('title'),'Actividad');
+  const comm=screen.getByRole('button',{name:'Operación'});assert.ok(comm);assert.equal(comm.getAttribute('title'),'Operación');
   fireEvent.click(screen.getByRole('button',{name:'Expandir menú'}));
   await waitFor(()=>assert.equal(frame.classList.contains('is-rail'),false));
   fireEvent.click(screen.getByRole('link',{name:'Clientes'}));
   await waitFor(()=>assert.equal(screen.getByRole('link',{name:'Clientes'}).getAttribute('aria-current'),'page'));
-  assert.ok(screen.getByRole('link',{name:/Comunicación/}));
+  assert.ok(screen.getByRole('link',{name:/Mensajes/}));
 });
 
 test('Admin summary prioritizes real agenda, attention and pending work, with finance only when the API grants it',async()=>{
@@ -193,7 +196,7 @@ test('Admin summary prioritizes real agenda, attention and pending work, with fi
   globalThis.fetch=async(url)=>{requested.push(String(url));return String(url).includes('/api/dashboard/command-center')?response(adminSummary):String(url).includes('/api/session/capabilities')?response({...capabilities,billing:true}):response({groups:[]});};
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   const main=await screen.findByRole('main');
-  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Requiere atención','Próximas sesiones','Equipo ahora']);
+  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Ocupación de hoy','Requiere atención','Próximas sesiones','Equipo ahora']);
   assert.equal(main.querySelector('.summary-session-capacity')?.textContent,'6/10');
   assert.equal(main.querySelector('.summary-session-free'),null);
   assert.ok(within(main).getByText('1 en espera'));
@@ -232,7 +235,7 @@ test('limited professional sees only server-permitted summary blocks without fin
   globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(limited):String(url).includes('/api/session/capabilities')?response({calendar:true,clients:false,communications:false,billing:false,staff:false}):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   const main=await screen.findByRole('main');
-  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Requiere atención','Próximas sesiones']);
+  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Ocupación de hoy','Requiere atención','Próximas sesiones']);
   assert.equal(within(main).queryByText('No tienes trabajo pendiente en tus bandejas'),null);
   assert.equal(within(main).queryByText('Clientes activos'),null);
   assert.equal(within(main).queryByText(/Caja|cobro|Economía/),null);
@@ -270,4 +273,34 @@ test('loading and error states are distinct and error can be retried accessibly'
   resolveDashboard(response({error:'internal_error'},500));
   assert.ok(await screen.findByRole('alert'));
   assert.ok(screen.getByRole('button',{name:'Reintentar'}));
+});
+
+test('global search also finds the screens this profile can open (ignoring accents), opens with "/" outside fields and moves with the arrow keys', async () => {
+  globalThis.fetch = async (url) => String(url).includes('/api/search')
+    ? response({ groups: [{ type: 'clients', label: 'Clientes', items: [{ id: 'c-1', label: 'María González' }] }] })
+    : String(url).includes('/api/session/capabilities') ? response({ ...capabilities, billing: true }) : response(model);
+  render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
+  await screen.findByRole('heading', { name: 'Próximas sesiones' });
+  fireEvent.keyDown(window, { key: '/' });
+  const input = await screen.findByRole('textbox', { name: 'Buscar en 2J' });
+  assert.ok(document.activeElement === input, 'the field is focused when it opens');
+  fireEvent.change(input, { target: { value: 'economia' } });
+  const dialog = within(screen.getByRole('dialog', { name: 'Búsqueda global' }));
+  const economy = await dialog.findByRole('link', { name: /Economía/ });
+  assert.equal(economy.getAttribute('href'), '#economics');
+  assert.equal(dialog.queryByRole('link', { name: /Ajustes de avisos/ }), null, 'screens the profile cannot open are not offered');
+  fireEvent.change(input, { target: { value: 'Mar' } });
+  await dialog.findByRole('link', { name: 'María González' });
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  assert.ok(document.activeElement === dialog.getByRole('link', { name: 'María González' }), 'ArrowDown moves from the field to the first result');
+  fireEvent.keyDown(document.activeElement, { key: 'ArrowUp' });
+  assert.ok(document.activeElement === input, 'ArrowUp from the first result goes back to the field');
+  fireEvent.click(screen.getByRole('button', { name: /Cerrar · Esc/ }));
+  await waitFor(() => assert.equal(screen.queryByRole('dialog', { name: 'Búsqueda global' }), null));
+  const field = document.createElement('input');
+  document.body.appendChild(field);
+  field.focus();
+  fireEvent.keyDown(field, { key: '/' });
+  assert.equal(screen.queryByRole('dialog', { name: 'Búsqueda global' }), null, '"/" typed inside a field does not hijack it');
+  field.remove();
 });
