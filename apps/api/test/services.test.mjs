@@ -1328,11 +1328,13 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(Object.hasOwn(trainer.json().summary, 'health'), false);
   assert.equal(trainer.json().summary.plans.access, 'available', 'Trainer has operational read access to entitlements');
   assert.equal(trainer.json().summary.documents.access, 'available');
+  assert.equal(trainer.json().sections.find((section) => section.id === 'documents').canManage, false, 'read access does not imply document management');
   assert.deepEqual(trainer.json().summary.messages.data, { unreadCount: 0, lastMessageAt: null });
   assert.equal(trainer.json().sections.find((section) => section.id === 'payments').sourceLabel, 'Pagos');
   const adminProfile = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
   assert.equal(adminProfile.statusCode, 200);
   assert.equal(adminProfile.json().client.email, testEmail.trim().toLowerCase(), 'contact fields remain available to the client manager');
+  assert.equal(adminProfile.json().sections.find((section) => section.id === 'documents').canManage, true, 'management capability is resolved server-side');
   assert.equal(JSON.stringify(trainer.json()).includes('qa-admin'), false);
   const forbiddenCreate = await createClientRequest(clientsTrainerApp, { firstName: 'No', lastName: 'Write' });
   assert.equal(forbiddenCreate.statusCode, 403);
