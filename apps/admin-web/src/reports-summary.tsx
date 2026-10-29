@@ -127,7 +127,7 @@ export function ReportsSummary() {
           ? <BarList title="Cobros por método" unit="Cobrado" rows={data.collectedByMethod.map((row) => ({ label: methodLabel[row.method] ?? row.method, value: row.cents, text: euros(row.cents) }))} />
           : <p className="reports-note">Sin cobros en este periodo.</p>)}
       </div>
-      <p className="reports-note"><Icon icon={icons.ShieldCheck} size={14} /> Solo cifras agregadas: este resumen no muestra datos personales ni de salud y no emite facturas.</p>
+      <p className="reports-note"><Icon icon={icons.ShieldCheck} size={16} /> Solo cifras agregadas: este resumen no muestra datos personales ni de salud y no emite facturas.</p>
     </>}
   </div>;
 }
