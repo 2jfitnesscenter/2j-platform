@@ -239,3 +239,19 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
 .import-confirm { padding: var(--2j-space-4) var(--2j-space-5) var(--2j-space-5); display: grid; gap: var(--2j-space-4); }
 .import-actions { display: flex; flex-wrap: wrap; gap: var(--2j-space-3); padding: var(--2j-space-3) var(--2j-space-5) var(--2j-space-5); }
 .import-confirm .import-actions { padding: 0; }
+
+/* Facturación: ajustes del emisor, logo y documentos de un cargo (A65/A66). */
+.invoice-settings { display: grid; gap: var(--2j-space-4); }
+.invoice-missing, .invoice-ready { margin: 0; padding: var(--2j-space-3) var(--2j-space-4); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); font-size: var(--2j-type-size-sm); }
+.invoice-missing { border-color: var(--2j-color-warning, var(--2j-color-border)); }
+.invoice-form { display: grid; gap: var(--2j-space-3); }
+.invoice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--2j-space-3); }
+.invoice-logo { display: grid; gap: var(--2j-space-3); padding: var(--2j-space-4); }
+.invoice-logo-preview { min-height: 72px; display: flex; align-items: center; }
+.invoice-logo-preview img { max-height: 72px; max-width: 220px; object-fit: contain; }
+.invoice-file { position: relative; cursor: pointer; }
+.invoice-file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.invoice-file:focus-within { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.invoice-docs { list-style: none; margin: 0 0 var(--2j-space-3); padding: 0; display: grid; gap: var(--2j-space-3); }
+.invoice-docs > li { display: grid; gap: var(--2j-space-2); padding: var(--2j-space-3); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); }
+.invoice-docs small { display: block; color: var(--2j-color-text-secondary); }

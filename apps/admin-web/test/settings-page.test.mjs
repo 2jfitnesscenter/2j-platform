@@ -43,7 +43,7 @@ test('Configuración offers the seven Base44 tabs and the unconnected ones say s
   serve(() => response(overview)); mount();
   assert.ok(await screen.findByRole('heading', { name: 'Configuración' }));
   const tabs = await screen.findAllByRole('tab');
-  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Centro', 'Horario y turnos', 'Apariencia', 'Reservas', 'Pagos', 'Tienda', 'Permisos', 'Integraciones']);
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Centro', 'Horario y turnos', 'Apariencia', 'Reservas', 'Pagos', 'Facturación', 'Tienda', 'Permisos', 'Integraciones']);
   for (const name of ['Apariencia', 'Reservas', 'Tienda']) {
     const panel = await openTab(name);
     assert.match(panel.textContent, /No conectado: estos ajustes todavía no se guardan/, name);
