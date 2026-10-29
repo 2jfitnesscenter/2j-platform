@@ -1,8 +1,8 @@
 CREATE TABLE client_import_preview_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   actor_id text NOT NULL,
-  source_format text NOT NULL CHECK (source_format IN ('csv','xlsx')),
-  row_count integer NOT NULL CHECK (row_count BETWEEN 0 AND 500),
+  source_format text NOT NULL CHECK (source_format IN ('csv','xlsx','xls')),
+  row_count integer NOT NULL CHECK (row_count BETWEEN 0 AND 2000),
   valid_count integer NOT NULL CHECK (valid_count BETWEEN 0 AND row_count),
   invalid_count integer NOT NULL CHECK (invalid_count BETWEEN 0 AND row_count),
   created_at timestamptz NOT NULL DEFAULT now(),
