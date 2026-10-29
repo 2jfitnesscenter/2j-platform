@@ -1,6 +1,6 @@
 # Handoff — perfil sintético de administración profesional
 
-- Base: `abd31b89ffc2ce64c9fae167f2226267234b2348`.
+- Base actualizado tras integrar Caja #150: `ccff10bc632d93ff7ca8c136dd10c6612f5d1cf7`.
 - El seed `apps/api/scripts/seed-demo.ts` crea/repara `Sofía Demo` (`d070…0105`) enlazado solo al actor local `local-demo:admin`; su contexto local conserva rol `admin` y el enlace server-side resuelve su ficha profesional.
 - `Alex Rivera` continúa enlazado a `local-demo:trainer`. `Nora Vega` y otros profesionales sintéticos ya existían; la prueba verifica Nora como segundo entrenador activo.
 - Cambios idempotentes y limitados a UUID sintéticos fijos. Si cualquiera de los actores ya está ligado a otra fila, el seed falla sin apropiarse de ella.
