@@ -28,7 +28,7 @@ const routes={
   activity:{id:'activity',label:'Avisos y auditoría',href:'#activity',permission:'calendar',icon:icons.Activity},
   communications:{id:'communications',label:'Comunicación',href:'#communications',permission:'communications',icon:icons.MessageSquare},
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
-  'my-gym':{id:'my-gym',label:'Panel del centro',href:'#my-gym',permission:'ownerPanel',icon:icons.Dumbbell},
+  'my-gym':{id:'my-gym',label:'Mi gimnasio',href:'#my-gym',permission:'ownerPanel',icon:icons.Dumbbell},
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},
   spaces:{id:'spaces',label:'Espacios',href:'#spaces',permission:'calendar',icon:icons.DoorOpen},
   services:{id:'services',label:'Servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
@@ -37,6 +37,7 @@ const routes={
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   reports:{id:'reports',label:'Informes',href:'#reports',permission:'billing',icon:icons.ReceiptText},
+  promotions:{id:'promotions',label:'Promociones',href:'#promotions',permission:'catalogPricingManage',icon:icons.BadgePercent},
   management:{id:'management',label:'Panel de gestión',href:'#management',permission:'ownerPanel',icon:icons.ShieldCheck},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
@@ -44,15 +45,13 @@ const routes={
   'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
-  {id:'home',label:'Resumen',icon:icons.LayoutDashboard,route:routes.home},
-  {id:'activity',label:'Actividad',icon:icons.Activity,children:[routes.activity,routes.communications]},
-  {id:'clients',label:'Clientes',icon:icons.Users,route:routes.clients},
-  {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes['my-gym'],routes.calendar,routes.spaces,routes.services]},
-  {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
-  {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
-  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.plans,routes.economics,routes.reports,routes.store,routes.news,routes.settings,routes['notification-settings']]},
+  {id:'operation',label:'Operación',icon:icons.LayoutDashboard,children:[routes.home,routes.activity,routes.timeclock,routes.calendar,routes.clients]},
+  {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.plans,routes.economics,routes.store,routes.promotions]},
+  {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.settings,routes['notification-settings']]},
   {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.management]},
 ];
+/** Groups that start open on a wide sidebar. */
+const defaultOpenGroups=['operation','commercial','management','administration'];
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */
 export const hasProfessionalRoute = (id: string) => Object.hasOwn(routes, id);
 const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
@@ -113,9 +112,9 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const isDrawer=mode==='drawer';
   const isRail=mode==='rail'||(mode==='expanded'&&folded);
   const [drawerOpen,setDrawerOpen]=React.useState(false);
-  const [expandedGroups,setExpandedGroups]=React.useState(()=>new Set(isRail?[]:['activity','gym','business']));
+  const [expandedGroups,setExpandedGroups]=React.useState(()=>new Set(isRail?[]:defaultOpenGroups));
   React.useEffect(()=>{try{localStorage.setItem('2j.nav.compact.v1',String(folded));}catch{}},[folded]);
-  React.useEffect(()=>{setExpandedGroups(new Set(isRail?[]:['activity','gym','business']));},[isRail]);
+  React.useEffect(()=>{setExpandedGroups(new Set(isRail?[]:defaultOpenGroups));},[isRail]);
   React.useEffect(()=>{if(!isDrawer)setDrawerOpen(false);},[isDrawer]);
   React.useEffect(()=>{setDrawerOpen(false);},[route]);
   const searchRef = React.useRef<HTMLInputElement>(null);
