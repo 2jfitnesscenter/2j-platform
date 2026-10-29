@@ -18,6 +18,7 @@ import { EconomicsPage } from './economics-page.js';
 import { StaffPage } from './staff-page.js';
 import { MyGymPage } from './my-gym-page.js';
 import { ReportsPage } from './reports-page.js';
+import { PromotionsPage } from './promotions-page.js';
 import { TimeClockPage } from './timeclock-page.js';
 import { CommunicationsPage } from './communications-page.js';
 import { AppShell, getProfessionalPageContext } from './app-shell.js';
@@ -39,7 +40,7 @@ function App() {
   }, []);
   React.useEffect(() => { document.title = `${getProfessionalPageContext(route).page} · 2J Platform`; }, [route]);
   usePageResetOnModuleChange(route);
-  const page = route === 'store' ? <StorePage/> : route === 'activity' ? <ActivityPage/> : route === 'news' ? <NewsPage/> : route === 'settings' ? <SettingsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'caja' ? <CajaPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'my-gym' ? <MyGymPage/> : route === 'reports' ? <ReportsPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'spaces' ? <ServicesPage section="areas"/> : route === 'services' ? <ServicesPage section="services"/> : route === 'plans' ? <ServicesPage section="plans"/> : <CommandCenter/>;
+  const page = route === 'store' ? <StorePage/> : route === 'activity' ? <ActivityPage/> : route === 'news' ? <NewsPage/> : route === 'settings' ? <SettingsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'caja' ? <CajaPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'my-gym' ? <MyGymPage/> : route === 'reports' ? <ReportsPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'spaces' ? <ServicesPage section="areas"/> : route === 'services' ? <ServicesPage section="services"/> : route === 'promotions' ? <PromotionsPage/> : route === 'plans' ? <ServicesPage section="plans"/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }
 

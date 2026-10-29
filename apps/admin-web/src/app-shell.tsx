@@ -38,6 +38,7 @@ const routes={
   caja:{id:'caja',label:'Caja',href:'#caja',permission:'cash',icon:icons.Wallet},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   reports:{id:'reports',label:'Informes',href:'#reports',permission:'billing',icon:icons.ReceiptText},
+  promotions:{id:'promotions',label:'Promociones',href:'#promotions',permission:'catalogPricingManage',icon:icons.BadgePercent},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
   settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
@@ -51,7 +52,7 @@ const navSections:NavSection[]=[
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
   {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
   {id:'caja',label:'Caja',icon:icons.Wallet,route:routes.caja},
-  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.plans,routes.economics,routes.reports,routes.store,routes.news,routes.settings,routes['notification-settings']]},
+  {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.plans,routes.economics,routes.reports,routes.store,routes.promotions,routes.news,routes.settings,routes['notification-settings']]},
 ];
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */
 export const hasProfessionalRoute = (id: string) => Object.hasOwn(routes, id);
