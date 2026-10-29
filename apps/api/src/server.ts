@@ -41,6 +41,7 @@ import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
 import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
 import { registerStoreMediaRoutes } from './store-media.js';
+import { registerClientDocumentRoutes } from './client-documents.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -360,7 +361,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
-  registerStoreMediaRoutes(app, client, authorizationResolver, options.objectStorage ?? defaultObjectStorage());
+  const objectStorage = options.objectStorage ?? defaultObjectStorage();
+  registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
+  registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
