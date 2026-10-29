@@ -296,6 +296,7 @@ function MemberMessagesView({ previewMode, onBack }: { previewMode: boolean; onB
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState('');
   const [refresh, setRefresh] = React.useState(0);
+  const pendingMessageKey = React.useRef<{ body: string; key: string } | null>(null);
   React.useEffect(() => {
     if (previewMode) return;
     let active = true;
@@ -313,9 +314,11 @@ function MemberMessagesView({ previewMode, onBack }: { previewMode: boolean; onB
       let activeConversation = conversation;
       if (!activeConversation) activeConversation = await api<MemberConversation>('/api/client-portal/conversations', { method: 'POST' });
       if (activeConversation.status !== 'active') { setError('Este hilo está cerrado. Contacta con el centro para continuar.'); return; }
-      const key = keyFor(`member-message:${activeConversation.id}`);
-      try { await api<MemberConversationMessage>(`/api/client-portal/conversations/${activeConversation.id}/messages`, { method: 'POST', headers: { 'idempotency-key': key.key }, body: JSON.stringify({ body }) }); key.clear(); }
-      catch (sendError) { throw sendError; }
+      const pending = pendingMessageKey.current;
+      const idempotencyKey = pending?.body === body ? pending.key : crypto.randomUUID();
+      pendingMessageKey.current = { body, key: idempotencyKey };
+      await api<MemberConversationMessage>(`/api/client-portal/conversations/${activeConversation.id}/messages`, { method: 'POST', headers: { 'idempotency-key': idempotencyKey }, body: JSON.stringify({ body }) });
+      pendingMessageKey.current = null;
       setDraft(''); setRefresh(value => value + 1);
     } catch { setError('No se ha podido enviar el mensaje. El texto se conserva para que puedas reintentarlo.'); }
     finally { setSending(false); }
