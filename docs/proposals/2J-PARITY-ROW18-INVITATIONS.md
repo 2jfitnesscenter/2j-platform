@@ -1,7 +1,7 @@
 # Propuesta de diseño — Fila 18: Invitaciones
 
-**Estado:** propuesta documental para revisión; no implementa rutas, tablas ni cambios de identidad.  
-**Base revisada:** `origin/main` — `abd31b89ffc2ce64c9fae167f2226267234b2348`.  
+**Estado:** propuesta documental para revisión; no implementa rutas, tablas ni cambios de identidad.
+**Base revisada:** `origin/main` — `abd31b89ffc2ce64c9fae167f2226267234b2348`.
 **Alcance:** invitaciones de socios del prototipo, alineadas con la identidad Platform y el vínculo asistido H13.
 
 ## Decisión de arquitectura
