@@ -5,7 +5,7 @@
 **Referencia:** `2jfitnesscenter/2jfit-admin` main `ded5340d8404ed1577a9e4d404554cbef82173b7`.
 **Evidencia:** inspección de rutas/componentes y handlers locales. No se ejecutó una sesión autenticada contra datos reales; “API disponible” significa implementada en el código de Platform, no verificada en producción.
 
-Home conserva cinco pestañas principales: **Inicio, Búnker, Tienda, Perfil y Ajustes**. Reservas y Evolución son vistas internas; no se añade una sexta pestaña. El modo de demo contiene fixtures sintéticos y no equivale a operaciones reales.
+Home conserva cinco pestañas principales: **Inicio, Búnker, Tienda, Perfil y Ajustes**. Reservas y Evolución son vistas internas; no se añade una sexta pestaña. Se conserva el diseño aprobado grafito + lima #A4D65E. El modo de demo contiene fixtures sintéticos y no equivale a operaciones reales.
 
 | Portal socio 2jfit-admin | Estado en Home | Real vs. prototipo | API de Platform disponible hoy | Brecha / decisión |
 |---|---|---|---|---|
