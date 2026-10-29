@@ -175,3 +175,13 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
 .summary-quick a { min-height: 44px; display: inline-flex; align-items: center; gap: var(--2j-space-2); padding: 0 var(--2j-space-4); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font-size: 14px; text-decoration: none; }
 .summary-quick a:hover { background: var(--2j-color-surface-subtle); }
 .summary-quick a svg { color: var(--2j-color-brand-strong); }
+
+/* Mensajes (antes Comunicación): filtro de la bandeja y selector de cliente para un mensaje nuevo. */
+.comms-filter { display: flex; margin-bottom: var(--2j-space-4); }
+.comms-picker-note { margin: var(--2j-space-3) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.comms-picker-list { list-style: none; margin: var(--2j-space-3) 0 0; padding: 0; display: grid; gap: var(--2j-space-1); max-height: 280px; overflow: auto; }
+.comms-picker-item { width: 100%; min-height: 44px; display: flex; align-items: center; gap: var(--2j-space-3); padding: var(--2j-space-2) var(--2j-space-3); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: inherit; text-align: left; cursor: pointer; }
+.comms-picker-item:hover { border-color: var(--2j-color-brand); }
+.comms-picker-item:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.comms-not-connected { margin: 0 0 var(--2j-space-3); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); display: flex; gap: var(--2j-space-2); align-items: center; flex-wrap: wrap; }
+.comms-not-connected .badge { padding: 2px var(--2j-space-2); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); font-size: 12px; }

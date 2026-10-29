@@ -29,7 +29,7 @@ test('Admin sees the six professional sections and only their existing authorize
   const nav=within(document.querySelector('.app-navigation'));
   for(const label of ['Resumen','Actividad','Clientes','Mi gimnasio','Equipo','Negocio'])assert.ok(nav.getByRole(label==='Resumen'||label==='Clientes'||label==='Equipo'?'link':'button',{name:label}));
   for(const label of ['Agenda','Espacios','Servicios','Economía','Tienda','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
-  assert.ok(nav.getByRole('link',{name:/Comunicación/}));
+  assert.ok(nav.getByRole('link',{name:/Mensajes/}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
   assert.ok(screen.getByText('2 mensajes sin leer'));
   assert.ok(screen.getByText('No hay sesiones programadas hoy'));
@@ -106,16 +106,16 @@ test('permitted Communications navigation remains visible while moving between m
   await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav = document.querySelector('.app-navigation');
   assert.ok(within(nav).getByRole('button', { name: 'Actividad' }));
-  assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
+  assert.ok(within(nav).getByRole('link', { name: /Mensajes/ }));
   for (const label of ['Servicios', 'Agenda', 'Clientes', 'Economía', 'Equipo']) {
     const link = within(nav).getByRole('link', { name: new RegExp(label) });
     fireEvent.click(link);
     await waitFor(() => assert.equal(within(nav).getByRole('link', { name: new RegExp(label) }).getAttribute('aria-current'), 'page'));
-    assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
+    assert.ok(within(nav).getByRole('link', { name: /Mensajes/ }));
   }
-  assert.ok(within(nav).getByRole('link', { name: /Comunicación/ }));
-  fireEvent.click(within(nav).getByRole('link', { name: /Comunicación/ }));
-  await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Comunicación/ }).getAttribute('aria-current'), 'page'));
+  assert.ok(within(nav).getByRole('link', { name: /Mensajes/ }));
+  fireEvent.click(within(nav).getByRole('link', { name: /Mensajes/ }));
+  await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Mensajes/ }).getAttribute('aria-current'), 'page'));
   assert.ok(within(nav).getByRole('button',{name:'Actividad'}).closest('.app-nav-group').classList.contains('is-active'));
 });
 
@@ -172,7 +172,7 @@ test('expanded navigation is the default and compact sidebar can expand without 
   await waitFor(()=>assert.equal(frame.classList.contains('is-rail'),false));
   fireEvent.click(screen.getByRole('link',{name:'Clientes'}));
   await waitFor(()=>assert.equal(screen.getByRole('link',{name:'Clientes'}).getAttribute('aria-current'),'page'));
-  assert.ok(screen.getByRole('link',{name:/Comunicación/}));
+  assert.ok(screen.getByRole('link',{name:/Mensajes/}));
 });
 
 test('Admin summary prioritizes real agenda, attention and pending work, with finance only when the API grants it',async()=>{
