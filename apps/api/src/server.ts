@@ -43,6 +43,7 @@ import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
+import { registerCenterProfileRoutes } from './center-profile.js';
 import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
 import { registerStoreMediaRoutes } from './store-media.js';
 import { registerClientImportRoutes } from './client-import.js';
@@ -371,6 +372,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  registerCenterProfileRoutes(app, client, authorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   const objectStorage = options.objectStorage ?? defaultObjectStorage();
   registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
