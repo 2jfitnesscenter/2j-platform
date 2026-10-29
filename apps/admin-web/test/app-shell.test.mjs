@@ -193,7 +193,7 @@ test('Admin summary prioritizes real agenda, attention and pending work, with fi
   globalThis.fetch=async(url)=>{requested.push(String(url));return String(url).includes('/api/dashboard/command-center')?response(adminSummary):String(url).includes('/api/session/capabilities')?response({...capabilities,billing:true}):response({groups:[]});};
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   const main=await screen.findByRole('main');
-  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Requiere atención','Próximas sesiones','Equipo ahora']);
+  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Ocupación de hoy','Requiere atención','Próximas sesiones','Equipo ahora']);
   assert.equal(main.querySelector('.summary-session-capacity')?.textContent,'6/10');
   assert.equal(main.querySelector('.summary-session-free'),null);
   assert.ok(within(main).getByText('1 en espera'));
@@ -232,7 +232,7 @@ test('limited professional sees only server-permitted summary blocks without fin
   globalThis.fetch=async(url)=>String(url).includes('/api/dashboard/command-center')?response(limited):String(url).includes('/api/session/capabilities')?response({calendar:true,clients:false,communications:false,billing:false,staff:false}):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   const main=await screen.findByRole('main');
-  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Requiere atención','Próximas sesiones']);
+  assert.deepEqual([...main.querySelectorAll('h2')].map(item=>item.textContent),['Ocupación de hoy','Requiere atención','Próximas sesiones']);
   assert.equal(within(main).queryByText('No tienes trabajo pendiente en tus bandejas'),null);
   assert.equal(within(main).queryByText('Clientes activos'),null);
   assert.equal(within(main).queryByText(/Caja|cobro|Economía/),null);

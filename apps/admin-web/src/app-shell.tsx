@@ -12,7 +12,7 @@ export type CommandCenterModel = {
   team: {active:number;workingNow:number;activeAbsences:number;substitutions:number}|null;
   unread: number;
   quickActions: Array<{id:string;label:string;href:string}>;
-  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null };
+  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null; expiringPlans?:Array<{assignmentId:string;clientId:string;clientName:string;planName:string;endsOn:string}>|null; recentMovements?:Array<{id:string;kind:'payment'|'refund';amountCents:number;concept:string;clientName:string;occurredAt:string}>|null };
 };
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);

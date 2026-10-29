@@ -66,3 +66,24 @@ test('commercial tiles: store sales of the month and low stock move with real da
   assert.equal(limited.lowStock, null, 'no stock without store.inventory.read');
   assert.ok(limited.transfers, 'trainers do validate transfers (D105), so they get that count');
 });
+
+test('Resumen lists the latest payments and the plans that expire within a week, only for profiles that can read them', async () => {
+  const tag = randomUUID().slice(0, 8);
+  const client = (await post('/api/clients', { firstName: 'Movimiento', lastName: `Resumen ${tag}` }, { 'idempotency-key': randomUUID() })).json();
+  const charge = await post('/api/economics/charges', { clientId: client.id, concept: `Cuota ${tag}`, amountCents: 3300, dueOn: '2099-12-10' }, { 'idempotency-key': randomUUID() });
+  assert.equal(charge.statusCode, 201, charge.body);
+  await ensureCashSessionForActor(sql, 'dashboard-commercial-admin');
+  const payment = await post('/api/economics/payments', { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 3300 }] }, { 'idempotency-key': randomUUID() });
+  assert.equal(payment.statusCode, 201, payment.body);
+  const { commercial } = await center();
+  assert.ok(Array.isArray(commercial.recentMovements) && commercial.recentMovements.length <= 6);
+  const latest = commercial.recentMovements[0];
+  assert.equal(latest.kind, 'payment');
+  assert.equal(latest.amountCents, 3300);
+  assert.equal(latest.concept, `Cuota ${tag}`);
+  assert.equal(latest.clientName, `Movimiento Resumen ${tag}`);
+  assert.ok(Array.isArray(commercial.expiringPlans), 'admins read plans');
+  for (const plan of commercial.expiringPlans) assert.match(plan.endsOn, /^\d{4}-\d{2}-\d{2}$/);
+  const limited = (await center(trainer)).commercial;
+  assert.equal(limited.recentMovements, null, 'no payments without billing.read-basic');
+});
