@@ -541,7 +541,7 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
       const databaseColumn = dbColumns.get(config.name).find((row) => row.column_name === column.name);
       assert.equal(databaseColumn.is_nullable === 'YES', !column.notNull, `${config.name}.${column.name} nullability drifted`);
       const rawType = column.getSQLType();
-      const expectedType = rawType.replace(/^char\(/, 'character(').replace(/^time$/, 'time without time zone');
+      const expectedType = rawType.replace(/^char\(/, 'character(').replace(/^time$/, 'time without time zone').replace(/^.+\[\]$/, 'ARRAY');
       assert.ok(databaseColumn.data_type === expectedType || (expectedType.startsWith('character(') && databaseColumn.data_type === 'character'), `${config.name}.${column.name} type drifted: ${databaseColumn.data_type} != ${expectedType}`);
       assert.equal(databaseColumn.column_default != null, column.hasDefault, `${config.name}.${column.name} default presence drifted`);
     }
