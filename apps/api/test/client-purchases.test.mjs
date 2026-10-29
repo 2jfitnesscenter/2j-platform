@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
 process.env.NODE_ENV ??= 'test';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: client purchases tests cannot be skipped.');
@@ -38,10 +39,8 @@ test('the client profile lists the client store purchases newest first, with lin
   const second = await sale(clientId, variant.id, 1);
   assert.equal(second.statusCode, 201, second.body);
   assert.equal((await sale(otherId, variant.id, 1)).statusCode, 201);
-  // D113 (#97): annulling a sale leaves a movement linked to an open shift; an already-open shift is fine.
-  const zero = Object.fromEntries(['coin_0_01','coin_0_02','coin_0_05','coin_0_10','coin_0_20','coin_0_50','coin_1','coin_2','bill_5','bill_10','bill_20','bill_50','bill_100','bill_200','bill_500'].map((key) => [key, 0]));
-  const shift = await post('/api/economics/cash/open', { openingDenominations: zero });
-  assert.ok([201, 409].includes(shift.statusCode), shift.body);
+  // D113 (#97): the existing synthetic shift is assigned to this API actor.
+  await ensureCashSessionForActor(sql, 'purchases-test-admin');
   assert.equal((await post(`/api/admin/store/sales/${first.json().id}/void`, { reason: 'Prueba de anulación' })).statusCode, 200);
 
   const profile = await admin.inject({ method: 'GET', url: `/api/clients/${clientId}` });

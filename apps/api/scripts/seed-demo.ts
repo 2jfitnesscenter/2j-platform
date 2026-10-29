@@ -21,10 +21,17 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     await tx`SELECT pg_advisory_xact_lock(2079079)`;
     const demoProfessionalId = 'd0700000-0000-4000-8000-000000000101';
     const trainerActorId = 'local-demo:trainer';
+    const demoAdminProfessionalId = 'd0700000-0000-4000-8000-000000000105';
+    const adminActorId = 'local-demo:admin';
     const [existingTrainerLink] = await tx`SELECT id FROM staff_professionals
       WHERE auth_actor_id=${trainerActorId} AND id<>${demoProfessionalId}::uuid FOR UPDATE`;
     if (existingTrainerLink) {
       throw new Error(`Demo trainer actor is already linked to another professional (${existingTrainerLink.id}); refusing to replace that link.`);
+    }
+    const [existingAdminLink] = await tx`SELECT id FROM staff_professionals
+      WHERE auth_actor_id=${adminActorId} AND id<>${demoAdminProfessionalId}::uuid FOR UPDATE`;
+    if (existingAdminLink) {
+      throw new Error(`Demo admin actor is already linked to another professional (${existingAdminLink.id}); refusing to replace that link.`);
     }
     for (const person of clients) {
       await tx`INSERT INTO clients(id,first_name,last_name,email,status)
@@ -60,6 +67,22 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     }
     if (demoProfessional.auth_actor_id == null) {
       await tx`UPDATE staff_professionals SET auth_actor_id=${trainerActorId},updated_at=now() WHERE id=${demoProfessionalId}::uuid AND auth_actor_id IS NULL`;
+    }
+
+    // The local demo admin is also attached to one synthetic professional record so the same
+    // server-resolved subject can use professional-only screens without an identity override.
+    await tx`INSERT INTO staff_professionals(id,first_name,last_name,display_name,status,base_role,created_by,auth_actor_id)
+      VALUES (${demoAdminProfessionalId}::uuid,'Sofía','Demo','Sofía Demo','active','admin','2j-demo-seed',${adminActorId})
+      ON CONFLICT(id) DO NOTHING`;
+    const [demoAdminProfessional] = await tx`SELECT auth_actor_id,display_name,base_role FROM staff_professionals WHERE id=${demoAdminProfessionalId}::uuid FOR UPDATE`;
+    if (demoAdminProfessional.display_name !== 'Sofía Demo' || demoAdminProfessional.base_role !== 'admin') {
+      throw new Error(`Synthetic demo admin professional ${demoAdminProfessionalId} is occupied by another record; refusing to replace it.`);
+    }
+    if (demoAdminProfessional.auth_actor_id != null && demoAdminProfessional.auth_actor_id !== adminActorId) {
+      throw new Error(`Synthetic demo admin professional ${demoAdminProfessionalId} is already linked to another actor; refusing to replace that link.`);
+    }
+    if (demoAdminProfessional.auth_actor_id == null) {
+      await tx`UPDATE staff_professionals SET auth_actor_id=${adminActorId},updated_at=now() WHERE id=${demoAdminProfessionalId}::uuid AND auth_actor_id IS NULL`;
     }
 
     const parallelProfessionals = [
@@ -261,23 +284,41 @@ async function seedMemberPilot(tx: Parameters<Parameters<ReturnType<typeof creat
     WHERE EXISTS(SELECT 1 FROM calendar_sessions WHERE id=${fullSessionId}::uuid AND status='scheduled') ON CONFLICT(id) DO NOTHING`;
 }
 
-async function runDemoSeed() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
-    throw new Error('Demo seed is restricted to development/test environments.');
-  }
+export function validateDemoSeedTarget(environment: NodeJS.ProcessEnv = process.env): 'local' | 'staging' {
+  const databaseUrl = environment.DATABASE_URL;
   if (!databaseUrl) throw new Error('DATABASE_URL is required.');
   const target = new URL(databaseUrl);
   const host = target.hostname.toLowerCase();
   const databaseName = decodeURIComponent(target.pathname.replace(/^\//, ''));
-  if (!['localhost', '127.0.0.1', '::1'].includes(host) || databaseName !== '2j_demo') {
+  const loopback = ['localhost', '127.0.0.1', '::1'].includes(host);
+
+  if (environment.STAGING_SEED !== undefined && environment.STAGING_SEED !== '1') {
+    throw new Error('STAGING_SEED must be exactly 1 when specified.');
+  }
+  if (environment.STAGING_SEED === '1') {
+    if (environment.NODE_ENV !== 'development') throw new Error('STAGING_SEED is allowed only from the 2j-staging development runner.');
+    if (environment.STAGING_SEED_HOST !== '2jfit.com') throw new Error('Staging seed target must be exactly 2jfit.com.');
+    if (!loopback || databaseName !== '2j_demo') throw new Error('Staging seed only accepts the isolated local 2j_demo database.');
+    return 'staging';
+  }
+
+  if (environment.NODE_ENV !== 'development' && environment.NODE_ENV !== 'test') {
+    throw new Error('Demo seed is restricted to development/test environments.');
+  }
+  if (!loopback || databaseName !== '2j_demo') {
     throw new Error('Demo seed only accepts a loopback PostgreSQL host and the database named 2j_demo.');
   }
+  return 'local';
+}
+
+async function runDemoSeed() {
+  const databaseUrl = process.env.DATABASE_URL;
+  const mode = validateDemoSeedTarget();
 
   const { client } = createDatabase(databaseUrl);
   try {
     await seedDemoData(client);
-    console.log('Synthetic 2J-070 demo data is ready. Existing real rows were not changed; the fixed synthetic trainer link was repaired if needed.');
+    console.log(`Synthetic ${mode} 2J-070 demo data is ready. The fixed synthetic admin/professional and trainer links were repaired if needed; existing non-demo rows were not changed.`);
   } finally {
     await client.end();
   }

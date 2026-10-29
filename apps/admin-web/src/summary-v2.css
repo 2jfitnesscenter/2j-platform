@@ -182,3 +182,52 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
 .summary-quick a { min-height: 44px; display: inline-flex; align-items: center; gap: var(--2j-space-2); padding: 0 var(--2j-space-4); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: var(--2j-color-text-primary); font-size: 14px; text-decoration: none; }
 .summary-quick a:hover { background: var(--2j-color-surface-subtle); }
 .summary-quick a svg { color: var(--2j-color-brand-strong); }
+
+/* Informes · pestaña Resumen (A59): gráficos SVG propios con tokens de color, válidos en claro y oscuro */
+.reports-page > .ui-tabs { margin-bottom: var(--2j-space-4); }
+.reports-summary .reports-filters { padding: 0 0 var(--2j-space-4); }
+.reports-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: var(--2j-space-4); margin-bottom: var(--2j-space-4); }
+.reports-chart-card.is-wide { grid-column: 1 / -1; }
+.reports-chart { margin: 0; padding: var(--2j-space-2) var(--2j-space-5) var(--2j-space-4); }
+.reports-chart-svg { width: 100%; height: auto; display: block; }
+.reports-chart-label { font-size: 11px; fill: var(--2j-color-text-secondary); }
+.reports-chart-value { font-size: 12px; font-weight: 600; fill: var(--2j-color-text-primary); }
+.reports-grid { stroke: var(--2j-color-border); stroke-width: 1; }
+.reports-bar { fill: var(--2j-color-brand); }
+.reports-bar.is-sold { fill: var(--2j-color-info); }
+.reports-legend { display: flex; gap: var(--2j-space-4); list-style: none; margin: 0 0 var(--2j-space-2); padding: 0; font-size: 12px; color: var(--2j-color-text-secondary); }
+.reports-legend li { display: inline-flex; align-items: center; gap: var(--2j-space-2); }
+.reports-swatch { width: 12px; height: 12px; border-radius: 3px; background: var(--2j-color-brand); }
+.reports-swatch.is-sold { background: var(--2j-color-info); }
+/* Mensajes (antes Comunicación): filtro de la bandeja y selector de cliente para un mensaje nuevo. */
+.comms-filter { display: flex; margin-bottom: var(--2j-space-4); }
+.comms-picker-note { margin: var(--2j-space-3) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.comms-picker-list { list-style: none; margin: var(--2j-space-3) 0 0; padding: 0; display: grid; gap: var(--2j-space-1); max-height: 280px; overflow: auto; }
+.comms-picker-item { width: 100%; min-height: 44px; display: flex; align-items: center; gap: var(--2j-space-3); padding: var(--2j-space-2) var(--2j-space-3); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); background: var(--2j-color-surface); color: inherit; text-align: left; cursor: pointer; }
+.comms-picker-item:hover { border-color: var(--2j-color-brand); }
+.comms-picker-item:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.comms-not-connected { margin: 0 0 var(--2j-space-3); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); display: flex; gap: var(--2j-space-2); align-items: center; flex-wrap: wrap; }
+.comms-not-connected .badge { padding: 2px var(--2j-space-2); border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-md); font-size: 12px; }
+/* Resumen — Ocupación de hoy, Cuotas próximas a vencer, Últimos movimientos y Novedades (paridad 2jfit-admin). */
+.summary-occupancy-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--2j-space-5); padding: var(--2j-space-4) var(--2j-space-5) var(--2j-space-5); }
+.summary-occupancy-value { font-size: var(--2j-type-size-3xl, 2rem); line-height: 1; font-weight: var(--2j-type-weight-semibold); letter-spacing: -0.02em; }
+.summary-occupancy-meter { display: grid; gap: var(--2j-space-2); }
+.summary-occupancy-meter .summary-fill { height: 8px; }
+.summary-occupancy-meter small { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.summary-occupancy-notes { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--2j-space-1); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.summary-occupancy-notes .is-danger { color: var(--2j-color-danger-ink, var(--2j-color-danger)); font-weight: var(--2j-type-weight-semibold); }
+.summary-occupancy-notes .is-info { color: var(--2j-color-text); font-weight: var(--2j-type-weight-semibold); }
+.summary-news-toggle { width: 100%; display: flex; align-items: center; gap: var(--2j-space-3); padding: var(--2j-space-4) var(--2j-space-5); border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; min-height: var(--2j-control-md, 44px); }
+.summary-news-toggle:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: -2px; }
+.summary-news-toggle[aria-expanded="true"] .summary-news-chevron { transform: rotate(180deg); }
+.summary-news-chevron { margin-left: auto; transition: transform 160ms ease; }
+.summary-news-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--2j-color-border); }
+.summary-news-list > li { padding: var(--2j-space-4) var(--2j-space-5); }
+.summary-news-list > li + li { border-top: 1px solid var(--2j-color-border); }
+.summary-news-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--2j-space-2); }
+.summary-news-head time { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
+.summary-news-list ul { margin: var(--2j-space-2) 0 0; padding-left: var(--2j-space-5); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); display: grid; gap: var(--2j-space-1); }
+@media (max-width: 720px) { .summary-occupancy-body { grid-template-columns: 1fr; gap: var(--2j-space-3); } }
+@media (prefers-reduced-motion: reduce) { .summary-news-chevron { transition: none; } }
+/* Promociones: pantalla informativa, sin acciones (A46). */
+.promotions-notes { margin: 0; padding: var(--2j-space-4) var(--2j-space-5) var(--2j-space-5) var(--2j-space-8); border-top: 1px solid var(--2j-color-border); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); display: grid; gap: var(--2j-space-1); }
