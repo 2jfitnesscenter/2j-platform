@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -356,50 +356,119 @@ export async function previewClientXlsx(data: Buffer, existingEmails: ReadonlySe
   return previewClientRows(await parseXlsxRows(data), 'xlsx', existingEmails);
 }
 
-export function registerClientImportRoutes(app: FastifyInstance, db: DB, resolveStaff: (request: FastifyRequest) => Promise<AuthorizationContext | null>, enabled = false) {
+const IMPORT_ERRORS = ['file_required', 'file_too_large', 'header_required', 'too_many_rows', 'too_many_columns', 'required_columns_missing', 'timp_columns_missing', 'duplicate_columns', 'unsupported_columns', 'invalid_csv', 'invalid_encoding', 'invalid_excel', 'excel_expanded_too_large', 'one_sheet_required', 'formula_not_allowed', 'cell_type_not_allowed'];
+
+type Upload = { fileData: Buffer; sourceFormat: 'csv' | 'xlsx' | 'xls' };
+
+/** Reads the single spreadsheet of a multipart request. Replies and returns null when the upload is not acceptable. */
+async function readUpload(request: FastifyRequest, reply: any): Promise<Upload | null> {
+  if (!request.isMultipart()) { reply.code(415).send({ error: 'multipart_required' }); return null; }
+  try {
+    const file = await request.file({ limits: { fileSize: MAX_BYTES, files: 1, fields: 0, parts: 1 } });
+    if (!file || file.fieldname !== 'file') { reply.code(400).send({ error: 'file_required' }); return null; }
+    const filename = file.filename.toLocaleLowerCase('en-US');
+    if (!filename.endsWith('.csv') && !filename.endsWith('.xlsx') && !filename.endsWith('.xls')) { file.file.resume(); reply.code(415).send({ error: 'spreadsheet_format_unsupported' }); return null; }
+    const sourceFormat = filename.endsWith('.xlsx') ? 'xlsx' : filename.endsWith('.xls') ? 'xls' : 'csv';
+    const fileData = await file.toBuffer();
+    if (file.file.truncated || fileData.length > MAX_BYTES) { reply.code(413).send({ error: 'file_too_large', maxBytes: MAX_BYTES }); return null; }
+    return { fileData, sourceFormat };
+  } catch (error: any) {
+    if (error?.code === 'FST_REQ_FILE_TOO_LARGE') { reply.code(413).send({ error: 'file_too_large', maxBytes: MAX_BYTES }); return null; }
+    reply.code(400).send({ error: 'invalid_upload' }); return null;
+  }
+}
+
+/** Parses the file and marks what already exists; the preview and the real import share this so they can never disagree. */
+async function buildImportPreview(db: DB, { fileData, sourceFormat }: Upload): Promise<ClientImportPreview> {
+  const rawRows = sourceFormat === 'csv' ? parseCsvRows(fileData) : sourceFormat === 'xlsx' ? await parseXlsxRows(fileData) : parseXlsRows(fileData);
+  const timp = isTimpHeader(rawRows[0] ?? []);
+  if (sourceFormat === 'xls' && !timp) throw new Error('timp_columns_missing');
+  const preliminary = timp ? previewTimpRows(rawRows, sourceFormat) : previewClientRows(rawRows, sourceFormat as 'csv' | 'xlsx');
+  const emails = new Set(preliminary.rows.flatMap((row) => row.email ? [row.email] : []));
+  const phones = new Set(preliminary.rows.flatMap((row) => row.phone ? [normalizePhone(row.phone)] : []));
+  const existing: Array<{ email: string | null; phone: string | null }> = emails.size || phones.size ? await db`
+    SELECT lower(email) AS email,phone FROM clients WHERE status='active' AND (
+      (email IS NOT NULL AND lower(email)=ANY(${[...emails]}::text[])) OR
+      (phone IS NOT NULL AND regexp_replace(phone,'[^0-9+]','','g')=ANY(${[...phones]}::text[]))
+    )` as Array<{ email: string | null; phone: string | null }> : [];
+  const existingEmails = new Set(existing.flatMap((row) => row.email ? [row.email] : []));
+  const existingPhones = new Set(existing.flatMap((row) => row.phone ? [normalizePhone(row.phone)] : []));
+  return timp ? previewTimpRows(rawRows, sourceFormat, { existingEmails, existingPhones })
+    : sourceFormat === 'csv' ? previewClientRows(rawRows, 'csv', existingEmails) : previewClientRows(rawRows, 'xlsx', existingEmails);
+}
+
+const failure = (reply: any, error: unknown) => {
+  const code = error instanceof Error ? error.message : 'invalid_csv';
+  return reply.code(code === 'file_too_large' ? 413 : 400).send({ error: IMPORT_ERRORS.includes(code) ? code : 'invalid_spreadsheet' });
+};
+const digestOf = (data: Buffer) => createHash('sha256').update(data).digest('hex');
+
+export type ClientImportResult = {
+  runId: string; rowCount: number; created: number; skipped: number; active: number; inactive: number; incomplete: number; emailNotStored: number;
+  skippedRows: Array<{ rowNumber: number; errors: string[] }>;
+};
+
+/**
+ * Real import (A62/A63). Only the code that validates the owner's explicit confirmation lives here; nothing is stored from the file except
+ * the clients it creates. Every row without a structural error becomes a client: active when the last reservation is within 365 days,
+ * archived (inactive) otherwise, incomplete records flagged, never any debt, charge or payment. A second submission of the same file
+ * returns the first result instead of importing again.
+ */
+async function commitImport(db: DB, actor: AuthorizationContext, upload: Upload, preview: ClientImportPreview, digest: string): Promise<{ replayed: boolean; result: ClientImportResult }> {
+  return db.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext('client-import-commit'))`;
+    const [previous] = await tx`SELECT id,row_count AS "rowCount",created_count AS created,skipped_count AS skipped,active_count AS active,inactive_count AS inactive,incomplete_count AS incomplete,email_not_stored_count AS "emailNotStored" FROM client_import_runs WHERE file_digest=${digest}`;
+    if (previous) return { replayed: true, result: { runId: previous.id, rowCount: previous.rowCount, created: previous.created, skipped: previous.skipped, active: previous.active, inactive: previous.inactive, incomplete: previous.incomplete, emailNotStored: previous.emailNotStored, skippedRows: [] } };
+    const runId = randomUUID();
+    const importable = preview.rows.filter((row) => row.errors.length === 0);
+    const skippedRows = preview.rows.filter((row) => row.errors.length > 0).map((row) => ({ rowNumber: row.rowNumber, errors: row.errors }));
+    const refs = importable.flatMap((row) => row.externalId ? [row.externalId] : []);
+    const taken = new Set<string>(refs.length ? (await tx`SELECT external_ref FROM clients WHERE import_source='timp' AND external_ref=ANY(${refs}::text[])`).map((row: any) => row.external_ref) : []);
+    const emails = importable.flatMap((row) => row.email ? [row.email] : []);
+    const activeEmails = new Set<string>(emails.length ? (await tx`SELECT lower(btrim(email)) AS email FROM clients WHERE status='active' AND email IS NOT NULL AND lower(btrim(email))=ANY(${emails}::text[])`).map((row: any) => row.email) : []);
+    let created = 0; let active = 0; let inactive = 0; let incomplete = 0; let emailNotStored = 0;
+    const planned: Array<{ id: string; row: ClientImportRow; status: 'active' | 'archived'; email: string | null; flags: string[]; missing: string[] }> = [];
+    for (const row of importable) {
+      if (row.externalId && taken.has(row.externalId)) { skippedRows.push({ rowNumber: row.rowNumber, errors: ['already_imported'] }); continue; }
+      const status = row.activityStatus === 'inactive' ? 'archived' : 'active';
+      let email = row.email;
+      const flags = [...(row.reviewFlags ?? []), ...(row.duplicateFields ?? []).map((field) => `duplicate_${field}`)];
+      const missing = [...(row.incompleteFields ?? [])];
+      if (email && status === 'active') {
+        // Two active clients cannot share an email (identity safety). The later one keeps everything else and is flagged for review.
+        if (activeEmails.has(email)) { email = null; flags.push('email_not_stored_duplicate'); if (!missing.includes('email')) missing.push('email'); emailNotStored += 1; }
+        else activeEmails.add(email);
+      }
+      planned.push({ id: randomUUID(), row, status, email, flags, missing });
+    }
+    skippedRows.sort((left, right) => left.rowNumber - right.rowNumber);
+    created = planned.length;
+    active = planned.filter((item) => item.status === 'active').length;
+    inactive = created - active;
+    incomplete = planned.filter((item) => item.missing.length > 0).length;
+    await tx`INSERT INTO client_import_runs(id,actor_id,source_format,file_digest,row_count,created_count,skipped_count,active_count,inactive_count,incomplete_count,email_not_stored_count)
+      VALUES (${runId}::uuid,${actor.actorId},${upload.sourceFormat},${digest},${preview.rowCount},${created},${preview.rowCount - created},${active},${inactive},${incomplete},${emailNotStored})`;
+    for (const item of planned) {
+      const { row } = item;
+      await tx`INSERT INTO clients(id,first_name,last_name,email,phone,birth_date,status,created_at,import_run_id,import_source,external_ref,member_number,gender,joined_on,last_reservation_on,import_provenance,import_tags,import_incomplete_fields,import_review_flags)
+        VALUES (${item.id}::uuid,${row.firstName},${row.lastName},${item.email},${row.phone},${row.birthDate},${item.status},COALESCE(${row.joinedAt ?? null}::date::timestamptz,now()),${runId}::uuid,${row.externalId ? 'timp' : null},${row.externalId ?? null},${row.memberNumber ?? null},${row.gender ?? null},${row.joinedAt ?? null}::date,${row.lastReservationAt ?? null}::date,${row.provenance ?? null},${row.tags ?? null},${item.missing}::text[],${item.flags}::text[])`;
+      await tx`INSERT INTO client_events(client_id,event_type,actor_id,actor_role) VALUES (${item.id}::uuid,'client.imported',${actor.actorId},${actor.role})`;
+    }
+    return { replayed: false, result: { runId, rowCount: preview.rowCount, created, skipped: preview.rowCount - created, active, inactive, incomplete, emailNotStored, skippedRows } };
+  }) as Promise<{ replayed: boolean; result: ClientImportResult }>;
+}
+
+export function registerClientImportRoutes(app: FastifyInstance, db: DB, resolveStaff: (request: FastifyRequest) => Promise<AuthorizationContext | null>, enabled = false, commitEnabled = false) {
   app.post('/api/clients/import/preview', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const actor = await resolveStaff(request);
     if (!actor) return reply.code(401).send({ error: 'authentication_required' });
     if (!can(actor, 'clients.manage')) return reply.code(403).send({ error: 'permission_denied' });
     if (!enabled) return reply.code(404).send({ error: 'client_import_preview_disabled' });
-    if (!request.isMultipart()) return reply.code(415).send({ error: 'multipart_required' });
-    let fileData: Buffer | null = null;
-    let sourceFormat: 'csv' | 'xlsx' | 'xls' = 'csv';
-    try {
-      const file = await request.file({ limits: { fileSize: MAX_BYTES, files: 1, fields: 0, parts: 1 } });
-      if (!file || file.fieldname !== 'file') return reply.code(400).send({ error: 'file_required' });
-      const filename = file.filename.toLocaleLowerCase('en-US');
-      if (!filename.endsWith('.csv') && !filename.endsWith('.xlsx') && !filename.endsWith('.xls')) { file.file.resume(); return reply.code(415).send({ error: 'spreadsheet_format_unsupported' }); }
-      sourceFormat = filename.endsWith('.xlsx') ? 'xlsx' : filename.endsWith('.xls') ? 'xls' : 'csv';
-      fileData = await file.toBuffer();
-      if (file.file.truncated || fileData.length > MAX_BYTES) return reply.code(413).send({ error: 'file_too_large', maxBytes: MAX_BYTES });
-    } catch (error: any) {
-      if (error?.code === 'FST_REQ_FILE_TOO_LARGE') return reply.code(413).send({ error: 'file_too_large', maxBytes: MAX_BYTES });
-      return reply.code(400).send({ error: 'invalid_upload' });
-    }
+    const upload = await readUpload(request, reply);
+    if (!upload) return;
     let parsed: ClientImportPreview;
-    try {
-      const rawRows = sourceFormat === 'csv' ? parseCsvRows(fileData!) : sourceFormat === 'xlsx' ? await parseXlsxRows(fileData!) : parseXlsRows(fileData!);
-      const timp = isTimpHeader(rawRows[0] ?? []);
-      if (sourceFormat === 'xls' && !timp) throw new Error('timp_columns_missing');
-      const preliminary = timp ? previewTimpRows(rawRows, sourceFormat) : previewClientRows(rawRows, sourceFormat as 'csv' | 'xlsx');
-      const emails = new Set(preliminary.rows.flatMap((row) => row.email ? [row.email] : []));
-      const phones = new Set(preliminary.rows.flatMap((row) => row.phone ? [normalizePhone(row.phone)] : []));
-      const existing: Array<{ email: string | null; phone: string | null }> = emails.size || phones.size ? await db`
-        SELECT lower(email) AS email,phone FROM clients WHERE status='active' AND (
-          (email IS NOT NULL AND lower(email)=ANY(${[...emails]}::text[])) OR
-          (phone IS NOT NULL AND regexp_replace(phone,'[^0-9+]','','g')=ANY(${[...phones]}::text[]))
-        )` as Array<{ email: string | null; phone: string | null }> : [];
-      const existingEmails = new Set(existing.flatMap((row) => row.email ? [row.email] : []));
-      const existingPhones = new Set(existing.flatMap((row) => row.phone ? [normalizePhone(row.phone)] : []));
-      parsed = timp ? previewTimpRows(rawRows, sourceFormat, { existingEmails, existingPhones })
-        : sourceFormat === 'csv' ? previewClientRows(rawRows, 'csv', existingEmails) : previewClientRows(rawRows, 'xlsx', existingEmails);
-    } catch (error) {
-      const code = error instanceof Error ? error.message : 'invalid_csv';
-      const status = code === 'file_too_large' ? 413 : 400;
-      return reply.code(status).send({ error: ['file_required', 'file_too_large', 'header_required', 'too_many_rows', 'too_many_columns', 'required_columns_missing', 'timp_columns_missing', 'duplicate_columns', 'unsupported_columns', 'invalid_csv', 'invalid_encoding', 'invalid_excel', 'excel_expanded_too_large', 'one_sheet_required', 'formula_not_allowed', 'cell_type_not_allowed'].includes(code) ? code : 'invalid_spreadsheet' });
-    }
+    try { parsed = await buildImportPreview(db, upload); } catch (error) { return failure(reply, error); }
     try {
       await db.begin(async (tx) => {
         await tx`INSERT INTO client_import_preview_audit(id,actor_id,source_format,row_count,valid_count,invalid_count) VALUES (${randomUUID()},${actor.actorId},${parsed.sourceFormat},${parsed.rowCount},${parsed.validCount},${parsed.invalidCount})`;
@@ -409,6 +478,32 @@ export function registerClientImportRoutes(app: FastifyInstance, db: DB, resolve
       request.log.error({ databaseCode: code, route: 'POST /api/clients/import/preview' }, 'client import preview audit failed');
       return reply.code(500).send({ error: 'internal_error' });
     }
-    return reply.send({ mode: 'dry_run', commitAvailable: false, approvalRequiredForRealImport: true, ...parsed });
+    return reply.send({ mode: 'dry_run', commitAvailable: commitEnabled && can(actor, 'settings.manage'), approvalRequiredForRealImport: true, fileDigest: digestOf(upload.fileData), ...parsed });
+  });
+
+  // The confirmation travels in headers so it is checked before the file is even parsed: the digest proves this is the file that was previewed.
+  app.post('/api/clients/import/commit', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const actor = await resolveStaff(request);
+    if (!actor) return reply.code(401).send({ error: 'authentication_required' });
+    if (!can(actor, 'clients.manage') || !can(actor, 'settings.manage')) return reply.code(403).send({ error: 'permission_denied' });
+    if (!enabled || !commitEnabled) return reply.code(404).send({ error: 'client_import_commit_disabled' });
+    const header = (name: string) => { const value = request.headers[name]; return typeof value === 'string' ? value.trim() : ''; };
+    const digest = header('x-import-digest'); const expectedRows = Number(header('x-import-expected-rows'));
+    if (header('x-import-confirm') !== 'IMPORTAR' || !/^[0-9a-f]{64}$/.test(digest) || !Number.isInteger(expectedRows) || expectedRows < 0 || expectedRows > MAX_ROWS) return reply.code(400).send({ error: 'confirmation_required' });
+    const upload = await readUpload(request, reply);
+    if (!upload) return;
+    if (digestOf(upload.fileData) !== digest) return reply.code(409).send({ error: 'file_changed_since_preview' });
+    let preview: ClientImportPreview;
+    try { preview = await buildImportPreview(db, upload); } catch (error) { return failure(reply, error); }
+    if (preview.rowCount !== expectedRows) return reply.code(409).send({ error: 'row_count_changed' });
+    try {
+      const { replayed, result } = await commitImport(db, actor, upload, preview, digest);
+      return reply.code(replayed ? 200 : 201).send({ replayed, ...result });
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'unknown';
+      request.log.error({ databaseCode: code, route: 'POST /api/clients/import/commit' }, 'client import commit failed');
+      return reply.code(500).send({ error: 'internal_error' });
+    }
   });
 }

@@ -234,6 +234,7 @@ export type ServerOptions = {
   objectStorage?: ObjectStorage;
   /** Allows controlled CSV dry-run previews only; there is no client-write import endpoint. Defaults off. */
   clientImportPreviewEnabled?: boolean;
+  clientImportCommitEnabled?: boolean;
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
@@ -373,7 +374,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const objectStorage = options.objectStorage ?? defaultObjectStorage();
   registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
   registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
-  registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true);
+  registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true, options.clientImportCommitEnabled === true);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
@@ -763,6 +764,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
     ownerActorId: process.env.PLATFORM_OWNER_ACTOR_ID ?? null,
+    clientImportPreviewEnabled: process.env.CLIENT_IMPORT_PREVIEW_ENABLED === 'true',
+    clientImportCommitEnabled: process.env.CLIENT_IMPORT_COMMIT_ENABLED === 'true',
     memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
     memberPilotBookingEnabled: process.env.PILOT_MEMBER_BOOKING_ENABLED === 'true',
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
