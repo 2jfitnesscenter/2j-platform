@@ -1,0 +1,26 @@
+{
+  "task": "2J-STAGING-UI-FIXES",
+  "status": "implementation_complete_ci_pending",
+  "base": "86693095d208c31d12a3ee19eaee9a96cc9c6693",
+  "scope": [
+    "Reset staff schedule form using a captured form reference after async save",
+    "Remove duplicate disabled center opening-hour fields and link to Horario y turnos",
+    "Label the known 2jfit.es and 2jfit.com domains as Staging"
+  ],
+  "verification": {
+    "admin_web_tests": { "passed": 358, "failed": 0 },
+    "monorepo_typecheck": "passed",
+    "monorepo_build_force": "passed",
+    "git_diff_check": "passed",
+    "quality": "pending",
+    "secret_scan": "pending",
+    "e2e": "pending"
+  },
+  "restricted_changes": {
+    "api": false,
+    "permissions": false,
+    "migrations": false,
+    "infrastructure": false,
+    "production": false
+  }
+}
