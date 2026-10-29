@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
 import { registerClientPlanRoutes } from './client-plans.js';
+import { registerContractRoutes } from './contracts.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-service-auth.js';
 import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
@@ -25,6 +26,9 @@ import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
 import { registerOwnerPanelRoutes } from './owner-panel.js';
+import { registerCenterOperationsRoutes } from './center-operations.js';
+import { registerMonitoringRoutes } from './monitoring.js';
+import { registerManagementPanelRoutes } from './management-panel.js';
 import { registerActivityRoutes } from './activity.js';
 import { registerReportRoutes } from './reports.js';
 import { registerSettingsOverviewRoutes } from './settings-overview.js';
@@ -42,6 +46,8 @@ import { registerCenterNewsRoutes } from './center-news.js';
 import { registerCenterProfileRoutes } from './center-profile.js';
 import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
 import { registerStoreMediaRoutes } from './store-media.js';
+import { registerClientImportRoutes } from './client-import.js';
+import { registerClientDocumentRoutes } from './client-documents.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -228,6 +234,8 @@ export type ServerOptions = {
   logger?: FastifyServerOptions['logger'];
   /** Where product photos are stored. Defaults to the local filesystem provider (development and pilot). */
   objectStorage?: ObjectStorage;
+  /** Allows controlled CSV dry-run previews only; there is no client-write import endpoint. Defaults off. */
+  clientImportPreviewEnabled?: boolean;
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
@@ -267,7 +275,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
     const context = await baseAuthorizationResolver(request);
     if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
-    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read'])] };
+    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read'])] };
   };
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
@@ -321,6 +329,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.addHook('onClose', async () => { stopTrainingSignals(); await client.end(); });
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
+  registerContractRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
   registerTrainingCapabilitiesRoute(app, client, trainingCapabilitiesKeys);
   registerTrainingSuspensionRoutes(app, client, authorizationResolver);
@@ -354,6 +363,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
   registerOwnerPanelRoutes(app, client, authorizationResolver);
+  registerCenterOperationsRoutes(app, client, authorizationResolver);
+  registerMonitoringRoutes(app, client, authorizationResolver);
+  registerManagementPanelRoutes(app, client, authorizationResolver);
   registerActivityRoutes(app, client, authorizationResolver);
   registerReportRoutes(app, client, authorizationResolver);
   registerSettingsOverviewRoutes(app, client, authorizationResolver, { trainingSso: options.trainingSsoEnabled === true, trainingServiceCalls: options.trainingServiceCallsEnabled === true, trainingLinking: options.trainingLinkingEnabled === true, trainingSignals: options.trainingSignalsEnabled === true, trainingProvisioning: options.trainingProvisioningEnabled === true, push: options.pushEnabled === true, passkeys: options.platformPasskeysEnabled === true, memberAuthPilot: options.memberPilotAuthEnabled === true, memberBookingPilot: options.memberPilotBookingEnabled === true });
@@ -362,7 +374,10 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterProfileRoutes(app, client, authorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
-  registerStoreMediaRoutes(app, client, authorizationResolver, options.objectStorage ?? defaultObjectStorage());
+  const objectStorage = options.objectStorage ?? defaultObjectStorage();
+  registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
+  registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
+  registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {

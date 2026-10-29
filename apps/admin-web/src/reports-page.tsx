@@ -1,5 +1,6 @@
 import React from 'react';
-import { Button, Card, CardHeader, EmptyState, Icon, PageHeader, StatusChip, icons, type StatusTone } from '@2j/ui';
+import { Button, Card, CardHeader, EmptyState, Icon, PageHeader, StatusChip, Tabs, icons, type StatusTone } from '@2j/ui';
+import { ReportsSummary } from './reports-summary.js';
 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 
@@ -37,6 +38,7 @@ function queryOf(filters: Filters) {
 export function ReportsPage() {
   const [filters, setFilters] = React.useState<Filters>(defaultFilters);
   const [state, setState] = React.useState<LoadState>({ status: 'loading' });
+  const [tab, setTab] = React.useState<'sales' | 'summary'>('sales');
   const set = (patch: Partial<Filters>) => setFilters((current) => ({ ...current, ...patch }));
   const valid = filters.from !== '' && filters.to !== '' && filters.to >= filters.from;
 
@@ -61,8 +63,11 @@ export function ReportsPage() {
 
   const data = state.status === 'ready' ? state.data : null;
   const totals = data?.totals;
+  const tabs = <Tabs label="Secciones de informes" items={[{ id: 'sales', label: 'Ventas' }, { id: 'summary', label: 'Resumen' }]} value={tab} onChange={(id) => setTab(id as 'sales' | 'summary')} panelId="reports-panel" idPrefix="reports-tab" />;
+  if (tab === 'summary') return <main className="summary reports-page" id="reports" data-2j-design="v2">{header}{tabs}<div role="tabpanel" id="reports-panel" aria-labelledby="reports-tab-summary"><ReportsSummary /></div></main>;
   return <main className="summary reports-page" id="reports" data-2j-design="v2">
     {header}
+    {tabs}
     <ul className="summary-metrics" aria-label="Totales del periodo">
       {[['Vendido', totals ? euros(totals.soldCents) : '—', 'Sin anuladas ni exentas'], ['Cobrado', totals ? euros(totals.collectedCents) : '—', 'Neto de devoluciones'], ['Pendiente de cobro', totals ? euros(totals.pendingCents) : '—', 'Vendido menos cobrado'], ['Anuladas', totals ? String(totals.voidedCount) : '—', totals ? `${euros(totals.voidedCents)} fuera del vendido` : 'Importe fuera del vendido']].map(([label, value, detail]) =>
         <li key={label}><Card padding="none" className="summary-metric"><div className="summary-metric-body"><span className="summary-metric-label">{label}</span><strong className="summary-metric-value">{value}</strong><span className="summary-metric-detail">{detail}</span></div></Card></li>)}
