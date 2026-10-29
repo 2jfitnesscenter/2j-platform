@@ -239,7 +239,7 @@ export function registerDashboardRoutes(
       const canPlans = can(context, 'entitlements.read');
       const canStoreSales = can(context, 'store.sales.read');
       const canStoreStock = can(context, 'store.inventory.read');
-      const [plansRows, salesRows, stockRows] = await Promise.all([
+      const [plansRows, salesRows, stockRows, expiringRows, movementRows] = await Promise.all([
         canPlans ? db`WITH today AS (SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS d)
           SELECT count(*) FILTER (WHERE s.state='active')::int AS "activeCount",
                  count(*) FILTER (WHERE s.state='active' AND a.ends_on IS NOT NULL AND a.ends_on <= (SELECT d FROM today)+7)::int AS "expiringSoonCount"
@@ -251,6 +251,17 @@ export function registerDashboardRoutes(
         canStoreStock ? db`SELECT count(*)::int AS "count" FROM (
           SELECT v.id, COALESCE(sum(m.quantity_delta),0) AS stock FROM store_product_variants v JOIN store_products p ON p.id=v.product_id
           LEFT JOIN store_inventory_movements m ON m.variant_id=v.id WHERE v.active AND v.stock_tracked AND p.active GROUP BY v.id) x WHERE x.stock<=3` : Promise.resolve(null),
+        // Cuotas que vencen en 7 días y últimos cobros/devoluciones (paridad con el Resumen de 2jfit-admin). Solo lectura. Llevan el nombre del cliente: exigen también clients.read.
+        canPlans && can(context, 'clients.read') ? db`WITH today AS (SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS d)
+          SELECT a.id AS "assignmentId", a.client_id AS "clientId", concat_ws(' ',cl.first_name,cl.last_name) AS "clientName", p.name AS "planName", a.ends_on::text AS "endsOn"
+          FROM client_plan_assignments a JOIN clients cl ON cl.id=a.client_id JOIN plans p ON p.id=a.plan_id
+          LEFT JOIN LATERAL (SELECT e.event_type FROM client_plan_assignment_events e WHERE e.assignment_id=a.id AND e.effective_on<=(SELECT d FROM today) ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1) le ON true
+          WHERE a.status<>'cancelled' AND COALESCE(le.event_type,'') NOT IN ('cancelled','changed','paused')
+            AND a.starts_on<=(SELECT d FROM today) AND a.ends_on IS NOT NULL AND a.ends_on>=(SELECT d FROM today) AND a.ends_on<=(SELECT d FROM today)+7
+          ORDER BY a.ends_on,cl.last_name,cl.first_name,a.id LIMIT 6` : Promise.resolve(null),
+        permissions.billing && can(context, 'clients.read') ? db`SELECT t.id,t.kind,t.amount_cents::bigint AS "amountCents",c.concept,concat_ws(' ',cl.first_name,cl.last_name) AS "clientName",t.created_at AS "occurredAt"
+          FROM economic_transactions t JOIN economic_charges c ON c.id=t.charge_id JOIN clients cl ON cl.id=t.client_id
+          ORDER BY t.created_at DESC,t.id DESC LIMIT 6` : Promise.resolve(null),
       ]);
       const plansRow = Array.isArray(plansRows) ? plansRows[0] ?? null : plansRows;
       const salesRow = Array.isArray(salesRows) ? salesRows[0] ?? null : salesRows;
@@ -260,6 +271,8 @@ export function registerDashboardRoutes(
         transfers: permissions.transfers ? { pendingCount: Number(transferRow?.count ?? 0) } : null,
         storeSales: salesRow ? { monthCount: Number(salesRow.count), monthTotalCents: Number(salesRow.totalCents) } : null,
         lowStock: stockRow ? { count: Number(stockRow.count) } : null,
+        expiringPlans: Array.isArray(expiringRows) ? (expiringRows as any[]).map(row => ({ assignmentId: row.assignmentId, clientId: row.clientId, clientName: row.clientName, planName: row.planName, endsOn: row.endsOn })) : null,
+        recentMovements: Array.isArray(movementRows) ? (movementRows as any[]).map(row => ({ id: row.id, kind: row.kind, amountCents: Number(row.amountCents), concept: row.concept, clientName: row.clientName, occurredAt: row.occurredAt })) : null,
       };
       const canManageReservations = can(context, 'reservations.manage');
       const canCreateClient = can(context, 'clients.manage');
