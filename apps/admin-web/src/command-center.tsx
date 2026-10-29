@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button, Card, CardHeader, Icon, PageHeader, StatusChip, icons, type LucideIcon, type StatusTone } from '@2j/ui';
 import { hasProfessionalRoute, useCommandCenter, type CommandCenterModel } from './app-shell.js';
+import { PLATFORM_CHANGELOG } from './platform-changelog.js';
 
 const pendingKinds = new Set(['sensitive_review', 'document_pending', 'consent_pending', 'overdue_checkin', 'pending_transfers']);
 
@@ -169,6 +170,77 @@ function SessionsCard({ data }: { data: CommandCenterModel }) {
   </Card>;
 }
 
+/** Ocupación de hoy: plazas reservadas sobre plazas ofrecidas, con lo que queda por resolver. */
+function OccupancyCard({ data }: { data: CommandCenterModel }) {
+  const { capacity, occupied, waitlistCount, unassignedCount, sessionCount } = data.today;
+  const percent = capacity > 0 ? Math.min(100, Math.round((occupied / capacity) * 100)) : 0;
+  return <Card as="section" padding="none" className="summary-card summary-occupancy" aria-labelledby="summary-occupancy-title">
+    <div className="summary-card-head"><CardHeader title="Ocupación de hoy" titleId="summary-occupancy-title" actions={<Button variant="ghost" size="sm" href="#calendar">Abrir agenda</Button>} /></div>
+    {capacity === 0
+      ? <div className="summary-empty"><span className="summary-empty-icon"><Icon icon={icons.Users} size={24} /></span><strong>Sin plazas ofrecidas hoy</strong><span>Cuando haya sesiones programadas verás aquí cuántas plazas están reservadas.</span></div>
+      : <div className="summary-occupancy-body">
+        <div className="summary-occupancy-meter"><span className="summary-fill" role="img" aria-label={`${percent} % de ocupación`}><span style={{ width: `${percent}%` }} /></span>
+          <small>{occupied} de {capacity} plazas · {sessionCount} {sessionCount === 1 ? 'sesión' : 'sesiones'}</small></div>
+        <ul className="summary-occupancy-notes">
+          <li className={waitlistCount > 0 ? 'is-info' : ''}>{waitlistCount} {waitlistCount === 1 ? 'persona en espera' : 'personas en espera'}</li>
+          <li className={unassignedCount > 0 ? 'is-danger' : ''}>{unassignedCount} {unassignedCount === 1 ? 'sesión sin profesional' : 'sesiones sin profesional'}</li>
+        </ul>
+      </div>}
+  </Card>;
+}
+
+const longDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short' });
+
+/** Cuotas que vencen en los próximos 7 días. Solo lectura: la renovación se hace desde la ficha del cliente. */
+function ExpiringPlansCard({ plans }: { plans: NonNullable<NonNullable<CommandCenterModel['commercial']>['expiringPlans']> }) {
+  return <Card as="section" padding="none" className="summary-card" aria-labelledby="summary-expiring-title">
+    <div className="summary-card-head"><CardHeader title="Cuotas próximas a vencer" titleId="summary-expiring-title" description="Vencen en los próximos 7 días" actions={<Button variant="ghost" size="sm" href="#clients">Ver clientes</Button>} /></div>
+    {plans.length === 0
+      ? <div className="summary-empty"><span className="summary-empty-icon"><Icon icon={icons.Ticket} size={24} /></span><strong>Ninguna cuota vence esta semana</strong><span>Las cuotas que estén a punto de terminar aparecerán aquí.</span></div>
+      : <ul className="summary-list" aria-label="Cuotas próximas a vencer">{plans.map(plan => <li key={plan.assignmentId}>
+        <ItemLink href={`#clients?clientId=${plan.clientId}`} className="summary-row">
+          <span className="summary-row-copy"><strong>{plan.clientName}</strong><small>{plan.planName}</small></span>
+          <span className="summary-row-meta"><StatusChip tone="warning">Vence {longDate.format(new Date(`${plan.endsOn}T12:00:00Z`))}</StatusChip></span>
+          <Icon icon={icons.ChevronRight} size={16} className="summary-row-arrow" />
+        </ItemLink>
+      </li>)}</ul>}
+  </Card>;
+}
+
+/** Últimos cobros y devoluciones registrados (no es el historial de auditoría, que vive en Actividad). */
+function RecentMovementsCard({ movements }: { movements: NonNullable<NonNullable<CommandCenterModel['commercial']>['recentMovements']> }) {
+  return <Card as="section" padding="none" className="summary-card" aria-labelledby="summary-movements-title">
+    <div className="summary-card-head"><CardHeader title="Últimos movimientos" titleId="summary-movements-title" description="Cobros y devoluciones recientes" actions={<Button variant="ghost" size="sm" href="#economics">Ver economía</Button>} /></div>
+    {movements.length === 0
+      ? <div className="summary-empty"><span className="summary-empty-icon"><Icon icon={icons.Wallet} size={24} /></span><strong>Sin movimientos registrados</strong><span>Los cobros y devoluciones aparecerán aquí.</span></div>
+      : <ul className="summary-list" aria-label="Últimos movimientos">{movements.map(movement => <li key={movement.id}>
+        <ItemLink href="#economics" className="summary-row">
+          <span className="summary-row-copy"><strong>{movement.concept}</strong><small>{movement.clientName} · <time dateTime={movement.occurredAt}>{date(movement.occurredAt)}</time></small></span>
+          <span className="summary-row-meta"><StatusChip tone={movement.kind === 'refund' ? 'danger' : 'success'}>{movement.kind === 'refund' ? 'Devolución' : 'Cobro'}</StatusChip><strong>{movement.kind === 'refund' ? '−' : ''}{money(movement.amountCents)}</strong></span>
+          <Icon icon={icons.ChevronRight} size={16} className="summary-row-arrow" />
+        </ItemLink>
+      </li>)}</ul>}
+  </Card>;
+}
+
+const fullDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'long', year: 'numeric' });
+
+/** Qué ha cambiado en el panel. Cerrado por defecto: es información secundaria. */
+function PlatformNews() {
+  const [open, setOpen] = React.useState(false);
+  return <Card as="section" padding="none" className="summary-card summary-news" aria-labelledby="summary-news-title">
+    <button type="button" className="summary-news-toggle" aria-expanded={open} aria-controls="summary-news-list" onClick={() => setOpen(value => !value)}>
+      <Icon icon={icons.History} size={20} />
+      <span className="summary-row-copy"><strong id="summary-news-title">Novedades de la plataforma</strong><small>{PLATFORM_CHANGELOG.length} {PLATFORM_CHANGELOG.length === 1 ? 'entrega' : 'entregas'} recientes</small></span>
+      <Icon icon={icons.ChevronDown} size={16} className="summary-news-chevron" />
+    </button>
+    {open && <ol id="summary-news-list" className="summary-news-list">{PLATFORM_CHANGELOG.map(change => <li key={change.date + change.title}>
+      <div className="summary-news-head"><strong>{change.title}</strong><time dateTime={change.date}>{fullDate.format(new Date(`${change.date}T12:00:00Z`))}</time></div>
+      <ul>{change.items.map(item => <li key={item}>{item}</li>)}</ul>
+    </li>)}</ol>}
+  </Card>;
+}
+
 /** What needs attention for this profile (shared by the Resumen and the Actividad screen). */
 export function attentionOf(data: CommandCenterModel) {
   const permissions = data.permissions;
@@ -203,6 +275,8 @@ export function CommandCenter() {
   const { canSeeAttention, canSeePending, rows: attentionRows } = attentionOf(data);
   const showAttention = canSeeAttention || canSeePending;
   const metrics = buildMetrics(data);
+  const expiringPlans = data.commercial?.expiringPlans ?? null;
+  const recentMovements = data.commercial?.recentMovements ?? null;
   const refreshing = state === 'loading';
 
   return <main className="summary" id="home" data-2j-design="v2">
@@ -217,9 +291,16 @@ export function CommandCenter() {
 
     {metrics.length > 0 && <ul className="summary-metrics" aria-label="Indicadores de hoy">{metrics.map(metric => <MetricTile key={metric.id} metric={metric} />)}</ul>}
 
+    {permissions.calendar && <OccupancyCard data={data} />}
+
     {(showAttention || permissions.calendar) && <div className={`summary-columns ${showAttention && permissions.calendar ? '' : 'is-single'}`}>
       {showAttention && <AttentionCard rows={attentionRows} />}
       {permissions.calendar && <SessionsCard data={data} />}
+    </div>}
+
+    {(expiringPlans || recentMovements) && <div className={`summary-columns ${expiringPlans && recentMovements ? '' : 'is-single'}`}>
+      {expiringPlans && <ExpiringPlansCard plans={expiringPlans} />}
+      {recentMovements && <RecentMovementsCard movements={recentMovements} />}
     </div>}
 
     {permissions.staff && data.team && <Card as="section" className="summary-team" aria-labelledby="summary-team-title">
@@ -230,5 +311,7 @@ export function CommandCenter() {
         <div><dd>{data.team.substitutions}</dd><dt>Coberturas activas</dt></div>
       </dl>
     </Card>}
+
+    <PlatformNews />
   </main>;
 }
