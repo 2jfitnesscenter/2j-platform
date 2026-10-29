@@ -6,6 +6,7 @@ import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
 import { coordinateContractAssignment } from '../src/contract-assignment-coordinator.ts';
 import { evaluateBookingEligibility } from '../src/booking-eligibility.ts';
+import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: term payment booking integration requires PostgreSQL.');
 const sourceUrl = new URL(process.env.DATABASE_URL);
@@ -17,6 +18,7 @@ const databaseUrl = new URL(sourceUrl); databaseUrl.pathname = `/${databaseName}
 const dbUrl = databaseUrl.toString();
 const sql = postgres(dbUrl, { max: 20, connect_timeout: 5 });
 await migrateDatabase(sql);
+await ensureCashSessionForActor(sql,'f1c2-test-admin');
 const app = buildServer(dbUrl, { authorizationResolver: async () => ({ actorId:'f1c2-test-admin', role:'admin' }) });
 const hash='a'.repeat(64);
 const actor={actorId:'f1c2-test-admin',role:'admin'};
@@ -247,7 +249,8 @@ test('Member read contracts expose authoritative payment state and per-session w
     const blockedPayment=membershipB.json().assignments.find(item=>item.id===suspendedAssignment.assignmentId).payment;
     assert.equal(blockedPayment.status,'unpaid');assert.equal(blockedPayment.accessStatus,'blocked_unpaid');
     const blockDate=addDays(suspendedAssignment.dueOn,1);
-    const offset=blockDate>='2026-03-29'&&blockDate<'2026-10-25'?'+01:00':'+00:00';
+    const zoneOffset=new Intl.DateTimeFormat('en-GB',{timeZone:'Atlantic/Canary',timeZoneName:'longOffset'}).formatToParts(new Date(`${blockDate}T00:00:00Z`)).find(part=>part.type==='timeZoneName')?.value??'GMT';
+    const offset=zoneOffset==='GMT'?'+00:00':zoneOffset.replace(/^GMT/,'');
     assert.equal(blockedPayment.effectiveBlockAt,`${blockDate}T00:00:00${offset}`);
     const from=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()),to=addDays(from,7);
     const listA=await appA.inject({method:'GET',url:`/api/me/sessions?from=${from}&to=${to}`});assert.equal(listA.statusCode,200,listA.body);

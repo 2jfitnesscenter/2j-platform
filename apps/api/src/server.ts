@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
 import { registerClientPlanRoutes } from './client-plans.js';
+import { registerContractRoutes } from './contracts.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-service-auth.js';
 import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
@@ -24,6 +25,13 @@ import { registerMemberBookingCohortRoutes } from './member-booking-cohort.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
+import { registerOwnerPanelRoutes } from './owner-panel.js';
+import { registerCenterOperationsRoutes } from './center-operations.js';
+import { registerMonitoringRoutes } from './monitoring.js';
+import { registerManagementPanelRoutes } from './management-panel.js';
+import { registerActivityRoutes } from './activity.js';
+import { registerReportRoutes } from './reports.js';
+import { registerSettingsOverviewRoutes } from './settings-overview.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
@@ -35,6 +43,9 @@ import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
+import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
+import { registerStoreMediaRoutes } from './store-media.js';
+import { registerClientDocumentRoutes } from './client-documents.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -172,6 +183,8 @@ export function parseTrustedProxies(value: unknown): string[] {
 
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
+  /** Exact trusted identity subject granted the owner-only panel capability. Never derived from request input or role. */
+  ownerActorId?: string | null;
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
   /** Injectable clock for deterministic Member read-contract tests; defaults to the system clock. */
@@ -217,6 +230,8 @@ export type ServerOptions = {
   /** Development/test only: lets the signed Training client talk to a loopback http origin. */
   trainingServiceAllowInsecureLoopback?: boolean;
   logger?: FastifyServerOptions['logger'];
+  /** Where product photos are stored. Defaults to the local filesystem provider (development and pilot). */
+  objectStorage?: ObjectStorage;
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
@@ -248,7 +263,16 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   if (options.trainingServiceAllowInsecureLoopback && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Insecure loopback Training calls are restricted to development/test environments.');
   const { client } = createDatabase(databaseUrl);
   const trainingCapabilitiesKeys = options.trainingCapabilitiesKeys ?? parseInternalServiceKeys(process.env.PLATFORM_INTERNAL_SERVICE_KEYS);
-  const authorizationResolver = options.authorizationResolver ?? (async () => null);
+  const baseAuthorizationResolver = options.authorizationResolver ?? (async () => null);
+  if (options.ownerActorId != null && !/^[^\u0000-\u001f\u007f]{1,120}$/.test(options.ownerActorId.trim())) {
+    throw new Error('ownerActorId must be a trusted non-empty identity subject of at most 120 characters.');
+  }
+  const ownerActorId = options.ownerActorId?.trim() || null;
+  const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
+    const context = await baseAuthorizationResolver(request);
+    if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
+    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read'])] };
+  };
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
   const trainingSummaryAdapter = options.trainingSummaryEnabled === true && options.trainingServiceCallsEnabled === true
@@ -301,6 +325,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.addHook('onClose', async () => { stopTrainingSignals(); await client.end(); });
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
+  registerContractRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
   registerTrainingCapabilitiesRoute(app, client, trainingCapabilitiesKeys);
   registerTrainingSuspensionRoutes(app, client, authorizationResolver);
@@ -333,10 +358,20 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
+  registerOwnerPanelRoutes(app, client, authorizationResolver);
+  registerCenterOperationsRoutes(app, client, authorizationResolver);
+  registerMonitoringRoutes(app, client, authorizationResolver);
+  registerManagementPanelRoutes(app, client, authorizationResolver);
+  registerActivityRoutes(app, client, authorizationResolver);
+  registerReportRoutes(app, client, authorizationResolver);
+  registerSettingsOverviewRoutes(app, client, authorizationResolver, { trainingSso: options.trainingSsoEnabled === true, trainingServiceCalls: options.trainingServiceCallsEnabled === true, trainingLinking: options.trainingLinkingEnabled === true, trainingSignals: options.trainingSignalsEnabled === true, trainingProvisioning: options.trainingProvisioningEnabled === true, push: options.pushEnabled === true, passkeys: options.platformPasskeysEnabled === true, memberAuthPilot: options.memberPilotAuthEnabled === true, memberBookingPilot: options.memberPilotBookingEnabled === true });
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  const objectStorage = options.objectStorage ?? defaultObjectStorage();
+  registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
+  registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
@@ -448,9 +483,15 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       return result.row;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
-  app.get('/api/services', async (_request, reply) => {
+  app.get('/api/services', async (request, reply) => {
+    const includeArchived = (request.query as { includeArchived?: string }).includeArchived === 'true';
+    if (includeArchived) {
+      const context = await authorizationResolver(request);
+      if (!context) return reply.code(401).send({ error: 'authentication_required' });
+      if (!can(context, 'catalog.pricing.manage')) return reply.code(403).send({ error: 'permission_denied' });
+    }
     try {
-      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",s.cancellation_window_minutes AS "cancellationWindowMinutes",s.late_cancellation_policy AS "lateCancellationPolicy",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE s.status <> 'archived' GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
+      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",s.cancellation_window_minutes AS "cancellationWindowMinutes",s.late_cancellation_policy AS "lateCancellationPolicy",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE (${includeArchived} OR s.status <> 'archived') GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/services', async (request, reply) => {
@@ -494,14 +535,15 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.get('/api/services/:serviceId/plans', async (request, reply) => {
     const context = await authorizationResolver(request);
     if (!context) return reply.code(401).send({ error: 'authentication_required' });
-    if (!can(context, 'calendar.read')) return reply.code(403).send({ error: 'permission_denied' });
+    const includeArchived = (request.query as { includeArchived?: string }).includeArchived === 'true';
+    if (includeArchived ? !can(context, 'catalog.pricing.manage') : (!can(context, 'calendar.read') && !can(context, 'catalog.pricing.manage'))) return reply.code(403).send({ error: 'permission_denied' });
     const { serviceId } = request.params as { serviceId: string };
     if (!uuid.safeParse(serviceId).success) return reply.code(400).send({ error: 'invalid_service_id' });
     try {
       const [service] = await client`SELECT id,status FROM services WHERE id=${serviceId}`;
       if (!service) return reply.code(404).send({ error: 'service_not_found' });
-      if (service.status === 'archived') return reply.code(409).send({ error: 'service_archived' });
-      const plans = await listPlans(client, serviceId);
+      if (service.status === 'archived' && !can(context, 'catalog.pricing.manage')) return reply.code(409).send({ error: 'service_archived' });
+      const plans = await listPlans(client, serviceId, includeArchived);
       if (can(context, 'catalog.pricing.manage')) return plans;
       return plans.map((plan) => {
         const { basePriceCents: _hiddenPrice, ...safePlan } = plan as typeof plan & { basePriceCents?: number | null };
@@ -624,11 +666,16 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     if (!uuid.safeParse(planId).success) return reply.code(400).send({ error: 'invalid_plan_id' });
     try {
       const result = await client.begin(async (tx) => {
-        const [plan] = await tx`SELECT id,status FROM plans WHERE id=${planId} FOR UPDATE`;
+        const [plan] = await tx`SELECT id,status,current_version AS "currentVersion" FROM plans WHERE id=${planId} FOR UPDATE`;
         if (!plan) return 'not_found';
-        if (plan.status === 'archived') return 'conflict';
-        const services = await tx`SELECT s.id,s.status FROM plans p JOIN plan_services ps ON ps.plan_id=p.id AND ps.plan_version=p.current_version JOIN services s ON s.id=ps.service_id WHERE p.id=${planId} ORDER BY s.id FOR SHARE OF s`;
-        if (services.length === 0 || services.some((service) => service.status !== 'active')) return 'archived_service';
+        const services = await tx`SELECT s.id,s.status,a.status AS "areaStatus" FROM plans p JOIN plan_services ps ON ps.plan_id=p.id AND ps.plan_version=p.current_version JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE p.id=${planId} ORDER BY s.id FOR SHARE OF s`;
+        if (services.length === 0 || services.some((service) => service.status !== 'active' || service.areaStatus !== 'active')) return 'archived_service';
+        if (plan.status === 'archived') {
+          const [version] = await tx`SELECT frozen_at AS "frozenAt" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion} FOR UPDATE`;
+          if (!version?.frozenAt) return 'conflict';
+          await tx`UPDATE plans SET status='active' WHERE id=${planId} AND status='archived'`;
+          return 'active';
+        }
         const [version] = await tx`SELECT frozen_at AS "frozenAt" FROM plan_versions WHERE plan_id=${planId} AND version=(SELECT current_version FROM plans WHERE id=${planId}) FOR UPDATE`;
         if (version?.frozenAt) return 'conflict';
         await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${planId} AND version=(SELECT current_version FROM plans WHERE id=${planId}) AND frozen_at IS NULL`;
@@ -668,10 +715,10 @@ function normalizePlanContract(plan: {termKind?:string|null|undefined;termMonths
   return{termKind,termMonths:plan.termMonths??null,maxSpanDays:plan.maxSpanDays??null,paymentRule,paymentBlock};
 }
 
-async function listPlans(client: SqlClient, serviceId: string) {
-  const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",v.term_kind AS "termKind",v.term_months AS "termMonths",v.max_span_days AS "maxSpanDays",v.payment_rule AS "paymentRule",v.payment_block AS "paymentBlock" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
+async function listPlans(client: SqlClient, serviceId: string, includeArchived = false) {
+  const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",v.term_kind AS "termKind",v.term_months AS "termMonths",v.max_span_days AS "maxSpanDays",v.payment_rule AS "paymentRule",v.payment_block AS "paymentBlock" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND (${includeArchived} OR p.status <> 'archived') ORDER BY lower(p.name),p.id`;
   return Promise.all(plans.map(async (plan) => {
-    const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
+  const services = await client`SELECT s.id,s.name,s.status,a.name AS area,a.status AS "areaStatus" FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
     const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",quantity_rule AS "quantityRule",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
     const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${plan.id} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
     return { ...plan, services, rights, modules };
@@ -684,7 +731,7 @@ async function listPlansById(client: SqlClient, planId: string) {
   if (!rows[0]) return [];
   const plan = rows[0];
   const versionRows = await client`SELECT kind,renewal_cadence AS "renewalCadence",period_days AS "periodDays",base_price_cents AS "basePriceCents",term_kind AS "termKind",term_months AS "termMonths",max_span_days AS "maxSpanDays",payment_rule AS "paymentRule",payment_block AS "paymentBlock" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion}`;
-  const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${planId} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
+  const services = await client`SELECT s.id,s.name,s.status,a.name AS area,a.status AS "areaStatus" FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${planId} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
   const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",quantity_rule AS "quantityRule",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${planId} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
   const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${planId} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
   return [{ ...plan, ...versionRows[0], services, rights, modules }];
@@ -713,6 +760,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   if (localDemoClientId && !z.string().uuid().safeParse(localDemoClientId).success) throw new Error('LOCAL_DEMO_CLIENT_ID must be a client UUID.');
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
+    ownerActorId: process.env.PLATFORM_OWNER_ACTOR_ID ?? null,
     memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
     memberPilotBookingEnabled: process.env.PILOT_MEMBER_BOOKING_ENABLED === 'true',
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',

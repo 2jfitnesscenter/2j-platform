@@ -54,6 +54,7 @@ export function registerDashboardRoutes(
       communications: can(context, 'communication.read'),
       billing: can(context, 'billing.read-basic'),
       staff: can(context, 'staff.read'),
+      ownerPanel: can(context, 'owner.panel.read'),
       notificationSettings: can(context, 'settings.manage'),
       news: can(context, 'news.manage'),
       reservationManage: can(context, 'reservations.manage'),
@@ -67,6 +68,7 @@ export function registerDashboardRoutes(
       capacityOverride: can(context, 'scheduling.override_capacity'),
       catalogPricingManage: can(context, 'catalog.pricing.manage'),
       store: can(context, 'store.catalog.read'),
+      cash: can(context, 'billing.cash.manage'),
     };
   });
 
@@ -83,6 +85,7 @@ export function registerDashboardRoutes(
       followup: can(context, 'followup.read'),
       billing: can(context, 'billing.read-basic'),
       cash: can(context, 'billing.cash.manage') || can(context, 'billing.payments.manage'),
+      ownerPanel: can(context, 'owner.panel.read'),
       transfers: can(context, 'billing.validate_transfer'),
       staff: can(context, 'staff.read'),
       timeclock: can(context, 'timeclock.read'),
@@ -174,13 +177,25 @@ export function registerDashboardRoutes(
         ) SELECT
           COALESCE(sum(balance) FILTER (WHERE state='pending'),0)::bigint AS "pendingCents",
           count(*) FILTER (WHERE state='pending' AND balance>0 AND due_on < (now() AT TIME ZONE ${zone})::date)::int AS "overdueCount",
-          COALESCE((SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint FROM economic_transactions WHERE created_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone}) AND created_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})),0)::bigint AS "collectedTodayCents",
-          CASE WHEN ${permissions.cash} THEN COALESCE((SELECT jsonb_build_object('status',s.status,'openingCents',s.opening_cents,'expectedCents',COALESCE(s.expected_cents,s.opening_cents+COALESCE(cash.amount,0)+COALESCE(adj.amount,0)),'countedCents',s.counted_cents,'differenceCents',s.difference_cents)
-            FROM economic_cash_sessions s
-            LEFT JOIN LATERAL (SELECT COALESCE(sum(CASE WHEN t.kind='payment' THEN ps.amount_cents ELSE -ps.amount_cents END),0)::bigint AS amount FROM economic_transactions t JOIN economic_payment_splits ps ON ps.transaction_id=t.id WHERE t.cash_session_id=s.id AND ps.method='cash') cash ON true
-            LEFT JOIN LATERAL (SELECT COALESCE(sum(amount_cents),0)::bigint AS amount FROM economic_cash_adjustments WHERE cash_session_id=s.id) adj ON true
-            WHERE s.status='open' OR s.local_date=(now() AT TIME ZONE ${zone})::date
-            ORDER BY (s.status='open') DESC,s.opened_at DESC LIMIT 1),'null'::jsonb) ELSE 'null'::jsonb END AS "cashSession"
+          CASE WHEN ${permissions.ownerPanel} THEN COALESCE((SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END)::bigint FROM economic_transactions WHERE created_at >= (((now() AT TIME ZONE ${zone})::date)::timestamp AT TIME ZONE ${zone}) AND created_at < ((((now() AT TIME ZONE ${zone})::date + 1)::timestamp) AT TIME ZONE ${zone})),0)::bigint ELSE NULL END AS "collectedTodayCents",
+          CASE WHEN ${permissions.ownerPanel} THEN COALESCE((SELECT jsonb_build_object(
+              'registers',COALESCE(jsonb_agg(jsonb_build_object('registerId',r.id,'registerCode',r.code,'registerName',r.name,'status',s.status,'openingCents',COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint,'expectedCents',COALESCE(s.expected_cents,COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint+COALESCE(cash.payments,0)+COALESCE(sales.amount,0)-COALESCE(cash.refunds,0)-COALESCE(sales.refunds,0)+COALESCE(adjustments.amount,0)-COALESCE(outflows.amount,0)),'countedCents',s.counted_cents,'differenceCents',s.difference_cents) ORDER BY r.code,s.opened_at),'[]'::jsonb),
+              'expectedCents',COALESCE(sum(COALESCE(s.expected_cents,COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint+COALESCE(cash.payments,0)+COALESCE(sales.amount,0)-COALESCE(cash.refunds,0)-COALESCE(sales.refunds,0)+COALESCE(adjustments.amount,0)-COALESCE(outflows.amount,0))),0)::bigint,
+              'countedCents',CASE WHEN bool_and(s.status<>'open') THEN COALESCE(sum(s.counted_cents),0)::bigint ELSE NULL END,
+              'differenceCents',CASE WHEN bool_and(s.status<>'open') THEN COALESCE(sum(s.difference_cents),0)::bigint ELSE NULL END,
+              'status',CASE WHEN bool_or(s.status='open') THEN 'open' ELSE 'closed' END)
+            FROM economic_cash_sessions s JOIN economic_cash_registers r ON r.id=s.register_id
+            LEFT JOIN LATERAL (SELECT occurred_at,details FROM economic_audit_events WHERE resource_type='cash_session' AND resource_id=s.id AND action='cash.reopened' ORDER BY occurred_at DESC,id DESC LIMIT 1) reopen ON true
+            LEFT JOIN LATERAL (SELECT COALESCE(sum(ps.amount_cents) FILTER(WHERE t.kind='payment'),0)::bigint payments,COALESCE(sum(ps.amount_cents) FILTER(WHERE t.kind='refund'),0)::bigint refunds FROM economic_transactions t JOIN economic_payment_splits ps ON ps.transaction_id=t.id WHERE t.cash_session_id=s.id AND ps.method='cash' AND (reopen.occurred_at IS NULL OR t.created_at>=reopen.occurred_at)) cash ON true
+            LEFT JOIN LATERAL (SELECT COALESCE((SELECT sum(total_cents) FROM store_sales sale WHERE sale.cash_session_id=s.id AND sale.status='completed' AND sale.payment_state='paid' AND sale.payment_method='cash' AND (reopen.occurred_at IS NULL OR sale.created_at>=reopen.occurred_at)),0)::bigint amount,COALESCE((SELECT sum(amount_cents) FROM store_sale_cash_movements movement WHERE movement.cash_session_id=s.id AND movement.payment_method='cash' AND (reopen.occurred_at IS NULL OR movement.occurred_at>=reopen.occurred_at)),0)::bigint refunds) sales ON true
+            LEFT JOIN LATERAL (SELECT COALESCE(sum(a.amount_cents),0)::bigint amount FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id AND (reopen.occurred_at IS NULL OR a.created_at>=reopen.occurred_at)) adjustments ON true
+            LEFT JOIN LATERAL (SELECT COALESCE(sum(amount_cents),0)::bigint amount FROM economic_cash_outflows WHERE cash_session_id=s.id AND status='approved' AND (reopen.occurred_at IS NULL OR created_at>=reopen.occurred_at)) outflows ON true
+            WHERE s.status='open' OR s.local_date=(now() AT TIME ZONE ${zone})::date),'null'::jsonb)
+            WHEN ${permissions.cash} THEN COALESCE((SELECT jsonb_build_object('registerCode',r.code,'registerName',r.name,'status',s.status)
+              FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id JOIN economic_cash_registers r ON r.id=s.register_id
+              WHERE c.actor_id=${context.actorId} AND s.local_date=(now() AT TIME ZONE ${zone})::date
+              ORDER BY c.started_at DESC LIMIT 1),'null'::jsonb)
+            ELSE 'null'::jsonb END AS "cashSession"
           FROM charge_balances` : Promise.resolve(null),
         permissions.staff ? db`SELECT
           count(*) FILTER (WHERE p.status='active' AND latest.event_type='clock_in' AND (latest.at AT TIME ZONE ${zone})::date=(now() AT TIME ZONE ${zone})::date)::int AS "workingNow",
@@ -221,17 +236,61 @@ export function registerDashboardRoutes(
       for (const item of openTimeclockRows as any[]) attentionItems.push({ id: `timeclock-${item.professionalId}`, kind: 'open_timeclock', title: 'Fichaje abierto', summary: item.professionalName, href: '#staff', ageAt: item.occurredAt });
       for (const item of affectedAbsenceRows as any[]) attentionItems.push({ id: `absence-${item.id}`, kind: 'absence_sessions', title: 'Ausencia con sesiones afectadas', summary: `${item.professionalName} · ${item.affectedSessions} ${Number(item.affectedSessions)===1?'sesión':'sesiones'}`, href: '#staff', ageAt: item.startsAt });
       const orderedAttention = sortAttentionItems(attentionItems as AttentionRecord[]);
+      // Indicadores comerciales del Resumen (paridad visual 9). Solo lectura; cada bloque es null sin su permiso.
+      const canPlans = can(context, 'entitlements.read');
+      const canStoreSales = can(context, 'store.sales.read');
+      const canStoreStock = can(context, 'store.inventory.read');
+      const [plansRows, salesRows, stockRows, expiringRows, movementRows] = await Promise.all([
+        canPlans ? db`WITH today AS (SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS d)
+          SELECT count(*) FILTER (WHERE s.state='active')::int AS "activeCount",
+                 count(*) FILTER (WHERE s.state='active' AND a.ends_on IS NOT NULL AND a.ends_on <= (SELECT d FROM today)+7)::int AS "expiringSoonCount"
+          FROM client_plan_assignments a
+          LEFT JOIN LATERAL (SELECT e.event_type FROM client_plan_assignment_events e WHERE e.assignment_id=a.id AND e.effective_on<=(SELECT d FROM today) ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1) le ON true
+          CROSS JOIN LATERAL (SELECT CASE WHEN le.event_type IN ('cancelled','changed','paused') OR a.status='cancelled' THEN 'inactive' WHEN a.starts_on>(SELECT d FROM today) THEN 'scheduled' WHEN a.ends_on IS NOT NULL AND a.ends_on<(SELECT d FROM today) THEN 'expired' ELSE 'active' END AS state) s` : Promise.resolve(null),
+        canStoreSales ? db`SELECT count(*)::int AS "count", COALESCE(sum(total_cents),0)::bigint AS "totalCents" FROM store_sales
+          WHERE status='completed' AND created_at >= date_trunc('month', now() AT TIME ZONE 'Atlantic/Canary') AT TIME ZONE 'Atlantic/Canary'` : Promise.resolve(null),
+        canStoreStock ? db`SELECT count(*)::int AS "count" FROM (
+          SELECT v.id, COALESCE(sum(m.quantity_delta),0) AS stock FROM store_product_variants v JOIN store_products p ON p.id=v.product_id
+          LEFT JOIN store_inventory_movements m ON m.variant_id=v.id WHERE v.active AND v.stock_tracked AND p.active GROUP BY v.id) x WHERE x.stock<=3` : Promise.resolve(null),
+        // Cuotas que vencen en 7 días y últimos cobros/devoluciones (paridad con el Resumen de 2jfit-admin). Solo lectura. Llevan el nombre del cliente: exigen también clients.read.
+        canPlans && can(context, 'clients.read') ? db`WITH today AS (SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date AS d)
+          SELECT a.id AS "assignmentId", a.client_id AS "clientId", concat_ws(' ',cl.first_name,cl.last_name) AS "clientName", p.name AS "planName", a.ends_on::text AS "endsOn"
+          FROM client_plan_assignments a JOIN clients cl ON cl.id=a.client_id JOIN plans p ON p.id=a.plan_id
+          LEFT JOIN LATERAL (SELECT e.event_type FROM client_plan_assignment_events e WHERE e.assignment_id=a.id AND e.effective_on<=(SELECT d FROM today) ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1) le ON true
+          WHERE a.status<>'cancelled' AND COALESCE(le.event_type,'') NOT IN ('cancelled','changed','paused')
+            AND a.starts_on<=(SELECT d FROM today) AND a.ends_on IS NOT NULL AND a.ends_on>=(SELECT d FROM today) AND a.ends_on<=(SELECT d FROM today)+7
+          ORDER BY a.ends_on,cl.last_name,cl.first_name,a.id LIMIT 6` : Promise.resolve(null),
+        permissions.billing && can(context, 'clients.read') ? db`SELECT t.id,t.kind,t.amount_cents::bigint AS "amountCents",c.concept,concat_ws(' ',cl.first_name,cl.last_name) AS "clientName",t.created_at AS "occurredAt"
+          FROM economic_transactions t JOIN economic_charges c ON c.id=t.charge_id JOIN clients cl ON cl.id=t.client_id
+          ORDER BY t.created_at DESC,t.id DESC LIMIT 6` : Promise.resolve(null),
+      ]);
+      const plansRow = Array.isArray(plansRows) ? plansRows[0] ?? null : plansRows;
+      const salesRow = Array.isArray(salesRows) ? salesRows[0] ?? null : salesRows;
+      const stockRow = Array.isArray(stockRows) ? stockRows[0] ?? null : stockRows;
+      const commercial = {
+        plans: plansRow ? { activeCount: Number(plansRow.activeCount), expiringSoonCount: Number(plansRow.expiringSoonCount) } : null,
+        transfers: permissions.transfers ? { pendingCount: Number(transferRow?.count ?? 0) } : null,
+        storeSales: salesRow ? { monthCount: Number(salesRow.count), monthTotalCents: Number(salesRow.totalCents) } : null,
+        lowStock: stockRow ? { count: Number(stockRow.count) } : null,
+        expiringPlans: Array.isArray(expiringRows) ? (expiringRows as any[]).map(row => ({ assignmentId: row.assignmentId, clientId: row.clientId, clientName: row.clientName, planName: row.planName, endsOn: row.endsOn })) : null,
+        recentMovements: Array.isArray(movementRows) ? (movementRows as any[]).map(row => ({ id: row.id, kind: row.kind, amountCents: Number(row.amountCents), concept: row.concept, clientName: row.clientName, occurredAt: row.occurredAt })) : null,
+      };
       const canManageReservations = can(context, 'reservations.manage');
       const canCreateClient = can(context, 'clients.manage');
       const canSend = can(context, 'communication.send');
+      // Accesos rápidos con verbos (paridad visual 9). Los enlaces siguen la convención de apps/admin-web/src/deep-link.ts.
+      // «Registrar pago» abre Economía sin parámetro profundo: esa pantalla (caja) no se toca hasta que se fusione #97.
       const quickActions = [
-        ...(canCreateClient ? [{ id: 'new-client', label: 'Abrir clientes', href: '#clients' }] : []),
-        ...(canManageReservations ? [{ id: 'new-reservation', label: 'Abrir agenda', href: '#calendar' }] : []),
-        ...(can(context, 'billing.payments.manage') ? [{ id: 'collect-payment', label: 'Abrir economía', href: '#economics' }] : []),
-        ...(canSend ? [{ id: 'send-message', label: 'Abrir mensajes', href: '#communications' }] : []),
-        ...(can(context, 'staff.absence.manage') ? [{ id: 'record-absence', label: 'Abrir equipo', href: '#staff' }] : []),
-        ...(permissions.cash ? [{ id: 'cash', label: 'Abrir caja', href: '#economics' }] : []),
-      ].slice(0, 6);
+        ...(canCreateClient ? [{ id: 'new-client', label: 'Nuevo cliente', href: '#clients?new=1' }] : []),
+        ...(canManageReservations ? [{ id: 'new-reservation', label: 'Crear reserva', href: '#calendar?book=1' }] : []),
+        ...(can(context, 'store.sales.create') ? [{ id: 'new-sale', label: 'Vender', href: '#store?sale=1' }] : []),
+        ...(can(context, 'entitlements.manage') ? [{ id: 'assign-plan', label: 'Asignar cuota', href: '#clients?intent=assign-plan' }] : []),
+        ...(can(context, 'billing.payments.manage') ? [{ id: 'collect-payment', label: 'Cobrar', href: '#economics' }] : []),
+        ...(canSend ? [{ id: 'send-message', label: 'Enviar mensaje', href: '#clients?intent=message' }] : []),
+        ...(can(context, 'timeclock.self') ? [{ id: 'timeclock-toggle', label: 'Fichar entrada/salida', href: '#timeclock?intent=toggle' }] : []),
+        ...(can(context, 'billing.cash.manage') ? [{ id: 'open-cash', label: 'Abrir caja', href: '#economics?intent=open-cash' }] : []),
+        ...(can(context, 'billing.cash.manage') ? [{ id: 'close-cash', label: 'Cerrar caja', href: '#economics?intent=close-cash' }] : []),
+      ];
       return {
         timezone: zone,
         permissions,
@@ -242,6 +301,7 @@ export function registerDashboardRoutes(
         team: teamSummary,
         unread: unreadSummary?.count ?? 0,
         quickActions,
+        commercial,
       };
     } catch (error) {
       const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'unknown';

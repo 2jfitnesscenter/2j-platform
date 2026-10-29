@@ -33,6 +33,7 @@
     "billing.read-basic",
     "billing.payments.manage",
     "billing.cash.manage",
+    "billing.cash.adjust",
     "billing.invoices.manage",
     "billing.read-tax",
     "billing.write-tax",
@@ -46,6 +47,9 @@
     "staff.manage",
     "staff.schedule.read",
     "staff.schedule.manage",
+    "staff.shifts.read",
+    "staff.shifts.manage",
+    "center.hours.manage",
     "staff.schedule.override",
     "staff.absence.read",
     "staff.absence.manage",
@@ -72,7 +76,8 @@
     "store.inventory.manage",
     "store.sales.read",
     "store.sales.create",
-    "store.sales.void"
+    "store.sales.void",
+    "owner.panel.read"
   ],
   "roles": {
     "admin": [
@@ -95,6 +100,8 @@
       "followup.read",
       "followup.manage",
       "timeclock.read",
+      "timeclock.self",
+      "billing.cash.manage",
       "reservations.manage",
       "reservations.attendance",
       "scheduling.override_capacity",
@@ -103,7 +110,6 @@
       "staff.read",
       "staff.schedule.read",
       "staff.absence.read",
-      "timeclock.self",
       "entitlements.read",
       "entitlements.recurrence.manage"
     ],

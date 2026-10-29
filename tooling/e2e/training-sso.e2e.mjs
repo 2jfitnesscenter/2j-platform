@@ -33,6 +33,7 @@ const requireFromApi = createRequire(path.join(platformApiDir, 'package.json'));
 const postgres = await import(pathToFileURL(requireFromApi.resolve('postgres')).href).then(m => m.default ?? m);
 
 const MEMBER_ORIGIN = 'http://127.0.0.1:5173';
+const emptyCashDenominations = { coin_0_01: 0, coin_0_02: 0, coin_0_05: 0, coin_0_10: 0, coin_0_20: 0, coin_0_50: 0, coin_1: 0, coin_2: 0, bill_5: 0, bill_10: 0, bill_20: 0, bill_50: 0, bill_100: 0, bill_200: 0, bill_500: 0 };
 const BUNKER_SECRET_TEXT = randomSecret();
 const platformKey = { id: 'e2e-bunker-v1', secret: randomBytes(32) };      // Búnker -> Platform
 const proofKey = { id: 'e2e-platform-v1', secret: randomBytes(32) };        // Platform -> Búnker (link proofs)
@@ -179,6 +180,10 @@ before(async () => {
   };
   const plans = { full: await makePlan('full'), autonomous: await makePlan('autonomous') };
   const commercial = { fuerza: ['full', 0, true], otra: ['autonomous', 0, true], impago: ['full', 0, false], vencido: ['full', -1, true], outfull: ['full', 0, true] };
+  const [cashProfessional] = await state.sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('E2E','Admin','Admin E2E','admin','local-demo:admin','e2e-fixture') RETURNING id`;
+  await state.sql`INSERT INTO staff_timeclock_events(professional_id,event_type,origin,actor_id) VALUES (${cashProfessional.id},'clock_in','web','local-demo:admin')`;
+  const cash = await padmin('POST', '/api/economics/cash/open', { registerCode: 'bunker', openingDenominations: emptyCashDenominations });
+  assert.equal(cash.status, 201, `open synthetic cash session: ${cash.text}`);
 
   for (const [label, name] of PERSONAS) {
     const client = await padmin('POST', '/api/clients', { firstName: name, lastName: `E2E ${label}` });
