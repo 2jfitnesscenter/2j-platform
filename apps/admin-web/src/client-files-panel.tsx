@@ -23,7 +23,7 @@ const uploadErrors: Record<string, string> = {
  * archivo, comprueba el tipo por contenido y decide quién lo ve; esta pantalla solo lista, sube, cambia la visibilidad y
  * descarga. «Visible para el cliente» es una decisión explícita: por defecto el archivo es solo del personal.
  */
-export function ClientFilesPanel({ clientId }: { clientId: string }) {
+export function ClientFilesPanel({ clientId, canManage = false }: { clientId: string; canManage?: boolean }) {
   const [files, setFiles] = React.useState<ClientFile[]>([]);
   const [state, setState] = React.useState<LoadState>('loading');
   const [busy, setBusy] = React.useState(false);
@@ -93,9 +93,9 @@ export function ClientFilesPanel({ clientId }: { clientId: string }) {
           <StatusChip tone={item.visibility === 'client_visible' ? 'info' : 'neutral'}>{item.visibility === 'client_visible' ? 'Visible para el cliente' : 'Solo personal'}</StatusChip></div>
         <div className="client-document-actions">
           <a className="button secondary" href={`${apiUrl}/api/clients/${clientId}/documents/${item.id}/download`} download>Descargar</a>
-          <Button disabled={busy} onClick={() => void changeVisibility(item)}>{item.visibility === 'staff_only' ? 'Hacer visible al cliente' : 'Volver a solo personal'}</Button>
+          {canManage && <Button disabled={busy} onClick={() => void changeVisibility(item)}>{item.visibility === 'staff_only' ? 'Hacer visible al cliente' : 'Volver a solo personal'}</Button>}
         </div></li>)}</ul>)}
-    {state === 'ready' && <form className="client-files-form" onSubmit={(event) => void upload(event)} aria-label="Subir archivo" aria-busy={busy}>
+    {state === 'ready' && canManage && <form className="client-files-form" onSubmit={(event) => void upload(event)} aria-label="Subir archivo" aria-busy={busy}>
       <label>Título<input value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} placeholder="Contrato de la cuota…" /></label>
       <label>Tipo<select value={documentType} onChange={(event) => setDocumentType(event.target.value as ClientFile['documentType'])}>{Object.entries(typeLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>Archivo<input key={fileKey} type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>

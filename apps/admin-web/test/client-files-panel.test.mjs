@@ -16,7 +16,7 @@ const file = (id, overrides = {}) => ({ id, title: `Contrato ${id}`, documentTyp
 
 test('lists the files with type, size and visibility, and links the download without exposing any storage key', async () => {
   globalThis.fetch = async () => response({ items: [file('a'), file('b', { visibility: 'client_visible', sizeBytes: 3 * 1024 * 1024 })] });
-  render(React.createElement(ClientFilesPanel, { clientId: CLIENT }));
+  render(React.createElement(ClientFilesPanel, { clientId: CLIENT, canManage: true }));
   const list = await screen.findByRole('list', { name: 'Archivos del cliente' });
   assert.match(list.textContent, /Solo personal/); assert.match(list.textContent, /Visible para el cliente/); assert.match(list.textContent, /3,0 MB/); assert.match(list.textContent, /2 KB/);
   const links = within(list).getAllByRole('link', { name: 'Descargar' });
@@ -32,7 +32,7 @@ test('uploading sends title, type and visibility before the file as multipart, s
     if ((options.method ?? 'GET') === 'POST') { items = [file('new', { title: 'Contrato firmado' })]; return response({ id: 'new' }, 201); }
     return response({ items });
   };
-  render(React.createElement(ClientFilesPanel, { clientId: CLIENT }));
+  render(React.createElement(ClientFilesPanel, { clientId: CLIENT, canManage: true }));
   await screen.findByText('Este cliente no tiene archivos.');
   assert.equal(screen.getByLabelText('Visible para el cliente').checked, false, 'private by default');
   fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Contrato firmado' } });
@@ -49,7 +49,7 @@ test('uploading sends title, type and visibility before the file as multipart, s
 test('upload problems are explained: oversized files never leave the browser, server refusals map to plain Spanish', async () => {
   let posts = 0;
   globalThis.fetch = async (url, options = {}) => { if ((options.method ?? 'GET') === 'POST') { posts += 1; return response({ error: 'unsupported_document_type' }, 415); } return response({ items: [] }); };
-  render(React.createElement(ClientFilesPanel, { clientId: CLIENT }));
+  render(React.createElement(ClientFilesPanel, { clientId: CLIENT, canManage: true }));
   await screen.findByText('Este cliente no tiene archivos.');
   fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Grande' } });
   const big = new File(['x'], 'big.pdf', { type: 'application/pdf' });
@@ -71,7 +71,7 @@ test('visibility changes are explicit, confirmed in words and reflected after re
     if (options.method === 'PATCH') { patches.push(JSON.parse(options.body)); visibility = patches.at(-1).visibility; return response({ id: 'a', visibility }); }
     return response({ items: [file('a', { visibility })] });
   };
-  render(React.createElement(ClientFilesPanel, { clientId: CLIENT }));
+  render(React.createElement(ClientFilesPanel, { clientId: CLIENT, canManage: true }));
   fireEvent.click(await screen.findByRole('button', { name: 'Hacer visible al cliente' }));
   await screen.findByText('El cliente ya puede ver este archivo.');
   assert.deepEqual(patches, [{ visibility: 'client_visible' }]);
@@ -88,4 +88,13 @@ test('a profile without document access, or an API without the feature, only get
   globalThis.fetch = async () => response({}, 404);
   render(React.createElement(ClientFilesPanel, { clientId: CLIENT }));
   assert.ok(await screen.findByText('Los archivos de cliente todavía no están disponibles en este entorno.'));
+});
+
+test('a read-only documents profile can list and download files but gets no upload or visibility controls', async () => {
+  globalThis.fetch = async () => response({ items: [file('read-only')] });
+  render(React.createElement(ClientFilesPanel, { clientId: CLIENT, canManage: false }));
+  const list = await screen.findByRole('list', { name: 'Archivos del cliente' });
+  assert.ok(within(list).getByRole('link', { name: 'Descargar' }));
+  assert.equal(within(list).queryByRole('button', { name: /visibilidad al cliente|solo personal/i }), null);
+  assert.equal(screen.queryByRole('form', { name: 'Subir archivo' }), null);
 });

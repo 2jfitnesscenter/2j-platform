@@ -6,7 +6,7 @@ import { ClientFilesPanel } from './client-files-panel.js';
 import { ClientAvatar, SECTION_LABEL, SECTION_ORDER, chargeChip, clientPlanChip, euros, planStatusChip, reservationChip, reservationRightsLabel, rightLine } from './client-presenters.js';
 
 type Client = { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; birthDate?:string|null; status: 'active' | 'archived'; createdAt: string; updatedAt?: string };
-type ClientSection = { id: string; label: string; sourceLabel: string; access: 'available' | 'forbidden'; dataState: 'ready' | 'not_connected' };
+type ClientSection = { id: string; label: string; sourceLabel: string; access: 'available' | 'forbidden'; dataState: 'ready' | 'not_connected'; canManage?: boolean };
 type ClientEvent = { id: string; eventType: string; actorLabel: string; occurredAt: string };
 type ClientReservation = { id: string; status: 'reserved' | 'attended' | 'no_show' | 'cancelled' | 'cancelled_late' | 'cancelled_by_center'; startsAt: string; durationMinutes: number; sessionStatus: 'scheduled' | 'cancelled'; serviceName: string; areaName: string; entitlementName:string|null; rightsUsed:string[]; entitlementMovements:Array<{type:string;quantity:number;occurredAt:string}> };
 type ClientWaitlistEntry={id:string;status:string;startsAt:string;sessionStatus:'scheduled'|'cancelled';serviceName:string;areaName:string};
@@ -593,7 +593,7 @@ export function ClientsPage() {
                 </article>)}
               </Card>
             </>}
-            {selectedId && <ClientFilesPanel clientId={selectedId} />}
+            {selectedId && <ClientFilesPanel clientId={selectedId} canManage={activeSectionData.canManage === true} />}
           </div>}
 
           {activeSection === 'followup' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-follow-title"><CardHeader title="Check-ins asignados" titleId="client-follow-title" level={2} description="Historial del módulo" />
