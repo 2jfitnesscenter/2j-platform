@@ -32,8 +32,16 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
     reply.header('Cache-Control','no-store');const context=await auth(request,reply,'billing.read-basic');if(!context)return;
     try {
       const [overview]=await db`SELECT count(*) FILTER(WHERE c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0) AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date AND c.amount_cents>COALESCE(x.net,0))::int AS "overdueCount",COALESCE(sum(c.amount_cents-COALESCE(x.net,0)) FILTER(WHERE c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0) AND c.due_on<(now() AT TIME ZONE 'Atlantic/Canary')::date),0)::bigint AS "overdueCents",count(*) FILTER(WHERE c.state='pending' AND NOT (COALESCE(x.paid,0)>0 AND COALESCE(x.net,0)=0))::int AS "chargeCount" FROM economic_charges c LEFT JOIN LATERAL(SELECT sum(amount_cents) FILTER(WHERE kind='payment') paid,sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) net FROM economic_transactions WHERE charge_id=c.id)x ON true`;
-      const [cashSession]=await db`SELECT id,local_date AS "localDate",opening_cents AS "openingCents",status FROM economic_cash_sessions WHERE local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date`;
-      return {currency:'EUR',timezone:'Atlantic/Canary',...overview,cashSession:cashSession??null,capabilities:{payments:can(context,'billing.payments.manage'),cash:can(context,'billing.cash.manage'),ownerPanelRead:can(context,'owner.panel.read'),invoices:can(context,'billing.invoices.manage'),tax:can(context,'billing.read-tax'),writeTax:can(context,'billing.write-tax'),validateTransfers:can(context,'billing.validate_transfer')}};
+      const [cashSession]=can(context,'owner.panel.read')
+        ? await db`SELECT s.id,s.register_id AS "registerId",r.code AS "registerCode",r.name AS "registerName",s.local_date AS "localDate",s.opening_cents AS "openingCents",s.status,s.expected_cents AS "expectedCents",s.counted_cents AS "countedCents",s.difference_cents AS "differenceCents"
+          FROM economic_cash_sessions s JOIN economic_cash_registers r ON r.id=s.register_id
+          WHERE s.status='open' OR s.local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY s.opened_at DESC LIMIT 1`
+        : can(context,'billing.cash.manage')
+          ? await db`SELECT s.id,s.register_id AS "registerId",r.code AS "registerCode",r.name AS "registerName",s.local_date AS "localDate",s.status
+              FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id JOIN economic_cash_registers r ON r.id=s.register_id
+              WHERE c.actor_id=${context.actorId} AND c.ended_at IS NULL AND s.local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY c.started_at DESC LIMIT 1`
+          : [];
+      return {currency:'EUR',timezone:'Atlantic/Canary',...overview,cashSession:cashSession??null,capabilities:{payments:can(context,'billing.payments.manage'),cash:can(context,'billing.cash.manage'),cashAdjust:can(context,'billing.cash.adjust'),ownerPanelRead:can(context,'owner.panel.read'),invoices:can(context,'billing.invoices.manage'),tax:can(context,'billing.read-tax'),writeTax:can(context,'billing.write-tax'),validateTransfers:can(context,'billing.validate_transfer')}};
     } catch(e){return error(reply,e);}
   });
 
@@ -108,7 +116,7 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         const [balance]=await tx`SELECT COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0)::bigint cents,COALESCE(sum(amount_cents) FILTER(WHERE kind='payment'),0)::bigint AS paid_cents FROM economic_transactions WHERE charge_id=${charge.id}`;
         if(Number(balance?.paid_cents??0)>0&&Number(balance?.cents??0)===0)return{error:'charge_refunded' as const};
         if(total+Number(balance?.cents??0)>Number(charge.amountCents))return{error:'amount_exceeds_balance' as const};
-        const cash=await lockOpenCashSession(tx);
+        const cash=await lockOpenCashSession(tx,context.actorId);
         if(!cash.ok)return {error:cash.error};
         await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${charge.id},${charge.clientId},'payment',${total},${data.note??null},${context.actorId},${key.data},${requestHash},${cash.id})`;
         for(const split of data.splits)await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${id},${split.method},${split.amountCents})`;
@@ -136,7 +144,7 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         await tx`SELECT id FROM economic_charges WHERE id=${payment.chargeId} FOR UPDATE`;
         const [refunded]=await tx`SELECT COALESCE(sum(amount_cents),0)::bigint cents FROM economic_transactions WHERE refund_of=${payment.id}`;
         if(data.amountCents+Number(refunded?.cents??0)>Number(payment.amountCents))return{error:'refund_exceeds_payment' as const};
-        const cash=await lockOpenCashSession(tx);
+        const cash=await lockOpenCashSession(tx,context.actorId);
         if(!cash.ok)return {error:cash.error};
         await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,refund_of,note,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${id},${payment.chargeId},${payment.clientId},'refund',${data.amountCents},${payment.id},${data.note},${context.actorId},${key.data},${requestHash},${cash.id})`;
         await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${id},${data.method},${data.amountCents})`;

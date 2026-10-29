@@ -266,6 +266,89 @@ export function registerCalendarRoutes(
     } catch (error) { app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/sessions/:sessionId/attendees' }, 'session attendees failed'); return reply.code(500).send({ error: 'internal_error' }); }
   });
 
+  app.get('/api/calendar/sessions/:sessionId', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const context = await authorized(request, reply, 'calendar.read'); if (!context) return;
+    const params = z.object({ sessionId: uuid }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_session_id' });
+    try {
+      const result = await database.begin(async (tx) => {
+        await tx`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`;
+        const [session] = await tx`
+          SELECT cs.id,cs.service_id AS "serviceId",s.name AS "serviceName",cs.area_id AS "areaId",a.name AS "areaName",
+            cs.professional_id AS "professionalId",sp.display_name AS "professionalName",cs.template_id AS "templateId",cs.source,
+            cs.starts_at AS "startsAt",cs.duration_minutes AS "durationMinutes",cs.capacity,cs.status,
+            (cs.individual_client_id IS NOT NULL) AS "isIndividual",
+            EXISTS(SELECT 1 FROM calendar_audit_events ae WHERE ae.session_id=cs.id AND ae.action='session.occurrence_overridden') AS "occurrenceOverridden"
+          FROM calendar_sessions cs JOIN services s ON s.id=cs.service_id JOIN areas a ON a.id=cs.area_id
+          LEFT JOIN staff_professionals sp ON sp.id=cs.professional_id WHERE cs.id=${params.data.sessionId}`;
+        if (!session) return null;
+        const [counts] = await tx`
+          SELECT (SELECT count(*)::int FROM calendar_reservations r WHERE r.session_id=${session.id} AND r.status IN ('reserved','attended','no_show','cancelled_late')) AS occupied,
+            (SELECT count(*)::int FROM calendar_waitlist_entries w WHERE w.session_id=${session.id} AND w.status='waiting') AS waiting`;
+        const hasClientRead = can(context, 'clients.read');
+        const reservations = hasClientRead ? await tx`
+          SELECT r.id,r.client_id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",r.status,r.created_at AS "createdAt",r.updated_at AS "updatedAt"
+          FROM calendar_reservations r JOIN clients c ON c.id=r.client_id WHERE r.session_id=${session.id} ORDER BY r.created_at,r.id` : [];
+        const waitlist = hasClientRead ? await tx`
+          SELECT w.id,w.client_id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",w.status,w.created_at AS "createdAt"
+          FROM calendar_waitlist_entries w JOIN clients c ON c.id=w.client_id WHERE w.session_id=${session.id} ORDER BY w.created_at,w.id` : [];
+        const history = await tx`
+          SELECT ae.id,ae.action,ae.resource_type AS "resourceType",ae.occurred_at AS "occurredAt",
+            COALESCE(sp.display_name,'Personal del centro') AS "actorLabel"
+          FROM calendar_audit_events ae LEFT JOIN staff_professionals sp ON sp.id::text=ae.actor_id
+          WHERE ae.session_id=${session.id} ORDER BY ae.occurred_at DESC,ae.id DESC LIMIT 200`;
+        const canReadNotes = can(context, 'communication.internal_notes.read');
+        const notes = canReadNotes ? await tx`
+          SELECT n.id,n.body,n.created_at AS "createdAt",COALESCE(sp.display_name,'Personal del centro') AS "actorLabel"
+          FROM calendar_session_notes n LEFT JOIN staff_professionals sp ON sp.id::text=n.actor_id
+          WHERE n.session_id=${session.id} ORDER BY n.created_at DESC,n.id DESC LIMIT 100` : [];
+        const occupied = Number(counts?.occupied ?? 0);
+        const capacity = Number(session.capacity);
+        return {
+          session,
+          occupancy: { occupied, capacity, available: Math.max(0, capacity - occupied), overbooked: Math.max(0, occupied - capacity) },
+          reservations,
+          waitlist,
+          history,
+          notes: { available: canReadNotes, items: notes },
+          rosterAvailable: hasClientRead,
+          appliedRules: { available: false, reason: 'booking_rule_snapshot_not_recorded' },
+        };
+      });
+      if (!result) return reply.code(404).send({ error: 'session_not_found' });
+      return result;
+    } catch (error) {
+      app.log.error({ databaseCode: dbCode(error), route: 'GET /api/calendar/sessions/:sessionId' }, 'session detail failed');
+      return reply.code(500).send({ error: 'internal_error' });
+    }
+  });
+
+  app.post('/api/calendar/sessions/:sessionId/notes', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const context = await authorized(request, reply, 'communication.internal_notes.write'); if (!context) return;
+    const params = z.object({ sessionId: uuid }).safeParse(request.params);
+    const body = z.object({ body: z.string().trim().min(1).max(3000) }).strict().safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
+    try {
+      const result = await database.begin(async (tx) => {
+        const [session] = await tx`SELECT id FROM calendar_sessions WHERE id=${params.data.sessionId} FOR SHARE`;
+        if (!session) return null;
+        const [note] = await tx`
+          INSERT INTO calendar_session_notes(session_id,actor_id,body) VALUES (${session.id},${context.actorId},${body.data.body})
+          RETURNING id,body,created_at AS "createdAt"`;
+        await appendAudit(tx, context.actorId, 'session.note_added', 'calendar_session_note', note!.id, session.id, null);
+        const [author] = await tx`SELECT display_name AS "actorLabel" FROM staff_professionals WHERE auth_actor_id=${context.actorId} AND status='active' LIMIT 1`;
+        return { ...note, actorLabel: author?.actorLabel ?? 'Personal del centro' };
+      });
+      if (!result) return reply.code(404).send({ error: 'session_not_found' });
+      return reply.code(201).send(result);
+    } catch (error) {
+      app.log.error({ databaseCode: dbCode(error), route: 'POST /api/calendar/sessions/:sessionId/notes' }, 'session note creation failed');
+      return reply.code(500).send({ error: 'internal_error' });
+    }
+  });
+
   app.get('/api/calendar/sessions/:sessionId/booking-eligibility', async (request, reply) => {
     reply.header('Cache-Control','no-store');
     const context = await authorized(request, reply, 'calendar.read'); if (!context) return;
