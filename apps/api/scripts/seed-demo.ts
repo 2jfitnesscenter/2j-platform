@@ -284,23 +284,41 @@ async function seedMemberPilot(tx: Parameters<Parameters<ReturnType<typeof creat
     WHERE EXISTS(SELECT 1 FROM calendar_sessions WHERE id=${fullSessionId}::uuid AND status='scheduled') ON CONFLICT(id) DO NOTHING`;
 }
 
-async function runDemoSeed() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
-    throw new Error('Demo seed is restricted to development/test environments.');
-  }
+export function validateDemoSeedTarget(environment: NodeJS.ProcessEnv = process.env): 'local' | 'staging' {
+  const databaseUrl = environment.DATABASE_URL;
   if (!databaseUrl) throw new Error('DATABASE_URL is required.');
   const target = new URL(databaseUrl);
   const host = target.hostname.toLowerCase();
   const databaseName = decodeURIComponent(target.pathname.replace(/^\//, ''));
-  if (!['localhost', '127.0.0.1', '::1'].includes(host) || databaseName !== '2j_demo') {
+  const loopback = ['localhost', '127.0.0.1', '::1'].includes(host);
+
+  if (environment.STAGING_SEED !== undefined && environment.STAGING_SEED !== '1') {
+    throw new Error('STAGING_SEED must be exactly 1 when specified.');
+  }
+  if (environment.STAGING_SEED === '1') {
+    if (environment.NODE_ENV !== 'development') throw new Error('STAGING_SEED is allowed only from the 2j-staging development runner.');
+    if (environment.STAGING_SEED_HOST !== '2jfit.com') throw new Error('Staging seed target must be exactly 2jfit.com.');
+    if (!loopback || databaseName !== '2j_demo') throw new Error('Staging seed only accepts the isolated local 2j_demo database.');
+    return 'staging';
+  }
+
+  if (environment.NODE_ENV !== 'development' && environment.NODE_ENV !== 'test') {
+    throw new Error('Demo seed is restricted to development/test environments.');
+  }
+  if (!loopback || databaseName !== '2j_demo') {
     throw new Error('Demo seed only accepts a loopback PostgreSQL host and the database named 2j_demo.');
   }
+  return 'local';
+}
+
+async function runDemoSeed() {
+  const databaseUrl = process.env.DATABASE_URL;
+  const mode = validateDemoSeedTarget();
 
   const { client } = createDatabase(databaseUrl);
   try {
     await seedDemoData(client);
-    console.log('Synthetic local 2J-070 demo data is ready. The fixed synthetic admin/professional and trainer links were repaired if needed; existing non-demo rows were not changed.');
+    console.log(`Synthetic ${mode} 2J-070 demo data is ready. The fixed synthetic admin/professional and trainer links were repaired if needed; existing non-demo rows were not changed.`);
   } finally {
     await client.end();
   }

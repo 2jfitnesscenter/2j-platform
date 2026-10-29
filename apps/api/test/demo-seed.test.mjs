@@ -4,9 +4,19 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
-import { seedDemoData } from '../scripts/seed-demo.ts';
+import { seedDemoData, validateDemoSeedTarget } from '../scripts/seed-demo.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
+
+test('demo seed target stays loopback-only and staging requires the explicit 2jfit.com flag', () => {
+  const local = { NODE_ENV: 'test', DATABASE_URL: 'postgres://localhost/2j_demo' };
+  assert.equal(validateDemoSeedTarget(local), 'local');
+  assert.equal(validateDemoSeedTarget({ NODE_ENV: 'development', DATABASE_URL: 'postgres://127.0.0.1/2j_demo', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.com' }), 'staging');
+  assert.throws(() => validateDemoSeedTarget({ ...local, STAGING_SEED: 'true', STAGING_SEED_HOST: '2jfit.com' }), /exactly 1/);
+  assert.throws(() => validateDemoSeedTarget({ NODE_ENV: 'production', DATABASE_URL: 'postgres://127.0.0.1/2j_demo', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.com' }), /development runner/);
+  assert.throws(() => validateDemoSeedTarget({ NODE_ENV: 'development', DATABASE_URL: 'postgres://127.0.0.1/2j_demo', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.es' }), /exactly 2jfit.com/);
+  assert.throws(() => validateDemoSeedTarget({ NODE_ENV: 'development', DATABASE_URL: 'postgres://production-db/production', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.com' }), /isolated local 2j_demo/);
+});
 
 test('synthetic trainer seed creates and repairs the fixed account link without changing auth semantics', async () => {
   const databaseName = `demo_seed_${randomUUID().replaceAll('-', '')}`;
