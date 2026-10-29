@@ -61,6 +61,6 @@ test('Panel de gestión sits under Administración and only appears with the own
   const base = { calendar: true, clients: true, communications: true, billing: true, staff: true };
   const group = (caps) => getProfessionalNavigation(caps).find((section) => section.id === 'administration');
   assert.equal(group(base), undefined);
-  assert.deepEqual(group({ ...base, ownerPanel: true }).children.map((route) => route.label), ['Panel de gestión']);
+  assert.deepEqual(group({ ...base, ownerPanel: true }).children.map((route) => route.label), ['Panel de gestión', 'Monitorización']);
   assert.equal(getProfessionalPageContext('management').section, 'Administración');
 });

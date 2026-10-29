@@ -26,6 +26,7 @@ import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
 import { registerOwnerPanelRoutes } from './owner-panel.js';
+import { registerMonitoringRoutes } from './monitoring.js';
 import { registerManagementPanelRoutes } from './management-panel.js';
 import { registerActivityRoutes } from './activity.js';
 import { registerReportRoutes } from './reports.js';
@@ -356,6 +357,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
   registerOwnerPanelRoutes(app, client, authorizationResolver);
+  registerMonitoringRoutes(app, client, authorizationResolver);
   registerManagementPanelRoutes(app, client, authorizationResolver);
   registerActivityRoutes(app, client, authorizationResolver);
   registerReportRoutes(app, client, authorizationResolver);
