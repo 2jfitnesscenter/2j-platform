@@ -10,6 +10,7 @@ import './clients-v2.css';
 import './agenda-v2.css';
 import './services-v2.css';
 import './store-v2.css';
+import './caja-v2.css';
 import { ServicesPage } from './services-page.js';
 import { ClientsPage } from './clients-page.js';
 import { CalendarPage } from './calendar-page.js';
@@ -29,6 +30,7 @@ import { ActivityPage } from './activity-page.js';
 import { NotificationSettings } from './notification-settings.js';
 import { SettingsPage } from './settings-page.js';
 import { NewsPage } from './news-page.js';
+import { CajaPage } from './caja-page.js';
 import { StorePage } from './store-page.js';
 import { usePageResetOnModuleChange } from './route-focus.js';
 
@@ -41,7 +43,7 @@ function App() {
   }, []);
   React.useEffect(() => { document.title = `${getProfessionalPageContext(route).page} · 2J Platform`; }, [route]);
   usePageResetOnModuleChange(route);
-  const page = route === 'store' ? <StorePage/> : route === 'activity' ? <ActivityPage/> : route === 'news' ? <NewsPage/> : route === 'settings' ? <SettingsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'my-gym' ? <MyGymPage/> : route === 'reports' ? <ReportsPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'spaces' ? <ServicesPage section="areas"/> : route === 'services' ? <ServicesPage section="services"/> : route === 'contracts' ? <ContractsPage/> : route === 'promotions' ? <PromotionsPage/> : route === 'management' ? <ManagementPage/> : route === 'monitoring' ? <MonitoringPage/> : route === 'plans' ? <ServicesPage section="plans"/> : <CommandCenter/>;
+  const page = route === 'store' ? <StorePage/> : route === 'activity' ? <ActivityPage/> : route === 'news' ? <NewsPage/> : route === 'settings' ? <SettingsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'caja' ? <CajaPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'my-gym' ? <MyGymPage/> : route === 'reports' ? <ReportsPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'spaces' ? <ServicesPage section="areas"/> : route === 'services' ? <ServicesPage section="services"/> : route === 'contracts' ? <ContractsPage/> : route === 'promotions' ? <PromotionsPage/> : route === 'management' ? <ManagementPage/> : route === 'monitoring' ? <MonitoringPage/> : route === 'plans' ? <ServicesPage section="plans"/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }
 
