@@ -45,6 +45,7 @@ import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
 import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
 import { registerStoreMediaRoutes } from './store-media.js';
+import { registerClientImportRoutes } from './client-import.js';
 import { registerClientDocumentRoutes } from './client-documents.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
@@ -232,6 +233,8 @@ export type ServerOptions = {
   logger?: FastifyServerOptions['logger'];
   /** Where product photos are stored. Defaults to the local filesystem provider (development and pilot). */
   objectStorage?: ObjectStorage;
+  /** Allows controlled CSV dry-run previews only; there is no client-write import endpoint. Defaults off. */
+  clientImportPreviewEnabled?: boolean;
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
@@ -372,6 +375,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const objectStorage = options.objectStorage ?? defaultObjectStorage();
   registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
   registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
+  registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
