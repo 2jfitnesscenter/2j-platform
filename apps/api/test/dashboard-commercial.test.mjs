@@ -24,9 +24,9 @@ test('quick actions use Base44 verbs and deep links, each only with its permissi
   assert.deepEqual(body.quickActions.map((item) => [item.id, item.label, item.href]), [
     ['new-client', 'Nuevo cliente', '#clients?new=1'],
     ['new-reservation', 'Crear reserva', '#calendar?book=1'],
-    ['new-sale', 'Registrar venta', '#store?sale=1'],
+    ['new-sale', 'Vender', '#store?sale=1'],
     ['assign-plan', 'Asignar cuota', '#clients?intent=assign-plan'],
-    ['collect-payment', 'Registrar pago', '#economics'],
+    ['collect-payment', 'Cobrar', '#economics'],
     ['send-message', 'Enviar mensaje', '#clients?intent=message'],
     ['timeclock-toggle', 'Fichar entrada/salida', '#timeclock?intent=toggle'],
     ['open-cash', 'Abrir caja', '#economics?intent=open-cash'],

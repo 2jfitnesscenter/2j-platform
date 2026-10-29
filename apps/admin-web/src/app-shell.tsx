@@ -27,7 +27,7 @@ type NavSection = {id:string;label:string;icon:LucideIcon;route?:NavRoute;childr
 const routes={
   home:{id:'home',label:'Resumen',href:'#home',permission:null,icon:icons.LayoutDashboard},
   activity:{id:'activity',label:'Avisos y auditoría',href:'#activity',permission:'calendar',icon:icons.Activity},
-  communications:{id:'communications',label:'Comunicación',href:'#communications',permission:'communications',icon:icons.MessageSquare},
+  communications:{id:'communications',label:'Mensajes',href:'#communications',permission:'communications',icon:icons.MessageSquare},
   clients:{id:'clients',label:'Clientes',href:'#clients',permission:'clients',icon:icons.Users},
   'my-gym':{id:'my-gym',label:'Mi gimnasio',href:'#my-gym',permission:'ownerPanel',icon:icons.Dumbbell},
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},

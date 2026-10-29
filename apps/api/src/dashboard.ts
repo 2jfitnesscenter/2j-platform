@@ -283,9 +283,9 @@ export function registerDashboardRoutes(
       const quickActions = [
         ...(canCreateClient ? [{ id: 'new-client', label: 'Nuevo cliente', href: '#clients?new=1' }] : []),
         ...(canManageReservations ? [{ id: 'new-reservation', label: 'Crear reserva', href: '#calendar?book=1' }] : []),
-        ...(can(context, 'store.sales.create') ? [{ id: 'new-sale', label: 'Registrar venta', href: '#store?sale=1' }] : []),
+        ...(can(context, 'store.sales.create') ? [{ id: 'new-sale', label: 'Vender', href: '#store?sale=1' }] : []),
         ...(can(context, 'entitlements.manage') ? [{ id: 'assign-plan', label: 'Asignar cuota', href: '#clients?intent=assign-plan' }] : []),
-        ...(can(context, 'billing.payments.manage') ? [{ id: 'collect-payment', label: 'Registrar pago', href: '#economics' }] : []),
+        ...(can(context, 'billing.payments.manage') ? [{ id: 'collect-payment', label: 'Cobrar', href: '#economics' }] : []),
         ...(canSend ? [{ id: 'send-message', label: 'Enviar mensaje', href: '#clients?intent=message' }] : []),
         ...(can(context, 'timeclock.self') ? [{ id: 'timeclock-toggle', label: 'Fichar entrada/salida', href: '#timeclock?intent=toggle' }] : []),
         ...(can(context, 'billing.cash.manage') ? [{ id: 'open-cash', label: 'Abrir caja', href: '#economics?intent=open-cash' }] : []),
