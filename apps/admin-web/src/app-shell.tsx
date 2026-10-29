@@ -37,6 +37,7 @@ const routes={
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   reports:{id:'reports',label:'Informes',href:'#reports',permission:'billing',icon:icons.ReceiptText},
+  promotions:{id:'promotions',label:'Promociones',href:'#promotions',permission:'catalogPricingManage',icon:icons.BadgePercent},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
   settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
@@ -44,7 +45,7 @@ const routes={
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
   {id:'operation',label:'Operación',icon:icons.LayoutDashboard,children:[routes.home,routes.activity,routes.timeclock,routes.calendar,routes.clients]},
-  {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.plans,routes.economics,routes.store]},
+  {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.plans,routes.economics,routes.store,routes.promotions]},
   {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.settings,routes['notification-settings']]},
   {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[]},
 ];
