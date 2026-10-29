@@ -1,29 +1,34 @@
-# Handoff: Platform row 21 API review
+# Handoff: Platform paridad fila 21 — Mi gimnasio y datos del centro
 
-Snapshot audited: `origin/main` at `abd31b89ffc2ce64c9fae167f2226267234b2348`.
+Base revisada: `abd31b89ffc2ce64c9fae167f2226267234b2348`.
 
-## Available on main
+## APIs disponibles y delta
 
-- **Center news:** `GET /api/admin/news`, `POST /api/admin/news`, `PATCH /api/admin/news/:newsId`, `POST /api/admin/news/:newsId/{publish,withdraw,feature,unfeature}`, `GET /api/admin/news/:newsId/audit`, and member-facing `GET /api/me/news`. Staff reads require `news.read`; mutations require `news.manage`. Changes are audited in `center_news_audit_events`. Tests: `apps/api/test/center-news.test.mjs`.
-- **Consent templates:** `GET /api/consents` and `GET /api/consents/:consentId/versions` are added in this branch with `consents.read`, SQL-side status/name/required filters, bounded pagination, and no-store responses. The existing `POST /api/consents`, `POST /api/consents/:consentId/versions`, `POST /api/consents/:consentId/activate`, and `POST /api/consents/:consentId/archive` provide the audited mutations. Acceptance history preserves the accepted content snapshot/hash. Client and staff acceptance routes exist, including assisted acceptance. Tests are in `apps/api/test/communications.test.mjs`.
-- **Settings read model:** `GET /api/settings/overview` exposes the existing payment settings, permission profiles and integration booleans to `settings.manage`; it is deliberately read-only. Existing economic mutations are under `/api/economics/settings` and cover only payment settings, not a general business profile.
+- **Noticias del centro (ya estaba en main):** `GET/POST /api/admin/news`, `PATCH /api/admin/news/:newsId`, publicar/retirar/destacar/quitar destacado, auditoría y `GET /api/me/news`. Lecturas por `news.read`; escrituras por `news.manage`; auditadas. No se duplicaron.
+- **Consentimientos:** esta PR añade `GET /api/consents` y `GET /api/consents/:consentId/versions`, con `consents.read`, filtros SQL y paginación acotada. Las escrituras, activación, archivo, aceptación e historial ya estaban en `communications.ts` y permanecen intactas.
+- **Perfil general de centro:** `GET/PUT /api/admin/center-profile`, protegido por `settings.manage`. Guarda nombre comercial, correo/teléfono de contacto y dirección/ciudad/código postal. Los cambios se auditan con actor y nombres de campos cambiados, sin duplicar valores de contacto en el historial.
+- **Migración/modelo:** `0059_center_business_profile.sql`, reflejada en Drizzle. La tabla es específica de `2j` y no crea un almacén genérico de configuración.
 
-## Exact remaining gap
+## Fuera de alcance explícito
 
-The row-21 “Datos del negocio” write API has no agreed field contract or corresponding general business-profile model/table on this main snapshot. The prototype/reference says “Datos del negocio” but does not establish which fields Platform should own. Implementing a guessed profile or adding a second opening-hours source would be unsafe. Owner-approved opening hours are already scoped by A45 in open PR #124; do not introduce a second source of truth. Consent template reads were the only confirmed API gap implemented here.
+- Identificadores/razón social/facturación fiscal: D106.
+- Salud y cuestionarios: D33.
+- Horarios y turnos: A45 permanece en PR #124; esta PR no crea una segunda fuente para horarios.
+- URL/logo y subida de imágenes: pendiente de contrato privado/público de recursos; no se persisten URLs arbitrarias.
+- Ajustes genéricos de reservas, pagos, permisos e integraciones: se mantienen en sus modelos/endpoints existentes; no se inventan campos.
 
-Open PR #124 (`codex/2J-A45-center-hours-staff-shifts`, head `0f516edab22f051ab34fff77be02562b539719c7`) already proposes the owner-editable center opening-hours model and API under A45. Its migration is `0053_center_hours_staff_shifts.sql`; it must remain the sole source for those hours if integrated. This row-21 branch must not duplicate that model/API.
+## Migración y orden de integración
 
-No migration was created. Therefore no migration number was selected and no open-PR migration collision check was needed for this handoff. Business-profile writes remain blocked on an explicit field contract; health questionnaires remain excluded by D33 and fiscal/invoice emission by D106.
+Antes de crear 0059 se revisaron los diffs de todas las PR abiertas, todas las ramas `origin/*` y los worktrees Platform locales; no había una migración 0059. La numeración anterior incluye #124/0053, #125/0054, main/0055, fila 7/0056, fila 16/0057 y la fila 22 local/0058. Por tanto, integrar la fila 22 (0058) antes de esta PR (0059) mantiene el orden de aplicación esperado.
 
-## Result
+## Validación
 
-This delta adds only two read APIs for existing consent templates/versions; it does not change the underlying model or acceptance behavior. Center news already exists and was not changed. General business-profile writes remain blocked on an approved field contract; keep A45 opening hours on PR #124. Health questionnaires and fiscal/invoice emission were not touched.
+- Consentimientos y noticias: 10/10 tests focales PASS en PostgreSQL sintético.
+- Perfil: 2 tests nuevos, incluidos permisos, auditoría no-PII, validación estricta y rechazo de campos fiscal/salud/horarios.
+- Suite API completa en PostgreSQL sintético limpio: 373/373 PASS, 0 fallos.
+- Typecheck API: PASS.
+- Build monorepo: 9/9 tareas PASS.
+- `git diff --check`: PASS.
+- No se usaron datos reales, no se aplicaron migraciones a una base real, y no se tocó Home, Búnker ni el seed de producción.
 
-## Validation
-
-- Synthetic PostgreSQL: `communications.test.mjs` + `center-news.test.mjs`, 10/10 pass. The center-news test is regression coverage only; its implementation was unchanged.
-- `pnpm --filter @2j/api typecheck`: pass.
-- `pnpm --filter @2j/api build`: pass.
-- `git diff --check`: pass.
-- No migration or production/staging data was changed. Full API suite was not run.
+La rama contiene la migración 0059. Su integración debe respetar la secuencia de cambios de esquema pendientes: fila 7/0056, fila 16/0057 y fila 22/0058 antes de aplicar 0059. La comprobación de colisiones se debe repetir justo antes de publicar cualquier nueva migración.
