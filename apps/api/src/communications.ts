@@ -972,6 +972,64 @@ export function registerCommunicationRoutes(
       }
     },
   );
+  app.get("/api/consents", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const actor = await staff(req, reply, "consents.read");
+    if (!actor) return;
+    const query = z.object({
+      status: z.enum(["draft", "active", "archived"]).optional(),
+      q: z.string().trim().min(1).max(160).optional(),
+      required: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      offset: z.coerce.number().int().min(0).max(10000).default(0),
+    }).strict().safeParse(req.query);
+    if (!query.success) return reply.code(400).send({ error: "validation_error" });
+    const { status, q, required, limit, offset } = query.data;
+    try {
+      const items = await db`SELECT c.id,c.name,c.consent_type AS "consentType",c.required,c.requires_acceptance AS "requiresAcceptance",c.status,
+        c.active_version_id AS "activeVersionId",active.version AS "activeVersion",active.title AS "activeTitle",active.effective_at AS "activeEffectiveAt",
+        latest.id AS "latestVersionId",latest.version AS "latestVersion",latest.title AS "latestTitle",latest.status AS "latestVersionStatus",
+        c.created_by AS "createdBy",c.created_at AS "createdAt",c.updated_at AS "updatedAt",c.archived_at AS "archivedAt",
+        count(*) OVER()::int AS "totalCount"
+        FROM client_consents c
+        LEFT JOIN client_consent_versions active ON active.id=c.active_version_id
+        LEFT JOIN LATERAL (SELECT v.id,v.version,v.title,v.status FROM client_consent_versions v WHERE v.consent_id=c.id ORDER BY v.version DESC LIMIT 1) latest ON true
+        WHERE (${status === undefined} OR c.status=${status ?? "draft"})
+          AND (${q === undefined} OR c.name ILIKE ${q === undefined ? "" : `%${q}%`})
+          AND (${required === undefined} OR c.required=${required ?? false})
+        ORDER BY c.updated_at DESC,c.id DESC LIMIT ${limit} OFFSET ${offset}`;
+      return { items, page: { limit, offset, totalCount: Number(items[0]?.totalCount ?? 0) } };
+    } catch {
+      req.log.error({ route: "GET /api/consents" }, "consent templates query failed");
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
+  app.get("/api/consents/:consentId/versions", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const actor = await staff(req, reply, "consents.read");
+    if (!actor) return;
+    const params = z.object({ consentId: uuid }).safeParse(req.params);
+    const query = z.object({
+      status: z.enum(["draft", "active", "archived"]).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      offset: z.coerce.number().int().min(0).max(10000).default(0),
+    }).strict().safeParse(req.query);
+    if (!params.success || !query.success) return reply.code(400).send({ error: "validation_error" });
+    const { status, limit, offset } = query.data;
+    try {
+      const [exists] = await db`SELECT id FROM client_consents WHERE id=${params.data.consentId}`;
+      if (!exists) return reply.code(404).send({ error: "consent_not_found" });
+      const items = await db`SELECT id,consent_id AS "consentId",version,title,body,content_sha256 AS "contentHash",effective_at AS "effectiveAt",status,created_by AS "createdBy",created_at AS "createdAt",
+        count(*) OVER()::int AS "totalCount"
+        FROM client_consent_versions
+        WHERE consent_id=${params.data.consentId} AND (${status === undefined} OR status=${status ?? "draft"})
+        ORDER BY version DESC,id DESC LIMIT ${limit} OFFSET ${offset}`;
+      return { items, page: { limit, offset, totalCount: Number(items[0]?.totalCount ?? 0) } };
+    } catch {
+      req.log.error({ route: "GET /api/consents/:consentId/versions" }, "consent versions query failed");
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
   app.post("/api/consents", async (req, reply) => {
     const actor = await staff(req, reply, "consents.manage");
     if (!actor) return;

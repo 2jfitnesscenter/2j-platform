@@ -369,11 +369,12 @@ test("versioned forms preserve old responses, require PAR-Q review and deduplica
 
 test("consent acceptance snapshots exact content, is idempotent and cannot be altered", async () => {
   const id = await createClient();
+  const consentName = `Normas internas ${randomUUID()}`;
   const consent = await admin.inject({
     method: "POST",
     url: "/api/consents",
     payload: {
-      name: "Normas internas",
+      name: consentName,
       consentType: "center_rules",
       required: true,
       title: "Normas del centro",
@@ -382,6 +383,27 @@ test("consent acceptance snapshots exact content, is idempotent and cannot be al
     },
   });
   assert.equal(consent.statusCode, 201, consent.body);
+  const draftTemplates = await admin.inject({
+    method: "GET",
+    url: `/api/consents?status=draft&q=${encodeURIComponent(consentName)}&required=true&limit=1`,
+  });
+  assert.equal(draftTemplates.statusCode, 200, draftTemplates.body);
+  assert.equal(draftTemplates.json().page.totalCount, 1);
+  assert.equal(draftTemplates.json().items[0].id, consent.json().id);
+  assert.equal(draftTemplates.json().items[0].latestVersion, 1);
+  assert.equal(draftTemplates.headers["cache-control"], "no-store");
+  assert.equal((await trainer.inject({ method: "GET", url: "/api/consents" })).statusCode, 200);
+  assert.equal((await accountant.inject({ method: "GET", url: "/api/consents" })).statusCode, 403);
+  assert.equal((await portal.inject({ method: "GET", url: "/api/consents" })).statusCode, 401);
+  assert.equal((await admin.inject({ method: "GET", url: "/api/consents?status=invalid" })).statusCode, 400);
+  const draftVersions = await trainer.inject({
+    method: "GET",
+    url: `/api/consents/${consent.json().id}/versions?status=draft`,
+  });
+  assert.equal(draftVersions.statusCode, 200, draftVersions.body);
+  assert.equal(draftVersions.json().items.length, 1);
+  assert.equal(draftVersions.json().items[0].title, "Normas del centro");
+  assert.equal((await admin.inject({ method: "GET", url: `/api/consents/${randomUUID()}/versions` })).statusCode, 404);
   assert.equal(
     (
       await admin.inject({
