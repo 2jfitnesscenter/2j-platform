@@ -13,7 +13,8 @@ await migrateDatabase(sql);
 const as = (role) => buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: `dashboard-commercial-${role}`, role }) });
 const admin = as('admin');
 const trainer = as('trainer');
-after(async () => { await Promise.all([admin.close(), trainer.close()]); await sql.end(); });
+const accountant = as('accountant');
+after(async () => { await Promise.all([admin.close(), trainer.close(), accountant.close()]); await sql.end(); });
 
 const post = (url, payload, headers = {}) => admin.inject({ method: 'POST', url, headers, payload });
 const center = async (app = admin) => { const response = await app.inject({ method: 'GET', url: '/api/dashboard/command-center' }); assert.equal(response.statusCode, 200, response.body); return response.json(); };
@@ -86,4 +87,12 @@ test('Resumen lists the latest payments and the plans that expire within a week,
   for (const plan of commercial.expiringPlans) assert.match(plan.endsOn, /^\d{4}-\d{2}-\d{2}$/);
   const limited = (await center(trainer)).commercial;
   assert.equal(limited.recentMovements, null, 'no payments without billing.read-basic');
+});
+
+test('client names in Resumen lists need clients.read: an accountant (billing only) gets neither payments nor expiring plans', async () => {
+  const body = await center(accountant);
+  assert.equal(body.permissions.billing, true, 'control: the accountant can read basic billing');
+  assert.equal(body.commercial.recentMovements, null, 'payments carry client names');
+  assert.equal(body.commercial.expiringPlans, null, 'expiring plans carry client names');
+  assert.equal(JSON.stringify(body).includes('Movimiento Resumen'), false);
 });
