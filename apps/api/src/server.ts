@@ -26,6 +26,7 @@ import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
 import { registerOwnerPanelRoutes } from './owner-panel.js';
+import { registerCenterOperationsRoutes } from './center-operations.js';
 import { registerMonitoringRoutes } from './monitoring.js';
 import { registerManagementPanelRoutes } from './management-panel.js';
 import { registerActivityRoutes } from './activity.js';
@@ -42,6 +43,7 @@ import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
+import { registerCenterProfileRoutes } from './center-profile.js';
 import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
 import { registerStoreMediaRoutes } from './store-media.js';
 import { registerClientImportRoutes } from './client-import.js';
@@ -274,7 +276,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
     const context = await baseAuthorizationResolver(request);
     if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
-    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read'])] };
+    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read'])] };
   };
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
@@ -362,6 +364,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
   registerOwnerPanelRoutes(app, client, authorizationResolver);
+  registerCenterOperationsRoutes(app, client, authorizationResolver);
   registerMonitoringRoutes(app, client, authorizationResolver);
   registerManagementPanelRoutes(app, client, authorizationResolver);
   registerActivityRoutes(app, client, authorizationResolver);
@@ -370,6 +373,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  registerCenterProfileRoutes(app, client, authorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   const objectStorage = options.objectStorage ?? defaultObjectStorage();
   registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
