@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://2jfitnesscenter.com/contracts/2J-training-performance-summary-v1.schema.json",
+  "title": "2J Training Performance Summary V1",
+  "description": "Proposed Búnker-to-Platform read-only performance projection. This is a draft contract, not an implemented API.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "personId", "generatedAt", "state", "metrics"],
+  "properties": {
+    "v": { "const": 1 },
+    "personId": { "type": "string", "format": "uuid" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "state": { "enum": ["available", "no_data"] },
+    "metrics": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "label", "unit", "points"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "unit": { "type": ["string", "null"], "maxLength": 24 },
+          "points": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["at", "value"],
+              "properties": {
+                "at": { "type": "string", "format": "date-time" },
+                "value": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
