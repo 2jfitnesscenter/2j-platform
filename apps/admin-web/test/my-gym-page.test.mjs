@@ -128,9 +128,9 @@ test('Novedades embeds the existing news screen with a single page heading, and 
   assert.equal(screen.getByRole('link', { name: 'Ir a Clientes' }).getAttribute('href'), '#clients');
 });
 
-test('the navigation lists Panel del centro inside Mi gimnasio', async () => {
+test('the navigation lists Mi gimnasio inside Gestión', async () => {
   serve(); window.location.hash = '#my-gym'; mount();
   await screen.findByRole('heading', { level: 1, name: 'Mi gimnasio' });
   const nav = within(document.querySelector('.app-navigation'));
-  assert.equal(nav.getByRole('link', { name: 'Panel del centro' }).getAttribute('aria-current'), 'page');
+  assert.equal(nav.getByRole('link', { name: 'Mi gimnasio' }).getAttribute('aria-current'), 'page');
 });

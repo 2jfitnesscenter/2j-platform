@@ -197,3 +197,5 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
 .summary-news-list ul { margin: var(--2j-space-2) 0 0; padding-left: var(--2j-space-5); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); display: grid; gap: var(--2j-space-1); }
 @media (max-width: 720px) { .summary-occupancy-body { grid-template-columns: 1fr; gap: var(--2j-space-3); } }
 @media (prefers-reduced-motion: reduce) { .summary-news-chevron { transition: none; } }
+/* Promociones: pantalla informativa, sin acciones (A46). */
+.promotions-notes { margin: 0; padding: var(--2j-space-4) var(--2j-space-5) var(--2j-space-5) var(--2j-space-8); border-top: 1px solid var(--2j-color-border); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); display: grid; gap: var(--2j-space-1); }
