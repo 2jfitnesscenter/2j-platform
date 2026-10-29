@@ -21,10 +21,17 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     await tx`SELECT pg_advisory_xact_lock(2079079)`;
     const demoProfessionalId = 'd0700000-0000-4000-8000-000000000101';
     const trainerActorId = 'local-demo:trainer';
+    const demoAdminProfessionalId = 'd0700000-0000-4000-8000-000000000105';
+    const adminActorId = 'local-demo:admin';
     const [existingTrainerLink] = await tx`SELECT id FROM staff_professionals
       WHERE auth_actor_id=${trainerActorId} AND id<>${demoProfessionalId}::uuid FOR UPDATE`;
     if (existingTrainerLink) {
       throw new Error(`Demo trainer actor is already linked to another professional (${existingTrainerLink.id}); refusing to replace that link.`);
+    }
+    const [existingAdminLink] = await tx`SELECT id FROM staff_professionals
+      WHERE auth_actor_id=${adminActorId} AND id<>${demoAdminProfessionalId}::uuid FOR UPDATE`;
+    if (existingAdminLink) {
+      throw new Error(`Demo admin actor is already linked to another professional (${existingAdminLink.id}); refusing to replace that link.`);
     }
     for (const person of clients) {
       await tx`INSERT INTO clients(id,first_name,last_name,email,status)
@@ -60,6 +67,22 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
     }
     if (demoProfessional.auth_actor_id == null) {
       await tx`UPDATE staff_professionals SET auth_actor_id=${trainerActorId},updated_at=now() WHERE id=${demoProfessionalId}::uuid AND auth_actor_id IS NULL`;
+    }
+
+    // The local demo admin is also attached to one synthetic professional record so the same
+    // server-resolved subject can use professional-only screens without an identity override.
+    await tx`INSERT INTO staff_professionals(id,first_name,last_name,display_name,status,base_role,created_by,auth_actor_id)
+      VALUES (${demoAdminProfessionalId}::uuid,'Sofía','Demo','Sofía Demo','active','admin','2j-demo-seed',${adminActorId})
+      ON CONFLICT(id) DO NOTHING`;
+    const [demoAdminProfessional] = await tx`SELECT auth_actor_id,display_name,base_role FROM staff_professionals WHERE id=${demoAdminProfessionalId}::uuid FOR UPDATE`;
+    if (demoAdminProfessional.display_name !== 'Sofía Demo' || demoAdminProfessional.base_role !== 'admin') {
+      throw new Error(`Synthetic demo admin professional ${demoAdminProfessionalId} is occupied by another record; refusing to replace it.`);
+    }
+    if (demoAdminProfessional.auth_actor_id != null && demoAdminProfessional.auth_actor_id !== adminActorId) {
+      throw new Error(`Synthetic demo admin professional ${demoAdminProfessionalId} is already linked to another actor; refusing to replace that link.`);
+    }
+    if (demoAdminProfessional.auth_actor_id == null) {
+      await tx`UPDATE staff_professionals SET auth_actor_id=${adminActorId},updated_at=now() WHERE id=${demoAdminProfessionalId}::uuid AND auth_actor_id IS NULL`;
     }
 
     const parallelProfessionals = [
@@ -277,7 +300,7 @@ async function runDemoSeed() {
   const { client } = createDatabase(databaseUrl);
   try {
     await seedDemoData(client);
-    console.log('Synthetic 2J-070 demo data is ready. Existing real rows were not changed; the fixed synthetic trainer link was repaired if needed.');
+    console.log('Synthetic local 2J-070 demo data is ready. The fixed synthetic admin/professional and trainer links were repaired if needed; existing non-demo rows were not changed.');
   } finally {
     await client.end();
   }

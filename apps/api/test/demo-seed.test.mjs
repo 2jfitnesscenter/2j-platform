@@ -15,6 +15,7 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
   databaseUrl.pathname = `/${databaseName}`;
   let sql;
   let trainer;
+  let adminStaff;
   let unlinked;
   try {
     await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
@@ -23,9 +24,14 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
 
     await seedDemoData(sql);
     const demoId = 'd0700000-0000-4000-8000-000000000101';
+    const demoAdminId = 'd0700000-0000-4000-8000-000000000105';
     let [demo] = await sql`SELECT id,display_name,auth_actor_id FROM staff_professionals WHERE id=${demoId}::uuid`;
     assert.equal(demo.display_name, 'Alex Rivera');
     assert.equal(demo.auth_actor_id, 'local-demo:trainer');
+    const [adminProfile] = await sql`SELECT display_name,base_role,auth_actor_id FROM staff_professionals WHERE id=${demoAdminId}::uuid`;
+    assert.deepEqual(adminProfile, { display_name: 'Sofía Demo', base_role: 'admin', auth_actor_id: 'local-demo:admin' });
+    const [secondTrainer] = await sql`SELECT display_name,base_role,status FROM staff_professionals WHERE id='d0700000-0000-4000-8000-000000000102'::uuid`;
+    assert.deepEqual(secondTrainer, { display_name: 'Nora Vega', base_role: 'trainer', status: 'active' });
 
     const daySessions = await sql`SELECT s.id,s.capacity,count(DISTINCT r.id)::int AS reservations,count(DISTINCT w.id)::int AS waiting
       FROM calendar_sessions s LEFT JOIN calendar_reservations r ON r.session_id=s.id AND r.status='reserved'
@@ -59,10 +65,14 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
     assert.equal(reviewSession.is_today,true,'re-running the owner-review seed moves only the fixed synthetic visible session back to today');
 
     trainer = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'local-demo:trainer', role: 'trainer' }) });
+    adminStaff = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'local-demo:admin', role: 'admin' }) });
     unlinked = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'production-style-unlinked-actor', role: 'trainer' }) });
     const clock = await trainer.inject({ method: 'GET', url: '/api/timeclock/self' });
     assert.equal(clock.statusCode, 200, clock.body);
     assert.equal(clock.json().professional.displayName, 'Alex Rivera');
+    const adminClock = await adminStaff.inject({ method: 'GET', url: '/api/timeclock/self' });
+    assert.equal(adminClock.statusCode, 200, adminClock.body);
+    assert.equal(adminClock.json().professional.displayName, 'Sofía Demo', 'the admin actor resolves to the attached synthetic professional instead of a second identity override');
     assert.equal((await unlinked.inject({ method: 'GET', url: '/api/timeclock/self' })).statusCode, 404);
     assert.deepEqual((await unlinked.inject({ method: 'GET', url: '/api/timeclock/self' })).json(), { error: 'staff_account_unlinked' });
 
@@ -76,7 +86,7 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
     assert.equal(preserved.auth_actor_id, 'local-demo:trainer');
     assert.equal(unclaimedDemo.auth_actor_id, null);
   } finally {
-    await Promise.all([trainer?.close(), unlinked?.close(), sql?.end()]);
+    await Promise.all([trainer?.close(), adminStaff?.close(), unlinked?.close(), sql?.end()]);
     await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
     await admin.end();
   }
