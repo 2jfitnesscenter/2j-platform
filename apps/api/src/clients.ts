@@ -68,11 +68,12 @@ function encodeCursor(cursor: ClientCursor) {
   return Buffer.from(JSON.stringify(cursor)).toString('base64url');
 }
 
-function actorLabel(role: AuthorizationContext['role'] | null) {
+function actorLabel(role: AuthorizationContext['role'] | 'member' | null) {
   if (role === 'admin') return 'Administración';
   if (role === 'trainer') return 'Entrenador';
   if (role === 'reception-management') return 'Recepción y gestión';
   if (role === 'accountant') return 'Contabilidad';
+  if (role === 'member') return 'Socio';
   return 'Equipo 2J';
 }
 

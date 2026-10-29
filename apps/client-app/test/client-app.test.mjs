@@ -116,6 +116,38 @@ test('pilot member login uses an opaque server session and logout returns to sig
   cleanup(); dom.window.close();
 });
 
+test('member edits only their own profile fields and email remains verification-gated', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, { window:{configurable:true,value:dom.window}, document:{configurable:true,value:dom.window.document}, navigator:{configurable:true,value:dom.window.navigator}, HTMLElement:{configurable:true,value:dom.window.HTMLElement}, sessionStorage:{configurable:true,value:dom.window.sessionStorage} });
+  let profile = { id:'44444444-4444-4444-8444-444444444444', firstName:'Eva', lastName:'Piloto', email:'eva@example.test', phone:null, status:'active' };
+  let patchBody = null;
+  globalThis.fetch = async (input, init = {}) => {
+    const url=String(input);
+    if(url==='/api/me/profile' && init.method==='PATCH') { patchBody=JSON.parse(init.body); profile={...profile,...patchBody}; return new Response(JSON.stringify({profile})); }
+    if(url==='/api/me') return new Response(JSON.stringify({profile}));
+    if(url==='/api/me/membership') return new Response(JSON.stringify({assignments:[],active:[],asOf:'2026-10-29',timezone:'Atlantic/Canary'}));
+    if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents') return new Response('[]');
+    if(url==='/api/me/preferences') return new Response(JSON.stringify({preferences:{appearance:'system',language:'es'}}));
+    if(url==='/api/me/news') return new Response(JSON.stringify({items:[],featured:null}));
+    if(url==='/api/me/store/catalog'||url==='/api/me/store/purchases') return new Response(JSON.stringify({items:[]}));
+    if(url==='/api/me/notifications/unread-count') return new Response(JSON.stringify({count:0}));
+    return new Response('{}');
+  };
+  const {render,cleanup,fireEvent,ClientApp}=await uiHarness();
+  const ui=render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading',{name:'Hola, Eva'}));
+  fireEvent.click(ui.getByRole('button',{name:'Perfil',exact:true}));
+  fireEvent.click(ui.getByRole('button',{name:'Editar perfil'}));
+  assert.ok(await ui.findByRole('dialog',{name:'Editar perfil'}));
+  fireEvent.change(ui.getByLabelText('Nombre'),{target:{value:'Eva María'}});
+  fireEvent.change(ui.getByLabelText('Teléfono'),{target:{value:'+34 600 111 222'}});
+  fireEvent.click(ui.getByRole('button',{name:'Guardar cambios'}));
+  assert.ok(await ui.findByText('Perfil actualizado.'));
+  assert.deepEqual(patchBody,{firstName:'Eva María',lastName:'Piloto',phone:'+34 600 111 222'});
+  assert.equal(ui.getByRole('heading',{name:'Eva María Piloto'}).textContent,'Eva María Piloto');
+  cleanup();dom.window.close();
+});
+
 test('preference save failure keeps the immediate appearance and offers a working retry', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, { window:{configurable:true,value:dom.window}, document:{configurable:true,value:dom.window.document}, navigator:{configurable:true,value:dom.window.navigator}, HTMLElement:{configurable:true,value:dom.window.HTMLElement}, sessionStorage:{configurable:true,value:dom.window.sessionStorage} });

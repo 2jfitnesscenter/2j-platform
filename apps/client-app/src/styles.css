@@ -122,6 +122,13 @@ button:focus-visible,a:focus-visible,select:focus-visible { outline:3px solid va
 .profile-identity { min-width:0; display:grid; gap:4px; }
 .profile-identity h2 { font-size:18px; }
 .profile-hero .active-pill { margin-left:auto; }
+.profile-edit-action { flex:0 0 auto; }
+.profile-edit-sheet { gap:16px; }
+.profile-edit-sheet form { display:grid; gap:14px; }
+.profile-edit-sheet label { display:grid; gap:7px; font-size:13px; font-weight:var(--2j-type-weight-semibold); }
+.profile-edit-sheet input { min-height:48px; padding:10px 12px; border:1px solid var(--2j-color-border-strong); border-radius:var(--2j-radius-md); background:var(--2j-color-surface); color:var(--2j-color-text-primary); font:inherit; }
+.profile-edit-sheet .dialog-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+.hub-theme .profile-edit-sheet input { border-color:#425258; background:#101719; color:#F4F6F8; }
 .profile-section { margin-top:26px; }
 .profile-section>.section-heading { margin-bottom:11px; }
 .profile-section .plan-row { margin-bottom:8px; }

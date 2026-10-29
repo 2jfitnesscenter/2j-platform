@@ -160,6 +160,22 @@ test('self-service facade derives the identity server-side and hides another cli
   assert.equal((await sql`SELECT status FROM calendar_reservations WHERE id=${reserved.json().id}`)[0].status, 'reserved');
 });
 
+test('member can edit only allowlisted fields on their own Home profile and change is audited', async () => {
+  const headers = { origin: 'http://127.0.0.1:5173' };
+  const before = (await appA.inject({ method: 'GET', url: '/api/me' })).json().profile;
+  const response = await appA.inject({ method: 'PATCH', url: '/api/me/profile', headers, payload: { firstName: '  Ada  ', lastName: 'Example', phone: '+34 600 123 456' } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.deepEqual(response.json().profile, { ...before, firstName: 'Ada', lastName: 'Example', phone: '+34 600 123 456' });
+  assert.equal((await appB.inject({ method: 'GET', url: '/api/me' })).json().profile.firstName, 'Bea', 'a member cannot alter another client');
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/profile', headers, payload: { email: 'attacker@example.test' } })).statusCode, 400, 'email is outside the self-service allowlist');
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/profile', headers, payload: { birthDate: '2000-01-01' } })).statusCode, 400, 'birth date is outside the self-service allowlist');
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/profile', headers, payload: { clientId: b.id, firstName: 'Impersonation' } })).statusCode, 400, 'identity cannot be supplied by the browser');
+  assert.equal((await appA.inject({ method: 'PATCH', url: '/api/me/profile', headers: { origin: 'https://attacker.example' }, payload: { firstName: 'Nope' } })).statusCode, 403, 'cross-origin mutation is rejected');
+  assert.equal((await anonymous.inject({ method: 'PATCH', url: '/api/me/profile', headers, payload: { firstName: 'Nope' } })).statusCode, 401);
+  const [event] = await sql`SELECT actor_id AS "actorId",actor_role AS "actorRole" FROM client_events WHERE client_id=${a.id} AND event_type='client.profile_updated' ORDER BY occurred_at DESC,id DESC LIMIT 1`;
+  assert.deepEqual(event, { actorId: `member:${a.id}`, actorRole: 'member' });
+});
+
 test('an active Member without any fee can still read Profile, inbox and documents', async () => {
   const client = await makeClient('No fee');
   const member = buildServer(process.env.DATABASE_URL, { clientAuthorizationResolver: async () => ({ clientId: client.id }) });

@@ -329,6 +329,10 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const [scheduleError, setScheduleError] = React.useState(false);
   const [scheduleVersion, setScheduleVersion] = React.useState(0);
   const [profile, setProfile] = React.useState<ClientProfile | null>(() => preview?.profile ?? null);
+  const [profileEditOpen, setProfileEditOpen] = React.useState(false);
+  const [profileDraft, setProfileDraft] = React.useState({ firstName: '', lastName: '', phone: '' });
+  const [profileEditBusy, setProfileEditBusy] = React.useState(false);
+  const [profileEditError, setProfileEditError] = React.useState('');
   const push = usePushSubscription(Boolean(profile && !previewMode));
   const [preferences, setPreferences] = React.useState<MemberPreferences>(() => ({ ...defaultPreferences, appearance: readAppearanceHint(previewMode) }));
   const [preferenceSaving, setPreferenceSaving] = React.useState(false);
@@ -390,6 +394,23 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const [dialogError, setDialogError] = React.useState('');
   const [selectedAssignment, setSelectedAssignment] = React.useState('');
   const dialogOpener = React.useRef<HTMLElement | null>(null);
+
+  const openProfileEdit = () => {
+    if (!profile) return;
+    dialogOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setProfileDraft({ firstName: profile.firstName, lastName: profile.lastName, phone: profile.phone ?? '' });
+    setProfileEditError(''); setProfileEditOpen(true);
+  };
+  const saveProfileEdit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (!profile || profileEditBusy) return;
+    setProfileEditBusy(true); setProfileEditError('');
+    try {
+      const input = { firstName: profileDraft.firstName, lastName: profileDraft.lastName, phone: profileDraft.phone.trim() || null };
+      const updated = previewMode ? { ...profile, ...input } : (await api<{ profile: ClientProfile }>('/api/me/profile', { method: 'PATCH', body: JSON.stringify(input) })).profile;
+      setProfile(updated); setProfileEditOpen(false); setMessage('Perfil actualizado.');
+    } catch { setProfileEditError('No se han podido guardar los cambios. Revisa los datos e inténtalo de nuevo.'); }
+    finally { setProfileEditBusy(false); }
+  };
 
   const refresh = React.useCallback(async () => {
     if (previewMode && preview) {
@@ -515,11 +536,11 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
     return () => { current = false; };
   }, [view, previewMode, profile?.id, trainingLinkReviewEnabled]);
   React.useEffect(() => {
-    if (!selectedSession && !waitlistPending && !selectedForm && !selectedConsent && !cancellationPending) return;
+    if (!selectedSession && !waitlistPending && !selectedForm && !selectedConsent && !cancellationPending && !profileEditOpen) return;
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
     (dialog?.querySelector<HTMLButtonElement>('.sheet-close') ?? dialog?.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); setSelectedSession(null); setWaitlistPending(null); setSelectedForm(null); setSelectedConsent(null); setCancellationPending(null); return; }
+      if (event.key === 'Escape') { event.preventDefault(); setSelectedSession(null); setWaitlistPending(null); setSelectedForm(null); setSelectedConsent(null); setCancellationPending(null); setProfileEditOpen(false); return; }
       if (event.key !== 'Tab' || !dialog) return;
       const controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled),textarea:not(:disabled),a[href]')];
       const first = controls[0]; const last = controls.at(-1);
@@ -528,7 +549,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
     };
     document.addEventListener('keydown', onKeyDown);
     return () => { document.removeEventListener('keydown', onKeyDown); if (dialogOpener.current?.isConnected) dialogOpener.current.focus(); };
-  }, [selectedSession?.id, waitlistPending?.id, selectedForm?.id, selectedConsent?.versionId, cancellationPending?.booking.id]);
+  }, [selectedSession?.id, waitlistPending?.id, selectedForm?.id, selectedConsent?.versionId, cancellationPending?.booking.id, profileEditOpen]);
 
   const openSession = async (session: ClientSession) => {
     dialogOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -836,7 +857,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
         </>}
         {view === 'profile' && <>
           <div className="page-intro"><p className="eyebrow">TU CUENTA</p><h1>Perfil</h1><p>Tu información y servicios del centro.</p></div>
-          <section className="profile-card profile-hero"><div className="profile-avatar" aria-hidden="true">{profile.firstName[0]}{profile.lastName[0]}</div><div className="profile-identity"><p className="eyebrow">MI PERFIL</p><h2>{profile.firstName} {profile.lastName}</h2><p>{profile.email ?? 'Email no indicado'}</p><p>{profile.phone ?? 'Teléfono no indicado'}</p></div><span className="active-pill">{profile.status === 'active' ? 'Cuenta activa' : 'Cuenta inactiva'}</span></section>
+          <section className="profile-card profile-hero"><div className="profile-avatar" aria-hidden="true">{profile.firstName[0]}{profile.lastName[0]}</div><div className="profile-identity"><p className="eyebrow">MI PERFIL</p><h2>{profile.firstName} {profile.lastName}</h2><p>{profile.email ?? 'Email no indicado'}</p><p>{profile.phone ?? 'Teléfono no indicado'}</p></div><span className="active-pill">{profile.status === 'active' ? 'Cuenta activa' : 'Cuenta inactiva'}</span><button className="button secondary profile-edit-action" type="button" onClick={openProfileEdit}>Editar perfil</button></section>
 
           {hasActiveMembership&&<section className="profile-section" aria-labelledby="profile-bookings-title"><div className="section-heading"><div><p className="eyebrow">TU ACTIVIDAD</p><h2 id="profile-bookings-title">Mis reservas</h2></div></div><button className="profile-link-card" type="button" onClick={() => setView('bookings')}><span><strong>Próximas e historial</strong><small>{upcomingAgenda.length ? `${upcomingAgenda.length} ${upcomingAgenda.length === 1 ? 'elemento próximo' : 'elementos próximos'}` : 'Consulta y gestiona tu actividad'}</small></span><span aria-hidden="true">→</span></button></section>}
 
@@ -867,6 +888,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
           <section className="profile-section" aria-labelledby="profile-training-link-title"><div className="section-heading"><div><p className="eyebrow">BÚNKER</p><h2 id="profile-training-link-title">Cuenta de entrenamiento</h2></div></div><p className="profile-caption">Vincula tu cuenta existente de Búnker con una prueba de titularidad.</p><button className="profile-link-card" type="button" onClick={() => setView('training-link')}><span><strong>Estado y vinculación</strong><small>Prueba con passkey o solicitud de revisión manual</small></span><span aria-hidden="true">→</span></button></section>
         </>}
       </>}
+      {profileEditOpen && profile && <div className="sheet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !profileEditBusy) setProfileEditOpen(false); }}><section className="session-sheet profile-edit-sheet" role="dialog" aria-modal="true" aria-labelledby="profile-edit-title"><button className="sheet-close" type="button" aria-label="Cerrar" onClick={() => setProfileEditOpen(false)} disabled={profileEditBusy}>×</button><p className="eyebrow">TU CUENTA</p><h2 id="profile-edit-title">Editar perfil</h2><form onSubmit={event => void saveProfileEdit(event)}><label>Nombre<input required maxLength={80} value={profileDraft.firstName} onChange={event => setProfileDraft(current => ({ ...current, firstName: event.target.value }))}/></label><label>Apellidos<input required maxLength={100} value={profileDraft.lastName} onChange={event => setProfileDraft(current => ({ ...current, lastName: event.target.value }))}/></label><label>Teléfono<input type="tel" maxLength={40} value={profileDraft.phone} onChange={event => setProfileDraft(current => ({ ...current, phone: event.target.value }))}/></label><div className="settings-note"><strong>Correo electrónico</strong><span>{profile.email ?? 'No registrado'}. Para cambiarlo habrá que verificar la nueva dirección.</span></div>{profileEditError && <p className="inline-message" role="alert">{profileEditError}</p>}<div className="dialog-actions"><button className="button secondary" type="button" disabled={profileEditBusy} onClick={() => setProfileEditOpen(false)}>Cancelar</button><button className="button primary" type="submit" disabled={profileEditBusy}>{profileEditBusy ? 'Guardando…' : 'Guardar cambios'}</button></div></form></section></div>}
     </main>
     {pilotToolsEnabled&&<footer className="pilot-footer"><span>Vista piloto · {HUB_BUILD_ID}</span><button type="button" className="text-button" onClick={() => void copyDiagnostics()}>Copiar información de diagnóstico</button></footer>}
     {!loading && !error && profile && <nav className="bottom-nav" aria-label="Navegación principal">{([['home','Inicio','home'],['bunker','Búnker','bunker'],['store','Tienda','store'],['profile','Perfil','profile'],['settings','Ajustes','settings']] as const).map(([id,label,icon]) => {const active=view===id||(view==='book'&&id==='home')||(view==='bookings'&&id==='home')||(view==='news'&&id==='home')||(view==='notifications'&&id==='profile')||(view==='training-link'&&id==='bunker')||(view==='evolution'&&id==='profile');return <button key={id} className={active?'nav-button active':'nav-button'} aria-current={active?'page':undefined} onClick={()=>{setView(id);setMessage('');setSelectedNews(null);}}><span aria-hidden="true"><NavIcon name={icon}/></span><small>{label}</small></button>;})}</nav>}

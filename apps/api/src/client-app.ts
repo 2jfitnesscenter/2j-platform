@@ -12,6 +12,11 @@ import { evaluateTermPaymentAccess } from './term-payment-access.js';
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const selfProfileInput = z.object({
+  firstName: z.string().max(512).transform(value => value.normalize('NFKC').trim()).pipe(z.string().min(1).max(80)).optional(),
+  lastName: z.string().max(512).transform(value => value.normalize('NFKC').trim()).pipe(z.string().min(1).max(100)).optional(),
+  phone: z.string().max(512).nullable().transform(value => value == null || value.normalize('NFKC').trim() === '' ? null : value.normalize('NFKC').trim()).pipe(z.string().min(1).max(40).nullable()).optional(),
+}).strict().refine(value => Object.keys(value).length > 0);
 
 /** Self-service reads always derive the client id from the authenticated session resolver. */
 export function registerClientAppRoutes(
@@ -94,6 +99,27 @@ export function registerClientAppRoutes(
   app.get('/api/me', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;
     const [profile] = await db`SELECT id,first_name AS "firstName",last_name AS "lastName",email,phone,status FROM clients WHERE id=${actor.clientId} AND status='active'`;
+    if (!profile) return reply.code(401).send({ error: 'client_authentication_required' });
+    return { profile };
+  });
+
+  app.patch('/api/me/profile', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    const parsed = selfProfileInput.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_profile_update' });
+    const values = parsed.data;
+    const [profile] = await db.begin(async tx => {
+      const [current] = await tx`SELECT first_name AS "firstName",last_name AS "lastName",phone FROM clients WHERE id=${actor.clientId} AND status='active' FOR UPDATE`;
+      if (!current) return [null];
+      const firstName = values.firstName ?? current.firstName;
+      const lastName = values.lastName ?? current.lastName;
+      const phone = Object.hasOwn(values, 'phone') ? values.phone ?? null : current.phone;
+      const [updated] = await tx`UPDATE clients SET first_name=${firstName},last_name=${lastName},phone=${phone},updated_at=now() WHERE id=${actor.clientId} AND status='active' RETURNING id,first_name AS "firstName",last_name AS "lastName",email,phone,status`;
+      if (firstName !== current.firstName || lastName !== current.lastName || phone !== current.phone) {
+        await tx`INSERT INTO client_events(client_id,event_type,actor_id,actor_role) VALUES (${actor.clientId}::uuid,'client.profile_updated',${`member:${actor.clientId}`},'member')`;
+      }
+      return [updated];
+    });
     if (!profile) return reply.code(401).send({ error: 'client_authentication_required' });
     return { profile };
   });
