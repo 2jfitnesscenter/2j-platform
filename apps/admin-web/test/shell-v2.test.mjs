@@ -62,9 +62,9 @@ test('tablet 1024-1279 switches to the rail automatically and groups still open 
   const frame = document.querySelector('.app-frame');
   assert.ok(frame.classList.contains('is-rail'));
   assert.equal(screen.queryByRole('button', { name: 'Compactar menú' }), null, 'the rail is automatic here, no fold toggle');
-  const group = screen.getByRole('button', { name: 'Mi gimnasio' });
+  const group = screen.getByRole('button', { name: 'Operación' });
   assert.equal(group.getAttribute('aria-expanded'), 'false');
-  assert.equal(group.getAttribute('title'), 'Mi gimnasio');
+  assert.equal(group.getAttribute('title'), 'Operación');
   fireEvent.click(group);
   assert.equal(group.getAttribute('aria-expanded'), 'true');
   assert.ok(within(document.querySelector('.app-sidebar')).getByRole('link', { name: /Agenda/ }));
@@ -112,8 +112,9 @@ test('shell keeps permission-driven destinations in every mode (capabilities unc
   viewport(1100); serve(model, { calendar: false, clients: true, communications: false, billing: false, staff: false });
   mount();
   await screen.findByRole('heading', { name: 'Resumen' });
+  fireEvent.click(screen.getByRole('button', { name: 'Operación' }));
   assert.ok(screen.getByRole('link', { name: 'Clientes' }));
-  assert.equal(screen.queryByRole('button', { name: 'Mi gimnasio' }), null);
+  assert.equal(screen.queryByRole('button', { name: 'Comercial' }), null);
   assert.equal(screen.queryByRole('link', { name: 'Equipo' }), null);
 });
 
@@ -139,6 +140,46 @@ test('Resumen metrics include occupancy, finance (with overdue tone) and clients
   assert.ok(within(strip).getByText('75 %'));
   assert.ok(within(strip).getByText('5 plazas libres'));
   assert.match(within(strip).getByText('2 cargos vencidos').className, /is-danger/);
+});
+
+test('Resumen shows the occupancy card, expiring plans, latest movements and a collapsed platform news panel from real data', async () => {
+  serve({
+    ...model, permissions: { ...permissions, billing: true },
+    today: { ...model.today, sessionCount: 2, capacity: 20, occupied: 15, waitlistCount: 3, unassignedCount: 1 },
+    commercial: {
+      plans: null, transfers: null, storeSales: null, lowStock: null,
+      expiringPlans: [{ assignmentId: 'a-1', clientId: 'c-1', clientName: 'Marta Santos', planName: 'Bono 10 sesiones', endsOn: '2026-11-02' }],
+      recentMovements: [{ id: 't-1', kind: 'payment', amountCents: 3300, concept: 'Cuota noviembre', clientName: 'Marta Santos', occurredAt: '2026-10-28T10:00:00Z' }, { id: 't-2', kind: 'refund', amountCents: 500, concept: 'Ajuste', clientName: 'Luis Pérez', occurredAt: '2026-10-28T09:00:00Z' }],
+    },
+  }, { ...capabilities, billing: true });
+  mount();
+  await screen.findByRole('heading', { name: 'Resumen' });
+  const occupancy = screen.getByRole('region', { name: 'Ocupación de hoy' });
+  assert.ok(within(occupancy).getByText('15 de 20 plazas · 2 sesiones'));
+  assert.equal(within(occupancy).getByRole('img', { name: '75 % de ocupación' }).tagName, 'SPAN');
+  assert.ok(within(occupancy).getByText('3 personas en espera'));
+  assert.match(within(occupancy).getByText('1 sesión sin profesional').className, /is-danger/);
+  const expiring = screen.getByRole('region', { name: 'Cuotas próximas a vencer' });
+  assert.ok(within(expiring).getByText('Bono 10 sesiones'));
+  assert.equal(within(expiring).getByRole('link', { name: /Marta Santos/ }).getAttribute('href'), '#clients?clientId=c-1');
+  const movements = screen.getByRole('region', { name: 'Últimos movimientos' });
+  assert.ok(within(movements).getByText('Cobro'));
+  assert.ok(within(movements).getByText('Devolución'));
+  assert.ok(within(movements).getByText(/−/));
+  const toggle = screen.getByRole('button', { name: /Novedades de la plataforma/ });
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  fireEvent.click(toggle);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.ok(screen.getByText('Caja con dos registros físicos'));
+});
+
+test('Resumen hides expiring plans and movements when the API does not grant them, and the empty occupancy says so', async () => {
+  serve({ ...model, permissions: { ...permissions, billing: false }, today: { ...model.today, capacity: 0, occupied: 0, sessionCount: 0 }, commercial: { plans: null, transfers: null, storeSales: null, lowStock: null, expiringPlans: null, recentMovements: null } });
+  mount();
+  await screen.findByRole('heading', { name: 'Resumen' });
+  assert.equal(screen.queryByRole('region', { name: 'Cuotas próximas a vencer' }), null);
+  assert.equal(screen.queryByRole('region', { name: 'Últimos movimientos' }), null);
+  assert.ok(within(screen.getByRole('region', { name: 'Ocupación de hoy' })).getByText('Sin plazas ofrecidas hoy'));
 });
 
 test('Requiere atención orders by urgency, pairs each item with a text chip and one destination, and never invents PP-01 signals', async () => {
