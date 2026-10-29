@@ -911,3 +911,47 @@ test('Home Buzón reads and sends a member message through the authenticated Pla
   assert.equal(readReceipt, true);
   cleanup(); dom.window.close();
 });
+
+test('Home assigns a fresh idempotency key if a member edits a message after an ambiguous send failure', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: (() => { let id = 0; return () => `11111111-1111-4111-8111-${String(++id).padStart(12, '0')}`; })() } },
+  });
+  const conversation = { id: '22222222-2222-4222-8222-222222222222', status: 'active', lastMessageAt: null };
+  const keys = [];
+  let sends = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '33333333-3333-4333-8333-333333333333', firstName: 'Eva', lastName: 'Piloto', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
+    if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
+    if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    if (url === '/api/client-portal/conversation') return new Response(JSON.stringify({ conversation, messages: [] }));
+    if (url === `/api/client-portal/conversations/${conversation.id}/messages` && init.method === 'POST') {
+      keys.push(init.headers['idempotency-key']); sends++;
+      if (sends === 1) return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500 });
+      return new Response(JSON.stringify({ id: '44444444-4444-4444-8444-444444444444', body: JSON.parse(init.body).body, createdAt: '2026-10-29T10:00:00.000Z', senderKind: 'client', readByClient: null }), { status: 201 });
+    }
+    throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
+  };
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Eva' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
+  fireEvent.click(await ui.findByRole('button', { name: /Mensajes con el centro/ }));
+  const input = await ui.findByLabelText('Tu mensaje');
+  fireEvent.change(input, { target: { value: 'Primer texto.' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Enviar mensaje' }));
+  assert.ok(await ui.findByText(/No se ha podido enviar el mensaje/));
+  fireEvent.change(input, { target: { value: 'Texto corregido.' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Enviar mensaje' }));
+  assert.ok(await ui.findByText('Texto corregido.'));
+  assert.equal(keys.length, 2);
+  assert.notEqual(keys[0], keys[1]);
+  cleanup(); dom.window.close();
+});
