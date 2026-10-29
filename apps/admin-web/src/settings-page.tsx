@@ -150,11 +150,12 @@ export function SettingsPage() {
     switch (tab) {
       case 'operations': return <OperationsSettings />;
       case 'center': return <>
-        <NotConnected>Los datos del centro y el horario son una maqueta.</NotConnected>
+        <NotConnected>Los datos del centro son una maqueta.</NotConnected>
         <div className="settings-grid"><Field label="Nombre comercial" value="2J Fitness Center" /><Field label="Teléfono" /><Field label="Correo de contacto" /><Field label="Dirección" wide /><Field label="Ciudad" /><Field label="Código postal" /></div>
         <h3 className="settings-subtitle">Horario y agenda</h3>
         <dl className="settings-list"><ReadOnlyRow label="Zona horaria" value={<>{data.timezone} <StatusChip tone="success" icon={null}>Conectado</StatusChip></>} detail="Fija para todo el centro; las horas se muestran siempre en hora de Canarias." /></dl>
-        <div className="settings-grid"><Field label="Hora de apertura" /><Field label="Hora de cierre" /><Field label="Antelación máxima de reserva (días)" /></div>
+        <p className="settings-hint">El horario de apertura y los turnos asignados se gestionan en la pestaña Horario y turnos.</p>
+        <Button variant="secondary" onClick={() => setTab('operations')}>Abrir Horario y turnos</Button>
         <p className="settings-hint">Los datos fiscales (razón social, CIF/NIF, serie y pie de factura) no están aquí: la puerta fiscal sigue cerrada.</p></>;
       case 'appearance': return <>
         <NotConnected>El logo y los colores son una maqueta.</NotConnected>

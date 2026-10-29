@@ -172,9 +172,16 @@ export function AppShell({children}:{children:React.ReactNode}) {
       {isDrawer&&<IconButton ref={menuButtonRef} className="app-menu-button" icon={icons.Menu} label="Abrir navegación" aria-expanded={drawerOpen} aria-controls="app-sidebar" onClick={()=>setDrawerOpen(true)}/>}
       <div className="app-location" aria-label="Ubicación actual">{pageContext.section!==pageContext.page&&<><span>{pageContext.section}</span><span className="app-location-divider" aria-hidden="true">/</span></>}<strong>{pageContext.page}</strong></div>
       <button className="global-search-trigger" type="button" onClick={()=>setSearchOpen(true)} aria-label="Buscar en 2J"><Icon icon={icons.Search} size={20}/><span>Buscar clientes, equipo, servicios o pantallas</span><kbd>Ctrl K</kbd></button>
-      <span className="local-pill"><span className="status-dot"/> Entorno local</span></header>
+      <span className="local-pill"><span className="status-dot"/> {environmentLabelForHost(window.location.hostname)}</span></header>
       <div className="app-page" id="main-content" tabIndex={-1}>{children}</div>
     </div>
     <GlobalSearchDialog open={searchOpen} onClose={()=>setSearchOpen(false)} api={api} screens={navigation.flatMap(section=>(section.children??(section.route?[section.route]:[])).map(route=>({id:route.id,label:route.label,href:route.href,section:section.label})))}/>
   </div></CommandContext.Provider>;
+}
+export function environmentLabelForHost(hostname: string): string {
+  const host = hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]') return 'Entorno local';
+  if (host === '2jfit.es' || host.endsWith('.2jfit.es') || host === '2jfit.com' || host.endsWith('.2jfit.com')) return 'Staging';
+  if (host === 'admin.2jfitnesscenter.com') return 'Producción';
+  return 'Entorno';
 }
