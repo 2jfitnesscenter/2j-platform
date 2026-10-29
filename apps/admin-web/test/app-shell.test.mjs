@@ -271,3 +271,33 @@ test('loading and error states are distinct and error can be retried accessibly'
   assert.ok(await screen.findByRole('alert'));
   assert.ok(screen.getByRole('button',{name:'Reintentar'}));
 });
+
+test('global search also finds the screens this profile can open (ignoring accents), opens with "/" outside fields and moves with the arrow keys', async () => {
+  globalThis.fetch = async (url) => String(url).includes('/api/search')
+    ? response({ groups: [{ type: 'clients', label: 'Clientes', items: [{ id: 'c-1', label: 'María González' }] }] })
+    : String(url).includes('/api/session/capabilities') ? response({ ...capabilities, billing: true }) : response(model);
+  render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
+  await screen.findByRole('heading', { name: 'Próximas sesiones' });
+  fireEvent.keyDown(window, { key: '/' });
+  const input = await screen.findByRole('textbox', { name: 'Buscar en 2J' });
+  assert.ok(document.activeElement === input, 'the field is focused when it opens');
+  fireEvent.change(input, { target: { value: 'economia' } });
+  const dialog = within(screen.getByRole('dialog', { name: 'Búsqueda global' }));
+  const economy = await dialog.findByRole('link', { name: /Economía/ });
+  assert.equal(economy.getAttribute('href'), '#economics');
+  assert.equal(dialog.queryByRole('link', { name: /Ajustes de avisos/ }), null, 'screens the profile cannot open are not offered');
+  fireEvent.change(input, { target: { value: 'Mar' } });
+  await dialog.findByRole('link', { name: 'María González' });
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  assert.ok(document.activeElement === dialog.getByRole('link', { name: 'María González' }), 'ArrowDown moves from the field to the first result');
+  fireEvent.keyDown(document.activeElement, { key: 'ArrowUp' });
+  assert.ok(document.activeElement === input, 'ArrowUp from the first result goes back to the field');
+  fireEvent.click(screen.getByRole('button', { name: /Cerrar · Esc/ }));
+  await waitFor(() => assert.equal(screen.queryByRole('dialog', { name: 'Búsqueda global' }), null));
+  const field = document.createElement('input');
+  document.body.appendChild(field);
+  field.focus();
+  fireEvent.keyDown(field, { key: '/' });
+  assert.equal(screen.queryByRole('dialog', { name: 'Búsqueda global' }), null, '"/" typed inside a field does not hijack it');
+  field.remove();
+});
