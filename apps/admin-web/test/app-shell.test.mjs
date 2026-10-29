@@ -7,7 +7,7 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http:
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
-const { AppShell, getProfessionalNavigation, getProfessionalPageContext } = await import('../src/app-shell.tsx');
+const { AppShell, getProfessionalNavigation, getProfessionalPageContext, environmentLabelForHost } = await import('../src/app-shell.tsx');
 const { CommandCenter } = await import('../src/command-center.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
 after(() => dom.window.close());
@@ -20,6 +20,15 @@ const model = {
   quickActions:[{id:'clients',label:'Ver clientes',href:'#clients'}],
 };
 const capabilities = {calendar:true,clients:true,communications:true,billing:false,staff:true};
+
+test('environment label identifies local, staging and production hosts',()=>{
+  assert.equal(environmentLabelForHost('127.0.0.1'),'Entorno local');
+  assert.equal(environmentLabelForHost('admin.2jfit.es'),'Staging');
+  assert.equal(environmentLabelForHost('admin.2jfit.com'),'Staging');
+  assert.equal(environmentLabelForHost('2jfit.es'),'Staging');
+  assert.equal(environmentLabelForHost('2jfit.com'),'Staging');
+  assert.equal(environmentLabelForHost('admin.2jfitnesscenter.com'),'Producción');
+});
 
 test('Admin sees the three active groups (Operación, Comercial, Gestión) and only their existing authorized routes', async () => {
   const adminCapabilities={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true};
