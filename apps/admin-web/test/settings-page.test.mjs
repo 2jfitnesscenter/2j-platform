@@ -44,13 +44,30 @@ test('Configuración offers the seven Base44 tabs and the unconnected ones say s
   assert.ok(await screen.findByRole('heading', { name: 'Configuración' }));
   const tabs = await screen.findAllByRole('tab');
   assert.deepEqual(tabs.map((tab) => tab.textContent), ['Centro', 'Horario y turnos', 'Apariencia', 'Reservas', 'Pagos', 'Tienda', 'Permisos', 'Integraciones']);
-  for (const name of ['Centro', 'Apariencia', 'Reservas', 'Tienda']) {
+  for (const name of ['Apariencia', 'Reservas', 'Tienda']) {
     const panel = await openTab(name);
     assert.match(panel.textContent, /No conectado: estos ajustes todavía no se guardan/, name);
     const inputs = panel.querySelectorAll('input');
     assert.ok(inputs.length > 0 && [...inputs].every((input) => input.disabled), `${name}: every field disabled`);
   }
   assert.equal(screen.queryByRole('button', { name: /guardar/i }), null, 'no misleading save button');
+});
+
+test('Centro does not duplicate opening-hour fields and links owners to Horario y turnos', async () => {
+  serve(async path => {
+    if (path.includes('/api/settings/overview')) return response(overview);
+    if (path.includes('/api/center/opening-hours')) return response({ timezone: 'Atlantic/Canary', intervals: [] });
+    if (path.includes('/api/center/shifts?')) return response({ timezone: 'Atlantic/Canary', shifts: [] });
+    if (path.includes('/api/center/coverage?')) return response({ openingIntervals: [], assignedShifts: [], staffingGaps: [], cashCustody: { status: 'incomplete', reason: 'sin datos', recordedSessions: [] } });
+    if (path.includes('/api/staff')) return response([]);
+    return response({});
+  });
+  mount();
+  const center = await openTab('Centro');
+  assert.equal(within(center).queryByLabelText('Hora de apertura'), null);
+  assert.equal(within(center).queryByLabelText('Hora de cierre'), null);
+  fireEvent.click(within(center).getByRole('button', { name: 'Abrir Horario y turnos' }));
+  assert.ok(await screen.findByRole('heading', { name: 'Horario de apertura del centro' }));
 });
 
 test('owner operations tab loads real Canary hours and offers audited shift management with server feedback', async () => {
