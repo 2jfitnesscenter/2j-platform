@@ -200,6 +200,43 @@ test('the multi-sheet xlsx export needs billing.export and neutralises spreadshe
   assert.ok(sales.includes('<v>12.34</v>'), 'amounts are numeric euros');
 });
 
+test('CSV and XLSX exports fail closed instead of returning silently truncated financial data', async () => {
+  const marker = `reports-export-limit-${tag}`;
+  const [fixtureClient] = await sql`INSERT INTO clients(first_name,last_name,status) VALUES ('Informe',${`Límite sintético ${tag}`},'active') RETURNING id`;
+  const clientId = fixtureClient.id;
+  try {
+    await sql`INSERT INTO economic_charges(client_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash)
+      SELECT ${clientId}, 'Informe sintético ' || ${tag} || ' ' || n::text, 100, ${today}::date, ${marker}, gen_random_uuid(), repeat('a',64)
+      FROM generate_series(1,5001) AS n`;
+
+    const csv = await admin.inject({ method: 'GET', url: `/api/reports/sales.csv?${range}` });
+    assert.equal(csv.statusCode, 413);
+    assert.deepEqual(csv.json(), { error: 'export_result_limit_exceeded', limit: 500 });
+
+    const xlsx = await admin.inject({ method: 'GET', url: `/api/reports/export.xlsx?${range}` });
+    assert.equal(xlsx.statusCode, 413);
+    assert.deepEqual(xlsx.json(), { error: 'export_result_limit_exceeded', limit: 5000 });
+  } finally {
+    // Economic rows are immutable by design. This API test runs against a disposable
+    // synthetic database, so disable only the immutability trigger while removing
+    // the uniquely marked fixtures; always restore it even if cleanup fails.
+    await sql`ALTER TABLE economic_charges DISABLE TRIGGER economic_charge_guard`;
+    try {
+      await sql`DELETE FROM economic_charges WHERE created_by=${marker}`;
+    } finally {
+      await sql`ALTER TABLE economic_charges ENABLE TRIGGER economic_charge_guard`;
+    }
+    // Client identities are also immutable in this schema; remove only this
+    // synthetic, now-unreferenced fixture using its dedicated delete guard.
+    await sql`ALTER TABLE clients DISABLE TRIGGER clients_no_delete`;
+    try {
+      await sql`DELETE FROM clients WHERE id=${clientId}`;
+    } finally {
+      await sql`ALTER TABLE clients ENABLE TRIGGER clients_no_delete`;
+    }
+  }
+});
+
 test('summary counts occupancy, attendance, reservations by service and fees by plan from the source tables', async () => {
   const before = await summary();
   const [area] = await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;

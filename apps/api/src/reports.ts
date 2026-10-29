@@ -5,6 +5,8 @@ import type { createDatabase } from './db.js';
 import { buildXlsx } from './xlsx.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
+const CSV_EXPORT_LIMIT = 500;
+const XLSX_EXPORT_LIMIT = 5_000;
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value);
 const methods = ['cash', 'card', 'transfer', 'direct_debit', 'other'] as const;
@@ -107,7 +109,8 @@ export function registerReportRoutes(app: FastifyInstance<any, any, any, any, an
     const context = await authorize(request, reply, 'billing.export'); if (!context) return;
     const parsed = salesQuery.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
-    const { items } = await loadSales({ ...parsed.data, limit: 500 });
+    const { items, truncated } = await loadSales({ ...parsed.data, limit: CSV_EXPORT_LIMIT });
+    if (truncated) return reply.code(413).send({ error: 'export_result_limit_exceeded', limit: CSV_EXPORT_LIMIT });
     const kindLabel: Record<string, string> = { plan: 'Cuota', charge: 'Cargo', store: 'Tienda' };
     const statusLabel: Record<string, string> = { paid: 'Cobrada', partial: 'Cobro parcial', pending: 'Pendiente', unpaid: 'Vencida', refunded: 'Devuelta', void: 'Anulada', exempt: 'Exenta' };
     const euros = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
@@ -182,7 +185,9 @@ export function registerReportRoutes(app: FastifyInstance<any, any, any, any, an
     const parsed = rangeQuery.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
     const { from, to } = parsed.data;
-    const [summary, sales] = await Promise.all([loadSummary(from, to), loadSales({ from, to, kind: 'all', invoice: 'all', limit: 5000 })]);
+    const sales = await loadSales({ from, to, kind: 'all', invoice: 'all', limit: XLSX_EXPORT_LIMIT });
+    if (sales.truncated) return reply.code(413).send({ error: 'export_result_limit_exceeded', limit: XLSX_EXPORT_LIMIT });
+    const summary = await loadSummary(from, to);
     const eur = (cents: number) => Math.round(cents) / 100;
     const pct = (rate: number | null) => (rate === null ? 'Sin datos' : `${(rate * 100).toFixed(1).replace('.', ',')} %`);
     const kindLabel: Record<string, string> = { plan: 'Cuota', charge: 'Cargo', store: 'Tienda' };
