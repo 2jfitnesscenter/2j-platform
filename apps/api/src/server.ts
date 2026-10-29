@@ -27,6 +27,7 @@ import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
 import { registerOwnerPanelRoutes } from './owner-panel.js';
 import { registerMonitoringRoutes } from './monitoring.js';
+import { registerManagementPanelRoutes } from './management-panel.js';
 import { registerActivityRoutes } from './activity.js';
 import { registerReportRoutes } from './reports.js';
 import { registerSettingsOverviewRoutes } from './settings-overview.js';
@@ -357,6 +358,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerStaffRoutes(app, client, authorizationResolver);
   registerOwnerPanelRoutes(app, client, authorizationResolver);
   registerMonitoringRoutes(app, client, authorizationResolver);
+  registerManagementPanelRoutes(app, client, authorizationResolver);
   registerActivityRoutes(app, client, authorizationResolver);
   registerReportRoutes(app, client, authorizationResolver);
   registerSettingsOverviewRoutes(app, client, authorizationResolver, { trainingSso: options.trainingSsoEnabled === true, trainingServiceCalls: options.trainingServiceCallsEnabled === true, trainingLinking: options.trainingLinkingEnabled === true, trainingSignals: options.trainingSignalsEnabled === true, trainingProvisioning: options.trainingProvisioningEnabled === true, push: options.pushEnabled === true, passkeys: options.platformPasskeysEnabled === true, memberAuthPilot: options.memberPilotAuthEnabled === true, memberBookingPilot: options.memberPilotBookingEnabled === true });

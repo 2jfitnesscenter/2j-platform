@@ -41,6 +41,7 @@ const routes={
   reports:{id:'reports',label:'Informes',href:'#reports',permission:'billing',icon:icons.ReceiptText},
   promotions:{id:'promotions',label:'Promociones',href:'#promotions',permission:'catalogPricingManage',icon:icons.BadgePercent},
   monitoring:{id:'monitoring',label:'Monitorización',href:'#monitoring',permission:'ownerPanel',icon:icons.Activity},
+  management:{id:'management',label:'Panel de gestión',href:'#management',permission:'ownerPanel',icon:icons.ShieldCheck},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
   settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
@@ -50,7 +51,7 @@ const navSections:NavSection[]=[
   {id:'operation',label:'Operación',icon:icons.LayoutDashboard,children:[routes.home,routes.activity,routes.timeclock,routes.calendar,routes.clients]},
   {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.contracts,routes.plans,routes.economics,routes.store,routes.promotions]},
   {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.settings,routes['notification-settings']]},
-  {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.monitoring]},
+  {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.management,routes.monitoring]},
 ];
 /** Groups that start open on a wide sidebar. */
 const defaultOpenGroups=['operation','commercial','management','administration'];

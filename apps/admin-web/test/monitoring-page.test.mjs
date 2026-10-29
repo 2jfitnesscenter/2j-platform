@@ -54,6 +54,6 @@ test('Monitorización sits under Administración and only appears with the owner
   const base = { calendar: true, clients: true, communications: true, billing: true, staff: true };
   const group = (caps) => getProfessionalNavigation(caps).find((section) => section.id === 'administration');
   assert.equal(group(base), undefined);
-  assert.deepEqual(group({ ...base, ownerPanel: true }).children.map((route) => route.label), ['Monitorización']);
+  assert.deepEqual(group({ ...base, ownerPanel: true }).children.map((route) => route.label), ['Panel de gestión', 'Monitorización']);
   assert.equal(getProfessionalPageContext('monitoring').section, 'Administración');
 });
