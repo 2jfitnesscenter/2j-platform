@@ -21,3 +21,27 @@
 .caja-total { margin: 0; }
 .caja-link { color: var(--2j-color-brand-strong); font-weight: var(--2j-type-weight-semibold); }
 .caja-table td, .caja-table th { white-space: nowrap; }
+.caja-daily-detail { display: grid; gap: var(--2j-space-4); }
+.caja-day-total { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--2j-space-3); margin: 0; }
+.caja-day-total > div, .caja-daily-register { border: 1px solid var(--2j-color-border-subtle); border-radius: var(--2j-radius-md); padding: var(--2j-space-4); }
+.caja-day-total dt { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); text-transform: uppercase; letter-spacing: .05em; }
+.caja-day-total dd { margin: 4px 0 0; font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-bold); }
+.caja-daily-registers { display: grid; gap: var(--2j-space-3); }
+.caja-daily-register { display: grid; gap: var(--2j-space-3); }
+.caja-daily-register-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--2j-space-3); }
+.caja-daily-register h3, .caja-daily-register h4 { margin: 0; }
+.caja-daily-register h4 { font-size: var(--2j-type-size-sm); }
+.caja-denomination-breakdowns { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--2j-space-2); }
+.caja-denomination-detail { border-radius: var(--2j-radius-sm); background: var(--2j-color-surface-subtle); padding: var(--2j-space-3); }
+.caja-denomination-detail summary { cursor: pointer; font-size: var(--2j-type-size-sm); font-weight: var(--2j-type-weight-semibold); }
+.caja-denomination-detail ul { margin: var(--2j-space-2) 0 0; padding-left: var(--2j-space-5); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
+.caja-movements { list-style: none; margin: 0; padding: 0; display: grid; }
+.caja-movements li { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: start; gap: var(--2j-space-3); padding: var(--2j-space-2) 0; border-top: 1px solid var(--2j-color-border-subtle); font-size: var(--2j-type-size-sm); }
+.caja-movements time, .caja-handover time { color: var(--2j-color-text-secondary); font-variant-numeric: tabular-nums; }
+.caja-movements > li > strong:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.caja-handovers { display: grid; gap: var(--2j-space-2); }
+.caja-handovers h4 { margin: 0; }
+.caja-handover { display: grid; grid-template-columns: minmax(180px, 1fr) auto; align-items: center; gap: var(--2j-space-2) var(--2j-space-3); padding: var(--2j-space-3); border-radius: var(--2j-radius-sm); background: var(--2j-color-surface-subtle); }
+.caja-handover > div { display: flex; flex-wrap: wrap; gap: var(--2j-space-2); align-items: center; }
+.caja-handover .caja-denomination-detail { grid-column: span 1; }
+@media (max-width: 640px) { .caja-movements li { grid-template-columns: 48px minmax(0, 1fr); } .caja-movements > li > strong:last-child { grid-column: 2; } .caja-handover { grid-template-columns: 1fr; } .caja-handover .caja-denomination-detail { grid-column: auto; } }

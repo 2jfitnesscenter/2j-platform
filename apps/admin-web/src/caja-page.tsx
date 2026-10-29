@@ -18,7 +18,12 @@ type TodaySession = { id: string; registerCode: RegisterCode | null; status: Ses
 type SessionRow = { id: string; registerCode: RegisterCode | null; registerName: string; localDate: string; status: SessionStatus; openedAt: string; closedAt: string | null; openedByName: string | null; closedByName: string | null; openingCents?: number; expectedCents?: number; countedCents?: number | null; differenceCents?: number | null };
 type DayRow = { date: string; sessions: number; openCount: number; closed: boolean; expectedCents?: number; countedCents?: number | null; differenceCents?: number | null };
 type Report = { from: string; to: string; items: SessionRow[]; days: DayRow[]; truncated: boolean };
-type Loaded = { registers: Register[]; today: TodaySession[]; report: Report; ownerView: boolean };
+type DenominationCount = Partial<Record<DenominationKey, number>> | null;
+type CashMovement = { id: string; kind: string; amountCents: number; method?: string | null; occurredAt: string; concept?: string | null; reason?: string | null; status?: string | null; hasReceipt?: boolean };
+type CashHandover = { id: string; outgoingDenominations: DenominationCount; incomingDenominations: DenominationCount; completedAt: string | null; mismatch: boolean | null; createdAt: string };
+type DailyRegisterDetail = { id?: string; registerCode: RegisterCode | null; registerName: string; localDate: string; status: SessionStatus; openingDenominations?: DenominationCount; countedDenominations?: DenominationCount; movements: CashMovement[]; handovers?: CashHandover[] };
+type DailyDetail = { items: DailyRegisterDetail[]; total?: { expectedCents: number; countedCents: number | null; differenceCents: number | null; balanced: boolean | null } };
+type Loaded = { registers: Register[]; today: TodaySession[]; report: Report; daily: DailyDetail; ownerView: boolean };
 type LoadState = { status: 'loading' } | { status: 'ready'; data: Loaded } | { status: 'denied' } | { status: 'error' };
 
 const euro = (cents: number) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(cents / 100);
@@ -48,6 +53,26 @@ function DifferenceChip({ cents }: { cents: number | null | undefined }) {
   if (cents == null) return <span className="caja-muted">Pendiente</span>;
   if (cents === 0) return <StatusChip tone="success" icon={null}>Cuadra</StatusChip>;
   return <StatusChip tone="danger" icon={null}>{cents > 0 ? '+' : ''}{euro(cents)}</StatusChip>;
+}
+
+const movementLabels: Record<string, string> = { payment: 'Cobro', refund: 'Devolución', store_sale: 'Venta en tienda', store_sale_refund: 'Devolución de tienda', annulment: 'Anulación de tienda', expense: 'Gasto', withdrawal: 'Retirada', adjustment: 'Ajuste', cash_sale_annulment: 'Anulación de tienda' };
+const paymentMethodLabels: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', bank_transfer: 'Transferencia bancaria', other: 'Otro medio' };
+const movementTime = (iso: string) => timeFmt.format(new Date(iso));
+const isOutflow = (kind: string) => ['refund', 'store_sale_refund', 'annulment', 'expense', 'withdrawal', 'cash_sale_annulment'].includes(kind);
+
+function DenominationBreakdown({ title, counts }: { title: string; counts?: DenominationCount | undefined }) {
+  if (!counts) return null;
+  const entries = denominations.flatMap(([key, label]) => Number(counts[key] ?? 0) > 0 ? [`${label}: ${counts[key]}`] : []);
+  return <details className="caja-denomination-detail"><summary>{title}</summary>{entries.length ? <ul>{entries.map(entry => <li key={entry}>{entry}</li>)}</ul> : <p className="caja-muted">Sin unidades contadas.</p>}</details>;
+}
+
+function CashMovementList({ movements }: { movements: CashMovement[] }) {
+  if (!movements.length) return <p className="caja-muted">Sin movimientos registrados durante esta custodia.</p>;
+  return <ol className="caja-movements">{movements.map((movement, index) => <li key={movement.id || `${movement.occurredAt}-${index}`}>
+    <time dateTime={movement.occurredAt}>{movementTime(movement.occurredAt)}</time>
+    <span><strong>{movementLabels[movement.kind] ?? 'Movimiento de caja'}</strong>{movement.concept ? ` · ${movement.concept}` : ''}{movement.reason ? ` · ${movement.reason}` : ''}{movement.method ? ` · ${paymentMethodLabels[movement.method] ?? 'Otro medio'}` : ''}{movement.hasReceipt ? ' · Justificante adjunto' : ''}{movement.status === 'pending_owner_approval' ? ' · Solicitud pendiente de aprobación' : movement.status === 'rejected' ? ' · Solicitud rechazada' : ''}</span>
+    <strong>{movement.status === 'pending_owner_approval' || movement.status === 'rejected' ? '' : isOutflow(movement.kind) ? '−' : '+'}{euro(Number(movement.amountCents))}</strong>
+  </li>)}</ol>;
 }
 
 function CountForm({ mode, registerName, busy, error, onSubmit, onCancel }: { mode: 'open' | 'close'; registerName: string; busy: boolean; error: string; onSubmit: (counts: Record<DenominationKey, number>) => void; onCancel: () => void }) {
@@ -83,15 +108,20 @@ export function CajaPage() {
       if (from) query.set('from', from);
       if (to) query.set('to', to);
       const suffix = query.toString() ? `?${query.toString()}` : '';
-      const [registersRes, todayRes, reportRes, capsRes] = await Promise.all([
+      const capsRes = await fetch(`${apiUrl}/api/session/capabilities`);
+      if (!capsRes.ok) throw new Error('capabilities');
+      const caps = await capsRes.json();
+      const ownerView = caps.ownerPanel === true;
+      const [registersRes, todayRes, reportRes, dailyRes] = await Promise.all([
         fetch(`${apiUrl}/api/economics/cash/registers`), fetch(`${apiUrl}/api/economics/cash/today`),
-        fetch(`${apiUrl}/api/economics/cash/sessions${suffix}`), fetch(`${apiUrl}/api/session/capabilities`),
+        fetch(`${apiUrl}/api/economics/cash/sessions${suffix}`),
+        fetch(`${apiUrl}/api/economics/cash/${ownerView ? 'day' : 'today'}`),
       ]);
-      if ([registersRes, todayRes, reportRes].some(res => res.status === 401 || res.status === 403)) { setState({ status: 'denied' }); return; }
-      if (![registersRes, todayRes, reportRes].every(res => res.ok)) throw new Error('load');
-      const caps = capsRes.ok ? await capsRes.json() : {};
-      const [registers, todayBody, report] = await Promise.all([registersRes.json(), todayRes.json(), reportRes.json()]);
-      setState({ status: 'ready', data: { registers: registers.items ?? [], today: todayBody.items ?? [], report, ownerView: caps.ownerPanel === true } });
+      if ([registersRes, todayRes, reportRes, dailyRes].some(res => res.status === 401 || res.status === 403)) { setState({ status: 'denied' }); return; }
+      if (![registersRes, todayRes, reportRes, dailyRes].every(res => res.ok)) throw new Error('load');
+      const [registers, todayBody, report, dailyBody] = await Promise.all([registersRes.json(), todayRes.json(), reportRes.json(), dailyRes.json()]);
+      const dailyItems = ownerView ? (dailyBody.registers ?? []) : (dailyBody.session ? [dailyBody.session] : []);
+      setState({ status: 'ready', data: { registers: registers.items ?? [], today: todayBody.items ?? [], report, daily: { items: dailyItems, total: ownerView ? dailyBody.total : undefined }, ownerView } });
     } catch { setState({ status: 'error' }); }
   }, [registerFilter, from, to]);
   React.useEffect(() => { void load(); }, [load]);
@@ -117,7 +147,7 @@ export function CajaPage() {
   if (state.status === 'error') return shell(<Card className="summary-state summary-error" role="alert"><strong>No se pudo cargar la caja</strong><Button onClick={() => void load()}>Reintentar</Button></Card>);
   if (state.status === 'denied') return shell(<Card><EmptyState icon={icons.ShieldCheck} title="Tu perfil no gestiona la caja">Pide acceso a quien administre los perfiles del equipo.</EmptyState></Card>);
 
-  const { registers, today: todaySessions, report, ownerView } = state.data;
+  const { registers, today: todaySessions, report, daily, ownerView } = state.data;
   const hasOwnCustody = registers.some(register => register.ownCustody);
   const panels: Array<{ code: RegisterCode; name: string }> = [{ code: 'bunker', name: 'Búnker' }, { code: 'sala', name: 'Sala' }];
   return shell(<>
@@ -166,9 +196,25 @@ export function CajaPage() {
       {report.truncated && <p className="caja-muted caja-note">Se muestran las 200 sesiones más recientes; acota el rango para ver el resto.</p>}
     </Card>
 
-    <Card as="section" aria-labelledby="caja-pending-title">
-      <CardHeader title="Retiradas, gastos y traspasos" titleId="caja-pending-title" actions={<StatusChip tone="warning" icon={null}>No conectado</StatusChip>} description="Todavía no se gestionan en esta pantalla. Siguen disponibles en Economía." />
-      <a className="caja-link" href="#economics">Ir a Economía</a>
+    <Card as="section" aria-labelledby="caja-detail-title" className="caja-daily-detail">
+      <CardHeader title="Movimientos y recuentos de hoy" titleId="caja-detail-title" description={ownerView ? 'Detalle de ambas cajas, incluidos recuentos, traspasos, gastos y retiradas.' : 'Movimientos realizados durante tu custodia. El importe esperado y la diferencia permanecen ocultos.'} />
+      {ownerView && daily.total && <dl className="caja-day-total"><div><dt>Esperado</dt><dd>{euro(daily.total.expectedCents)}</dd></div><div><dt>Contado</dt><dd>{daily.total.countedCents == null ? 'Pendiente de cierre' : euro(daily.total.countedCents)}</dd></div><div><dt>Cuadre</dt><dd><DifferenceChip cents={daily.total.differenceCents}/></dd></div></dl>}
+      {daily.items.length === 0 ? <EmptyState icon={icons.Wallet} title="Sin actividad de caja hoy">Cuando tengas una caja a tu cargo, sus movimientos aparecerán aquí.</EmptyState> :
+        <div className="caja-daily-registers">{daily.items.map((register, index) => <article className="caja-daily-register" key={register.id ?? register.registerCode ?? index}>
+          <div className="caja-daily-register-heading"><div><h3>{register.registerName}</h3><p className="caja-muted">{register.status === 'open' ? 'Abierta' : statusText[register.status]}</p></div></div>
+          {(ownerView || register.countedDenominations) && <div className="caja-denomination-breakdowns">
+            <DenominationBreakdown title="Fondo de apertura · por denominación" counts={register.openingDenominations}/>
+            <DenominationBreakdown title="Recuento de cierre · por denominación" counts={register.countedDenominations}/>
+          </div>}
+          <h4>Movimientos</h4>
+          <CashMovementList movements={register.movements ?? []}/>
+          {ownerView && (register.handovers?.length ?? 0) > 0 && <div className="caja-handovers"><h4>Traspasos de custodia</h4>{register.handovers!.map(handover => <article key={handover.id} className="caja-handover">
+            <div><strong>{handover.completedAt ? 'Traspaso completado' : 'Traspaso pendiente'}</strong><time dateTime={handover.completedAt ?? handover.createdAt}>{movementTime(handover.completedAt ?? handover.createdAt)}</time></div>
+            {handover.mismatch && <StatusChip tone="danger" icon={null}>Incidencia: recuentos distintos</StatusChip>}
+            <DenominationBreakdown title="Recuento de salida" counts={handover.outgoingDenominations}/>
+            <DenominationBreakdown title="Recuento de entrada" counts={handover.incomingDenominations}/>
+          </article>)}</div>}
+        </article>)}</div>}
     </Card>
   </>);
 }
