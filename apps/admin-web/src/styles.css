@@ -527,6 +527,18 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .cash-denomination-grid label { display:grid; gap:6px; color:var(--2j-color-text-primary); font-size:13px; font-weight:var(--2j-type-weight-medium); }
 .cash-denomination-grid input { min-height:42px; }
 .cash-difference { display: flex; justify-content: space-between; padding: 10px 12px; background: var(--2j-color-surface-subtle); border-radius: var(--2j-radius-sm); }
+.cash-actions { display:flex; flex-wrap:wrap; gap:10px 16px; margin-top:4px; }
+.pending-cash-handovers > ul { display:grid; gap:10px; padding:0; list-style:none; }
+.pending-cash-handovers > ul > li { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 16px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); background:var(--2j-color-surface); }
+.pending-cash-handovers > ul > li > span { display:grid; gap:4px; }
+.pending-cash-handovers > ul > li small { color:var(--2j-color-text-secondary); }
+.cash-owner-day { display:grid; gap:16px; }
+.cash-register-day { padding:16px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); background:var(--2j-color-surface); }
+.cash-register-day > p { color:var(--2j-color-text-secondary); font-size:14px; }
+.cash-limit-form { display:flex; align-items:end; flex-wrap:wrap; gap:12px; padding:14px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); }
+.cash-limit-form label { display:grid; gap:6px; min-width:min(280px,100%); font-size:14px; font-weight:var(--2j-type-weight-medium); }
+.cash-limit-form input,.dialog textarea { min-height:44px; padding:9px 12px; border:1px solid var(--2j-color-border-strong); border-radius:var(--2j-radius-sm); background:var(--2j-color-surface); color:var(--2j-color-text-primary); font:inherit; }
+.cash-limit-form small { color:var(--2j-color-text-secondary); flex:1 1 220px; }
 .confirm-check { display: flex !important; align-items: flex-start; gap: 9px !important; margin: 12px 0; font-weight: var(--2j-type-weight-regular) !important; }
 .confirm-check input { min-height: 20px !important; width: 20px; margin: 0; }
 .economic-client-list { display: grid; margin: 8px 0 16px; }
@@ -663,3 +675,4 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .plan-facts dd { margin: 0; color: var(--2j-color-text-primary); font-size: 14px; }
 .plan-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--2j-color-border); }
 @media (max-width: 640px) { .plan-cards .plan-card { padding: 14px; } .plan-facts > div { grid-template-columns: 1fr; gap: 3px; } }
+.cash-owner-decisions { display: flex; flex-wrap: wrap; gap: 8px; }

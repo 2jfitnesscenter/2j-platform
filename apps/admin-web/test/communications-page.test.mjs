@@ -164,3 +164,73 @@ test("sending state disables composer controls and announces completion",async()
   finish();
   await screen.findByText('Mensaje enviado.');
 });
+
+test("Mensajes filters the inbox to unread conversations and labels what is not connected", async () => {
+  const read = { ...item, clientId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", firstName: "Bea", lastName: "Leída", unreadCount: 0 };
+  globalThis.fetch = async (url) => {
+    const path = String(url);
+    if (path.endsWith("/api/communications/inbox")) return response([item, read]);
+    if (path.endsWith("/api/communications/templates")) return response([]);
+    return response({});
+  };
+  render(React.createElement(CommunicationsPage));
+  await screen.findByRole("button", { name: /Bea Leída/ });
+  assert.ok(screen.getByRole("heading", { name: "Mensajes" }));
+  assert.ok(screen.getByText("No conectado"));
+  fireEvent.click(screen.getByRole("button", { name: "Sin leer (1)" }));
+  await waitFor(() => assert.equal(screen.queryByRole("button", { name: /Bea Leída/ }), null));
+  assert.ok(screen.getByRole("button", { name: /Ana Prueba/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Todos" }));
+  assert.ok(await screen.findByRole("button", { name: /Bea Leída/ }));
+});
+
+test("Nuevo mensaje searches clients and sends the first message with an idempotency key", async () => {
+  const requests = [];
+  const target = { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", firstName: "Carla", lastName: "Nueva" };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    requests.push({ path, options });
+    if (path.endsWith("/api/communications/inbox")) return response([]);
+    if (path.endsWith("/api/communications/templates")) return response([]);
+    if (path.includes("/api/clients?q=")) return response({ items: [target] });
+    if (path.endsWith(`/api/clients/${target.id}/conversation`)) return response({ conversation: null, messages: [], internalNotes: [] });
+    if (path.endsWith(`/api/clients/${target.id}/messages`)) return response({ id: "m-new" }, 201);
+    return response({});
+  };
+  render(React.createElement(CommunicationsPage));
+  fireEvent.click(await screen.findByRole("button", { name: "Nuevo mensaje" }));
+  fireEvent.change(await screen.findByLabelText("Buscar cliente"), { target: { value: "Carl" } });
+  fireEvent.click(await screen.findByRole("button", { name: /Carla Nueva/ }));
+  fireEvent.change(await screen.findByLabelText("Mensaje para el cliente"), { target: { value: "Bienvenida a 2J." } });
+  fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
+  await screen.findByText("Mensaje enviado.");
+  const sent = requests.find((r) => r.path.endsWith(`/api/clients/${target.id}/messages`));
+  assert.equal(JSON.parse(sent.options.body).body, "Bienvenida a 2J.");
+  assert.match(sent.options.headers["Idempotency-Key"] ?? sent.options.headers["idempotency-key"], /^[0-9a-f-]{36}$/);
+});
+
+test("Mensajes filters unread conversations and starts a new message by searching a client", async () => {
+  const read = { ...item, clientId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", firstName: "Luis", lastName: "Leído", unreadCount: 0 };
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(String(url));
+    if (String(url).endsWith("/api/communications/inbox")) return response([item, read]);
+    if (String(url).endsWith("/api/communications/templates")) return response([]);
+    if (String(url).includes("/api/clients?q=")) return response({ items: [{ id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", firstName: "Marta", lastName: "Nueva" }] });
+    if (String(url).endsWith("/conversation")) return response({ conversation: null, messages: [], internalNotes: [] });
+    return response({});
+  };
+  const { within } = await import("@testing-library/react");
+  render(React.createElement(CommunicationsPage));
+  assert.ok(await screen.findByRole("heading", { level: 1, name: "Mensajes" }));
+  await screen.findByText("Luis Leído");
+  fireEvent.click(screen.getByRole("button", { name: "Sin leer (1)" }));
+  assert.equal(screen.queryByText("Luis Leído"), null, "read conversations leave the unread view");
+  assert.ok(screen.getByText("Ana Prueba"));
+  fireEvent.click(screen.getByRole("button", { name: "Nuevo mensaje" }));
+  const dialog = await screen.findByRole("dialog", { name: "¿A quién escribes?" });
+  fireEvent.change(within(dialog).getByLabelText("Buscar cliente"), { target: { value: "Marta" } });
+  fireEvent.click(await within(dialog).findByRole("button", { name: /Marta Nueva/ }, { timeout: 1500 }));
+  await waitFor(() => assert.ok(requests.some((url) => url.endsWith("/api/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd/conversation"))));
+  assert.ok(await screen.findByLabelText("Mensaje para el cliente"));
+});

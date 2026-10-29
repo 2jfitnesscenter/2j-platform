@@ -1,14 +1,17 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import zlib from 'node:zlib';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
 process.env.NODE_ENV ??= 'test';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: report integration tests cannot be skipped.');
 const sql = postgres(process.env.DATABASE_URL, { max: 6, connect_timeout: 5 });
 await migrateDatabase(sql);
+await ensureCashSessionForActor(sql, 'reports-test-admin');
 const as = (role) => buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: `reports-test-${role}`, role }) });
 const admin = as('admin');
 const accountant = as('accountant');
@@ -123,4 +126,140 @@ test('the CSV has a BOM, semicolons, Spanish decimals, the same rows as the list
   assert.ok(lines.some((line) => line.includes('"12,34"')), 'euros use a decimal comma');
   assert.ok(lines.some((line) => line.includes(`"'+Cuota ${tag}"`)), 'a concept starting with + is neutralised');
   assert.ok(lines.some((line) => line.includes('"\'=HYPERLINK')), 'a client name starting with = is neutralised');
+});
+
+// ---- A59: pestaña Resumen (KPIs) y exportación Excel multi-hoja (D109) ----
+const summaryUrl = `/api/reports/summary?${range}`;
+const summary = async (app = admin) => { const response = await app.inject({ method: 'GET', url: summaryUrl }); assert.equal(response.statusCode, 200, response.body); return response.json(); };
+
+test('summary needs billing.read-basic, validates the range (max 366 days) and exposes no personal data', async () => {
+  assert.equal((await anonymous.inject({ method: 'GET', url: summaryUrl })).statusCode, 401);
+  assert.equal((await trainer.inject({ method: 'GET', url: summaryUrl })).statusCode, 403);
+  assert.equal((await reception.inject({ method: 'GET', url: summaryUrl })).statusCode, 200);
+  assert.equal((await reception.inject({ method: 'GET', url: summaryUrl })).json().capabilities.export, false);
+  assert.equal((await admin.inject({ method: 'GET', url: '/api/reports/summary?from=2026-10-10&to=2026-10-01' })).statusCode, 400);
+  assert.equal((await admin.inject({ method: 'GET', url: '/api/reports/summary?from=2025-01-01&to=2026-10-01' })).statusCode, 400, 'more than 366 days');
+  assert.equal((await admin.inject({ method: 'GET', url: `${summaryUrl}&x=1` })).statusCode, 400, 'unknown parameters are rejected');
+  assert.equal((await admin.inject({ method: 'GET', url: '/api/reports/summary?from=2026-02-31&to=2026-03-01' })).statusCode, 400);
+  const body = JSON.stringify(await summary());
+  assert.ok(!body.includes(tag) && !/clientName|email|phone|health/i.test(body), 'only aggregates');
+});
+
+test('summary computes monthly income, overdue-unpaid, average fee and collected by method from the same entries as the list', async () => {
+  const before = await summary();
+  const [a, b] = await Promise.all([client('KpiA'), client('KpiB')]);
+  await pay(await charge(a, `Cuota kpi ${tag}`, 7000), 'transfer', 7000);
+  const overdueCharge = await post('/api/economics/charges', { clientId: b, concept: `Vencida kpi ${tag}`, amountCents: 3000, dueOn: '2020-01-15' });
+  assert.equal(overdueCharge.statusCode, 201, overdueCharge.body);
+  const after = await summary();
+  assert.equal(after.overdue.cents - before.overdue.cents, 3000);
+  assert.equal(after.overdue.count - before.overdue.count, 1);
+  const month = today.slice(0, 7);
+  const monthOf = (body) => body.monthly.find((row) => row.month === month);
+  assert.equal(monthOf(after).soldCents - monthOf(before).soldCents, 10000);
+  assert.equal(monthOf(after).collectedCents - monthOf(before).collectedCents, 7000);
+  const transfer = (body) => body.collectedByMethod.find((row) => row.method === 'transfer')?.cents ?? 0;
+  assert.equal(transfer(after) - transfer(before), 7000);
+  assert.ok(Number.isInteger(after.averageFee.cents) && after.occupancy.rate === null || after.occupancy.rate >= 0);
+  const wide = await admin.inject({ method: 'GET', url: `/api/reports/summary?from=${Number(today.slice(0, 4)) - 1}-${today.slice(5, 7)}-${today.slice(8, 10)}&to=${today}` });
+  assert.equal(wide.statusCode, 200);
+  assert.ok(wide.json().monthly.length >= 12, 'one point per month, empty months included');
+});
+
+function unzip(buffer) {
+  const entries = {}; let end = buffer.length - 22; while (buffer.readUInt32LE(end) !== 0x06054b50) end -= 1;
+  const count = buffer.readUInt16LE(end + 10); let offset = buffer.readUInt32LE(end + 16);
+  for (let i = 0; i < count; i += 1) {
+    const size = buffer.readUInt32LE(offset + 20); const nameLength = buffer.readUInt16LE(offset + 28); const local = buffer.readUInt32LE(offset + 42);
+    const name = buffer.toString('utf8', offset + 46, offset + 46 + nameLength);
+    const start = local + 30 + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
+    entries[name] = zlib.inflateRawSync(buffer.subarray(start, start + size)).toString('utf8');
+    offset += 46 + nameLength;
+  }
+  return entries;
+}
+
+test('the multi-sheet xlsx export needs billing.export and neutralises spreadsheet formulas in free text', async () => {
+  const url = `/api/reports/export.xlsx?${range}`;
+  assert.equal((await anonymous.inject({ method: 'GET', url })).statusCode, 401);
+  assert.equal((await reception.inject({ method: 'GET', url })).statusCode, 403);
+  assert.equal((await trainer.inject({ method: 'GET', url })).statusCode, 403);
+  assert.equal((await admin.inject({ method: 'GET', url: '/api/reports/export.xlsx?from=2026-10-10&to=2026-10-01' })).statusCode, 400);
+  const evil = await client('Formula', '=HYPERLINK("http://x")');
+  await pay(await charge(evil, `=1+1 ${tag}`, 1234), 'cash', 1234);
+  const response = await accountant.inject({ method: 'GET', url });
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers['content-type'], /spreadsheetml\.sheet/);
+  assert.match(response.headers['content-disposition'], /informes-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.xlsx/);
+  const files = unzip(response.rawPayload);
+  const workbook = files['xl/workbook.xml'];
+  for (const name of ['Resumen', 'Ventas', 'Cobros por método', 'Ingresos mensuales', 'Reservas por servicio', 'Cuotas por plan']) assert.ok(workbook.includes(`name="${name}"`), name);
+  const sales = files['xl/worksheets/sheet2.xml'];
+  assert.ok(sales.includes(`'=1+1 ${tag}`) && sales.includes(`'=HYPERLINK`), 'formula-looking text is prefixed');
+  assert.ok(!/<t[^>]*>=/.test(sales) && !sales.includes('<f>'), 'no cell starts with = and there are no formulas');
+  assert.ok(sales.includes('<v>12.34</v>'), 'amounts are numeric euros');
+});
+
+test('CSV and XLSX exports fail closed instead of returning silently truncated financial data', async () => {
+  const marker = `reports-export-limit-${tag}`;
+  const [fixtureClient] = await sql`INSERT INTO clients(first_name,last_name,status) VALUES ('Informe',${`Límite sintético ${tag}`},'active') RETURNING id`;
+  const clientId = fixtureClient.id;
+  try {
+    await sql`INSERT INTO economic_charges(client_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash)
+      SELECT ${clientId}, 'Informe sintético ' || ${tag} || ' ' || n::text, 100, ${today}::date, ${marker}, gen_random_uuid(), repeat('a',64)
+      FROM generate_series(1,5001) AS n`;
+
+    const csv = await admin.inject({ method: 'GET', url: `/api/reports/sales.csv?${range}` });
+    assert.equal(csv.statusCode, 413);
+    assert.deepEqual(csv.json(), { error: 'export_result_limit_exceeded', limit: 500 });
+
+    const xlsx = await admin.inject({ method: 'GET', url: `/api/reports/export.xlsx?${range}` });
+    assert.equal(xlsx.statusCode, 413);
+    assert.deepEqual(xlsx.json(), { error: 'export_result_limit_exceeded', limit: 5000 });
+  } finally {
+    // Economic rows are immutable by design. This API test runs against a disposable
+    // synthetic database, so disable only the immutability trigger while removing
+    // the uniquely marked fixtures; always restore it even if cleanup fails.
+    await sql`ALTER TABLE economic_charges DISABLE TRIGGER economic_charge_guard`;
+    try {
+      await sql`DELETE FROM economic_charges WHERE created_by=${marker}`;
+    } finally {
+      await sql`ALTER TABLE economic_charges ENABLE TRIGGER economic_charge_guard`;
+    }
+    // Client identities are also immutable in this schema; remove only this
+    // synthetic, now-unreferenced fixture using its dedicated delete guard.
+    await sql`ALTER TABLE clients DISABLE TRIGGER clients_no_delete`;
+    try {
+      await sql`DELETE FROM clients WHERE id=${clientId}`;
+    } finally {
+      await sql`ALTER TABLE clients ENABLE TRIGGER clients_no_delete`;
+    }
+  }
+});
+
+test('summary counts occupancy, attendance, reservations by service and fees by plan from the source tables', async () => {
+  const before = await summary();
+  const [area] = await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;
+  const [service] = await sql`INSERT INTO services(name,area_id,status) VALUES (${`Servicio KPI ${tag}`},${area.id},'active') RETURNING id`;
+  const [session] = await sql`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,created_by) VALUES (${service.id},${area.id},date_trunc('day',now() AT TIME ZONE 'Atlantic/Canary') AT TIME ZONE 'Atlantic/Canary' + interval '1 minute',45,4,'reports-test') RETURNING id`;
+  for (const [index, status] of ['attended', 'no_show', 'reserved'].entries()) {
+    const clientId = await client(`Reserva${index}`);
+    await sql`INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,status,created_by) VALUES (${session.id},${clientId},'qa-entitlement',${status},'reports-test')`;
+  }
+  const planResponse = await post('/api/plans', { name: `Plan KPI ${tag}`, serviceIds: [service.id], kind: 'session_pack', renewalCadence: null, basePriceCents: 5000, modules: [{ module: 'reservations', accessLevel: 'full', capabilities: [] }], rights: [{ rightType: 'service_access', serviceId: service.id }, { rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'per_service', quantity: 10 }] });
+  assert.equal(planResponse.statusCode, 201, planResponse.body);
+  assert.equal((await admin.inject({ method: 'POST', url: `/api/plans/${planResponse.json().id}/activate`, payload: {} })).statusCode, 200);
+  for (let n = 0; n < 2; n += 1) {
+    const sale = await post(`/api/clients/${await client('PlanKpi')}/plans`, { planId: planResponse.json().id, startsOn: today, dueOn: today, amountCents: 5000 });
+    assert.equal(sale.statusCode, 201, sale.body);
+  }
+  const after = await summary();
+  assert.equal(after.occupancy.sessions - before.occupancy.sessions, 1);
+  assert.equal(after.occupancy.capacity - before.occupancy.capacity, 4);
+  assert.equal(after.occupancy.occupied - before.occupancy.occupied, 3, 'reserved, attended and no-show hold a place');
+  assert.equal(after.attendance.attended - before.attendance.attended, 1);
+  assert.equal(after.attendance.noShow - before.attendance.noShow, 1);
+  assert.deepEqual(after.reservationsByService.find((row) => row.name === `Servicio KPI ${tag}`), { name: `Servicio KPI ${tag}`, count: 3 });
+  assert.deepEqual(after.feesByPlan.find((row) => row.name === `Plan KPI ${tag}`), { name: `Plan KPI ${tag}`, count: 2, soldCents: 10000 });
+  assert.ok(after.occupancy.rate > 0 && after.occupancy.rate <= 1 && after.attendance.rate > 0 && after.attendance.rate <= 1);
 });
