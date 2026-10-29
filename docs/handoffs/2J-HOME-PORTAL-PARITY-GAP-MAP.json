@@ -6,7 +6,6 @@
   "referenceMain": "ded5340d8404ed1577a9e4d404554cbef82173b7",
   "document": "docs/reviews/2J-HOME-PORTAL-PARITY-GAP-MAP.md",
   "draftPullRequest": 133,
-  "draftHead": "ff42523dc6e279ba907c6d90c71acc0b0d811151",
   "implementation": "No additional Home code change: existing supported flows are present or already covered by PRs #116/#126; remaining missing items have no safe published Platform contract or are blocked by D106.",
   "independentReview": {
     "pullRequest": 80,
