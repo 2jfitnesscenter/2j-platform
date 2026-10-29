@@ -37,6 +37,7 @@ const routes={
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   reports:{id:'reports',label:'Informes',href:'#reports',permission:'billing',icon:icons.ReceiptText},
+  monitoring:{id:'monitoring',label:'Monitorización',href:'#monitoring',permission:'ownerPanel',icon:icons.Activity},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
   settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
@@ -50,6 +51,7 @@ const navSections:NavSection[]=[
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
   {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
   {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.plans,routes.economics,routes.reports,routes.store,routes.news,routes.settings,routes['notification-settings']]},
+  {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.monitoring]},
 ];
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */
 export const hasProfessionalRoute = (id: string) => Object.hasOwn(routes, id);
