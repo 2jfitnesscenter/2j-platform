@@ -43,6 +43,13 @@ test('center hours, owner-assigned shifts and staffing gaps are owner-only and a
   assert.equal(shift.statusCode, 201, shift.body);
   assert.equal(shift.json().localDate, localDate);
 
+  const deactivateWithFutureShift = await owner.inject({ method: 'PATCH', url: `/api/staff/${staff.json().id}/status`, payload: { status: 'inactive' } });
+  assert.equal(deactivateWithFutureShift.statusCode, 409, deactivateWithFutureShift.body);
+  assert.equal(deactivateWithFutureShift.json().error, 'future_calendar_items_exist');
+  const archiveWithFutureShift = await owner.inject({ method: 'PATCH', url: `/api/staff/${staff.json().id}/archive` });
+  assert.equal(archiveWithFutureShift.statusCode, 409, archiveWithFutureShift.body);
+  assert.equal(archiveWithFutureShift.json().error, 'future_calendar_items_exist');
+
   const overlap = await owner.inject({ method: 'POST', url: '/api/center/shifts', payload: {
     professionalId: staff.json().id, localDate, startsAt: '12:30', endsAt: '15:00',
   } });
@@ -60,6 +67,12 @@ test('center hours, owner-assigned shifts and staffing gaps are owner-only and a
   const cancelled = await owner.inject({ method: 'PATCH', url: `/api/center/shifts/${shift.json().id}/cancel` });
   assert.equal(cancelled.statusCode, 200, cancelled.body);
   assert.equal(cancelled.json().status, 'cancelled');
+  const deactivateAfterCancellingShift = await owner.inject({ method: 'PATCH', url: `/api/staff/${staff.json().id}/status`, payload: { status: 'inactive' } });
+  assert.equal(deactivateAfterCancellingShift.statusCode, 200, deactivateAfterCancellingShift.body);
+  assert.equal(deactivateAfterCancellingShift.json().status, 'inactive');
+  const coverageAfterDeactivation = await owner.inject({ method: 'GET', url: `/api/center/coverage?date=${localDate}` });
+  assert.equal(coverageAfterDeactivation.statusCode, 200, coverageAfterDeactivation.body);
+  assert.equal(coverageAfterDeactivation.json().assignedShifts.length, 0, 'inactive professionals must not count toward assigned coverage');
 
   const revisedHours = await owner.inject({ method: 'POST', url: '/api/center/opening-hours', payload: { effectiveFrom: localDate, intervals: [
     { weekday, opensAt: '09:00', closesAt: '18:00' },
@@ -113,12 +126,15 @@ test('editing a selected opening-hours period preserves every future effective p
   const currentAtStart = await owner.inject({ method: 'GET', url: `/api/center/opening-hours?date=${effectiveFrom}` });
   assert.equal(currentAtStart.statusCode, 200, currentAtStart.body);
   assert.equal(currentAtStart.json().intervals.length, 1);
-  assert.equal(currentAtStart.json().intervals[0].opensAt, '08:00:00');
+  assert.equal(currentAtStart.json().intervals[0].opensAt, '08:00');
+  assert.equal(currentAtStart.json().intervals[0].closesAt, '19:00');
+  const roundTrip = await owner.inject({ method: 'POST', url: '/api/center/opening-hours', payload: { effectiveFrom, intervals: currentAtStart.json().intervals.map(({ weekday, opensAt, closesAt }) => ({ weekday, opensAt, closesAt })) } });
+  assert.equal(roundTrip.statusCode, 201, roundTrip.body);
   const futureAtStart = await owner.inject({ method: 'GET', url: `/api/center/opening-hours?date=${futureFrom}` });
   assert.equal(futureAtStart.statusCode, 200, futureAtStart.body);
   assert.equal(futureAtStart.json().effectiveOn, futureFrom);
   assert.equal(futureAtStart.json().intervals.length, 1);
-  assert.equal(futureAtStart.json().intervals[0].opensAt, '10:00:00');
+  assert.equal(futureAtStart.json().intervals[0].opensAt, '10:00');
   assert.equal(futureAtStart.json().intervals[0].validFrom, futureFrom);
 });
 

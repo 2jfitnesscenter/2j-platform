@@ -65,8 +65,8 @@ export function registerCenterOperationsRoutes(app: FastifyInstance<any, any, an
     if (!query.success) return reply.code(400).send({ error: 'invalid_effective_date' });
     try {
       const rows = query.data.date
-        ? await db`SELECT id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' AND valid_from<=${query.data.date}::date AND (valid_until IS NULL OR valid_until>=${query.data.date}::date) ORDER BY weekday,opens_at,valid_from`
-        : await db`SELECT id,weekday,opens_at AS "opensAt",closes_at AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' ORDER BY weekday,opens_at,valid_from`;
+        ? await db`SELECT id,weekday,to_char(opens_at,'HH24:MI') AS "opensAt",to_char(closes_at,'HH24:MI') AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' AND valid_from<=${query.data.date}::date AND (valid_until IS NULL OR valid_until>=${query.data.date}::date) ORDER BY weekday,opens_at,valid_from`
+        : await db`SELECT id,weekday,to_char(opens_at,'HH24:MI') AS "opensAt",to_char(closes_at,'HH24:MI') AS "closesAt",valid_from::text AS "validFrom",valid_until::text AS "validUntil",status FROM center_opening_hours WHERE status='active' ORDER BY weekday,opens_at,valid_from`;
       return { timezone: 'Atlantic/Canary', effectiveOn: query.data.date ?? null, intervals: rows };
     } catch (error) { return fail(reply, error); }
   });
@@ -162,7 +162,7 @@ export function registerCenterOperationsRoutes(app: FastifyInstance<any, any, an
     try {
       const [hours, shifts, cash] = await Promise.all([
         db`SELECT id,(((${parsed.data.date}::date+opens_at) AT TIME ZONE 'Atlantic/Canary')) AS "startsAt",(((${parsed.data.date}::date+closes_at) AT TIME ZONE 'Atlantic/Canary')) AS "endsAt" FROM center_opening_hours WHERE status='active' AND weekday=extract(dow FROM ${parsed.data.date}::date) AND valid_from<=${parsed.data.date}::date AND (valid_until IS NULL OR valid_until>=${parsed.data.date}::date) ORDER BY opens_at,id`,
-        db`SELECT s.id,s.professional_id AS "professionalId",p.display_name AS "displayName",s.starts_at AS "startsAt",s.ends_at AS "endsAt" FROM staff_shift_assignments s JOIN staff_professionals p ON p.id=s.professional_id WHERE s.local_date=${parsed.data.date}::date AND s.status='scheduled' ORDER BY s.starts_at,s.id`,
+        db`SELECT s.id,s.professional_id AS "professionalId",p.display_name AS "displayName",s.starts_at AS "startsAt",s.ends_at AS "endsAt" FROM staff_shift_assignments s JOIN staff_professionals p ON p.id=s.professional_id AND p.status='active' WHERE s.local_date=${parsed.data.date}::date AND s.status='scheduled' ORDER BY s.starts_at,s.id`,
         db`SELECT id,status,opened_at AS "openedAt",closed_at AS "closedAt" FROM economic_cash_sessions WHERE local_date=${parsed.data.date}::date ORDER BY opened_at,id`,
       ]);
       const intervals = hours.map((row: any) => ({ startsAt: new Date(row.startsAt).toISOString(), endsAt: new Date(row.endsAt).toISOString() }));
