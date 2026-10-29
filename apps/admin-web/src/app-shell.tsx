@@ -33,6 +33,7 @@ const routes={
   calendar:{id:'calendar',label:'Agenda',href:'#calendar',permission:'calendar',icon:icons.CalendarDays},
   spaces:{id:'spaces',label:'Espacios',href:'#spaces',permission:'calendar',icon:icons.DoorOpen},
   services:{id:'services',label:'Servicios',href:'#services',permission:'calendar',icon:icons.LayoutGrid},
+  contracts:{id:'contracts',label:'Contratos',href:'#contracts',permission:'billing',icon:icons.FileText},
   plans:{id:'plans',label:'Planes y cuotas',href:'#plans',permission:'catalogPricingManage',icon:icons.Ticket},
   timeclock:{id:'timeclock',label:'Fichaje',href:'#timeclock',permission:'staff',icon:icons.Clock},
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
@@ -46,7 +47,7 @@ const routes={
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
   {id:'operation',label:'Operación',icon:icons.LayoutDashboard,children:[routes.home,routes.activity,routes.timeclock,routes.calendar,routes.clients]},
-  {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.plans,routes.economics,routes.store,routes.promotions]},
+  {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.contracts,routes.plans,routes.economics,routes.store,routes.promotions]},
   {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.settings,routes['notification-settings']]},
   {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[]},
 ];
