@@ -17,7 +17,7 @@ export type CommandCenterModel = {
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
 export const useProfessionalCapabilities = () => React.useContext(CommandContext).capabilities;
-export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;catalogPricingManage?:boolean};
+export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean};
 export function ProfessionalCapabilitiesProvider({capabilities,children}:{capabilities:NavigationCapabilities|null;children:React.ReactNode}) {
   return <CommandContext.Provider value={{data:null,state:'loading',error:'',reload:()=>{},capabilities}}>{children}</CommandContext.Provider>;
 }
@@ -35,6 +35,7 @@ const routes={
   plans:{id:'plans',label:'Planes y cuotas',href:'#plans',permission:'catalogPricingManage',icon:icons.Ticket},
   timeclock:{id:'timeclock',label:'Fichaje',href:'#timeclock',permission:'staff',icon:icons.Clock},
   staff:{id:'staff',label:'Equipo',href:'#staff',permission:'staff',icon:icons.UserCog},
+  caja:{id:'caja',label:'Caja',href:'#caja',permission:'cash',icon:icons.Wallet},
   economics:{id:'economics',label:'Economía',href:'#economics',permission:'billing',icon:icons.Wallet},
   reports:{id:'reports',label:'Informes',href:'#reports',permission:'billing',icon:icons.ReceiptText},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
@@ -49,6 +50,7 @@ const navSections:NavSection[]=[
   {id:'gym',label:'Mi gimnasio',icon:icons.Dumbbell,children:[routes['my-gym'],routes.calendar,routes.spaces,routes.services]},
   {id:'staff',label:'Equipo',icon:icons.UserCog,route:routes.staff},
   {id:'timeclock',label:'Fichaje',icon:icons.Clock,route:routes.timeclock},
+  {id:'caja',label:'Caja',icon:icons.Wallet,route:routes.caja},
   {id:'business',label:'Negocio',icon:icons.Briefcase,children:[routes.plans,routes.economics,routes.reports,routes.store,routes.news,routes.settings,routes['notification-settings']]},
 ];
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */

@@ -68,6 +68,7 @@ export function registerDashboardRoutes(
       capacityOverride: can(context, 'scheduling.override_capacity'),
       catalogPricingManage: can(context, 'catalog.pricing.manage'),
       store: can(context, 'store.catalog.read'),
+      cash: can(context, 'billing.cash.manage'),
     };
   });
 
