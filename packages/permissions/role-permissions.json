@@ -47,6 +47,9 @@
     "staff.manage",
     "staff.schedule.read",
     "staff.schedule.manage",
+    "staff.shifts.read",
+    "staff.shifts.manage",
+    "center.hours.manage",
     "staff.schedule.override",
     "staff.absence.read",
     "staff.absence.manage",
@@ -141,7 +144,8 @@
       "billing.read-basic",
       "billing.read-tax",
       "billing.export"
-    ]
+    ],
+    "owner": []
   },
   "unresolved": [
     "Official fiscal-document issuance remains blocked behind a legal/fiscal gate; accountant has read/export access only",

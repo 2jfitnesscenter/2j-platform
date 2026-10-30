@@ -143,6 +143,48 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       return {timezone:'Atlantic/Canary',date:businessDate?.date??null,registers,total:{expectedCents:registers.reduce((sum,row)=>sum+Number(row.expectedCents??0),0),countedCents:closed?registers.reduce((sum,row)=>sum+Number(row.countedCents??0),0):null,differenceCents:closed?registers.reduce((sum,row)=>sum+Number(row.differenceCents??0),0):null,balanced:closed?registers.every(row=>row.balanced):null}};
     }catch{return reply.code(500).send({error:'cash_day_read_failed'});}
   });
+  app.get('/api/economics/cash/sessions',async(request,reply)=>{
+    reply.header('Cache-Control','no-store');
+    const context=await auth(request,reply,'billing.cash.manage');if(!context)return;
+    const isDate=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value=>!Number.isNaN(Date.parse(`${value}T00:00:00Z`)));
+    const parsed=z.object({from:isDate.optional(),to:isDate.optional(),registerCode:z.enum(['bunker','sala']).optional()}).strict().safeParse(request.query);
+    if(!parsed.success)return reply.code(400).send({error:'validation_error'});
+    const [todayRow]=await db`SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date::text AS today`;const today=String(todayRow?.today);
+    const to=parsed.data.to??today;
+    const [fromRow]=await db`SELECT (${to}::date-13)::text AS "defaultFrom"`;
+    const from=parsed.data.from??String(fromRow?.defaultFrom);
+    const [spanRow]=await db`SELECT (${to}::date-${from}::date) AS span`;
+    const span=Number(spanRow?.span);if(span<0||span>62)return reply.code(400).send({error:'validation_error',message:'El rango admite como máximo 63 días.'});
+    const ownerView=can(context,'owner.panel.read');
+    const registerFilter=parsed.data.registerCode??null;
+    const rows=await db`SELECT s.id,r.code AS "registerCode",r.name AS "registerName",s.local_date::text AS "localDate",s.status,s.opened_at AS "openedAt",s.closed_at AS "closedAt",
+        opener.display_name AS "openedByName",closer.display_name AS "closedByName"
+      FROM economic_cash_sessions s LEFT JOIN economic_cash_registers r ON r.id=s.register_id
+      LEFT JOIN staff_professionals opener ON opener.auth_actor_id=s.opened_by LEFT JOIN staff_professionals closer ON closer.auth_actor_id=s.closed_by
+      WHERE s.local_date BETWEEN ${from}::date AND ${to}::date
+        AND (${registerFilter}::text IS NULL OR r.code=${registerFilter})
+        AND (${ownerView}::boolean OR EXISTS(SELECT 1 FROM economic_cash_custodies c WHERE c.cash_session_id=s.id AND c.actor_id=${context.actorId}))
+      ORDER BY s.local_date DESC,r.code NULLS LAST,s.opened_at DESC LIMIT 200`;
+    const items=[] as any[];
+    for(const row of rows){
+      const base={id:row.id,registerCode:row.registerCode,registerName:row.registerName??'Histórica sin registro',localDate:row.localDate,status:row.status,openedAt:row.openedAt,closedAt:row.closedAt,openedByName:row.openedByName??null,closedByName:row.closedByName??null};
+      if(!ownerView){items.push(base);continue;}
+      const snapshot=await cashSnapshot(db,row.id);
+      const closed=row.status!=='open';
+      items.push({...base,openingCents:Number(snapshot?.openingCents??0),expectedCents:Number(snapshot?.expectedCents??0),countedCents:closed?Number(snapshot?.countedCents??0):null,differenceCents:closed?Number(snapshot?.differenceCents??0):null,balanced:closed?Number(snapshot?.differenceCents??0)===0:null});
+    }
+    const dayMap=new Map<string,any>();
+    for(const item of items){
+      const day=dayMap.get(item.localDate)??{date:item.localDate,sessions:0,openCount:0,expectedCents:0,countedCents:0,differenceCents:0};
+      day.sessions+=1;if(item.status==='open')day.openCount+=1;
+      if(ownerView){day.expectedCents+=item.expectedCents;day.countedCents+=item.countedCents??0;day.differenceCents+=item.differenceCents??0;}
+      dayMap.set(item.localDate,day);
+    }
+    const days=[...dayMap.values()].map(day=>ownerView
+      ?{date:day.date,sessions:day.sessions,openCount:day.openCount,closed:day.openCount===0,expectedCents:day.expectedCents,countedCents:day.openCount===0?day.countedCents:null,differenceCents:day.openCount===0?day.differenceCents:null,balanced:day.openCount===0?day.differenceCents===0:null}
+      :{date:day.date,sessions:day.sessions,openCount:day.openCount,closed:day.openCount===0});
+    return {timezone:'Atlantic/Canary',from,to,registerCode:registerFilter,items,days,truncated:rows.length===200};
+  });
   app.post('/api/economics/cash/open', async (request, reply) => {
     const context = await auth(request, reply, 'billing.cash.manage'); if (!context) return;
     const parsed = z.object({ registerCode: z.enum(['bunker','sala']), openingDenominations: cashDenominationsSchema }).strict().safeParse(request.body);
@@ -627,12 +669,6 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       if ('error' in result) return reply.code(result.error === 'series_not_found' || result.error === 'source_charge_not_found' ? 404 : result.error === 'idempotency_conflict' || result.error === 'payment_required' ? 409 : 422).send({ error:result.error });
       return reply.code(result.replay ? 200 : 201).send({ id:result.id, status:'draft', officialNumber:null, officiallyIssued:false });
     } catch { return reply.code(500).send({ error:'invoice_draft_failed' }); }
-  });
-  app.post('/api/economics/invoice-drafts/:draftId/issue', async (request, reply) => {
-    if (!await auth(request, reply, 'billing.invoices.manage')) return;
-    reply.header('Cache-Control','no-store');
-    const params = z.object({ draftId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error:'validation_error' });
-    return reply.code(423).send({ error:'legal_fiscal_gate_closed', message:'La emisión oficial seguirá bloqueada hasta aprobar requisitos fiscales y legales.' });
   });
   app.get('/api/economics/document-policy',async(request,reply)=>{
     if(!await auth(request,reply,'billing.read-tax'))return;

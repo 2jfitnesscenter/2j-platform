@@ -228,7 +228,7 @@ export function registerClientRoutes(
         summary,
         reservations,
         waitlistEntries,
-        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) || (section.id === 'purchases' && can(context, 'store.sales.read')) ? 'ready' : 'not_connected' })),
+        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', ...(section.id === 'documents' ? { canManage: can(context, 'documents.manage') } : {}), dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) || (section.id === 'purchases' && can(context, 'store.sales.read')) ? 'ready' : 'not_connected' })),
         history: events.map((event) => ({ id: event.id, eventType: event.eventType, actorLabel: actorLabel(event.actorRole), occurredAt: event.occurredAt })),
       };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId' }, 'client detail failed'); return reply.code(500).send({ error: 'internal_error' }); }

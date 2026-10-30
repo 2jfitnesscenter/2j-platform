@@ -1,7 +1,8 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { ConfirmDialog, SaveState } from '@2j/ui';
 
-const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 type NewsStatus = 'draft' | 'published' | 'withdrawn';
 type NewsItem = { id:string; title:string; body:string; status:NewsStatus; featured:boolean; publishedAt:string|null; updatedAt:string; createdAt:string };
 type AuditEvent = { id:string; action:string; actorId:string; occurredAt:string; details:Record<string,unknown> };
@@ -25,7 +26,7 @@ export function NewsPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   const load=React.useCallback(async()=>{
     setLoading(true);setError('');
-    try{const response=await fetch(`${api}/api/admin/news`,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json() as {items:NewsItem[]};setItems(result.items);}
+    try{const response=await apiFetch(`${api}/api/admin/news`,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json() as {items:NewsItem[]};setItems(result.items);}
     catch{setError('No se han podido cargar las noticias del centro. Comprueba tus permisos e inténtalo de nuevo.');}
     finally{setLoading(false);}
   },[]);
@@ -36,7 +37,7 @@ export function NewsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const save=async(event:React.FormEvent)=>{
     event.preventDefault();setSaving(true);setError('');setMessage('');
     try{
-      const response=await fetch(editing?`${api}/api/admin/news/${editing.id}`:`${api}/api/admin/news`,{method:editing?'PATCH':'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({title,body})});
+      const response=await apiFetch(editing?`${api}/api/admin/news/${editing.id}`:`${api}/api/admin/news`,{method:editing?'PATCH':'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({title,body})});
       if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error==='validation_error'?'Revisa el título y el texto.':'No se ha podido guardar la noticia.');}
       reset();setMessage(editing?'Cambios guardados.':'Borrador creado.');await load();
     }catch(cause){setError(cause instanceof Error?cause.message:'No se ha podido guardar la noticia.');}
@@ -45,14 +46,14 @@ export function NewsPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   const mutate=async(item:NewsItem,action:'publish'|'withdraw'|'feature'|'unfeature')=>{
     setError('');setMessage('');
-    try{const response=await fetch(`${api}/api/admin/news/${item.id}/${action}`,{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:'{}'});if(!response.ok)throw new Error();setMessage(action==='publish'?'Noticia publicada.':action==='withdraw'?'Noticia retirada.':action==='feature'?'Noticia destacada.':'Se quitó de destacadas.');await load();}
+    try{const response=await apiFetch(`${api}/api/admin/news/${item.id}/${action}`,{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:'{}'});if(!response.ok)throw new Error();setMessage(action==='publish'?'Noticia publicada.':action==='withdraw'?'Noticia retirada.':action==='feature'?'Noticia destacada.':'Se quitó de destacadas.');await load();}
     catch{setError('No se pudo actualizar el estado de la noticia.');}
   };
 
   const toggleAudit=async(item:NewsItem)=>{
     if(auditFor===item.id){setAuditFor(null);return;}
     setAuditFor(item.id);setAudit([]);setError('');
-    try{const response=await fetch(`${api}/api/admin/news/${item.id}/audit`,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json() as {events:AuditEvent[]};setAudit(result.events);}
+    try{const response=await apiFetch(`${api}/api/admin/news/${item.id}/audit`,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json() as {events:AuditEvent[]};setAudit(result.events);}
     catch{setError('No se pudo cargar el historial de esta noticia.');}
   };
 
