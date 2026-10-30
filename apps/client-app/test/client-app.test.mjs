@@ -53,6 +53,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
     sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '00000000-0000-4000-8000-000000000001' } },
   });
   let loggedIn = false; const requests = []; let memberPreferences = { appearance: 'dark', language: 'es' };
+  let trainingSummaryResponse = { status: 'linked', summaryStatus: 'available', summary: { trainingStatus: 'active', asOf: '2026-10-13T12:00:00.000Z', currentProgram: { name: 'Fuerza base' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } } };
   globalThis.fetch = async (url, init = {}) => {
     requests.push({ url: String(url), init });
     if (url === '/api/pilot/member/login') { assert.deepEqual(JSON.parse(init.body), { code: '2j-member-a-local' }); loggedIn = true; return new Response(JSON.stringify({ expiresAt: new Date(Date.now() + 3_600_000).toISOString() }), { headers: { 'content-type': 'application/json' } }); }
@@ -68,7 +69,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response(JSON.stringify([]));
     if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
     if (url === '/api/me/notifications') return new Response(JSON.stringify({ items: [] }));
-    if (url === '/api/me/training-summary') return new Response(JSON.stringify({ status: 'linked', summaryStatus: 'available', summary: { trainingStatus: 'active', asOf: '2026-10-13T12:00:00.000Z', currentProgram: { name: 'Fuerza base' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } } }));
+    if (url === '/api/me/training-summary') return new Response(JSON.stringify(trainingSummaryResponse));
     return new Response('{}');
   };
   const { render, cleanup, fireEvent, within, ClientApp } = await uiHarness();
@@ -111,6 +112,11 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(ui.getByText(/4 entrenos en los últimos 30 días/));
   assert.ok(ui.getByText(/contrato 2J-089/));
   assert.ok(ui.getByText(/Medidas y pliegues registrados\. · No conectado/));
+  fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
+  trainingSummaryResponse = { status: 'linked', summaryStatus: 'blocked', reason: 'consent_required' };
+  fireEvent.click(await ui.findByRole('button', { name: /Abrir Mi evolución/ }));
+  assert.ok(await ui.findByText('Sin datos disponibles.'));
+  assert.equal(ui.queryByText(/no está disponible en este entorno/), null, 'A68 consent blocks are not shown as connectivity failures');
   fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
   fireEvent.click(ui.getByRole('button', { name: /Notificaciones.*avisos sin leer/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));

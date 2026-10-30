@@ -4,7 +4,7 @@
 
 - Rama local aislada: `agent/codex/2J-HOME-A67-MEMBER-CONTINUATION`.
 - Base actualizada: `main` en `fe899e900e66598779136fea351d488e8937db39`; incluye #157 y la puerta A68 de Mi evolución (#169).
-- PR #168 se está restackeando sobre `main`; la rama publicada se actualizará con lease, sin sobrescribir cambios ajenos. No se ha fusionado ni desplegado.
+- PR #168 está restackeado sobre `main`. No se ha fusionado ni desplegado.
 
 ## Alcance integrado
 
@@ -25,8 +25,8 @@
 
 ## Validación
 
-Tras restack sobre `main`: `pnpm --filter @2j/client-app test` 49/49; `typecheck` correcto; `build` correcto; `build:demo` correcto; `git diff --check` correcto. Son pruebas de cliente con respuestas sintéticas; no se probó una sesión real.
+Tras restack sobre `main` y corregir el estado A68 bloqueado en Mi evolución: `pnpm --filter @2j/client-app test` 49/49; `typecheck` correcto; `build` correcto; `build:demo` correcto; `git diff --check` correcto. Se añadió regresión para `summaryStatus: blocked` con `consent_required`; Home muestra «Sin datos disponibles». Son pruebas de cliente con respuestas sintéticas; no se probó una sesión real.
 
 ## Revisión requerida
 
-La revisión independiente nivel 2 del commit anterior (`d60ed8cdd3e520b286214ddcc11fc8f2ab012175`) no encontró hallazgos en Mis facturas. Tras este restack requiere confirmación del delta exacto. CI remoto se volverá a ejecutar sobre el nuevo HEAD; no hay despliegue.
+Revisión independiente del restack (`5e4a80a895b5330d8623cf4a04cf5e0352c48c74`) encontró un P2: el bloqueo A68 se representaba como «No conectado». Corregido para mostrar «Sin datos disponibles» y cubierto por regresión; se requiere confirmación independiente de este arreglo en el HEAD actualizado. CI remoto se está ejecutando de nuevo sobre el nuevo HEAD; no hay despliegue.
