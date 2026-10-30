@@ -56,6 +56,7 @@ export function registerDashboardRoutes(
       invoices: can(context, 'billing.read-tax'),
       staff: can(context, 'staff.read'),
       ownerPanel: can(context, 'owner.panel.read'),
+      linkReviewManage: can(context, 'platform_link_issue'),
       notificationSettings: can(context, 'settings.manage'),
       news: can(context, 'news.manage'),
       reservationManage: can(context, 'reservations.manage'),

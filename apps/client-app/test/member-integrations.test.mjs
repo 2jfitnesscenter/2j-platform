@@ -110,12 +110,12 @@ test('manual link review sends only an approved reason and optional note to the 
   await ui.findByRole('heading', { name: 'Hola, María' });
   fireEvent.click(ui.getByRole('button', { name: 'Búnker', exact: true }));
   fireEvent.click(await ui.findByRole('button', { name: /Gestionar vinculación/ }));
-  fireEvent.change(await ui.findByLabelText('Motivo'), { target: { value: 'proof_failed' } });
+  fireEvent.change(await ui.findByLabelText('Motivo'), { target: { value: 'support_request' } });
   fireEvent.change(ui.getByLabelText('Nota para el equipo (opcional)'), { target: { value: 'El código no aparece en mi cuenta.' } });
   fireEvent.click(ui.getByRole('button', { name: 'Solicitar revisión' }));
   await ui.findByText(/Solicitud en revisión/);
   const post = requests.find(row => row.url === '/api/me/training/link-review' && row.method === 'POST');
-  assert.deepEqual(JSON.parse(post.init.body), { reason: 'proof_failed', note: 'El código no aparece en mi cuenta.' });
+  assert.deepEqual(JSON.parse(post.init.body), { reason: 'support_request', note: 'El código no aparece en mi cuenta.' });
   assert.equal(post.init.credentials, 'include');
   assert.equal(JSON.stringify(JSON.parse(post.init.body)).match(/trainingUserId|email|phone|name/gi), null);
   cleanup(); dom.window.close();

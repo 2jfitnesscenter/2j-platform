@@ -97,6 +97,17 @@ test('owner cash panel permission is an explicit server-side grant and never com
   assert.equal(can({ actorId: 'fixture', role: 'admin', explicitPermissions: ['owner.panel.read'], deniedPermissions: ['owner.panel.read'] }, 'owner.panel.read'), false);
 });
 
+test('A29 Platform link issue is a dedicated explicit grant, not implied by Admin or identity.people.manage', () => {
+  assert.equal(knownPermissions.has('platform_link_issue'), true);
+  for (const role of ['admin', 'trainer', 'reception-management', 'accountant', 'owner']) {
+    assert.equal(can({ actorId: 'fixture', role }, 'platform_link_issue'), false);
+  }
+  assert.equal(can({ actorId: 'fixture', role: 'admin', explicitPermissions: ['identity.people.manage'] }, 'platform_link_issue'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'owner', explicitPermissions: ['platform_link_issue'] }, 'platform_link_issue'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin', explicitPermissions: ['platform_link_issue'] }, 'platform_link_issue'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin', explicitPermissions: ['platform_link_issue'], deniedPermissions: ['platform_link_issue'] }, 'platform_link_issue'), false);
+});
+
 test('the owner authentication context receives no staff-role permissions', () => {
   const owner = { actorId: 'owner-person', role: 'owner', explicitPermissions: ['owner.panel.read'] };
   assert.equal(can(owner, 'owner.panel.read'), true);

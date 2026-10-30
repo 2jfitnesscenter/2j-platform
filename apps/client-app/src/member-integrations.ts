@@ -8,9 +8,9 @@ export type SessionAvailability =
   | 'waitlist_suspended';
 
 export type TrainingLinkReviewReason =
-  | 'lost_passkey'
-  | 'no_access_to_training_account'
-  | 'proof_failed'
+  | 'lost_device'
+  | 'no_home_access'
+  | 'support_request'
   | 'other';
 
 export const trainingLinkEndpoints = {

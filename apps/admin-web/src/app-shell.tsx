@@ -20,7 +20,7 @@ export type CommandCenterModel = {
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
 export const useProfessionalCapabilities = () => React.useContext(CommandContext).capabilities;
-export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean};
+export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean;linkReviewManage?:boolean};
 export function ProfessionalCapabilitiesProvider({capabilities,children}:{capabilities:NavigationCapabilities|null;children:React.ReactNode}) {
   return <CommandContext.Provider value={{data:null,state:'loading',error:'',reload:()=>{},capabilities}}>{children}</CommandContext.Provider>;
 }
@@ -48,13 +48,14 @@ const routes={
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
   import:{id:'import',label:'Importar clientes',href:'#import',permission:'notificationSettings',icon:icons.Users},
+  invitations:{id:'invitations',label:'Invitaciones',href:'#invitations',permission:'linkReviewManage',icon:icons.UserRound},
   settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
   'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
   {id:'operation',label:'Operación',icon:icons.LayoutDashboard,children:[routes.home,routes.activity,routes.timeclock,routes.calendar,routes.clients]},
   {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.contracts,routes.plans,routes.economics,routes.caja,routes.store,routes.promotions]},
-  {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.import,routes.settings,routes['notification-settings']]},
+  {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.invitations,routes.import,routes.settings,routes['notification-settings']]},
   {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.management,routes.monitoring]},
 ];
 /** Groups that start open on a wide sidebar. */
