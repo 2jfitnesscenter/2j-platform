@@ -21,9 +21,9 @@ type LoadState = 'loading' | 'ready' | 'denied' | 'error';
 type Action = 'approve' | 'reject' | 'dismiss';
 
 const reasonLabels: Record<string, string> = {
-  lost_passkey: 'Ha perdido el dispositivo de acceso',
-  no_access_to_training_account: 'No puede acceder a su cuenta de Búnker',
-  proof_failed: 'No pudo completar la verificación',
+  lost_device: 'Ha perdido el dispositivo de acceso',
+  no_home_access: 'No puede acceder a Home',
+  support_request: 'Necesita ayuda del equipo',
   other: 'Otro motivo',
 };
 const statusLabels: Record<ReviewStatus, string> = { open: 'Pendiente', approved: 'Revisada para vincular', rejected: 'Rechazada', dismissed: 'Descartada' };

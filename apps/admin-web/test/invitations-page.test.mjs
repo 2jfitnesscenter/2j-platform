@@ -10,7 +10,7 @@ const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@t
 const { InvitationsPage } = await import('../src/invitations-page.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
 after(() => dom.window.close());
-const item = { id: 'case-1', personId: 'ignored-by-ui', reason: 'lost_passkey', memberNote: 'Perdió su llave de acceso.', status: 'open', createdAt: '2026-10-30T09:00:00Z', person: { displayName: 'Cliente Sintético' } };
+const item = { id: 'case-1', personId: 'ignored-by-ui', reason: 'lost_device', memberNote: 'Perdió su llave de acceso.', status: 'open', createdAt: '2026-10-30T09:00:00Z', person: { displayName: 'Cliente Sintético' } };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 
 test('muestra la cola H13 real y deja claro que aprobar no activa el vínculo Búnker', async () => {

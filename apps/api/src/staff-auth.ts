@@ -67,7 +67,7 @@ export function createStaffAuth(database: DB, options: StaffAuthOptions) {
     const assignedRole: ApprovedRole | null = session.isOwner === true ? 'owner' : approvedRole(session.baseRole);
     if (!assignedRole) return null;
     await database.unsafe('UPDATE platform_staff_sessions SET last_seen_at=now() WHERE session_hash=$1 AND revoked_at IS NULL', [digest]);
-    return { actorId: String(session.actorId), role: assignedRole, ...(session.isOwner === true ? { explicitPermissions: ['owner.panel.read', 'platform_link_issue'] } : {}) };
+    return { actorId: String(session.actorId), personId: String(session.personId), role: assignedRole, ...(session.isOwner === true ? { explicitPermissions: ['owner.panel.read', 'platform_link_issue'] } : {}) };
   }
 
   async function revoke(request: FastifyRequest) {

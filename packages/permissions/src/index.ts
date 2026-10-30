@@ -2,6 +2,8 @@ export type ApprovedRole = 'admin' | 'trainer' | 'reception-management' | 'accou
 
 export interface AuthorizationContext {
   readonly actorId: string;
+  /** Stable central personId supplied only by a trusted server-side identity resolver. */
+  readonly personId?: string;
   readonly role: ApprovedRole;
   readonly deniedPermissions?: readonly string[];
   /** Explicit grants supplied only by a trusted server-side authorization resolver. */

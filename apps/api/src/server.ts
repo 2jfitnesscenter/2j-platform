@@ -199,6 +199,8 @@ export type ServerOptions = {
   ownerActorId?: string | null;
   /** Stable Platform personId configured by a verified owner bootstrap; never supplied by a browser. */
   ownerPersonId?: string | null;
+  /** Comma-delimited stable Platform personIds permitted to manage H13 reviews (PLATFORM_LINK_ISSUERS); never emails or display names. */
+  platformLinkIssuers?: readonly string[];
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
   /** Injectable clock for deterministic Member read-contract tests; defaults to the system clock. */
@@ -293,10 +295,21 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     throw new Error('ownerActorId must be a trusted non-empty identity subject of at most 120 characters.');
   }
   const ownerActorId = options.ownerActorId?.trim() || null;
+  const platformLinkIssuers = new Set((options.platformLinkIssuers ?? (process.env.PLATFORM_LINK_ISSUERS ?? '').split(',')).map(value => value.trim().toLowerCase()).filter(Boolean));
+  if ([...platformLinkIssuers].some(value => !z.string().uuid().safeParse(value).success)) {
+    throw new Error('PLATFORM_LINK_ISSUERS must contain stable Platform personId UUIDs, not names, emails, or other identifiers.');
+  }
+  const grantLinkIssue = (context: AuthorizationContext | null): AuthorizationContext | null => {
+    if (!context || !context.personId || !platformLinkIssuers.has(context.personId.toLowerCase()) || context.explicitPermissions?.includes('platform_link_issue')) return context;
+    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'platform_link_issue'])] };
+  };
   const trustedAuthorizationResolver = async (request: import('fastify').FastifyRequest) => {
     const context = await baseAuthorizationResolver(request);
-    if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
-    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read', 'platform_link_issue'])] };
+    if (!context) return null;
+    const granted = grantLinkIssue(context);
+    if (!granted) return null;
+    if (!ownerActorId || granted.actorId !== ownerActorId) return granted;
+    return { ...granted, explicitPermissions: [...new Set([...(granted.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read', 'platform_link_issue'])] };
   };
   if (options.ownerPersonId != null && !z.string().uuid().safeParse(options.ownerPersonId).success) throw new Error('ownerPersonId must be a trusted Platform person UUID.');
   const ownerPersonId = options.ownerPersonId?.toLowerCase() ?? null;
@@ -317,7 +330,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   });
   const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
     const session = await staffAuth.resolve(request);
-    return session ?? trustedAuthorizationResolver(request);
+    return session ? grantLinkIssue(session) : trustedAuthorizationResolver(request);
   };
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
@@ -819,6 +832,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     ownerActorId: process.env.PLATFORM_OWNER_ACTOR_ID ?? null,
     ...clientImportRuntimeFlags(),
     ownerPersonId: process.env.PLATFORM_OWNER_PERSON_ID ?? null,
+    platformLinkIssuers: (process.env.PLATFORM_LINK_ISSUERS ?? '').split(',').map(value => value.trim()).filter(Boolean),
     staffAuthEnabled: process.env.PLATFORM_STAFF_AUTH_ENABLED === 'true',
     staffAppOrigin: process.env.STAFF_APP_ORIGIN ?? null,
     staffPasskeyRpId: process.env.STAFF_PASSKEY_RP_ID ?? null,
