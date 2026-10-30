@@ -1,4 +1,5 @@
 import React from "react";
+import { StaffPasskeyLogin } from './staff-login.js';
 
 type Page =
   | "home"
@@ -131,7 +132,8 @@ const errorCopy = (e: unknown) =>
       ? "Tu cuenta no tiene permiso para esta acción."
       : "No se ha podido completar. Comprueba la conexión e inténtalo de nuevo.";
 export function StaffApp() {
-  const [page, setPage] = React.useState<Page>("home"),
+  const [authRequired, setAuthRequired] = React.useState(false),
+    [page, setPage] = React.useState<Page>("home"),
     [caps, setCaps] = React.useState<Caps | null>(null),
     [loading, setLoading] = React.useState(true),
     [error, setError] = React.useState(""),
@@ -185,7 +187,8 @@ export function StaffApp() {
       else setClock(null);
       await Promise.all(jobs);
     } catch (e) {
-      setError(errorCopy(e));
+      if (e instanceof Error && e.message === 'authentication_required') { setAuthRequired(true); setError(''); }
+      else setError(errorCopy(e));
     } finally {
       setLoading(false);
     }
@@ -193,6 +196,10 @@ export function StaffApp() {
   React.useEffect(() => {
     void load();
   }, [load]);
+  const logout = async () => {
+    try { await staffApi('/api/staff/auth/logout', { method: 'POST', body: '{}' }); setAuthRequired(true); setCaps(null); setError(''); }
+    catch { setError('No se pudo cerrar la sesión. Inténtalo de nuevo.'); }
+  };
   const openSession = async (s: Session) => {
     setSelected(s);
     setPage("session");
@@ -424,6 +431,7 @@ export function StaffApp() {
         Preparando tu espacio de trabajo…
       </div>
     );
+  if (authRequired) return <StaffPasskeyLogin onSuccess={() => { setAuthRequired(false); void load(); }} />;
   if (error)
     return (
       <main className="state error" role="alert">
@@ -466,6 +474,7 @@ export function StaffApp() {
         >
           •
         </button>
+        <button className="staff-logout" type="button" onClick={() => void logout()}>Salir</button>
       </header>
       <main className="main" id="main-content">
         {toast && (
@@ -730,18 +739,24 @@ export function StaffApp() {
                     ["reserved", "attended", "no_show"].includes(r.status) && (
                       <div className="person-actions">
                         <button
-                          disabled={busy}
+                          className="attendance-mark is-present"
+                          disabled={busy || r.status === "attended"}
+                          aria-pressed={r.status === "attended"}
                           aria-label={`Marcar asistió: ${r.firstName}`}
+                          title="Asistió"
                           onClick={() => void attendance(r.id, "attended")}
                         >
-                          {r.status === "attended" ? "✓" : "Asistió"}
+                          <span aria-hidden="true">✓</span>
                         </button>
                         <button
-                          disabled={busy}
-                          aria-label={`Marcar no-show: ${r.firstName}`}
+                          className="attendance-mark is-absent"
+                          disabled={busy || r.status === "no_show"}
+                          aria-pressed={r.status === "no_show"}
+                          aria-label={`Marcar no asistió: ${r.firstName}`}
+                          title="No asistió"
                           onClick={() => void attendance(r.id, "no_show")}
                         >
-                          {r.status === "no_show" ? "✓" : "No-show"}
+                          <span aria-hidden="true">✗</span>
                         </button>
                       </div>
                     )}
@@ -1127,7 +1142,7 @@ function statusLabel(s: string) {
       {
         reserved: "Reservado",
         attended: "Asistió",
-        no_show: "No se presentó",
+        no_show: "No asistió",
         waiting: "En espera",
         cancelled: "Cancelada",
         cancelled_late: "Cancelación tardía",

@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import Fastify, { type FastifyError, type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import { createHash, createHmac } from 'node:crypto';
@@ -7,26 +8,48 @@ import { resolve } from 'node:path';
 import { createDatabase } from './db.js';
 import { registerClientRoutes } from './clients.js';
 import { registerClientPlanRoutes } from './client-plans.js';
+import { registerContractRoutes } from './contracts.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-service-auth.js';
 import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
+import { registerTrainingSsoRoutes } from './training-sso.js';
 import { registerTrainingSuspensionRoutes } from './training-suspensions.js';
+import { createTrainingSignalDispatcher } from './training-signals.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
+import { createPushService, registerPushRoutes, type PushProvider } from './push.js';
+import { createWebPushProvider } from './push-web-provider.js';
 import { createMemberPilotAuth } from './member-pilot-auth.js';
 import { registerMemberBookingCohortRoutes } from './member-booking-cohort.js';
 import { registerEconomicRoutes } from './economics.js';
 import { registerEconomicExtensions } from './economic-extensions.js';
 import { registerStaffRoutes } from './staff.js';
+import { registerOwnerPanelRoutes } from './owner-panel.js';
+import { registerCenterOperationsRoutes } from './center-operations.js';
+import { registerMonitoringRoutes } from './monitoring.js';
+import { registerManagementPanelRoutes } from './management-panel.js';
+import { registerActivityRoutes } from './activity.js';
+import { registerReportRoutes } from './reports.js';
+import { registerSettingsOverviewRoutes } from './settings-overview.js';
 import { registerCommunicationRoutes, type ClientAuthorizationContext } from './communications.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
-import { registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
+import { registerPlatformPasskeyRoutes } from './platform-passkeys.js';
+import { createStaffAuth } from './staff-auth.js';
+import { createTrainingLinkTransactions, registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
+import { registerTrainingLinkReviewRoutes } from './training-link-review.js';
+import { createTrainingLinkFlow, createTrainingServiceClient, registerTrainingLinkFlowRoutes, type TrainingServiceClient } from './training-link-flow.js';
 import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, type TrainingAdapter } from './training-integration.js';
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
+import { registerCenterProfileRoutes } from './center-profile.js';
+import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
+import { registerStoreMediaRoutes } from './store-media.js';
+import { registerClientImportRoutes } from './client-import.js';
+import { registerClientDocumentRoutes } from './client-documents.js';
+import { registerInvoicingRoutes } from './invoicing.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -146,13 +169,50 @@ export function mapDatabaseError(error: unknown) {
   return { status: 500, body: { error: 'internal_error', message: 'No se pudo completar la operación.' } };
 }
 
+/** Validates the trusted-proxy list: concrete addresses or narrow CIDRs only, so a typo can never trust the whole internet. */
+export function parseTrustedProxies(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 4) throw new Error('trustedProxies must be a list of at most 4 proxy addresses.');
+  return value.map(entry => {
+    if (typeof entry !== 'string') throw new Error('trustedProxies entries must be strings.');
+    const [address, prefix, ...rest] = entry.trim().split('/');
+    const family = address ? isIP(address) : 0;
+    const bits = family === 4 ? 32 : 128;
+    const length = prefix === undefined ? bits : /^\d{1,3}$/.test(prefix) ? Number(prefix) : NaN;
+    const minimum = family === 4 ? 16 : 64;
+    if (!family || rest.length || !Number.isInteger(length) || length > bits || (prefix !== undefined && length < minimum)) throw new Error('trustedProxies entries must be an IP address or a CIDR no wider than /16 (IPv4) or /64 (IPv6).');
+    return prefix === undefined ? address! : `${address}/${length}`;
+  });
+}
+
+export function clientImportRuntimeFlags(env: NodeJS.ProcessEnv = process.env) {
+  const previewEnabled = env.CLIENT_IMPORT_PREVIEW_ENABLED === 'true';
+  return {
+    clientImportPreviewEnabled: previewEnabled,
+    clientImportCommitEnabled: previewEnabled && env.CLIENT_IMPORT_COMMIT_ENABLED === 'true',
+  };
+}
+
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
+  /** Exact trusted identity subject granted the owner-only panel capability. Never derived from request input or role. */
+  ownerActorId?: string | null;
+  /** Stable Platform personId configured by a verified owner bootstrap; never supplied by a browser. */
+  ownerPersonId?: string | null;
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
+  /** Injectable clock for deterministic Member read-contract tests; defaults to the system clock. */
+  memberNowProvider?: () => Date;
+  /** Injectable clock for deterministic TIMP import preview/confirmation boundaries. */
+  clientImportNowProvider?: () => Date;
   memberPilotAuthEnabled?: boolean;
   memberPilotBookingEnabled?: boolean;
   memberPilotCohortManagementEnabled?: boolean;
+  /** Web Push (decisions D152, D176, D199…). Off by default; needs the VAPID keys unless a provider is injected. */
+  pushEnabled?: boolean;
+  pushProvider?: PushProvider;
+  pushVapidPublicKey?: string;
+  pushIntervalMs?: number;
   memberAppOrigin?: string | null;
   trainingLinkingEnabled?: boolean;
   trainingVerifiedLinkingEnabled?: boolean;
@@ -161,18 +221,56 @@ export type ServerOptions = {
   trainingSummaryEnabled?: boolean;
   trainingSummaryAdapter?: TrainingAdapter;
   trainingCapabilitiesKeys?: InternalServiceKeys;
+  /** One-time Training SSO (Platform -> Búnker). Off by default; never enabled implicitly. */
+  trainingSsoEnabled?: boolean;
+  trainingSsoRedirectUrl?: string | null;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
+  /** Bilateral link lifecycle (finish linking with the owner's proof, activate, revoke). Off by default; needs verified + canonical linking and service calls. */
+  /** Platform-owned WebAuthn passkeys. Off by default; refused outside development/test until a human security review approves a rollout. */
+  platformPasskeysEnabled?: boolean;
+  /** Exact relying-party id, immutable once credentials exist (for example home.2jfitnesscenter.com). */
+  platformPasskeyRpId?: string | null;
+  platformPasskeyMaxRequestsPerMinute?: number;
+  /** Staff/owner passkey sessions. Disabled by default and restricted to development/test pending independent security review. */
+  staffAuthEnabled?: boolean;
+  staffAppOrigin?: string | null;
+  staffPasskeyRpId?: string | null;
+  staffAuthMaxRequestsPerMinute?: number;
+  /** Exact addresses/CIDRs of the reverse proxies allowed to set X-Forwarded-For/-Proto (empty = trust none, the default). Never `true` or a catch-all: see docs/runbooks/2J-INT-proxy-and-rate-limits.md. */
+  trustedProxies?: string[];
+  trainingLinkLifecycleEnabled?: boolean;
+  /** Idempotent provisioning of a minimal Training profile. Off by default. */
+  trainingProvisioningEnabled?: boolean;
+  /** Manual review queue for Training links that cannot be completed with the owner's passkey proof (A26). Off by default. */
+  trainingLinkReviewEnabled?: boolean;
+  /** Signed suspension/lift signals to Training (2J-CAPABILITY-SIGNAL-V1). Proof of concept: off by default and refused outside development/test. Needs the signed Training client. */
+  trainingSignalsEnabled?: boolean;
+  trainingSignalsIntervalMs?: number;
+  trainingServiceClient?: TrainingServiceClient;
+  /** Development/test only: lets the signed Training client talk to a loopback http origin. */
+  trainingServiceAllowInsecureLoopback?: boolean;
   logger?: FastifyServerOptions['logger'];
+  /** Where product photos are stored. Defaults to the local filesystem provider (development and pilot). */
+  objectStorage?: ObjectStorage;
+  /** Allows controlled CSV dry-run previews only; there is no client-write import endpoint. Defaults off. */
+  clientImportPreviewEnabled?: boolean;
+  clientImportCommitEnabled?: boolean;
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
   if (options.memberPilotAuthEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) {
     throw new Error('Pilot member authentication is restricted to development/test environments.');
   }
+  if (options.trainingProvisioningEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training provisioning is restricted to development/test environments until a later, explicitly approved phase.');
+  if (options.trainingSignalsEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training signals are a proof of concept, restricted to development/test environments until a later, explicitly approved phase.');
+  if (options.platformPasskeysEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Platform passkeys are restricted to development/test environments until a security review approves a rollout.');
+  if (options.staffAuthEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Staff authentication is restricted to development/test until a security review approves a rollout.');
   if (options.memberPilotBookingEnabled && (!options.memberPilotAuthEnabled || !['development', 'test'].includes(process.env.NODE_ENV ?? ''))) throw new Error('Member booking pilot mutations require development/test Member pilot authentication.');
   if (options.memberPilotCohortManagementEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Member pilot cohort management is restricted to development/test environments.');
+  const trustedProxies = parseTrustedProxies(options.trustedProxies);
   const app = Fastify({
+    trustProxy: trustedProxies.length ? trustedProxies : false,
     logger: options.logger ?? { serializers: { req(request) { return { method: request.method ?? '', url: typeof request.url === 'string' ? request.url.split('?')[0] ?? '/' : '/' }; } } },
     bodyLimit: 16_384,
   });
@@ -187,10 +285,41 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     if (statusCode >= 500) app.log.error({ errorCode: fastifyError.code ?? 'unknown', method: request.method, route }, 'request failed');
     return reply.code(statusCode).send({ error: statusCode < 500 ? 'request_rejected' : 'internal_error' });
   });
+  if (options.trainingServiceAllowInsecureLoopback && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Insecure loopback Training calls are restricted to development/test environments.');
   const { client } = createDatabase(databaseUrl);
   const trainingCapabilitiesKeys = options.trainingCapabilitiesKeys ?? parseInternalServiceKeys(process.env.PLATFORM_INTERNAL_SERVICE_KEYS);
-  const authorizationResolver = options.authorizationResolver ?? (async () => null);
-  const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null });
+  const baseAuthorizationResolver = options.authorizationResolver ?? (async () => null);
+  if (options.ownerActorId != null && !/^[^\u0000-\u001f\u007f]{1,120}$/.test(options.ownerActorId.trim())) {
+    throw new Error('ownerActorId must be a trusted non-empty identity subject of at most 120 characters.');
+  }
+  const ownerActorId = options.ownerActorId?.trim() || null;
+  const trustedAuthorizationResolver = async (request: import('fastify').FastifyRequest) => {
+    const context = await baseAuthorizationResolver(request);
+    if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
+    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read'])] };
+  };
+  if (options.ownerPersonId != null && !z.string().uuid().safeParse(options.ownerPersonId).success) throw new Error('ownerPersonId must be a trusted Platform person UUID.');
+  const ownerPersonId = options.ownerPersonId?.toLowerCase() ?? null;
+  const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
+  const staffOrigin = options.staffAppOrigin ?? null;
+  if (staffOrigin) {
+    const parsedOrigin = new URL(staffOrigin);
+    const host = parsedOrigin.hostname.replace(/^\[|\]$/g, '');
+    if (!['127.0.0.1', 'localhost', '::1'].includes(host) || parsedOrigin.origin !== staffOrigin.replace(/\/$/, '')) throw new Error('STAFF_APP_ORIGIN must be an exact loopback origin until production auth acceptance.');
+  }
+  const staffAuth = createStaffAuth(client, {
+    enabled: options.staffAuthEnabled === true,
+    rpId: options.staffPasskeyRpId ?? null,
+    origins: [...new Set([allowedOrigin, ...(staffOrigin ? [staffOrigin] : [])])],
+    ownerPersonId,
+    baseAuthorization: async request => authorizationResolver(request),
+    ...(options.staffAuthMaxRequestsPerMinute ? { maxRequestsPerMinute: options.staffAuthMaxRequestsPerMinute } : {}),
+  });
+  const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
+    const session = await staffAuth.resolve(request);
+    return session ?? trustedAuthorizationResolver(request);
+  };
+  const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
   const trainingSummaryAdapter = options.trainingSummaryEnabled === true && options.trainingServiceCallsEnabled === true
     ? options.trainingSummaryAdapter ?? (() => {
@@ -209,15 +338,15 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     } catch { return createTrainingAdapter(); }
   })()
     : createTrainingAdapter();
-  const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
   const memberOrigin = options.memberAppOrigin ?? null;
-  for (const configuredOrigin of [allowedOrigin, ...(memberOrigin ? [memberOrigin] : [])]) {
+  for (const configuredOrigin of [allowedOrigin, ...(memberOrigin ? [memberOrigin] : []), ...(staffOrigin ? [staffOrigin] : [])]) {
     const parsedOrigin = new URL(configuredOrigin);
     const originHost = parsedOrigin.hostname.replace(/^\[|\]$/g, '');
-    if (!['127.0.0.1', 'localhost', '::1'].includes(originHost) || parsedOrigin.origin !== configuredOrigin.replace(/\/$/, '')) throw new Error('CORS_ORIGIN and MEMBER_APP_ORIGIN must be exact loopback origins.');
+    if (!['127.0.0.1', 'localhost', '::1'].includes(originHost) || parsedOrigin.origin !== configuredOrigin.replace(/\/$/, '')) throw new Error('CORS_ORIGIN, MEMBER_APP_ORIGIN and STAFF_APP_ORIGIN must be exact loopback origins.');
   }
   if (options.memberPilotAuthEnabled && !memberOrigin) throw new Error('MEMBER_APP_ORIGIN is required when pilot member authentication is enabled.');
-  const corsOrigins = [...new Set([allowedOrigin, ...(memberOrigin ? [memberOrigin] : [])])];
+  if (options.staffAuthEnabled && (!staffOrigin || !options.staffPasskeyRpId)) throw new Error('STAFF_APP_ORIGIN and STAFF_PASSKEY_RP_ID are required when staff authentication is enabled.');
+  const corsOrigins = [...new Set([allowedOrigin, ...(memberOrigin ? [memberOrigin] : []), ...(staffOrigin ? [staffOrigin] : [])])];
   app.register(cors, { origin: corsOrigins, credentials: true, methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders: ['content-type', 'idempotency-key'] });
   app.addHook('onRequest', async (request, reply) => {
     const host = request.hostname?.replace(/^\[|\]$/g, '').toLowerCase();
@@ -227,6 +356,12 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const routePath = request.routeOptions.url ?? '';
     const memberMutation = routePath.startsWith('/api/me/') || routePath.startsWith('/api/client-portal/');
     if (memberPilotAuth.enabled && memberMutation && !['GET','HEAD','OPTIONS'].includes(request.method) && !memberPilotAuth.csrfAllowed(request)) return reply.code(403).send({ error: 'origin_rejected' });
+    const staffMutation = routePath.startsWith('/api/') && !memberMutation && !['GET','HEAD','OPTIONS'].includes(request.method);
+    if (staffAuth.enabled && staffMutation) {
+      const passkeyRevoke = routePath.endsWith('/passkeys/revoke');
+      const memberOriginMayRevoke = passkeyRevoke && memberOrigin !== null && request.headers.origin === memberOrigin;
+      if (!memberOriginMayRevoke && !staffAuth.csrfAllowed(request)) return reply.code(403).send({ error: 'origin_rejected' });
+    }
   });
   app.addHook('onSend', async (request, reply, payload) => {
     const route = request.routeOptions.url ?? '';
@@ -238,12 +373,21 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     }
     return payload;
   });
-  app.addHook('onClose', async () => { await client.end(); });
+  let stopTrainingSignals: () => void = () => {};
+  app.addHook('onClose', async () => { stopTrainingSignals(); await client.end(); });
   registerClientRoutes(app, client, authorizationResolver);
   registerClientPlanRoutes(app, client, authorizationResolver);
+  registerContractRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);
   registerTrainingCapabilitiesRoute(app, client, trainingCapabilitiesKeys);
   registerTrainingSuspensionRoutes(app, client, authorizationResolver);
+  registerTrainingSsoRoutes(app, client, {
+    enabled: options.trainingSsoEnabled === true,
+    keys: trainingCapabilitiesKeys,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    redirectUrl: options.trainingSsoRedirectUrl ?? null,
+    allowedOrigin: options.memberAppOrigin ?? null,
+  });
   registerAssignmentPeriodRoutes(app, client, authorizationResolver);
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
   const allowMemberBooking = async (personId: string | undefined, request: import('fastify').FastifyRequest) => {
@@ -252,16 +396,38 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     return Boolean(row);
   };
   registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver, allowMemberBooking);
-  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter);
+  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter, options.memberNowProvider);
   registerMemberBookingCohortRoutes(app, client, authorizationResolver, options.memberPilotCohortManagementEnabled === true);
+  const pushEnabled = options.pushEnabled === true;
+  const vapid = { publicKey: options.pushVapidPublicKey ?? process.env.PUSH_VAPID_PUBLIC_KEY ?? '', privateKey: process.env.PUSH_VAPID_PRIVATE_KEY ?? '', subject: process.env.PUSH_VAPID_SUBJECT ?? '' };
+  if (pushEnabled && !options.pushProvider && !(vapid.publicKey && vapid.privateKey && vapid.subject)) throw new Error('PUSH_ENABLED needs PUSH_VAPID_PUBLIC_KEY, PUSH_VAPID_PRIVATE_KEY and PUSH_VAPID_SUBJECT.');
+  const push = createPushService(client, { enabled: pushEnabled, provider: pushEnabled ? options.pushProvider ?? createWebPushProvider(vapid) : null, vapidPublicKey: vapid.publicKey || null, ...(options.pushIntervalMs ? { intervalMs: options.pushIntervalMs } : {}), logger: app.log });
+  registerPushRoutes(app, client, clientAuthorizationResolver, push, memberOrigin);
+  app.addHook('onReady', async () => { push.start(); });
+  app.addHook('onClose', async () => { push.stop(); });
   memberPilotAuth.register(app);
+  registerPlatformPasskeyRoutes(app, client, { enabled: options.platformPasskeysEnabled === true, rpId: options.platformPasskeyRpId ?? null, origin: options.memberAppOrigin ?? null, startSession: memberPilotAuth.startSession, resolveAuthorization: authorizationResolver, ...(options.platformPasskeyMaxRequestsPerMinute ? { maxRequestsPerMinute: options.platformPasskeyMaxRequestsPerMinute } : {}) });
+  staffAuth.register(app, client);
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
+  registerOwnerPanelRoutes(app, client, authorizationResolver);
+  registerCenterOperationsRoutes(app, client, authorizationResolver);
+  registerMonitoringRoutes(app, client, authorizationResolver);
+  registerManagementPanelRoutes(app, client, authorizationResolver);
+  registerActivityRoutes(app, client, authorizationResolver);
+  registerReportRoutes(app, client, authorizationResolver);
+  registerSettingsOverviewRoutes(app, client, authorizationResolver, { trainingSso: options.trainingSsoEnabled === true, trainingServiceCalls: options.trainingServiceCallsEnabled === true, trainingLinking: options.trainingLinkingEnabled === true, trainingSignals: options.trainingSignalsEnabled === true, trainingProvisioning: options.trainingProvisioningEnabled === true, push: options.pushEnabled === true, passkeys: options.platformPasskeysEnabled === true, memberAuthPilot: options.memberPilotAuthEnabled === true, memberBookingPilot: options.memberPilotBookingEnabled === true });
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  registerCenterProfileRoutes(app, client, authorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  const objectStorage = options.objectStorage ?? defaultObjectStorage();
+  registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
+  registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
+  registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true, options.clientImportCommitEnabled === true, options.clientImportNowProvider);
+  registerInvoicingRoutes(app, client, authorizationResolver, objectStorage);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
@@ -275,7 +441,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
       fetcher: globalThis.fetch,
     }),
-    resolvePersonAuth: options.resolvePersonAuth ?? (async () => null),
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
   });
   app.decorate('trainingCanonicalLinkLifecycle', createTrainingCanonicalLinkLifecycle(client, {
     trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
@@ -285,12 +451,52 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
       trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
       trainingCanonicalLinkingEnabled: options.trainingCanonicalLinkingEnabled === true,
+      ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
       ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
       ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
       ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
       fetcher: globalThis.fetch,
     }),
   }));
+  const lifecycleOn = options.trainingLinkLifecycleEnabled === true || options.trainingProvisioningEnabled === true || options.trainingSignalsEnabled === true;
+  const trainingServiceClient = options.trainingServiceClient ?? createTrainingServiceClient({
+    trainingVerifiedLinkingEnabled: lifecycleOn,
+    trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
+    ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
+    ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
+    fetcher: globalThis.fetch,
+    ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
+  });
+  const linkVerifier = options.trainingLinkVerifier ?? createRemoteTrainingLinkVerifier({
+    trainingVerifiedLinkingEnabled: options.trainingVerifiedLinkingEnabled === true,
+    trainingServiceCallsEnabled: options.trainingServiceCallsEnabled === true,
+    ...(process.env.TRAINING_SERVICE_BASE_URL ? { baseUrl: process.env.TRAINING_SERVICE_BASE_URL } : {}),
+    ...(process.env.TRAINING_SERVICE_KEY_ID ? { keyId: process.env.TRAINING_SERVICE_KEY_ID } : {}),
+    ...(process.env.TRAINING_SERVICE_SECRET ? { secret: process.env.TRAINING_SERVICE_SECRET } : {}),
+    fetcher: globalThis.fetch,
+    ...(options.trainingServiceAllowInsecureLoopback ? { allowInsecureLoopbackForTests: true } : {}),
+  });
+  const trainingSignals = createTrainingSignalDispatcher(client, { client: trainingServiceClient, enabled: options.trainingSignalsEnabled === true && options.trainingServiceCallsEnabled === true, ...(options.trainingSignalsIntervalMs ? { intervalMs: options.trainingSignalsIntervalMs } : {}), logger: app.log });
+  (app as unknown as { trainingSignals: typeof trainingSignals }).trainingSignals = trainingSignals;
+  app.addHook('onReady', async () => { trainingSignals.start(); });
+  stopTrainingSignals = () => trainingSignals.stop();
+  registerTrainingLinkFlowRoutes(app, client, {
+    enabled: options.trainingLinkLifecycleEnabled === true && options.trainingVerifiedLinkingEnabled === true && options.trainingCanonicalLinkingEnabled === true && options.trainingServiceCallsEnabled === true,
+    provisioningEnabled: options.trainingProvisioningEnabled === true && options.trainingServiceCallsEnabled === true,
+    flow: createTrainingLinkFlow(client, { client: trainingServiceClient }),
+    transactions: createTrainingLinkTransactions(client, { enabled: options.trainingVerifiedLinkingEnabled === true, serviceCallsEnabled: options.trainingServiceCallsEnabled === true, verifier: linkVerifier }),
+    lifecycle: (app as unknown as { trainingCanonicalLinkLifecycle: ReturnType<typeof createTrainingCanonicalLinkLifecycle> }).trainingCanonicalLinkLifecycle,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    resolveAuthorization: authorizationResolver,
+    allowedOrigin: options.memberAppOrigin ?? null,
+  });
+  registerTrainingLinkReviewRoutes(app, client, {
+    enabled: options.trainingLinkReviewEnabled === true,
+    resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
+    resolveAuthorization: authorizationResolver,
+    allowedOrigin: options.memberAppOrigin ?? null,
+  });
   app.get('/health', async (_request, reply) => {
     try { await client`SELECT 1`; return { status: 'ok', mode: 'local-only', database: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable', mode: 'local-only', database: 'unavailable' }); }
@@ -333,9 +539,15 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
       return result.row;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
-  app.get('/api/services', async (_request, reply) => {
+  app.get('/api/services', async (request, reply) => {
+    const includeArchived = (request.query as { includeArchived?: string }).includeArchived === 'true';
+    if (includeArchived) {
+      const context = await authorizationResolver(request);
+      if (!context) return reply.code(401).send({ error: 'authentication_required' });
+      if (!can(context, 'catalog.pricing.manage')) return reply.code(403).send({ error: 'permission_denied' });
+    }
     try {
-      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",s.cancellation_window_minutes AS "cancellationWindowMinutes",s.late_cancellation_policy AS "lateCancellationPolicy",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE s.status <> 'archived' GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
+      return await client`SELECT s.id,s.name,s.status,s.area_id AS "areaId",s.cancellation_window_minutes AS "cancellationWindowMinutes",s.late_cancellation_policy AS "lateCancellationPolicy",a.name AS area,s.updated_at AS "updatedAt",count(DISTINCT p.id)::int AS "planCount",count(DISTINCT r.id)::int AS "rightCount" FROM services s JOIN areas a ON a.id=s.area_id LEFT JOIN plan_services ps ON ps.service_id=s.id LEFT JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version AND p.status <> 'archived' LEFT JOIN plan_rights r ON r.plan_id=p.id AND r.plan_version=p.current_version AND (r.service_id IS NULL OR r.service_id=s.id) WHERE (${includeArchived} OR s.status <> 'archived') GROUP BY s.id,a.name ORDER BY lower(a.name),lower(s.name),s.id`;
     } catch (error) { return sendDatabaseError(app, reply, error); }
   });
   app.post('/api/services', async (request, reply) => {
@@ -379,14 +591,15 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.get('/api/services/:serviceId/plans', async (request, reply) => {
     const context = await authorizationResolver(request);
     if (!context) return reply.code(401).send({ error: 'authentication_required' });
-    if (!can(context, 'calendar.read')) return reply.code(403).send({ error: 'permission_denied' });
+    const includeArchived = (request.query as { includeArchived?: string }).includeArchived === 'true';
+    if (includeArchived ? !can(context, 'catalog.pricing.manage') : (!can(context, 'calendar.read') && !can(context, 'catalog.pricing.manage'))) return reply.code(403).send({ error: 'permission_denied' });
     const { serviceId } = request.params as { serviceId: string };
     if (!uuid.safeParse(serviceId).success) return reply.code(400).send({ error: 'invalid_service_id' });
     try {
       const [service] = await client`SELECT id,status FROM services WHERE id=${serviceId}`;
       if (!service) return reply.code(404).send({ error: 'service_not_found' });
-      if (service.status === 'archived') return reply.code(409).send({ error: 'service_archived' });
-      const plans = await listPlans(client, serviceId);
+      if (service.status === 'archived' && !can(context, 'catalog.pricing.manage')) return reply.code(409).send({ error: 'service_archived' });
+      const plans = await listPlans(client, serviceId, includeArchived);
       if (can(context, 'catalog.pricing.manage')) return plans;
       return plans.map((plan) => {
         const { basePriceCents: _hiddenPrice, ...safePlan } = plan as typeof plan & { basePriceCents?: number | null };
@@ -509,11 +722,16 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     if (!uuid.safeParse(planId).success) return reply.code(400).send({ error: 'invalid_plan_id' });
     try {
       const result = await client.begin(async (tx) => {
-        const [plan] = await tx`SELECT id,status FROM plans WHERE id=${planId} FOR UPDATE`;
+        const [plan] = await tx`SELECT id,status,current_version AS "currentVersion" FROM plans WHERE id=${planId} FOR UPDATE`;
         if (!plan) return 'not_found';
-        if (plan.status === 'archived') return 'conflict';
-        const services = await tx`SELECT s.id,s.status FROM plans p JOIN plan_services ps ON ps.plan_id=p.id AND ps.plan_version=p.current_version JOIN services s ON s.id=ps.service_id WHERE p.id=${planId} ORDER BY s.id FOR SHARE OF s`;
-        if (services.length === 0 || services.some((service) => service.status !== 'active')) return 'archived_service';
+        const services = await tx`SELECT s.id,s.status,a.status AS "areaStatus" FROM plans p JOIN plan_services ps ON ps.plan_id=p.id AND ps.plan_version=p.current_version JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE p.id=${planId} ORDER BY s.id FOR SHARE OF s`;
+        if (services.length === 0 || services.some((service) => service.status !== 'active' || service.areaStatus !== 'active')) return 'archived_service';
+        if (plan.status === 'archived') {
+          const [version] = await tx`SELECT frozen_at AS "frozenAt" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion} FOR UPDATE`;
+          if (!version?.frozenAt) return 'conflict';
+          await tx`UPDATE plans SET status='active' WHERE id=${planId} AND status='archived'`;
+          return 'active';
+        }
         const [version] = await tx`SELECT frozen_at AS "frozenAt" FROM plan_versions WHERE plan_id=${planId} AND version=(SELECT current_version FROM plans WHERE id=${planId}) FOR UPDATE`;
         if (version?.frozenAt) return 'conflict';
         await tx`UPDATE plan_versions SET frozen_at=now() WHERE plan_id=${planId} AND version=(SELECT current_version FROM plans WHERE id=${planId}) AND frozen_at IS NULL`;
@@ -553,10 +771,10 @@ function normalizePlanContract(plan: {termKind?:string|null|undefined;termMonths
   return{termKind,termMonths:plan.termMonths??null,maxSpanDays:plan.maxSpanDays??null,paymentRule,paymentBlock};
 }
 
-async function listPlans(client: SqlClient, serviceId: string) {
-  const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",v.term_kind AS "termKind",v.term_months AS "termMonths",v.max_span_days AS "maxSpanDays",v.payment_rule AS "paymentRule",v.payment_block AS "paymentBlock" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND p.status <> 'archived' ORDER BY lower(p.name),p.id`;
+async function listPlans(client: SqlClient, serviceId: string, includeArchived = false) {
+  const plans = await client`SELECT p.id,p.name,p.status,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",v.term_kind AS "termKind",v.term_months AS "termMonths",v.max_span_days AS "maxSpanDays",v.payment_rule AS "paymentRule",v.payment_block AS "paymentBlock" FROM plan_services ps JOIN plans p ON p.id=ps.plan_id AND p.current_version=ps.plan_version JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE ps.service_id=${serviceId} AND (${includeArchived} OR p.status <> 'archived') ORDER BY lower(p.name),p.id`;
   return Promise.all(plans.map(async (plan) => {
-    const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
+  const services = await client`SELECT s.id,s.name,s.status,a.name AS area,a.status AS "areaStatus" FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${plan.id} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
     const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",quantity_rule AS "quantityRule",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${plan.id} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
     const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${plan.id} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
     return { ...plan, services, rights, modules };
@@ -569,7 +787,7 @@ async function listPlansById(client: SqlClient, planId: string) {
   if (!rows[0]) return [];
   const plan = rows[0];
   const versionRows = await client`SELECT kind,renewal_cadence AS "renewalCadence",period_days AS "periodDays",base_price_cents AS "basePriceCents",term_kind AS "termKind",term_months AS "termMonths",max_span_days AS "maxSpanDays",payment_rule AS "paymentRule",payment_block AS "paymentBlock" FROM plan_versions WHERE plan_id=${planId} AND version=${plan.currentVersion}`;
-  const services = await client`SELECT s.id,s.name,a.name AS area FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${planId} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
+  const services = await client`SELECT s.id,s.name,s.status,a.name AS area,a.status AS "areaStatus" FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=${planId} AND ps.plan_version=${plan.currentVersion} ORDER BY lower(s.name),s.id`;
   const rights = await client`SELECT id,right_type AS "rightType",training_access_level AS "trainingAccessLevel",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,weekly_frequency AS "weeklyFrequency",quantity_rule AS "quantityRule",period,period_mode AS "periodMode",timezone,valid_days AS "validDays",valid_days_start_rule AS "validDaysStartRule" FROM plan_rights WHERE plan_id=${planId} AND plan_version=${plan.currentVersion} ORDER BY right_type,service_id NULLS FIRST,id`;
   const modules = await client`SELECT m.module,m.access_level AS "accessLevel",COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb) AS capabilities FROM plan_module_accesses m WHERE m.plan_id=${planId} AND m.plan_version=${plan.currentVersion} ORDER BY m.module`;
   return [{ ...plan, ...versionRows[0], services, rights, modules }];
@@ -598,11 +816,29 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   if (localDemoClientId && !z.string().uuid().safeParse(localDemoClientId).success) throw new Error('LOCAL_DEMO_CLIENT_ID must be a client UUID.');
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
+    ownerActorId: process.env.PLATFORM_OWNER_ACTOR_ID ?? null,
+    ...clientImportRuntimeFlags(),
+    ownerPersonId: process.env.PLATFORM_OWNER_PERSON_ID ?? null,
+    staffAuthEnabled: process.env.PLATFORM_STAFF_AUTH_ENABLED === 'true',
+    staffAppOrigin: process.env.STAFF_APP_ORIGIN ?? null,
+    staffPasskeyRpId: process.env.STAFF_PASSKEY_RP_ID ?? null,
     memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
     memberPilotBookingEnabled: process.env.PILOT_MEMBER_BOOKING_ENABLED === 'true',
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
     trainingServiceCallsEnabled: process.env.TRAINING_SERVICE_CALLS_ENABLED === 'true',
     trainingSummaryEnabled: process.env.TRAINING_SUMMARY_ENABLED === 'true',
+    trainingVerifiedLinkingEnabled: process.env.TRAINING_VERIFIED_LINKING_ENABLED === 'true',
+    trainingCanonicalLinkingEnabled: process.env.TRAINING_CANONICAL_LINKING_ENABLED === 'true',
+    platformPasskeysEnabled: process.env.PLATFORM_PASSKEYS_ENABLED === 'true',
+    trustedProxies: (process.env.PLATFORM_TRUSTED_PROXIES ?? '').split(',').map(value => value.trim()).filter(Boolean),
+    platformPasskeyRpId: process.env.PLATFORM_PASSKEY_RP_ID ?? null,
+    trainingLinkLifecycleEnabled: process.env.TRAINING_LINK_LIFECYCLE_ENABLED === 'true',
+    trainingProvisioningEnabled: process.env.TRAINING_PROVISIONING_ENABLED === 'true',
+    trainingSignalsEnabled: process.env.TRAINING_SIGNALS_ENABLED === 'true',
+    ...(Number.isInteger(Number(process.env.TRAINING_SIGNALS_INTERVAL_MS)) && Number(process.env.TRAINING_SIGNALS_INTERVAL_MS) >= 100 ? { trainingSignalsIntervalMs: Number(process.env.TRAINING_SIGNALS_INTERVAL_MS) } : {}),
+    trainingServiceAllowInsecureLoopback: process.env.TRAINING_SERVICE_ALLOW_INSECURE_LOOPBACK === 'true',
+    trainingSsoEnabled: process.env.TRAINING_SSO_ENABLED === 'true',
+    trainingSsoRedirectUrl: process.env.TRAINING_SSO_REDIRECT_URL ?? null,
     memberAppOrigin: process.env.MEMBER_APP_ORIGIN ?? null,
     ...(localDemoClientId ? { clientAuthorizationResolver: async () => ({ clientId: localDemoClientId.toLowerCase() }) } : {}),
   });

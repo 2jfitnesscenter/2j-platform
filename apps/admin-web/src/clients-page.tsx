@@ -1,10 +1,14 @@
+import { apiFetch } from './api-fetch.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, RefObject } from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, IconButton, PageHeader, SearchField, SegmentedControl, StatusChip, Tabs, icons } from '@2j/ui';
+import { clearDeepLink, readDeepLink } from './deep-link.js';
+import { ClientFilesPanel } from './client-files-panel.js';
+import { InvoiceDialog } from './invoice-ui.js';
 import { ClientAvatar, SECTION_LABEL, SECTION_ORDER, chargeChip, clientPlanChip, euros, planStatusChip, reservationChip, reservationRightsLabel, rightLine } from './client-presenters.js';
 
 type Client = { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; birthDate?:string|null; status: 'active' | 'archived'; createdAt: string; updatedAt?: string };
-type ClientSection = { id: string; label: string; sourceLabel: string; access: 'available' | 'forbidden'; dataState: 'ready' | 'not_connected' };
+type ClientSection = { id: string; label: string; sourceLabel: string; access: 'available' | 'forbidden'; dataState: 'ready' | 'not_connected'; canManage?: boolean };
 type ClientEvent = { id: string; eventType: string; actorLabel: string; occurredAt: string };
 type ClientReservation = { id: string; status: 'reserved' | 'attended' | 'no_show' | 'cancelled' | 'cancelled_late' | 'cancelled_by_center'; startsAt: string; durationMinutes: number; sessionStatus: 'scheduled' | 'cancelled'; serviceName: string; areaName: string; entitlementName:string|null; rightsUsed:string[]; entitlementMovements:Array<{type:string;quantity:number;occurredAt:string}> };
 type ClientWaitlistEntry={id:string;status:string;startsAt:string;sessionStatus:'scheduled'|'cancelled';serviceName:string;areaName:string};
@@ -23,10 +27,10 @@ type ClientFormItem = { id:string; formId:string; name:string; category:string; 
 type ClientConsentItem = { consentId:string; versionId:string; name:string; version:number; title:string; body:string; accepted:boolean; acceptedAt:string|null; canAcceptAssisted:boolean };
 type FollowupItem = { id:string; name:string; status:string; dueAt:string|null; assignedAt:string; version:number; answers:Record<string,unknown>|null; submittedAt:string|null };
 
-const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 const statusLabel = { active: 'Activo', archived: 'Archivado' };
 const moduleLabels: Record<string, string> = { reservations: 'Reservas', training: 'Entrenamiento', nutrition: 'Nutrición', health: 'Salud', clients: 'Clientes', communication: 'Comunicación' };
-const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'documents', 'messages', 'followup', 'history']);
+const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'purchases', 'documents', 'messages', 'followup', 'history']);
 
 function displayName(client: Client) { return `${client.firstName} ${client.lastName}`; }
 function dateLabel(value: string) { return new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(value)); }
@@ -37,6 +41,25 @@ function createIdempotencyKey() {
 function localDateKey() { return new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); }
 function plusLocalDays(value:string,days:number){const parts=value.split('-').map(Number);const next=new Date(Date.UTC(parts[0]??1970,(parts[1]??1)-1,(parts[2]??1)+days));return next.toISOString().slice(0,10);}
 function euroToCents(value:string) { const normalized=value.trim().replace(',','.'); if(!/^\d+(\.\d{1,2})?$/.test(normalized))return null; const cents=Math.round(Number(normalized)*100); return Number.isSafeInteger(cents)&&cents>0?cents:null; }
+
+type PurchaseRow = { id: string; createdAt: string; status: string; paymentState: string; paymentMethod: string | null; totalCents: number | string; lines: Array<{ productName: string; variantLabel: string; quantity: number }> };
+const purchaseDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short', year: 'numeric' });
+const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', other: 'Otro' };
+
+/** Compras de tienda del cliente (paridad visual 5; D49: compras consultables sin cuota). */
+function PurchasesPanel({ sales }: { sales: PurchaseRow[] }) {
+  return <Card as="section" aria-labelledby="client-purchases-title">
+    <CardHeader title="Compras" titleId="client-purchases-title" level={2} description="Ventas de tienda registradas a este cliente (las 30 más recientes)." />
+    {sales.length === 0
+      ? <EmptyState icon={icons.ShoppingBag} title="Sin compras registradas">Cuando se registre una venta de tienda a este cliente aparecerá aquí.</EmptyState>
+      : <ul className="client-purchases" aria-label="Compras del cliente">{sales.map((sale) => <li key={sale.id}>
+        <span className="client-purchase-copy"><strong>{sale.lines.map((line) => `${line.quantity} × ${line.productName} (${line.variantLabel})`).join(', ') || 'Venta sin líneas'}</strong>
+          <small>{purchaseDate.format(new Date(sale.createdAt))}{sale.paymentMethod ? ` · ${methodLabel[sale.paymentMethod] ?? sale.paymentMethod}` : ''}</small></span>
+        <span className="client-purchase-meta"><strong>{euros(Number(sale.totalCents))}</strong>
+          <StatusChip tone={sale.status === 'voided' ? 'neutral' : sale.paymentState === 'paid' ? 'success' : 'warning'}>{sale.status === 'voided' ? 'Anulada' : sale.paymentState === 'paid' ? 'Cobrada' : 'Pendiente de cobro'}</StatusChip></span>
+      </li>)}</ul>}
+  </Card>;
+}
 
 export function ClientsPage() {
   const [query, setQuery] = useState('');
@@ -52,6 +75,7 @@ export function ClientsPage() {
   const [profileState, setProfileState] = useState<'idle' | 'loading' | 'ready' | 'error' | 'unauthorized'>('idle');
   const [profileError, setProfileError] = useState('');
   const [profileRetry, setProfileRetry] = useState(0);
+  const [invoiceCharge, setInvoiceCharge] = useState<{ id: string; concept: string } | null>(null);
   const [documentsData, setDocumentsData] = useState<{forms:ClientFormItem[];consents:ClientConsentItem[]}|null>(null);
   const [followupData, setFollowupData] = useState<FollowupItem[]|null>(null);
   const [operationState, setOperationState] = useState<'loading'|'ready'|'error'>('ready');
@@ -63,6 +87,11 @@ export function ClientsPage() {
   const [documentBusy, setDocumentBusy] = useState(false);
   const [activeSection, setActiveSection] = useState('summary');
   const [showCreate, setShowCreate] = useState(false);
+  // Enlaces profundos del Resumen (ver deep-link.ts): se leen una vez y se retiran de la URL.
+  const [deepLink] = useState(() => readDeepLink(['new', 'intent'] as const));
+  useEffect(() => { clearDeepLink(['new', 'intent']); }, []);
+  const [intent, setIntent] = useState<'assign-plan' | 'message' | null>(deepLink.intent === 'assign-plan' || deepLink.intent === 'message' ? deepLink.intent : null);
+  const openNewFromLink = useRef(deepLink.new === '1');
   const [showEdit, setShowEdit] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState('');
@@ -128,7 +157,7 @@ export function ClientsPage() {
     if (debouncedQuery) params.set('q', debouncedQuery);
     if (cursor) params.set('cursor', cursor);
     try {
-      const response = await fetch(`${apiUrl}/api/clients?${params}`);
+      const response = await apiFetch(`${apiUrl}/api/clients?${params}`);
       const data = await response.json().catch(() => ({}));
       if (requestId !== listRequest.current) return;
       if (response.status === 401) { setListState('unauthorized'); return; }
@@ -157,7 +186,7 @@ export function ClientsPage() {
     if (!selectedId) { setProfile(null); setProfileState('idle'); return () => { current = false; }; }
     setProfileState('loading');
     setProfileError('');
-    void fetch(`${apiUrl}/api/clients/${selectedId}`)
+    void apiFetch(`${apiUrl}/api/clients/${selectedId}`)
       .then(async (response) => ({ response, data: await response.json().catch(() => ({})) }))
       .then(({ response, data }) => {
         if (!current) return;
@@ -174,7 +203,7 @@ export function ClientsPage() {
   useEffect(() => {
     if (!showPlanDialog) return;
     let active=true; setPlanCatalogState('loading'); setPlanSaveError('');
-    void fetch(`${apiUrl}/api/plans/assignable`).then(async response=>{if(!response.ok)throw new Error(response.status===403?'Tu perfil no puede asignar cuotas.':'No se pudo cargar el catálogo de planes.');return response.json() as Promise<AssignablePlan[]>;}).then(rawItems=>{const items=rawItems.map(normalizeAssignablePlan);if(active){setAssignablePlans(items);setPlanCatalogState('ready');if(!selectedPlanId&&items[0]){setSelectedPlanId(items[0].id);setPlanPrice(items[0].basePriceCents==null?'':(items[0].basePriceCents/100).toFixed(2));}}}).catch(()=>{if(active)setPlanCatalogState('error');});
+    void apiFetch(`${apiUrl}/api/plans/assignable`).then(async response=>{if(!response.ok)throw new Error(response.status===403?'Tu perfil no puede asignar cuotas.':'No se pudo cargar el catálogo de planes.');return response.json() as Promise<AssignablePlan[]>;}).then(rawItems=>{const items=rawItems.map(normalizeAssignablePlan);if(active){setAssignablePlans(items);setPlanCatalogState('ready');if(!selectedPlanId&&items[0]){setSelectedPlanId(items[0].id);setPlanPrice(items[0].basePriceCents==null?'':(items[0].basePriceCents/100).toFixed(2));}}}).catch(()=>{if(active)setPlanCatalogState('error');});
     return()=>{active=false;};
   },[showPlanDialog]);
 
@@ -183,20 +212,20 @@ export function ClientsPage() {
     let current = true;
     setOperationState('loading'); setOperationError('');
     const requests = activeSection === 'documents'
-      ? Promise.all([fetch(`${apiUrl}/api/clients/${selectedId}/forms`),fetch(`${apiUrl}/api/clients/${selectedId}/consents`)]).then(async ([forms,consents]) => { if (!forms.ok || !consents.ok) throw new Error('No se pudieron cargar los documentos del cliente.'); return {forms:await forms.json(),consents:await consents.json()}; })
-      : fetch(`${apiUrl}/api/clients/${selectedId}/followup`).then(async response => { if (!response.ok) throw new Error('No se pudo cargar el seguimiento del cliente.'); return {followup:await response.json()}; });
+      ? Promise.all([apiFetch(`${apiUrl}/api/clients/${selectedId}/forms`),apiFetch(`${apiUrl}/api/clients/${selectedId}/consents`)]).then(async ([forms,consents]) => { if (!forms.ok || !consents.ok) throw new Error('No se pudieron cargar los documentos del cliente.'); return {forms:await forms.json(),consents:await consents.json()}; })
+      : apiFetch(`${apiUrl}/api/clients/${selectedId}/followup`).then(async response => { if (!response.ok) throw new Error('No se pudo cargar el seguimiento del cliente.'); return {followup:await response.json()}; });
     void requests.then(data=>{if(!current)return;if('forms' in data)setDocumentsData(data as {forms:ClientFormItem[];consents:ClientConsentItem[]});else setFollowupData(data.followup as FollowupItem[]);setOperationState('ready');}).catch((error:unknown)=>{if(current){setOperationError(error instanceof Error?error.message:'No se pudieron cargar los datos.');setOperationState('error');}});
     return ()=>{current=false;};
   },[selectedId,activeSection,refreshKey]);
 
   async function reviewForm(item:ClientFormItem, decision:'approved'|'rejected') {
     if(!selectedId)return;setDocumentBusy(true);setOperationError('');
-    try { const response=await fetch(`${apiUrl}/api/clients/${selectedId}/forms/${item.formId}/review`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({assignmentId:item.id,decision,note:reviewNotes[item.id]??''})});if(!response.ok)throw new Error('No se pudo guardar la revisión.');setReviewNotes(value=>({...value,[item.id]:''}));setRefreshKey(value=>value+1); }
+    try { const response=await apiFetch(`${apiUrl}/api/clients/${selectedId}/forms/${item.formId}/review`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({assignmentId:item.id,decision,note:reviewNotes[item.id]??''})});if(!response.ok)throw new Error('No se pudo guardar la revisión.');setReviewNotes(value=>({...value,[item.id]:''}));setRefreshKey(value=>value+1); }
     catch(error){setOperationError(error instanceof Error?error.message:'No se pudo guardar la revisión.');} finally{setDocumentBusy(false);}
   }
   async function acceptConsent(item:ClientConsentItem) {
     if(!selectedId||!consentConfirmed||consentTypedName.trim().length<2)return;setDocumentBusy(true);setOperationError('');
-    try {const response=await fetch(`${apiUrl}/api/clients/${selectedId}/consents/${item.versionId}/accept-assisted`,{method:'POST',headers:{'content-type':'application/json','idempotency-key':createIdempotencyKey()},body:JSON.stringify({typedName:consentTypedName.trim(),accepted:true})});if(!response.ok)throw new Error('No se pudo registrar la aceptación asistida.');setConsentConfirmId(null);setConsentConfirmed(false);setConsentTypedName('');setRefreshKey(value=>value+1);setArchiveFeedback('Aceptación registrada por personal del centro.');}
+    try {const response=await apiFetch(`${apiUrl}/api/clients/${selectedId}/consents/${item.versionId}/accept-assisted`,{method:'POST',headers:{'content-type':'application/json','idempotency-key':createIdempotencyKey()},body:JSON.stringify({typedName:consentTypedName.trim(),accepted:true})});if(!response.ok)throw new Error('No se pudo registrar la aceptación asistida.');setConsentConfirmId(null);setConsentConfirmed(false);setConsentTypedName('');setRefreshKey(value=>value+1);setArchiveFeedback('Aceptación registrada por personal del centro.');}
     catch(error){setOperationError(error instanceof Error?error.message:'No se pudo registrar la aceptación.');} finally{setDocumentBusy(false);}
   }
 
@@ -265,6 +294,18 @@ export function ClientsPage() {
     if (window.location.hash.includes('tab=')) window.location.hash = `#clients?clientId=${profile.client.id}`;
   }, [profileState, profile, visibleSections, activeSection]);
 
+  useEffect(() => {
+    if (!intent || profileState !== 'ready' || !profile) return;
+    if (intent === 'assign-plan') { if (profile.capabilities.assignPlans && profile.client.status === 'active') startPlanSale(); }
+    else if (visibleSections.some((section) => section.id === 'messages')) selectSection('messages');
+    setIntent(null);
+  }, [intent, profileState, profile]);
+  useEffect(() => {
+    if (!openNewFromLink.current || listState !== 'ready') return;
+    openNewFromLink.current = false;
+    if (list.capabilities.manage) { opener.current = document.activeElement as HTMLElement | null; createKeyRef.current = createIdempotencyKey(); setShowCreate(true); }
+  }, [listState, list.capabilities.manage]);
+
   async function createClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
@@ -273,7 +314,7 @@ export function ClientsPage() {
     setSaving(true); setSaveError('');
     createKeyRef.current ??= createIdempotencyKey();
     try {
-      const response = await fetch(`${apiUrl}/api/clients`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': createKeyRef.current }, body: JSON.stringify({ firstName: form.get('firstName'), lastName: form.get('lastName'), email: form.get('email'), phone: form.get('phone'), birthDate: form.get('birthDate') || null }) });
+      const response = await apiFetch(`${apiUrl}/api/clients`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': createKeyRef.current }, body: JSON.stringify({ firstName: form.get('firstName'), lastName: form.get('lastName'), email: form.get('email'), phone: form.get('phone'), birthDate: form.get('birthDate') || null }) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(response.status === 403 ? 'Tu perfil no puede dar de alta clientes.' : result.message ?? 'No se pudo guardar el cliente.');
       createKeyRef.current = null;
@@ -286,7 +327,7 @@ export function ClientsPage() {
 
   async function updateClient(event:FormEvent<HTMLFormElement>) {
     event.preventDefault(); if(!selectedId||!profile)return; const form=new FormData(event.currentTarget);setEditBusy(true);setEditError('');
-    try { const response=await fetch(`${apiUrl}/api/clients/${selectedId}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({firstName:form.get('firstName'),lastName:form.get('lastName'),email:form.get('email'),phone:form.get('phone'),birthDate:form.get('birthDate')||null})});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error==='email_conflict'?'Ya existe un cliente activo con ese email.':'No se pudo actualizar el perfil.');setShowEdit(false);setProfileRetry(value=>value+1);setArchiveFeedback('Datos del cliente actualizados.');setRefreshKey(value=>value+1); }
+    try { const response=await apiFetch(`${apiUrl}/api/clients/${selectedId}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({firstName:form.get('firstName'),lastName:form.get('lastName'),email:form.get('email'),phone:form.get('phone'),birthDate:form.get('birthDate')||null})});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error==='email_conflict'?'Ya existe un cliente activo con ese email.':'No se pudo actualizar el perfil.');setShowEdit(false);setProfileRetry(value=>value+1);setArchiveFeedback('Datos del cliente actualizados.');setRefreshKey(value=>value+1); }
     catch(error){setEditError(error instanceof Error?error.message:'No se pudo actualizar el perfil.');}finally{setEditBusy(false);}
   }
 
@@ -308,9 +349,9 @@ export function ClientsPage() {
     }
     setPlanSaveBusy(true); setPlanSaveError('');
     try {
-      const response = await fetch(`${apiUrl}/api/clients/${selectedId}/plans`, { method:'POST', headers:{'content-type':'application/json','idempotency-key':planSaleKeyRef.current}, body:JSON.stringify(payload) });
+      const response = await apiFetch(`${apiUrl}/api/clients/${selectedId}/plans`, { method:'POST', headers:{'content-type':'application/json','idempotency-key':planSaleKeyRef.current}, body:JSON.stringify(payload) });
       const result = await response.json().catch(()=>({}));
-      if (!response.ok) throw new Error(result.error==='price_override_forbidden'?'Tu perfil no puede modificar el precio de catálogo.':result.error==='catalog_price_required'?'Este plan necesita un precio base configurado por Administración antes de poder venderse.':response.status===403?'Tu perfil no tiene permiso para asignar y cobrar esta cuota.':result.error==='cash_session_required'?'Abre la caja antes de registrar un cobro en efectivo.':'No se pudo asignar la cuota.');
+      if (!response.ok) throw new Error(result.error==='price_override_forbidden'?'Tu perfil no puede modificar el precio de catálogo.':result.error==='catalog_price_required'?'Este plan necesita un precio base configurado por Administración antes de poder venderse.':response.status===403?'Tu perfil no tiene permiso para asignar y cobrar esta cuota.':result.error==='cash_session_required'?'Abre la caja antes de registrar cobros.':'No se pudo asignar la cuota.');
       planSaleKeyRef.current = null;
       planSalePayloadRef.current = null;
       setShowPlanDialog(false); setPlanOperation(null);setPlanOperationReason('');setActiveSection('plans'); setRefreshKey(value=>value+1); setProfileRetry(value=>value+1); setArchiveFeedback(collectNow?(planOperation?.kind==='renewal'?'Renovación y cobro registrados.':planOperation?.kind==='change'?'Cambio de plan y cobro registrados.':'Cuota asignada y cobro registrado.'):(planOperation?.kind==='renewal'?'Renovación guardada; el cargo queda pendiente.':planOperation?.kind==='change'?'Cambio de plan guardado; el cargo queda pendiente.':'Cuota asignada; el cargo queda pendiente.'));
@@ -334,7 +375,7 @@ export function ClientsPage() {
 
   async function openPlanAction(assignment:ClientPlanAssignment,action:PlanAction['action'],rightId?:string){
     if(!selectedId)return;setPlanAction({assignment,action,...(rightId?{rightId}:{})});setPlanActionReason('');setPlanActionQuantity('');setPlanActionError('');setPlanMovements(null);planActionKeyRef.current=null;planActionPayloadRef.current=null;
-    if(action==='movements')try{const response=await fetch(`${apiUrl}/api/clients/${selectedId}/plans/${assignment.id}/movements`);if(!response.ok)throw new Error();setPlanMovements(await response.json() as PlanMovementData);}catch{setPlanActionError('No se pudo cargar el historial de movimientos.');}
+    if(action==='movements')try{const response=await apiFetch(`${apiUrl}/api/clients/${selectedId}/plans/${assignment.id}/movements`);if(!response.ok)throw new Error();setPlanMovements(await response.json() as PlanMovementData);}catch{setPlanActionError('No se pudo cargar el historial de movimientos.');}
   }
   async function performPlanAction(){
     if(!selectedId||!planAction)return;const requiresReason=planAction.action==='pause'||planAction.action==='cancel'||planAction.action==='adjust';
@@ -343,7 +384,7 @@ export function ClientsPage() {
     if(planAction.action==='adjust'&&(!Number.isInteger(Number(planActionQuantity))||Number(planActionQuantity)===0)){setPlanActionError('Indica una cantidad entera distinta de cero.');return;}
     const fingerprint=JSON.stringify({clientId:selectedId,assignmentId:planAction.assignment.id,action:planAction.action,body});if(!planActionKeyRef.current||planActionPayloadRef.current!==fingerprint){planActionKeyRef.current=createIdempotencyKey();planActionPayloadRef.current=fingerprint;}
     setPlanActionBusy(true);setPlanActionError('');
-    try{const isAdjustment=planAction.action==='adjust';const response=await fetch(`${apiUrl}/api/clients/${selectedId}/plans/${planAction.assignment.id}/${isAdjustment?'adjustments':planAction.action}`,{method:'POST',headers:{'content-type':'application/json','idempotency-key':planActionKeyRef.current},body:JSON.stringify(body)});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error==='balance_cannot_be_negative'?'El saldo del bono no puede quedar por debajo de cero.':result.error==='assignment_not_paused'?'Esta cuota ya no está en pausa.':result.error==='assignment_not_active'?'Solo se puede pausar una cuota activa.':'No se pudo guardar el cambio. Revisa el permiso y los datos.');setPlanAction(null);setRefreshKey(value=>value+1);setProfileRetry(value=>value+1);setArchiveFeedback(planAction.action==='pause'?'Cuota pausada.':planAction.action==='resume'?'Cuota reanudada.':planAction.action==='cancel'?'Cuota cancelada y conservada en el historial.':'Saldo ajustado y auditado.');}
+    try{const isAdjustment=planAction.action==='adjust';const response=await apiFetch(`${apiUrl}/api/clients/${selectedId}/plans/${planAction.assignment.id}/${isAdjustment?'adjustments':planAction.action}`,{method:'POST',headers:{'content-type':'application/json','idempotency-key':planActionKeyRef.current},body:JSON.stringify(body)});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error==='balance_cannot_be_negative'?'El saldo del bono no puede quedar por debajo de cero.':result.error==='assignment_not_paused'?'Esta cuota ya no está en pausa.':result.error==='assignment_not_active'?'Solo se puede pausar una cuota activa.':'No se pudo guardar el cambio. Revisa el permiso y los datos.');setPlanAction(null);setRefreshKey(value=>value+1);setProfileRetry(value=>value+1);setArchiveFeedback(planAction.action==='pause'?'Cuota pausada.':planAction.action==='resume'?'Cuota reanudada.':planAction.action==='cancel'?'Cuota cancelada y conservada en el historial.':'Saldo ajustado y auditado.');}
     catch(error){setPlanActionError(error instanceof Error?error.message:'No se pudo completar la acción.');}finally{setPlanActionBusy(false);}
   }
 
@@ -351,7 +392,7 @@ export function ClientsPage() {
     if (!profile) return;
     setArchiving(true); setArchiveError('');
     try {
-      const response = await fetch(`${apiUrl}/api/clients/${profile.client.id}/archive`, { method: 'PATCH' });
+      const response = await apiFetch(`${apiUrl}/api/clients/${profile.client.id}/archive`, { method: 'PATCH' });
       if (!response.ok) throw new Error(response.status === 403 ? 'Tu perfil no puede archivar clientes.' : 'No se pudo archivar el perfil. Inténtalo de nuevo.');
       const archived = await response.json() as Client;
       archiveSucceeded.current = true;
@@ -396,6 +437,7 @@ export function ClientsPage() {
   return <main className="clients-v2" id="clients" data-2j-design="v2">
     {!selectedId && <>
       <PageHeader title="Clientes" description="Busca y abre perfiles del centro. La ficha reúne la información operativa autorizada." actions={list.capabilities.manage ? <Button variant="primary" icon={icons.Plus} onClick={openCreate}>Nuevo cliente</Button> : undefined} />
+      {intent && <div className="client-feedback" role="status"><Icon icon={icons.Users} size={20} />{intent === 'assign-plan' ? 'Elige un cliente para asignarle una cuota.' : 'Elige un cliente para escribirle un mensaje.'}<Button size="sm" variant="ghost" onClick={() => setIntent(null)}>Cancelar</Button></div>}
       <Card as="section" padding="none" className="clients-panel" aria-label="Listado de clientes" aria-busy={listBusy || loadingMore}>
         <div className="clients-toolbar">
           <SearchField label="Buscar cliente" placeholder="Nombre, email o teléfono…" value={query} onChange={setQuery} />
@@ -515,13 +557,15 @@ export function ClientsPage() {
               <li><Card padding="none" className="client-fact"><span className="client-fact-label">Cargos vencidos</span><strong className="client-fact-value">{Number(paymentData?.overdueCount ?? 0)}</strong></Card></li>
             </ul>
             <Card as="section" aria-labelledby="client-charges-title"><CardHeader title="Cargos recientes" titleId="client-charges-title" level={2} actions={<Button variant="ghost" size="sm" href="#economics">Abrir Pagos</Button>} />
-              {(paymentData?.charges ?? []).length ? <ul className="client-list">{(paymentData?.charges ?? []).map((item) => <li key={item.id} className="client-list-row"><div className="client-list-main"><strong>{item.concept}</strong><span>{item.dueOn}</span></div><div className="client-list-side">{chargeChip(item.status)}<strong>{money(Number(item.balanceCents))}{item.status === 'refunded' ? ' devuelto' : ' pendiente'}</strong></div></li>)}</ul> : <p className="client-muted">No hay cargos recientes.</p>}
+              {(paymentData?.charges ?? []).length ? <ul className="client-list">{(paymentData?.charges ?? []).map((item) => <li key={item.id} className="client-list-row"><div className="client-list-main"><strong>{item.concept}</strong><span>{item.dueOn}</span></div><div className="client-list-side">{chargeChip(item.status)}<strong>{money(Number(item.balanceCents))}{item.status === 'refunded' ? ' devuelto' : ' pendiente'}</strong>{item.status !== 'void' && Number(item.amountCents) > Number(item.balanceCents) && <Button variant="ghost" size="sm" onClick={() => setInvoiceCharge(item)}>Factura</Button>}</div></li>)}</ul> : <p className="client-muted">No hay cargos recientes.</p>}
+              {invoiceCharge && <InvoiceDialog chargeId={invoiceCharge.id} title={invoiceCharge.concept} onClose={() => setInvoiceCharge(null)} />}
             </Card>
             <Card as="section" aria-labelledby="client-moves-title"><CardHeader title="Movimientos recientes" titleId="client-moves-title" level={2} />
               {(paymentData?.movements ?? []).length ? <ul className="client-list">{(paymentData?.movements ?? []).map((item) => <li key={item.id} className="client-list-row"><div className="client-list-main"><strong>{item.kind === 'refund' ? 'Devolución' : 'Pago'} · {item.concept}</strong><span>{new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Atlantic/Canary' }).format(new Date(item.createdAt))}</span></div><strong>{money(Number(item.amountCents))}</strong></li>)}</ul> : <p className="client-muted">No hay movimientos recientes.</p>}
             </Card>
           </div>}
 
+          {activeSection === 'purchases' && activeSectionData?.access === 'available' && <PurchasesPanel sales={(profile?.summary.purchases?.data as PurchaseRow[] | null) ?? []} />}
           {activeSection === 'messages' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-msg-title"><CardHeader title="Conversación del centro" titleId="client-msg-title" level={2} actions={<Button variant="ghost" size="sm" href="#communications">Abrir bandeja</Button>} />
             <dl className="client-dl"><div><dt>Mensajes sin leer</dt><dd>{Number((profile.summary.messages?.data as { unreadCount?: number } | null)?.unreadCount ?? 0)}</dd></div><div><dt>Último mensaje</dt><dd>{(profile.summary.messages?.data as { lastMessageAt?: string | null } | null)?.lastMessageAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Atlantic/Canary' }).format(new Date((profile.summary.messages?.data as { lastMessageAt: string }).lastMessageAt)) : 'Sin conversación'}</dd></div></dl>
           </Card>}
@@ -553,6 +597,7 @@ export function ClientsPage() {
                 </article>)}
               </Card>
             </>}
+            {selectedId && <ClientFilesPanel clientId={selectedId} canManage={activeSectionData.canManage === true} />}
           </div>}
 
           {activeSection === 'followup' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-follow-title"><CardHeader title="Check-ins asignados" titleId="client-follow-title" level={2} description="Historial del módulo" />

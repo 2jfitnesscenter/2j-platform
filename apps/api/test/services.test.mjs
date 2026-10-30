@@ -1,4 +1,4 @@
-import { after, test } from 'node:test';
+import { after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import http from 'node:http';
@@ -17,6 +17,7 @@ import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifec
 import { activateSettledEntitlementPeriods, materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
 import { signedRequestSignature } from '../src/internal-service-auth.ts';
 import { canaryBusinessDate, proratedSessionsForPayment } from '@2j/domain';
+import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: PostgreSQL integration tests cannot be skipped.');
 
@@ -28,6 +29,9 @@ const clientsAdminApp = buildServer(process.env.DATABASE_URL, { authorizationRes
 const clientsTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-trainer', role: 'trainer' }) });
 const clientsReceptionApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-reception', role: 'reception-management' }) });
 const clientsAccountantApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-accountant', role: 'accountant' }) });
+const ownerPanelApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-owner', role: 'admin', explicitPermissions: ['owner.panel.read'] }) });
+const configuredOwnerPanelApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-configured-owner', role: 'admin' }), ownerActorId: 'qa-configured-owner' });
+const nonOwnerPanelApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-not-owner', role: 'admin' }), ownerActorId: 'qa-configured-owner' });
 const trainingLinkingAdminApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }), trainingLinkingEnabled: true });
 const trainingLinkingTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-trainer', role: 'trainer' }), trainingLinkingEnabled: true });
 const trainingLinkingReceptionApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-reception', role: 'reception-management' }), trainingLinkingEnabled: true });
@@ -39,7 +43,17 @@ const capabilityKeyId = 'qa-home-v1';
 const capabilitySecret = Buffer.alloc(32, 37).toString('base64url');
 const trainingCapabilitiesApp = buildServer(process.env.DATABASE_URL, { trainingCapabilitiesKeys: { [capabilityKeyId]: { caller:'home', secret:capabilitySecret } } });
 const [defaultArea] = await sql`SELECT id,name FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
+const cashDenominationKeys=['coin_0_01','coin_0_02','coin_0_05','coin_0_10','coin_0_20','coin_0_50','coin_1','coin_2','bill_5','bill_10','bill_20','bill_50','bill_100','bill_200','bill_500'];
+function cashCount(cents){return Object.fromEntries(cashDenominationKeys.map((key,index)=>[key,index===0?cents:0]));}
+async function expectedCashCents(database,sessionId){const [row]=await database`SELECT COALESCE(reopen.details->>'openingCents',s.opening_cents::text)::bigint
+  +COALESCE((SELECT sum(CASE WHEN t.kind='payment' THEN p.amount_cents ELSE -p.amount_cents END) FROM economic_transactions t JOIN economic_payment_splits p ON p.transaction_id=t.id WHERE t.cash_session_id=s.id AND p.method='cash' AND (reopen.occurred_at IS NULL OR t.created_at>=reopen.occurred_at)),0)
+  +COALESCE((SELECT sum(x.total_cents) FROM store_sales x WHERE x.cash_session_id=s.id AND x.payment_state='paid' AND x.payment_method='cash' AND (reopen.occurred_at IS NULL OR x.created_at>=reopen.occurred_at)),0)
+  -COALESCE((SELECT sum(m.amount_cents) FROM store_sale_cash_movements m WHERE m.cash_session_id=s.id AND m.payment_method='cash' AND (reopen.occurred_at IS NULL OR m.occurred_at>=reopen.occurred_at)),0)
+  +COALESCE((SELECT sum(a.amount_cents) FROM economic_cash_adjustments a WHERE a.cash_session_id=s.id AND (reopen.occurred_at IS NULL OR a.created_at>=reopen.occurred_at)),0)
+  -COALESCE((SELECT sum(o.amount_cents) FROM economic_cash_outflows o WHERE o.cash_session_id=s.id AND o.status='approved' AND (reopen.occurred_at IS NULL OR o.created_at>=reopen.occurred_at)),0) AS total
+  FROM economic_cash_sessions s LEFT JOIN LATERAL(SELECT occurred_at,details FROM economic_audit_events WHERE resource_type='cash_session' AND resource_id=s.id AND action='cash.reopened' ORDER BY occurred_at DESC,id DESC LIMIT 1) reopen ON true WHERE s.id=${sessionId}`;return Number(row.total);}
+beforeEach(async () => { await ensureCashSessionForActor(sql,'qa-admin'); });
+after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), ownerPanelApp.close(), configuredOwnerPanelApp.close(), nonOwnerPanelApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
 
 function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
   const timestamp = overrides.timestamp ?? new Date().toISOString();
@@ -266,7 +280,7 @@ test('DB migration is checksummed, repeatable and unchanged on re-application', 
   assert.deepEqual(first.map((item) => item.name), names);
   for (const name of names) {
     const contents = await readFile(new URL(name, directory), 'utf8');
-    assert.equal(first.find((item) => item.name === name)?.checksum.trim(), createHash('sha256').update(contents).digest('hex'));
+    assert.equal(first.find((item) => item.name === name)?.checksum.trim(), createHash('sha256').update(contents.replace(/\r\n/g, '\n')).digest('hex'), 'new rows store the checksum of the LF form, whatever the checkout line endings');
   }
   const migration = names[0];
   const originalChecksum = first.find((item) => item.name === migration).checksum.trim();
@@ -289,7 +303,7 @@ test('0037 upgrades the checksummed current-main schema once and preserves legac
     const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
     const contract='0037_contract_entitlement_periods_v1.sql';
     assert.ok(names.includes(contract));
-    assert.equal(names.at(-1),'0038_economic_grace_days.sql');
+    assert.ok(names.includes('0038_economic_grace_days.sql'));
     const prior=names.filter(name=>name<contract);
     await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
     for(const name of prior){
@@ -378,16 +392,15 @@ test('0037 upgrades the checksummed current-main schema once and preserves legac
     };
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,36);
     const upgraded=await migrateDatabase(upgradeDb);
-    assert.equal(upgraded.length,38);
-    assert.deepEqual(upgraded.slice(-2).map(row=>row.name),[contract,'0038_economic_grace_days.sql']);
-    assert.deepEqual(upgraded.slice(-3).map(row=>row.name),['0036_contract_terms_dates.sql',contract,'0038_economic_grace_days.sql']);
+    assert.equal(upgraded.length,names.length);
+    assert.deepEqual(upgraded.slice(35,38).map(row=>row.name),['0036_contract_terms_dates.sql',contract,'0038_economic_grace_days.sql'],'later migrations are appended after 0038');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${contract}`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='quantity_rule'`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='assignment_entitlement_periods' AND column_name IN ('period_index','entitlement_mode','formula_id','weekdays_in_period','sessions_granted')`)[0].count,5);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM information_schema.columns WHERE table_name='plan_rights' AND column_name='training_access_level'`)[0].count,1);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_service_request_replays') IS NOT NULL AS exists`)[0].exists,true);
     assert.equal((await upgradeDb`SELECT to_regclass('public.platform_training_access_events') IS NOT NULL AS exists`)[0].exists,true);
-    assert.equal((await migrateDatabase(upgradeDb)).length,38,'re-running migration verification applies no duplicate migration');
+    assert.equal((await migrateDatabase(upgradeDb)).length,names.length,'re-running migration verification applies no duplicate migration');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE term_kind IS NOT NULL`)[0].count,0,'migration must not rewrite legacy plan versions');
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM plan_versions WHERE plan_id=${legacyPlanId} AND version=1 AND term_kind IS NULL AND term_months IS NULL AND max_span_days IS NULL AND payment_rule IS NULL AND payment_block IS NULL`)[0].count,1);
     assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM assignment_contract_terms`)[0].count,0,'migration must not fabricate terms for legacy assignments');
@@ -408,6 +421,11 @@ test('0037 upgrades the checksummed current-main schema once and preserves legac
     const upgradedApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'migration-flow-test',role:'admin'})});
     try{
       await upgradedApp.ready();
+      const [cashProfessional]=await upgradeDb`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('Migración','Caja','migration-flow-test','admin','migration-flow-test','test-fixture') RETURNING id`;
+      const [cashRegister]=await upgradeDb`SELECT id FROM economic_cash_registers WHERE code='bunker'`;
+      const zeroDenominations={coin_0_01:0,coin_0_02:0,coin_0_05:0,coin_0_10:0,coin_0_20:0,coin_0_50:0,coin_1:0,coin_2:0,bill_5:0,bill_10:0,bill_20:0,bill_50:0,bill_100:0,bill_200:0,bill_500:0};
+      const [cashSession]=await upgradeDb`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${cashRegister.id},(now() AT TIME ZONE 'Atlantic/Canary')::date,0,${upgradeDb.json(zeroDenominations)},'migration-flow-test') RETURNING id`;
+      await upgradeDb`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${cashSession.id},${cashProfessional.id},'migration-flow-test')`;
       const paymentKey=randomUUID();
       const paymentResponse=await upgradedApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':paymentKey},payload:{chargeId:legacyPendingChargeId,splits:[{method:'card',amountCents:8000}]}});
       assert.equal(paymentResponse.statusCode,201,paymentResponse.body);
@@ -523,7 +541,7 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
       const databaseColumn = dbColumns.get(config.name).find((row) => row.column_name === column.name);
       assert.equal(databaseColumn.is_nullable === 'YES', !column.notNull, `${config.name}.${column.name} nullability drifted`);
       const rawType = column.getSQLType();
-      const expectedType = rawType.replace(/^char\(/, 'character(').replace(/^time$/, 'time without time zone');
+      const expectedType = rawType.replace(/^char\(/, 'character(').replace(/^time$/, 'time without time zone').replace(/^.+\[\]$/, 'ARRAY');
       assert.ok(databaseColumn.data_type === expectedType || (expectedType.startsWith('character(') && databaseColumn.data_type === 'character'), `${config.name}.${column.name} type drifted: ${databaseColumn.data_type} != ${expectedType}`);
       assert.equal(databaseColumn.column_default != null, column.hasDefault, `${config.name}.${column.name} default presence drifted`);
     }
@@ -553,9 +571,10 @@ test('0037/0038 migrate a fresh database from zero and verify the upgrade from c
     sourceUrl.pathname=`/${databaseName}`;fresh=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     assert.equal((await fresh`SELECT to_regclass('public.plan_versions') AS table`)[0].table,null,'fresh database starts empty');
     const first=await migrateDatabase(fresh);
-    assert.equal(first.length,38);
-    assert.equal(first.at(-2).name,'0037_contract_entitlement_periods_v1.sql');
-    assert.equal(first.at(-1).name,'0038_economic_grace_days.sql');
+    const listing=(await readdir(new URL('../migrations/',import.meta.url))).filter(name=>name.endsWith('.sql')).sort();
+    assert.deepEqual(first.map(row=>row.name),listing,'every migration file is applied exactly once, in order, and nothing else is recorded');
+    assert.equal(first[36].name,'0037_contract_entitlement_periods_v1.sql','released history keeps its position');
+    assert.equal(first[37].name,'0038_economic_grace_days.sql','released history keeps its position');
     const second=await migrateDatabase(fresh);
     assert.deepEqual(second.map(row=>[row.name,row.checksum.trim()]),first.map(row=>[row.name,row.checksum.trim()]));
     assert.equal((await fresh`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0037_contract_entitlement_periods_v1.sql'`)[0].count,1);
@@ -570,7 +589,7 @@ test('0037/0038 migrate a fresh database from zero and verify the upgrade from c
   }
 });
 
-test('0038 upgrades the exact current-main schema once and remains checksum-stable on rerun', async () => {
+test('the latest migration upgrades the previous schema once and remains checksum-stable on rerun', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`f1c_main_upgrade_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';
   const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});let upgradeDb;
@@ -579,18 +598,19 @@ test('0038 upgrades the exact current-main schema once and remains checksum-stab
     sourceUrl.pathname=`/${databaseName}`;upgradeDb=postgres(sourceUrl.toString(),{max:2,connect_timeout:5});
     const directory=new URL('../migrations/',import.meta.url);
     const names=(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort();
-    assert.equal(names.length,38);assert.equal(names.at(-2),'0037_contract_entitlement_periods_v1.sql');
-    assert.equal(names.at(-1),'0038_economic_grace_days.sql');
+    assert.ok(names.length>=39);assert.equal(names[36],'0037_contract_entitlement_periods_v1.sql');
+    assert.equal(names[37],'0038_economic_grace_days.sql');
+    const latest=names.at(-1);
     await upgradeDb`CREATE TABLE schema_migrations(name text PRIMARY KEY,checksum char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`;
-    for(const name of names.slice(0,37)){
+    for(const name of names.slice(0,-1)){
       const contents=await readFile(new URL(name,directory),'utf8');
       const checksum=createHash('sha256').update(contents).digest('hex');
       await upgradeDb.begin(async tx=>{await tx.unsafe(contents);await tx`INSERT INTO schema_migrations(name,checksum) VALUES (${name},${checksum})`});
     }
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,37);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations`)[0].count,names.length-1);
     const upgraded=await migrateDatabase(upgradeDb);
-    assert.equal(upgraded.length,38);assert.equal(upgraded.at(-1).name,'0038_economic_grace_days.sql');
-    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name='0038_economic_grace_days.sql'`)[0].count,1);
+    assert.equal(upgraded.length,names.length);assert.equal(upgraded.at(-1).name,latest);
+    assert.equal((await upgradeDb`SELECT count(*)::int AS count FROM schema_migrations WHERE name=${latest}`)[0].count,1,'the new migration is applied exactly once');
     assert.equal((await upgradeDb`SELECT grace_days FROM economic_settings WHERE singleton=true`)[0].grace_days,5);
     const repeated=await migrateDatabase(upgradeDb);
     assert.deepEqual(repeated.map(row=>[row.name,row.checksum.trim()]),upgraded.map(row=>[row.name,row.checksum.trim()]));
@@ -1308,11 +1328,13 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(Object.hasOwn(trainer.json().summary, 'health'), false);
   assert.equal(trainer.json().summary.plans.access, 'available', 'Trainer has operational read access to entitlements');
   assert.equal(trainer.json().summary.documents.access, 'available');
+  assert.equal(trainer.json().sections.find((section) => section.id === 'documents').canManage, false, 'read access does not imply document management');
   assert.deepEqual(trainer.json().summary.messages.data, { unreadCount: 0, lastMessageAt: null });
   assert.equal(trainer.json().sections.find((section) => section.id === 'payments').sourceLabel, 'Pagos');
   const adminProfile = await clientsAdminApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
   assert.equal(adminProfile.statusCode, 200);
   assert.equal(adminProfile.json().client.email, testEmail.trim().toLowerCase(), 'contact fields remain available to the client manager');
+  assert.equal(adminProfile.json().sections.find((section) => section.id === 'documents').canManage, true, 'management capability is resolved server-side');
   assert.equal(JSON.stringify(trainer.json()).includes('qa-admin'), false);
   const forbiddenCreate = await createClientRequest(clientsTrainerApp, { firstName: 'No', lastName: 'Write' });
   assert.equal(forbiddenCreate.statusCode, 403);
@@ -1912,6 +1934,37 @@ test('archiving a draft freezes its definition and preserves its current version
   await assert.rejects(sql`UPDATE plans SET current_version=2 WHERE id=${plan.json().id}`, (error) => error.code === '55000');
 });
 
+test('archived plans remain visible to catalog managers and can be reactivated without changing the frozen version', async () => {
+  const areaResponse = await app.inject({ method: 'POST', url: '/api/areas', payload: { name: `Área plan histórico ${randomUUID()}` } });
+  assert.equal(areaResponse.statusCode, 201, areaResponse.body);
+  const serviceResponse = await app.inject({ method: 'POST', url: '/api/services', payload: { name: `Servicio plan histórico ${randomUUID()}`, areaId: areaResponse.json().id, status: 'active' } });
+  assert.equal(serviceResponse.statusCode, 201, serviceResponse.body);
+  const service = serviceResponse.json();
+  const { response: plan } = await createPlan([service.id]);
+  const id = plan.json().id;
+  assert.equal((await app.inject({ method: 'POST', url: `/api/plans/${id}/activate` })).statusCode, 200);
+  const archived = await app.inject({ method: 'POST', url: `/api/plans/${id}/archive` });
+  assert.equal(archived.statusCode, 200);
+  const normalList = await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
+  const archivedList = await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans?includeArchived=true` });
+  const trainerArchivedList = await clientsTrainerApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans?includeArchived=true` });
+  assert.equal(normalList.json().some((item) => item.id === id), false);
+  assert.equal(archivedList.statusCode, 200);
+  const listedPlan = archivedList.json().find((item) => item.id === id);
+  assert.equal(listedPlan?.status, 'archived');
+  assert.equal(listedPlan?.services[0]?.areaStatus, 'active');
+  assert.equal(trainerArchivedList.statusCode, 403, 'archived catalog access requires pricing-management permission');
+
+  const before = await sql`SELECT current_version AS version,(SELECT frozen_at FROM plan_versions WHERE plan_id=${id} AND version=plans.current_version) AS frozen_at FROM plans WHERE id=${id}`;
+  const reactivated = await app.inject({ method: 'POST', url: `/api/plans/${id}/activate` });
+  assert.equal(reactivated.statusCode, 200, reactivated.body);
+  assert.equal(reactivated.json().status, 'active');
+  const after = await sql`SELECT current_version AS version,(SELECT frozen_at FROM plan_versions WHERE plan_id=${id} AND version=plans.current_version) AS frozen_at FROM plans WHERE id=${id}`;
+  assert.deepEqual(after, before, 'reactivation preserves the version pointer and frozen definition');
+  assert.equal((await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans` })).json().some((item) => item.id === id), true);
+
+});
+
 test('service right counts include only global or service-targeted rights', async () => {
   const first = await createService();
   const second = await createService();
@@ -1927,17 +1980,23 @@ test('service right counts include only global or service-targeted rights', asyn
   assert.equal(byId.get(second.id).rightCount, 1);
 });
 
-test('archived services cannot be linked to new plans and plan reads report UUID and 404 errors', async () => {
+test('plans linked to archived services remain manageable but cannot be assigned to new plans', async () => {
   const service = await createService();
+  const plan = await createPlan([service.id]);
+  assert.equal(plan.response.statusCode, 201, plan.response.body);
   assert.equal((await app.inject({ method: 'PATCH', url: `/api/services/${service.id}/archive` })).statusCode, 200);
   const invalidId = await app.inject({ method: 'GET', url: '/api/services/not-a-uuid/plans' });
   const missing = await app.inject({ method: 'GET', url: `/api/services/${randomUUID()}/plans` });
   const archivedRead = await app.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
+  const trainerRead = await clientsTrainerApp.inject({ method: 'GET', url: `/api/services/${service.id}/plans` });
   const createArchived = await app.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': randomUUID() }, payload: planPayload([service.id]) });
   assert.equal(invalidId.statusCode, 400);
   assert.deepEqual(invalidId.json(), { error: 'invalid_service_id' });
   assert.equal(missing.statusCode, 404);
-  assert.equal(archivedRead.statusCode, 409);
+  assert.equal(archivedRead.statusCode, 200, archivedRead.body);
+  assert.equal(archivedRead.json().some((item) => item.id === plan.response.json().id), true);
+  assert.equal(archivedRead.json()[0].services[0].status, 'archived');
+  assert.equal(trainerRead.statusCode, 409);
   assert.equal(createArchived.statusCode, 409);
 });
 
@@ -1966,8 +2025,9 @@ test('economic charges and split payments are permissioned, idempotent, partial 
 
   const paymentKey = randomUUID();
   const paymentPayload = { chargeId: chargeResponse.json().id, splits: [{ method: 'cash', amountCents: 2000 }, { method: 'card', amountCents: 3000 }] };
-  const cashSession = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 0 } });
-  assert.equal(cashSession.statusCode, 201, cashSession.body);
+  const cashSession = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(cashSession.statusCode, 200, cashSession.body);
+  assert.equal(cashSession.json().session.status, 'open');
   const payment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': paymentKey }, payload: paymentPayload });
   assert.equal(payment.statusCode, 201, payment.body);
   const paymentReplay = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': paymentKey }, payload: paymentPayload });
@@ -1989,7 +2049,7 @@ test('economic charges and split payments are permissioned, idempotent, partial 
   const [audit] = await sql`SELECT count(*)::int AS count FROM economic_audit_events WHERE client_id=${client.id}`;
   assert.equal(audit.count, 3);
   const cashSnapshot = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
-  const closedCash = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${cashSession.json().id}/close`, payload: { countedCents: cashSnapshot.json().session.expectedCents } });
+  const closedCash = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${cashSession.json().session.id}/close`, payload: { countedDenominations: cashCount(await expectedCashCents(sql, cashSession.json().session.id)) } });
   assert.equal(closedCash.statusCode, 200, closedCash.body);
 });
 
@@ -2168,6 +2228,136 @@ test('debt restriction permits waitlist and Trainer can make a reasoned audited 
   }
 });
 
+test('D113 gates payment collection and D102 transfer validation remains independent of cash', async () => {
+  const open = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(open.statusCode, 200, open.body);
+  const closed = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${open.json().session.id}/close`, payload: { countedDenominations: cashCount(await expectedCashCents(sql, open.json().session.id)) } });
+  assert.equal(closed.statusCode, 200, closed.body);
+
+  const client = (await createClientRequest(clientsAdminApp, { firstName: 'D113', lastName: `Gate ${randomUUID()}`, email: null, phone: null })).json();
+  const charge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'D113 QA', amountCents: 10000, dueOn: '2099-12-10' } });
+  assert.equal(charge.statusCode, 201, charge.body);
+  for (const method of ['cash', 'card', 'transfer', 'direct_debit', 'other']) {
+    const response = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method, amountCents: 1000 }] } });
+    assert.equal(response.statusCode, 409, `${method}: ${response.body}`);
+    assert.equal(response.json().error, 'cash_session_required');
+  }
+  const [noPayment] = await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${charge.json().id}`;
+  assert.equal(noPayment.count, 0);
+
+  const service = await createService(`D113 ${randomUUID()}`);
+  const plan = await createPlan([service.id]);
+  assert.equal(plan.response.statusCode, 201, plan.response.body);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/plans/${plan.response.json().id}/activate` })).statusCode, 200);
+  const assignment = await clientsAdminApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { planId: plan.response.json().id, startsOn: '2026-10-25', endsOn: null, dueOn: '2026-10-25', amountCents: 5000, paymentAmountCents: 5000, paymentMethod: 'card' } });
+  assert.equal(assignment.statusCode, 409, assignment.body);
+  assert.equal(assignment.json().error, 'cash_session_required');
+  const [noAssignment] = await sql`SELECT count(*)::int AS count FROM client_plan_assignments WHERE client_id=${client.id}`;
+  assert.equal(noAssignment.count, 0);
+
+  const proof = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/transfer-proofs', payload: { chargeId: charge.json().id, amountCents: 1000, contentType: 'application/pdf', fileName: 'd113.pdf', base64: Buffer.from('%PDF-1.7\nD113').toString('base64') } });
+  assert.equal(proof.statusCode, 201, proof.body);
+  const validatedWithoutShift = await clientsTrainerApp.inject({ method: 'POST', url: `/api/economics/transfer-proofs/${proof.json().id}/review`, payload: { decision: 'validated', note: 'Revisión D102 sin exigir caja' } });
+  assert.equal(validatedWithoutShift.statusCode, 200, validatedWithoutShift.body);
+  const [validatedProof] = await sql`SELECT status,transaction_id FROM economic_transfer_proofs WHERE id=${proof.json().id}`;
+  assert.equal(validatedProof.status, 'validated');
+  assert.ok(validatedProof.transaction_id);
+  const [transferTransaction] = await sql`SELECT cash_session_id,kind FROM economic_transactions WHERE id=${validatedProof.transaction_id}`;
+  assert.equal(transferTransaction.kind, 'payment');
+  assert.equal(transferTransaction.cash_session_id, null, 'D102 transfer validation is not attributed to a cash shift');
+
+  const reopened = await ownerPanelApp.inject({ method: 'POST', url: `/api/economics/cash/${open.json().session.id}/owner-reopen`, payload: { custodianActorId:'qa-admin', openingDenominations: cashCount(0) } });
+  assert.equal(reopened.statusCode, 200, reopened.body);
+  const paid = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 1000 }] } });
+  assert.equal(paid.statusCode, 201, paid.body);
+  const [linked] = await sql`SELECT cash_session_id FROM economic_transactions WHERE id=${paid.json().id}`;
+  assert.equal(linked.cash_session_id, reopened.json().id);
+});
+
+test('D113 requires an open shift for every refund method and links the refund to that shift', async () => {
+  const client = (await createClientRequest(clientsAdminApp, { firstName: 'Refund D113', lastName: randomUUID(), email: null, phone: null })).json();
+  const charge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'Reembolso D113', amountCents: 10000, dueOn: '2099-12-10' } });
+  const payment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method: 'card', amountCents: 5000 }] } });
+  assert.equal(payment.statusCode, 201, payment.body);
+  const current = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  const close = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${current.json().session.id}/close`, payload: { countedDenominations: cashCount(await expectedCashCents(sql, current.json().session.id)) } });
+  assert.equal(close.statusCode, 200, close.body);
+
+  for (const method of ['cash', 'card', 'transfer', 'direct_debit', 'other']) {
+    const response = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: payment.json().id, amountCents: 500, method, note: `D113 ${method}` } });
+    assert.equal(response.statusCode, 409, `${method}: ${response.body}`);
+    assert.equal(response.json().error, 'cash_session_required');
+  }
+  const [noRefunds] = await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE refund_of=${payment.json().id}`;
+  assert.equal(noRefunds.count, 0);
+
+  const opened = await ownerPanelApp.inject({ method: 'POST', url: `/api/economics/cash/${current.json().session.id}/owner-reopen`, payload: { custodianActorId:'qa-admin', openingDenominations: cashCount(0) } });
+  assert.equal(opened.statusCode, 200, opened.body);
+  const refund = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: payment.json().id, amountCents: 500, method: 'card', note: 'D113 tarjeta con caja abierta' } });
+  assert.equal(refund.statusCode, 201, refund.body);
+  const [linked] = await sql`SELECT cash_session_id FROM economic_transactions WHERE id=${refund.json().id}`;
+  assert.equal(linked.cash_session_id, opened.json().id);
+});
+
+test('database guard rejects unlinked payments and refunds while D102 validated transfer remains the only NULL-shift exception', async () => {
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'DB guard',lastName:randomUUID(),email:null,phone:null})).json();
+  const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'DB guard',amountCents:2000,dueOn:'2099-12-10'}});
+  const paymentId=randomUUID(),paymentKey=randomUUID(),paymentHash='a'.repeat(64);
+  await assert.rejects(sql.begin(async tx=>{
+    await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${paymentId},${charge.json().id},${client.id},'payment',500,'qa-db-guard',${paymentKey},${paymentHash},NULL)`;
+    await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${paymentId},'card',500)`;
+  }),{code:'23514'});
+  const paid=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'card',amountCents:500}]}});
+  assert.equal(paid.statusCode,201,paid.body);
+  const refundId=randomUUID(),refundKey=randomUUID(),refundHash='b'.repeat(64);
+  await assert.rejects(sql.begin(async tx=>{
+    await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,refund_of,actor_id,idempotency_key,request_hash,cash_session_id) VALUES (${refundId},${charge.json().id},${client.id},'refund',100,${paid.json().id},'qa-db-guard',${refundKey},${refundHash},NULL)`;
+    await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents) VALUES (${refundId},'card',100)`;
+  }),{code:'23514'});
+  assert.equal((await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE id IN (${paymentId},${refundId})`)[0].count,0);
+});
+
+test('concurrent collection and cash close serialize with the close including exactly the accepted cash collection',async()=>{
+  const client=(await createClientRequest(clientsAdminApp,{firstName:'Close race',lastName:randomUUID(),email:null,phone:null})).json();
+  const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Close race',amountCents:1000,dueOn:'2099-12-10'}});
+  const current=await clientsAdminApp.inject({method:'GET',url:'/api/economics/cash/today'});assert.equal(current.statusCode,200,current.body);
+  const session=current.json().session,baseline=await expectedCashCents(sql,session.id);
+  const [payment,close]=await Promise.all([
+    clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'cash',amountCents:500}]}}),
+    clientsAdminApp.inject({method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedDenominations:cashCount(baseline)}}),
+  ]);
+  assert.equal(close.statusCode,200,close.body);
+  assert.ok(payment.statusCode===201||(payment.statusCode===409&&payment.json().error==='cash_session_required'),payment.body);
+  const count=Number((await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${charge.json().id} AND kind='payment'`)[0].count);
+  assert.equal(count,payment.statusCode===201?1:0);
+  const [closed]=await sql`SELECT expected_cents FROM economic_cash_sessions WHERE id=${session.id}`;
+  assert.equal(Number(closed.expected_cents),baseline+(count?500:0));
+});
+
+test('cash difference is returned only to an explicit owner.panel.read grant', async () => {
+  const current = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(current.statusCode, 200, current.body);
+  const close = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${current.json().session.id}/close`, payload: { countedDenominations: cashCount((await expectedCashCents(sql, current.json().session.id)) + 77) } });
+  assert.equal(close.statusCode, 200, close.body);
+  assert.equal(Object.hasOwn(close.json(), 'differenceCents'), false, 'generic admin role is not the owner permission');
+  const genericCash = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(Object.hasOwn(genericCash.json().session, 'differenceCents'), false);
+  const genericOverview = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/overview' });
+  assert.equal(genericOverview.json().capabilities.ownerPanelRead, false);
+  const ownerCash = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(Number(ownerCash.json().items.find(item=>item.id===current.json().session.id).differenceCents), 77);
+  const ownerOverview = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/overview' });
+  assert.equal(ownerOverview.json().capabilities.ownerPanelRead, true);
+  const genericDashboard = await clientsAdminApp.inject({ method: 'GET', url: '/api/dashboard/command-center' });
+  assert.equal(genericDashboard.statusCode, 200, genericDashboard.body);
+  assert.equal(Object.hasOwn(genericDashboard.json().economics.cashSession, 'differenceCents'), false);
+  const ownerDashboard = await ownerPanelApp.inject({ method: 'GET', url: '/api/dashboard/command-center' });
+  assert.equal(ownerDashboard.statusCode, 200, ownerDashboard.body);
+  assert.equal(Number(ownerDashboard.json().economics.cashSession.differenceCents), 77);
+  assert.equal((await configuredOwnerPanelApp.inject({ method: 'GET', url: '/api/economics/overview' })).json().capabilities.ownerPanelRead, true);
+  assert.equal((await nonOwnerPanelApp.inject({ method: 'GET', url: '/api/economics/overview' })).json().capabilities.ownerPanelRead, false);
+});
+
 test('cash close, human transfer validation, and tax-explicit invoice drafts have guarded transitions', async () => {
   const clientResponse = await createClientRequest(clientsAdminApp, { firstName: 'Fiscal', lastName: `QA ${randomUUID()}`, email: null, phone: null });
   assert.equal(clientResponse.statusCode, 201);
@@ -2205,7 +2395,9 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   const seriesAfterDraft = await sql`SELECT next_number FROM economic_invoice_series WHERE id=${series.json().id}`;
   assert.equal(Number(seriesAfterDraft[0].next_number), 1, 'drafts must not consume official numbering');
   const issueBlocked = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/invoice-drafts/${draft.json().id}/issue`, payload: {} });
-  assert.equal(issueBlocked.statusCode, 423);
+  assert.equal(issueBlocked.statusCode, 409, 'with no issuer data filled in (A65) nothing can be issued');
+  assert.equal(issueBlocked.json().error, 'issuer_incomplete');
+  assert.ok(issueBlocked.json().missing.includes('NIF'));
   const nonSubject = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/invoice-drafts', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, seriesId: series.json().id, sourceChargeId: charge.json().id, concept: 'Línea no sujeta QA', netCents: 8000, taxTreatment: 'non_subject', taxDescription: 'Tratamiento pendiente de revisión legal' } });
   assert.equal(nonSubject.statusCode, 201, nonSubject.body);
   const [taxDraft] = await sql`SELECT tax_treatment,tax_rate_basis_points,tax_cents FROM economic_invoice_drafts WHERE id=${nonSubject.json().id}`;
@@ -2224,9 +2416,13 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   assert.equal(lineData.tax_treatment,'mixed');
   assert.equal(lineData.line_items.length,3);
 
-  const opened = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 20000 } });
-  assert.equal(opened.statusCode, 201, opened.body);
-  const secondOpen = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { openingCents: 1000 } });
+  const priorOpenCash = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(priorOpenCash.json().session.status, 'open');
+  const priorClose = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${priorOpenCash.json().session.id}/close`, payload: { countedDenominations: cashCount(await expectedCashCents(sql, priorOpenCash.json().session.id)) } });
+  assert.equal(priorClose.statusCode, 200, priorClose.body);
+  const opened = await ownerPanelApp.inject({ method: 'POST', url: `/api/economics/cash/${priorOpenCash.json().session.id}/owner-reopen`, payload: { custodianActorId:'qa-admin', openingDenominations: cashCount(20000) } });
+  assert.equal(opened.statusCode, 200, opened.body);
+  const secondOpen = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/open', payload: { registerCode:'bunker', openingDenominations: cashCount(1000) } });
   assert.equal(secondOpen.statusCode, 409);
   const cashCharge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'Pago en caja QA', amountCents: 8000, dueOn: '2099-12-10' } });
   const cashPayment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: cashCharge.json().id, splits: [{ method: 'cash', amountCents: 3000 }, { method: 'card', amountCents: 2000 }] } });
@@ -2235,33 +2431,92 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   assert.equal(cashRefund.statusCode, 201, cashRefund.body);
   const [cashLinks] = await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE id IN (${cashPayment.json().id}::uuid,${cashRefund.json().id}::uuid) AND cash_session_id=${opened.json().id}`;
   assert.equal(cashLinks.count, 2);
-  const adjustment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/adjustments', payload: { amountCents: 300, reason: 'Cambio de apertura QA' } });
+  const adjustment = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/outflows', payload: { movementType:'expense', amountCents: 300, reason: 'Gasto de apertura QA' } });
   assert.equal(adjustment.statusCode, 201, adjustment.body);
   const liveCash = await clientsAdminApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
-  assert.equal(Number(liveCash.json().session.expectedCents), 22800);
-  assert.equal(Number(liveCash.json().session.cashPaymentsCents), 3000);
-  assert.equal(Number(liveCash.json().session.cashRefundsCents), 500);
-  const closed = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${opened.json().id}/close`, payload: { countedCents: 23000 } });
+  assert.equal(await expectedCashCents(sql, opened.json().id), 22200);
+  assert.equal(Object.hasOwn(liveCash.json().session,'expectedCents'),false,'cashier read must not disclose the expected amount');
+  const closed = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${opened.json().id}/close`, payload: { countedDenominations: cashCount(23000) } });
   assert.equal(closed.statusCode, 200, closed.body);
   assert.equal(closed.json().status, 'closed');
-  assert.equal(Number(closed.json().expectedCents), 22800);
-  assert.equal(Number(closed.json().differenceCents), 200);
-  const duplicateClose = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/close', payload: { countedCents: 27000 } });
+  assert.equal(await expectedCashCents(sql,opened.json().id), 22200);
+  assert.equal(Object.hasOwn(closed.json(), 'differenceCents'), false, 'cash difference is not returned to the generic admin role');
+  const ownerClosedCash = await ownerPanelApp.inject({ method: 'GET', url: '/api/economics/cash/today' });
+  assert.equal(Number(ownerClosedCash.json().session.differenceCents), 800);
+  const duplicateClose = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/cash/close', payload: { countedDenominations: cashCount(27000) } });
   assert.equal(duplicateClose.statusCode, 409);
   const [immutableCash] = await sql`SELECT expected_cents,difference_cents FROM economic_cash_sessions WHERE id=${opened.json().id}`;
   await assert.rejects(sql`UPDATE economic_cash_sessions SET counted_cents=1 WHERE id=${opened.json().id}`, { code: '55000' });
-  assert.equal(Number(immutableCash.expected_cents), 22800);
-  assert.equal(Number(immutableCash.difference_cents), 200);
+  assert.equal(Number(immutableCash.expected_cents), 22200);
+  assert.equal(Number(immutableCash.difference_cents), 800);
 });
 
-test('late close preserves the operational date and records the actual closer and timestamp', async () => {
-  const [session] = await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,opened_by) VALUES ('1900-01-01',5000,'qa-late-open') RETURNING id,local_date`;
-  const response = await clientsAdminApp.inject({ method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedCents:5000} });
-  assert.equal(response.statusCode,200,response.body);
-  assert.equal(response.json().status,'late_close');
-  assert.equal(String(response.json().localDate),session.local_date instanceof Date ? session.local_date.toISOString().slice(0,10) : String(session.local_date));
-  assert.equal(response.json().closedBy,'qa-admin');
-  assert.ok(response.json().closedAt);
+test('previous-day open cash blocks collection and requires owner resolution without changing clock records', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`cash_stale_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
+  let testDb,testApp;
+  try {
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);sourceUrl.pathname=`/${databaseName}`;
+    testDb=postgres(sourceUrl.toString(),{max:3,connect_timeout:5});await migrateDatabase(testDb);
+    testApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'qa-stale-cash-owner-resolution',role:'admin'})});
+    const client=(await testApp.inject({method:'POST',url:'/api/clients',headers:{'idempotency-key':randomUUID()},payload:{firstName:'Caja',lastName:'Ayer',email:null,phone:null}})).json();
+    const charge=await testApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Cobro bloqueado por caja anterior',amountCents:1000,dueOn:'2099-12-10'}});
+    assert.equal(charge.statusCode,201,charge.body);
+    const [bunker]=await testDb`SELECT id FROM economic_cash_registers WHERE code='bunker'`;
+    const [session]=await testDb`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${bunker.id},(now() AT TIME ZONE 'Atlantic/Canary')::date-1,5000,${testDb.json(cashCount(5000))},'qa-stale-shift') RETURNING id,local_date`;
+    const payment=await testApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'cash',amountCents:500}]}});
+    assert.equal(payment.statusCode,409,payment.body);assert.equal(payment.json().error,'cash_session_previous_day_requires_owner_resolution');
+    assert.match(payment.json().message,/propietario debe resolverla/i);
+    const opened=await testApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:cashCount(0)}});
+    assert.equal(opened.statusCode,409,opened.body);assert.equal(opened.json().error,'cash_session_previous_day_requires_owner_resolution');
+    const close=await testApp.inject({method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedDenominations:cashCount(5000)}});
+    assert.equal(close.statusCode,409,close.body);assert.equal(close.json().error,'cash_session_previous_day_requires_owner_resolution');
+    const [unchanged]=await testDb`SELECT status,closed_at,closed_by,local_date FROM economic_cash_sessions WHERE id=${session.id}`;
+    assert.equal(unchanged.status,'open');assert.equal(unchanged.closed_at,null);assert.equal(unchanged.closed_by,null);
+    const [clockCount]=await testDb`SELECT count(*)::int AS count FROM staff_timeclock_events`;
+    assert.equal(clockCount.count,0,'stale cash resolution does not invent timeclock events');
+  } finally {
+    await testApp?.close();await testDb?.end();await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
+  }
+});
+
+test('D111 opening and closing store denomination counts while never exposing expected cash to the cashier', async () => {
+  const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`cash_blind_${randomUUID().replaceAll('-','')}`;
+  const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
+  let testDb,cashierApp,ownerApp;
+  const denominations=cashCount(0);denominations.bill_10=1;denominations.coin_2=2;
+  const counted={...denominations,coin_1:1};
+  try {
+    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);sourceUrl.pathname=`/${databaseName}`;
+    testDb=postgres(sourceUrl.toString(),{max:3,connect_timeout:5});await migrateDatabase(testDb);
+    cashierApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'qa-cashier',role:'admin'})});
+    ownerApp=buildServer(sourceUrl.toString(),{authorizationResolver:async()=>({actorId:'qa-cash-owner',role:'admin'}),ownerActorId:'qa-cash-owner'});
+    const [cashierProfessional]=await testDb`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('QA','Cajero','QA Cajero','trainer','qa-cashier','test') RETURNING id`;
+    await cashierApp.inject({method:'POST',url:'/api/timeclock/clock-in',payload:{origin:'web'}});
+    const rejectedLegacyAmount=await cashierApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingCents:1400}});
+    assert.equal(rejectedLegacyAmount.statusCode,400);
+    const opened=await cashierApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:denominations}});
+    assert.equal(opened.statusCode,201,opened.body);assert.equal(Number(opened.json().openingCents),1400);
+    assert.deepEqual(opened.json().openingDenominations,denominations);
+    const cashierRead=await cashierApp.inject({method:'GET',url:'/api/economics/cash/today'});
+    assert.equal(cashierRead.statusCode,200,cashierRead.body);
+    for(const key of ['expectedCents','liveExpectedCents','differenceCents','cashPaymentsCents','cashRefundsCents','cashStoreSalesCents','cashStoreRefundsCents','adjustmentsCents'])assert.equal(Object.hasOwn(cashierRead.json().session,key),false,`${key} must be hidden during blind count`);
+    const ownerRead=await ownerApp.inject({method:'GET',url:'/api/economics/cash/today'});
+    assert.equal(Number(ownerRead.json().session.expectedCents),1400);
+    const close=await cashierApp.inject({method:'POST',url:`/api/economics/cash/${opened.json().id}/close`,payload:{countedDenominations:counted}});
+    assert.equal(close.statusCode,200,close.body);
+    assert.equal(Object.hasOwn(close.json(),'expectedCents'),false);assert.equal(Object.hasOwn(close.json(),'differenceCents'),false);
+    const [stored]=await testDb`SELECT opening_cents,counted_cents,difference_cents,opening_denominations,counted_denominations FROM economic_cash_sessions WHERE id=${opened.json().id}`;
+    assert.equal(Number(stored.opening_cents),1400);assert.equal(Number(stored.counted_cents),1500);assert.equal(Number(stored.difference_cents),100);
+    assert.deepEqual(stored.opening_denominations,denominations);assert.deepEqual(stored.counted_denominations,counted);
+    const ownerClosedRead=await ownerApp.inject({method:'GET',url:'/api/economics/cash/today'});
+    assert.equal(Number(ownerClosedRead.json().session.differenceCents),100);
+    assert.deepEqual(ownerClosedRead.json().session.countedDenominations,counted);
+    const [event]=await testDb`SELECT details FROM economic_audit_events WHERE action='cash.closed' AND resource_id=${opened.json().id} ORDER BY occurred_at DESC LIMIT 1`;
+    assert.deepEqual(event.details.countedDenominations,counted);
+  } finally {
+    await cashierApp?.close();await ownerApp?.close();await testDb?.end();await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
+  }
 });
 
 test('pending charges can be voided once with an audited reason, while charges with money require compensation', async () => {
@@ -2293,8 +2548,8 @@ test('economic history rejects truncate and destructive row changes', async () =
   const client=created.json();
   const charge=await clientsAdminApp.inject({method:'POST',url:'/api/economics/charges',headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,concept:'Histórico protegido',amountCents:2000,dueOn:'2099-12-10'}});
   const series=await clientsAdminApp.inject({method:'POST',url:'/api/economics/invoice-series',payload:{name:`SER-${randomUUID()}`,prefix:'QA'}});
-  const [session]=await sql`INSERT INTO economic_cash_sessions(local_date,opening_cents,expected_cents,counted_cents,difference_cents,status,close_kind,opened_by,closed_by,closed_at) VALUES ((now() AT TIME ZONE 'Atlantic/Canary')::date-10,0,0,0,0,'closed','closed','qa-guard','qa-guard',now()) RETURNING id`;
-  await sql`INSERT INTO economic_cash_adjustments(cash_session_id,amount_cents,reason,actor_id) VALUES (${session.id},100,'Movimiento de fixture','qa-guard')`;
+  const session=await ensureCashSessionForActor(sql,'qa-admin');
+  await sql`INSERT INTO economic_cash_adjustments(cash_session_id,amount_cents,reason,actor_id) VALUES (${session.id},100,'Movimiento de fixture','qa-admin')`;
   const [proof]=await sql`INSERT INTO economic_transfer_proofs(charge_id,amount_cents,content_type,file_name,file_bytes,sha256,submitted_by) VALUES (${charge.json().id},100,'application/pdf','fixture.pdf',${Buffer.from('%PDF-1.7')},${createHash('sha256').update('fixture').digest('hex')},'qa-uploader') RETURNING id`;
   const payment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'card',amountCents:2000}]}});
   assert.equal(payment.statusCode,201,payment.body);
@@ -2321,8 +2576,8 @@ test('accountant is economic/fiscal read-only and upload limits stay route-speci
   assert.equal((await clientsAccountantApp.inject({method:'GET',url:'/api/economics/export'})).statusCode,200);
   assert.equal((await clientsAccountantApp.inject({method:'GET',url:'/api/economics/fiscal-export'})).statusCode,200);
   assert.equal((await clientsAccountantApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'card',amountCents:100}]}})).statusCode,403);
-  assert.equal((await clientsAccountantApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingCents:100}})).statusCode,403);
-  const tooLargeNormal=await clientsAdminApp.inject({method:'POST',url:'/api/economics/cash/open',headers:{'content-type':'application/json'},payload:{openingCents:1,padding:'x'.repeat(20000)}});
+  assert.equal((await clientsAccountantApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{openingDenominations:cashCount(100)}})).statusCode,403);
+  const tooLargeNormal=await clientsAdminApp.inject({method:'POST',url:'/api/economics/cash/open',headers:{'content-type':'application/json'},payload:{registerCode:'bunker',openingDenominations:cashCount(1),padding:'x'.repeat(20000)}});
   assert.equal(tooLargeNormal.statusCode,413);
   const proofBytes=Buffer.concat([Buffer.from('%PDF-1.7\n'),Buffer.alloc(20000,65)]);
   const acceptedLargeProof=await clientsAdminApp.inject({method:'POST',url:'/api/economics/transfer-proofs',payload:{chargeId:charge.json().id,amountCents:100,contentType:'application/pdf',fileName:'large-fixture.pdf',base64:proofBytes.toString('base64')}});
@@ -2391,6 +2646,11 @@ test('client plan sale atomically assigns the frozen catalog version, charge and
 });
 
 test('client plan sale leaves only an unpaid charge when no money is collected and rolls back if cash cannot be recorded', async () => {
+  const today=await clientsAdminApp.inject({method:'GET',url:'/api/economics/cash/today'});
+  if(today.json().session?.status==='open'){
+    const close=await clientsAdminApp.inject({method:'POST',url:`/api/economics/cash/${today.json().session.id}/close`,payload:{countedDenominations:cashCount(await expectedCashCents(sql,today.json().session.id))}});
+    assert.equal(close.statusCode,200,close.body);
+  }
   const service=await createService(`Plan pendiente ${randomUUID()}`);
   const createdPlan=await createPlan([service.id]);
   const planId=createdPlan.response.json().id;

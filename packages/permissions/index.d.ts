@@ -1,9 +1,10 @@
-export type ApprovedRole = 'admin' | 'trainer' | 'reception-management' | 'accountant';
+export type ApprovedRole = 'admin' | 'trainer' | 'reception-management' | 'accountant' | 'owner';
 
 export interface AuthorizationContext {
   readonly actorId: string;
   readonly role: ApprovedRole;
   readonly deniedPermissions?: readonly string[];
+  readonly explicitPermissions?: readonly string[];
 }
 
 export declare const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>>;

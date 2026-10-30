@@ -1,4 +1,7 @@
+import { apiFetch } from './api-fetch.js';
 import { useCallback, useEffect, useState } from "react";
+import { Button, EmptyState, PageHeader, SearchField, SegmentedControl, icons } from "@2j/ui";
+import { Modal } from "./modal.js";
 
 type InboxItem = {
   clientId: string;
@@ -26,7 +29,7 @@ type Thread = {
   internalNotes: { id: string; body: string; actorLabel?: string; createdAt: string }[];
 };
 type MessageTemplate = { id:string; name:string; body:string; status:string };
-const api = import.meta.env?.VITE_API_URL ?? "http://127.0.0.1:3100";
+const api = import.meta.env?.VITE_API_URL ?? "http://localhost:3100";
 const uuid = () => crypto.randomUUID();
 export function CommunicationsPage() {
   const [items, setItems] = useState<InboxItem[]>([]),
@@ -39,13 +42,15 @@ export function CommunicationsPage() {
     [error, setError] = useState(""),
     [sending, setSending] = useState(false),
     [feedback, setFeedback] = useState("");
+  const [filter, setFilter] = useState<"all" | "unread">("all");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const r = await fetch(`${api}/api/communications/inbox`);
+      const r = await apiFetch(`${api}/api/communications/inbox`);
       if (!r.ok)
         throw new Error(
           r.status === 401
@@ -55,7 +60,7 @@ export function CommunicationsPage() {
               : "No se pudo cargar la bandeja.",
         );
       setItems((await r.json()) as InboxItem[]);
-      const templateResponse = await fetch(`${api}/api/communications/templates`);
+      const templateResponse = await apiFetch(`${api}/api/communications/templates`);
       if (templateResponse.ok) setTemplates(((await templateResponse.json()) as MessageTemplate[]).filter((item)=>item.status==='active'));
     } catch (e) {
       setError(
@@ -75,7 +80,7 @@ export function CommunicationsPage() {
       setThreadLoading(true);
       setFeedback("");
       try {
-        const r = await fetch(
+        const r = await apiFetch(
           `${api}/api/clients/${item.clientId}/conversation`,
         );
         if (!r.ok) throw new Error("No se pudo abrir la conversación.");
@@ -86,7 +91,7 @@ export function CommunicationsPage() {
           data.messages
             .filter((m) => m.senderKind === "client" && !m.readByCenter)
             .map((m) =>
-              fetch(`${api}/api/communications/messages/${m.id}/read`, {
+              apiFetch(`${api}/api/communications/messages/${m.id}/read`, {
                 method: "POST",
               }),
             ),
@@ -114,7 +119,7 @@ export function CommunicationsPage() {
       const path = internal
         ? `/api/clients/${selected.clientId}/internal-notes`
         : `/api/clients/${selected.clientId}/messages`;
-      const response = await fetch(`${api}${path}`, {
+      const response = await apiFetch(`${api}${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -138,7 +143,7 @@ export function CommunicationsPage() {
   async function markUnread(messageId: string) {
     if (!selected) return;
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${api}/api/communications/messages/${messageId}/unread`,
         { method: "POST" },
       );
@@ -151,60 +156,31 @@ export function CommunicationsPage() {
       );
     }
   }
+  const unreadItems = items.filter((entry) => entry.unreadCount > 0);
+  const visibleItems = filter === "unread" ? unreadItems : items;
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <a className="brand" href="#services">
-          <span className="brand-mark">2J</span>
-          <span className="brand-copy">
-            FITNESS CENTER<small>OPERACIONES</small>
-          </span>
-        </a>
-        <div className="nav-label">GESTIÓN</div>
-        <nav aria-label="Gestión">
-          <a className="nav-item" href="#services">
-            Servicios y planes
-          </a>
-          <a className="nav-item" href="#clients">
-            Clientes
-          </a>
-          <a className="nav-item" href="#calendar">
-            Calendario
-          </a>
-          <a className="nav-item" href="#economics">
-            Pagos
-          </a>
-          <a className="nav-item" href="#staff">
-            Equipo
-          </a>
-          <a
-            className="nav-item active"
-            href="#communications"
-            aria-current="page"
-          >
-            Comunicación
-          </a>
-        </nav>
-      </aside>
-      <main className="main">
-        <header className="topbar">
-          <div className="crumb">
-            Gestión <span aria-hidden="true">›</span> Comunicación
-          </div>
-          <div className="local-pill">
-            <span className="status-dot" /> Entorno local
-          </div>
-        </header>
-        <section className="page-heading">
-          <div>
-            <div className="eyebrow">SEGUIMIENTO DEL CENTRO</div>
-            <h1>Comunicación</h1>
-            <p>
-              Conversaciones compartidas por el equipo y documentación
-              pendiente.
-            </p>
-          </div>
-        </section>
+    <main className="summary comms-page" id="communications" data-2j-design="v2">
+      <PageHeader
+        title="Mensajes"
+        description="Conversaciones del centro con los clientes. Cada mensaje queda en su ficha."
+        actions={
+          <>
+            <Button variant="primary" icon={icons.Plus} onClick={() => setPickerOpen(true)}>Nuevo mensaje</Button>
+          </>
+        }
+      />
+      <p className="comms-not-connected"><span className="badge">No conectado</span> Envío por email o WhatsApp: hoy los mensajes se leen en la app del cliente.</p>
+      <div className="comms-filter">
+        <SegmentedControl
+          label="Filtrar mensajes"
+          value={filter}
+          onChange={(value) => setFilter(value as "all" | "unread")}
+          options={[
+            { value: "all", label: "Todos" },
+            { value: "unread", label: unreadItems.length > 0 ? `Sin leer (${unreadItems.length})` : "Sin leer" },
+          ]}
+        />
+      </div>
         <section
           className="communication-layout"
           aria-label="Bandeja de comunicación"
@@ -213,7 +189,7 @@ export function CommunicationsPage() {
             <div className="panel-heading">
               <div>
                 <h2>Bandeja</h2>
-                <p>{items.length} clientes con conversación</p>
+                <p>{visibleItems.length} {visibleItems.length === 1 ? "cliente" : "clientes"} {filter === "unread" ? "con mensajes sin leer" : "con conversación"}</p>
               </div>
               <button className="button secondary" onClick={() => void load()}>
                 Actualizar
@@ -234,14 +210,13 @@ export function CommunicationsPage() {
                   Reintentar
                 </button>
               </div>
-            ) : items.length === 0 ? (
-              <div className="state-panel">
-                <strong>La bandeja está al día</strong>
-                <span>Las conversaciones de clientes aparecerán aquí.</span>
-              </div>
+            ) : visibleItems.length === 0 ? (
+              <EmptyState icon={icons.Inbox} title={filter === "unread" ? "No hay mensajes sin leer" : "La bandeja está al día"}>
+                {filter === "unread" ? "Todas las conversaciones están leídas." : "Las conversaciones de clientes aparecerán aquí."}
+              </EmptyState>
             ) : (
               <div className="inbox-list">
-                {items.map((item) => (
+                {visibleItems.map((item) => (
                   <button
                     key={item.clientId}
                     className={`inbox-item ${selected?.clientId === item.clientId ? "selected" : ""}`}
@@ -408,7 +383,56 @@ export function CommunicationsPage() {
             )}
           </section>
         </section>
-      </main>
-    </div>
+      {pickerOpen && <NewMessagePicker onClose={() => setPickerOpen(false)} onPick={(client) => { setPickerOpen(false); setFilter("all"); void loadThread({ clientId: client.id, firstName: client.firstName, lastName: client.lastName, conversationId: "", lastMessageAt: null, unreadCount: 0, pendingDocuments: 0, pendingConsents: 0, overdueCheckinDue: null }); }} />}
+    </main>
+  );
+}
+
+type ClientHit = { id: string; firstName: string; lastName: string };
+
+/** Elige a quién escribir: busca en los clientes (la API aplica sus permisos) y abre su conversación. */
+function NewMessagePicker({ onClose, onPick }: { onClose: () => void; onPick: (client: ClientHit) => void }) {
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<ClientHit[]>([]);
+  const [state, setState] = useState<"idle" | "loading" | "error" | "denied">("idle");
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) { setHits([]); setState("idle"); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setState("loading");
+      try {
+        const response = await fetch(`${api}/api/clients?q=${encodeURIComponent(term)}&limit=8`, { signal: controller.signal });
+        if (response.status === 403 || response.status === 401) { setState("denied"); return; }
+        if (!response.ok) throw new Error(String(response.status));
+        const data = (await response.json()) as { items: ClientHit[] };
+        setHits(data.items);
+        setState("idle");
+      } catch (caught) { if ((caught as Error).name !== "AbortError") setState("error"); }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query]);
+  return (
+    <Modal titleId="new-message-title" title="¿A quién escribes?" description="Busca al cliente por nombre y abre su conversación." onClose={onClose}>
+      <SearchField label="Buscar cliente" placeholder="Nombre o apellidos…" value={query} onChange={setQuery} />
+      <div aria-live="polite">
+        {state === "loading" && <p className="comms-picker-note" role="status">Buscando…</p>}
+        {state === "denied" && <p className="comms-picker-note" role="alert">Tu perfil no puede buscar clientes.</p>}
+        {state === "error" && <p className="comms-picker-note" role="alert">No se pudo buscar. Inténtalo de nuevo.</p>}
+        {state === "idle" && query.trim().length >= 2 && hits.length === 0 && <p className="comms-picker-note">Sin resultados para esa búsqueda.</p>}
+      </div>
+      {hits.length > 0 && (
+        <ul className="comms-picker-list" aria-label="Clientes encontrados">
+          {hits.map((client) => (
+            <li key={client.id}>
+              <button type="button" className="comms-picker-item" onClick={() => onPick(client)}>
+                <span className="inbox-avatar" aria-hidden="true">{client.firstName.slice(0, 1)}{client.lastName.slice(0, 1)}</span>
+                <strong>{client.firstName} {client.lastName}</strong>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Modal>
   );
 }

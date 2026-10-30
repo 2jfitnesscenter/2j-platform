@@ -1,7 +1,10 @@
 node_modules/
 dist/
+apps/client-app/dist-demo/
 .turbo/
 .env
 .env.*
 !.env.example
 work/
+
+.local-object-storage/

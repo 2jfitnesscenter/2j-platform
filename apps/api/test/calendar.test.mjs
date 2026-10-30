@@ -20,9 +20,11 @@ const engineAdmin = buildServer(process.env.DATABASE_URL, { authorizationResolve
 const trainer = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-trainer', role: 'trainer' }) });
 const trainerEligible = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-trainer-eligible', role: 'trainer' }), bookingEligibilityResolver: eligible });
 const accountant = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-accountant', role: 'accountant' }) });
+const calendarReaderWithoutNotes = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-reader-no-notes', role: 'reception-management', deniedPermissions: ['communication.internal_notes.read', 'communication.internal_notes.write'] }), bookingEligibilityResolver: eligible });
+const calendarReaderWithoutClientRead = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'calendar-reader-no-client-read', role: 'accountant', explicitPermissions: ['calendar.read'] }), bookingEligibilityResolver: eligible });
 const anonymous = buildServer(process.env.DATABASE_URL);
 const [area] = await sql`SELECT id FROM areas WHERE normalized_name='la sala'`;
-after(async () => { await Promise.all([admin.close(), reception.close(), receptionNoOverride.close(), failClosed.close(), engineAdmin.close(), trainer.close(), trainerEligible.close(), accountant.close(), anonymous.close()]); await sql.end(); });
+after(async () => { await Promise.all([admin.close(), reception.close(), receptionNoOverride.close(), failClosed.close(), engineAdmin.close(), trainer.close(), trainerEligible.close(), accountant.close(), calendarReaderWithoutNotes.close(), calendarReaderWithoutClientRead.close(), anonymous.close()]); await sql.end(); });
 
 async function createClient(firstName) {
   const result = await admin.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': randomUUID() }, payload: { firstName, lastName: `Calendar ${randomUUID().slice(0, 8)}` } });
@@ -66,6 +68,79 @@ test('creates a session from active service and area and returns it in the Canar
   assert.equal(row.capacity, 3);
   assert.equal(row.isIndividual, false);
   assert.equal(row.source, 'manual');
+});
+
+test('session detail returns one consistent operational snapshot with capacity, roster, waitlist and audit history', async () => {
+  const session = await createSession({ capacity: 1 });
+  const clients = await Promise.all([createClient('Detail booked'), createClient('Detail waiting')]);
+  const reservation = await reserve(session.id, clients[0].id);
+  assert.equal(reservation.statusCode, 201, reservation.body);
+  const waitlist = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/waitlist`, payload: { clientId: clients[1].id } });
+  assert.equal(waitlist.statusCode, 201, waitlist.body);
+  const attendance = await admin.inject({ method: 'PATCH', url: `/api/calendar/reservations/${reservation.json().id}/attendance`, payload: { status: 'attended' } });
+  assert.equal(attendance.statusCode, 200, attendance.body);
+  const privateReason = `session-detail-private-reason-${randomUUID()}`;
+  await sql`INSERT INTO calendar_audit_events(actor_id,action,resource_type,resource_id,session_id,details) VALUES ('calendar-test-review','reservation.debt_override','calendar_session',${session.id},${session.id},${sql.json({ reason: privateReason, requirementIds: 'internal-only' })})`;
+
+  const result = await admin.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}` });
+  assert.equal(result.statusCode, 200, result.body);
+  const detail = result.json();
+  assert.equal(detail.session.id, session.id);
+  assert.equal(detail.session.serviceName, session.service.name);
+  assert.equal(detail.occupancy.occupied, 1);
+  assert.equal(detail.occupancy.capacity, 1);
+  assert.equal(detail.occupancy.available, 0);
+  assert.equal(detail.occupancy.overbooked, 0);
+  assert.equal(detail.reservations.find((item) => item.clientId === clients[0].id).status, 'attended');
+  assert.equal(detail.waitlist.find((item) => item.clientId === clients[1].id).status, 'waiting');
+  assert.equal(detail.history.some((item) => item.action === 'reservation.attendance_changed'), true);
+  assert.equal(detail.history.some((item) => item.action === 'reservation.debt_override'), true);
+  assert.equal('details' in detail.history.find((item) => item.action === 'reservation.debt_override'), false);
+  assert.equal(result.body.includes(privateReason), false);
+  assert.deepEqual(detail.appliedRules, { available: false, reason: 'booking_rule_snapshot_not_recorded' });
+  assert.equal(detail.notes.available, true);
+});
+
+test('session notes are permission checked, append-only and audited without copying note text into audit details', async () => {
+  const session = await createSession();
+  const deniedRead = await calendarReaderWithoutNotes.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}` });
+  assert.equal(deniedRead.statusCode, 200, deniedRead.body);
+  assert.deepEqual(deniedRead.json().notes, { available: false, items: [] });
+  assert.equal((await calendarReaderWithoutNotes.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/notes`, payload: { body: 'No permiso' } })).statusCode, 403);
+
+  const created = await admin.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/notes`, payload: { body: 'Confirmar acceso por la puerta lateral.' } });
+  assert.equal(created.statusCode, 201, created.body);
+  assert.equal(created.json().body, 'Confirmar acceso por la puerta lateral.');
+  const detail = await admin.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}` });
+  assert.equal(detail.json().notes.items.some((item) => item.id === created.json().id), true);
+  const [audit] = await sql`SELECT action,details FROM calendar_audit_events WHERE resource_id=${created.json().id} AND action='session.note_added'`;
+  assert.ok(audit);
+  assert.deepEqual(audit.details, {});
+  await assert.rejects(sql`UPDATE calendar_session_notes SET body='edited' WHERE id=${created.json().id}`, (error) => error.code === '55000');
+  await assert.rejects(sql`DELETE FROM calendar_session_notes WHERE id=${created.json().id}`, (error) => error.code === '55000');
+});
+
+test('session detail and note routes fail closed for anonymous actors and unknown sessions', async () => {
+  const session = await createSession();
+  assert.equal((await anonymous.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}` })).statusCode, 401);
+  assert.equal((await anonymous.inject({ method: 'POST', url: `/api/calendar/sessions/${session.id}/notes`, payload: { body: 'Note' } })).statusCode, 401);
+  const missing = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  assert.equal((await admin.inject({ method: 'GET', url: `/api/calendar/sessions/${missing}` })).statusCode, 404);
+  assert.equal((await admin.inject({ method: 'POST', url: `/api/calendar/sessions/${missing}/notes`, payload: { body: 'Note' } })).statusCode, 404);
+});
+
+test('session detail keeps attendee identity behind clients.read while exposing aggregate capacity', async () => {
+  const session = await createSession({ capacity: 2 });
+  const client = await createClient('Detail private');
+  assert.equal((await reserve(session.id, client.id)).statusCode, 201);
+  const response = await calendarReaderWithoutClientRead.inject({ method: 'GET', url: `/api/calendar/sessions/${session.id}` });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.json().occupancy.occupied, 1);
+  assert.equal(response.json().rosterAvailable, false);
+  assert.deepEqual(response.json().reservations, []);
+  assert.deepEqual(response.json().waitlist, []);
+  assert.equal(JSON.stringify(response.json()).includes('Detail private'), false);
+  assert.equal(JSON.stringify(response.json()).includes(client.id), false);
 });
 
 test('professional calendar omits client birth-date data and permits nullable birth dates', async () => {
@@ -630,6 +705,32 @@ test('reservation and waitlist revalidate service and area status at write time'
   await sql`UPDATE calendar_sessions SET starts_at=now()+interval '1 day' WHERE id=${areaSession.id}`;
   const waitlist = await reception.inject({ method: 'POST', url: `/api/calendar/sessions/${areaSession.id}/waitlist`, payload: { clientId: (await createClient('Archived at waitlist')).id } });
   assert.equal(waitlist.statusCode, 409); assert.equal(waitlist.json().error, 'area_archived');
+});
+
+test('booking preview of a started session reports session_started only, never a phantom session_full', async () => {
+  const service=await createService();const session=await createSession({service,capacity:8});
+  await sql`UPDATE calendar_sessions SET starts_at=now()-interval '2 hours' WHERE id=${session.id}`;
+  const client=await createClient('Started session');
+  const preview=await engineAdmin.inject({method:'GET',url:`/api/calendar/sessions/${session.id}/booking-eligibility?clientId=${client.id}`});
+  assert.equal(preview.statusCode,200,preview.body);
+  const body=preview.json();
+  assert.equal(body.allowed,false);
+  assert.ok(body.blockingReasons.includes('session_started'),JSON.stringify(body.blockingReasons));
+  assert.ok(!body.blockingReasons.includes('session_full'),'an empty session (0 of 8) must not be reported as full: '+JSON.stringify(body.blockingReasons));
+  assert.equal(body.waitlistAllowed,false);assert.equal(body.overridePossible.capacity,false);
+  assert.equal(body.decision,'blocked');
+});
+
+test('booking preview of a future session at capacity still reports session_full with its capacity', async () => {
+  const service=await createService();const session=await createSession({service,capacity:1});
+  const {client}=await createEntitledClient(service,{rightType:'sessions_quota',quantity:2});
+  const first=await engineAdmin.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id}});
+  assert.equal(first.statusCode,201,first.body);
+  const {client:second}=await createEntitledClient(service,{rightType:'sessions_quota',quantity:2});
+  const preview=await engineAdmin.inject({method:'GET',url:`/api/calendar/sessions/${session.id}/booking-eligibility?clientId=${second.id}`});
+  assert.equal(preview.statusCode,200,preview.body);
+  assert.ok(preview.json().blockingReasons.includes('session_full'));
+  assert.deepEqual(preview.json().capacity,{occupied:1,limit:1,available:0});
 });
 
 test('central engine consumes one bonus session atomically, retries idempotently and restores on valid cancellation', async () => {

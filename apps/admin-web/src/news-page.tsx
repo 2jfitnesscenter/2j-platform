@@ -1,7 +1,8 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { ConfirmDialog, SaveState } from '@2j/ui';
 
-const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 type NewsStatus = 'draft' | 'published' | 'withdrawn';
 type NewsItem = { id:string; title:string; body:string; status:NewsStatus; featured:boolean; publishedAt:string|null; updatedAt:string; createdAt:string };
 type AuditEvent = { id:string; action:string; actorId:string; occurredAt:string; details:Record<string,unknown> };
@@ -9,7 +10,7 @@ const statusLabel:Record<NewsStatus,string> = {draft:'Borrador',published:'Publi
 const actionLabel:Record<string,string> = {'news.created':'Creada','news.updated':'Editada','news.published':'Publicada','news.withdrawn':'Retirada','news.featured':'Destacada','news.unfeatured':'Ya no destacada'};
 const dateLabel=(value:string|null)=>value?new Intl.DateTimeFormat('es-ES',{timeZone:'Atlantic/Canary',dateStyle:'medium',timeStyle:'short'}).format(new Date(value)):'Sin publicar';
 
-export function NewsPage() {
+export function NewsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [items,setItems]=React.useState<NewsItem[]>([]);
   const [loading,setLoading]=React.useState(true);
   const [saving,setSaving]=React.useState(false);
@@ -25,7 +26,7 @@ export function NewsPage() {
 
   const load=React.useCallback(async()=>{
     setLoading(true);setError('');
-    try{const response=await fetch(`${api}/api/admin/news`,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json() as {items:NewsItem[]};setItems(result.items);}
+    try{const response=await apiFetch(`${api}/api/admin/news`,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json() as {items:NewsItem[]};setItems(result.items);}
     catch{setError('No se han podido cargar las noticias del centro. Comprueba tus permisos e inténtalo de nuevo.');}
     finally{setLoading(false);}
   },[]);
@@ -36,7 +37,7 @@ export function NewsPage() {
   const save=async(event:React.FormEvent)=>{
     event.preventDefault();setSaving(true);setError('');setMessage('');
     try{
-      const response=await fetch(editing?`${api}/api/admin/news/${editing.id}`:`${api}/api/admin/news`,{method:editing?'PATCH':'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({title,body})});
+      const response=await apiFetch(editing?`${api}/api/admin/news/${editing.id}`:`${api}/api/admin/news`,{method:editing?'PATCH':'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({title,body})});
       if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error==='validation_error'?'Revisa el título y el texto.':'No se ha podido guardar la noticia.');}
       reset();setMessage(editing?'Cambios guardados.':'Borrador creado.');await load();
     }catch(cause){setError(cause instanceof Error?cause.message:'No se ha podido guardar la noticia.');}
@@ -45,19 +46,20 @@ export function NewsPage() {
 
   const mutate=async(item:NewsItem,action:'publish'|'withdraw'|'feature'|'unfeature')=>{
     setError('');setMessage('');
-    try{const response=await fetch(`${api}/api/admin/news/${item.id}/${action}`,{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:'{}'});if(!response.ok)throw new Error();setMessage(action==='publish'?'Noticia publicada.':action==='withdraw'?'Noticia retirada.':action==='feature'?'Noticia destacada.':'Se quitó de destacadas.');await load();}
+    try{const response=await apiFetch(`${api}/api/admin/news/${item.id}/${action}`,{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:'{}'});if(!response.ok)throw new Error();setMessage(action==='publish'?'Noticia publicada.':action==='withdraw'?'Noticia retirada.':action==='feature'?'Noticia destacada.':'Se quitó de destacadas.');await load();}
     catch{setError('No se pudo actualizar el estado de la noticia.');}
   };
 
   const toggleAudit=async(item:NewsItem)=>{
     if(auditFor===item.id){setAuditFor(null);return;}
     setAuditFor(item.id);setAudit([]);setError('');
-    try{const response=await fetch(`${api}/api/admin/news/${item.id}/audit`,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json() as {events:AuditEvent[]};setAudit(result.events);}
+    try{const response=await apiFetch(`${api}/api/admin/news/${item.id}/audit`,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json() as {events:AuditEvent[]};setAudit(result.events);}
     catch{setError('No se pudo cargar el historial de esta noticia.');}
   };
 
-  return <main className="page-content center-news-page">
-    <div className="page-heading"><div><p className="eyebrow">CONTENIDO DEL CENTRO</p><h1>Noticias</h1><p>Publica información útil para los miembros desde Inicio.</p></div><button type="button" className="button primary" onClick={()=>{reset();setMessage('');setError('');document.getElementById('center-news-title')?.focus();}}>Nueva noticia</button></div>
+  const Root = embedded ? 'div' : 'main';
+  return <Root className="page-content center-news-page">
+    <div className="page-heading"><div><p className="eyebrow">CONTENIDO DEL CENTRO</p>{embedded ? <h2>Noticias</h2> : <h1>Noticias</h1>}<p>Publica información útil para los miembros desde Inicio.</p></div><button type="button" className="button primary" onClick={()=>{reset();setMessage('');setError('');document.getElementById('center-news-title')?.focus();}}>Nueva noticia</button></div>
     <div className="center-news-layout">
       <form className="panel center-news-editor" onSubmit={event=>void save(event)} aria-label={editing?'Editar noticia':'Nueva noticia'}>
         <div className="panel-heading"><div><h2>{editing?'Editar noticia':'Crear borrador'}</h2><p>Texto sencillo, sin imágenes ni formato enriquecido.</p></div></div>
@@ -83,5 +85,5 @@ export function NewsPage() {
       </section>
     </div>
   <ConfirmDialog open={withdrawTarget!==null} title={withdrawTarget?`Retirar «${withdrawTarget.title}»`:'Retirar noticia'} description="Dejará de aparecer a los miembros y se conservará en el historial." confirmLabel="Retirar noticia" busy={withdrawBusy} onCancel={()=>setWithdrawTarget(null)} onConfirm={()=>{const item=withdrawTarget;if(!item)return;setWithdrawBusy(true);void mutate(item,'withdraw').finally(()=>{setWithdrawBusy(false);setWithdrawTarget(null);});}}/>
-  </main>;
+  </Root>;
 }

@@ -1,0 +1,123 @@
+name: E2E Home-Platform-Búnker
+
+# Three real processes on loopback (Platform API, Búnker API, a scripted browser) against a throwaway PostgreSQL.
+# Needs a read-only token for the PRIVATE Búnker repo: the Actions secret BUNKER_REPO_READ_TOKEN
+# (fine-grained PAT, repository 2jfitnesscenter/2jfitnessapp ONLY, permission Contents: read-only, expiring). It is used by the
+# checkout step only; the tests never see it. Pull requests from forks never get secrets, so the job is skipped for them.
+
+on:
+  # Only changes that can affect the SSO/link flow run it (admin-web, staff-app and docs-only changes do not), and only on pull requests that are
+  # not drafts: marking a draft as ready runs it. It no longer runs after every merge to main; a weekly run and workflow_dispatch cover main.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main, "agent/**"]
+    paths:
+      - "apps/api/**"
+      - "apps/client-app/**"
+      - "packages/**"
+      - "tooling/e2e/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".github/workflows/e2e-training.yml"
+  # main is re-checked once a week instead of after every merge (the pull request already ran it).
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      bunker_ref:
+        description: "Búnker branch/tag/SHA to test against"
+        required: false
+        default: ""
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Búnker code under test: its main (the Platform consumer, V2.1 and SSO landed there).
+  BUNKER_REF_DEFAULT: main
+
+jobs:
+  e2e:
+    name: e2e (training SSO + link)
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: e2e_admin
+          POSTGRES_PASSWORD: e2e_ci_throwaway_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U e2e_admin -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Check the Búnker read token exists
+        id: token
+        env:
+          HAS_TOKEN: ${{ secrets.BUNKER_REPO_READ_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::BUNKER_REPO_READ_TOKEN is not set (or expired). The owner must renew it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out Búnker (read-only token, no credentials kept)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: 2jfitnesscenter/2jfitnessapp
+          ref: ${{ github.event.inputs.bunker_ref || env.BUNKER_REF_DEFAULT }}
+          token: ${{ secrets.BUNKER_REPO_READ_TOKEN }}
+          path: _bunker
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.34.6
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build   # workspace packages (@2j/domain dist) must exist before the Platform API starts
+      - name: Install Búnker API dependencies (no install scripts)
+        working-directory: _bunker/api
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Record what is under test
+        run: |
+          echo "Platform: $(git rev-parse --short HEAD)"
+          echo "Búnker:   $(git -C _bunker rev-parse --short HEAD) ($(git -C _bunker rev-parse --abbrev-ref HEAD))"
+
+      - name: SSO + capabilities E2E
+        working-directory: apps/api
+        env:
+          E2E_DATABASE_ADMIN_URL: postgres://e2e_admin:e2e_ci_throwaway_only@127.0.0.1:5432/postgres
+          E2E_BUNKER_API_DIR: ${{ github.workspace }}/_bunker/api
+          E2E_OUT_DIR: ${{ runner.temp }}/e2e
+        run: node --import tsx ../../tooling/e2e/training-sso.e2e.mjs
+
+      - name: Account link lifecycle E2E
+        working-directory: apps/api
+        env:
+          E2E_DATABASE_ADMIN_URL: postgres://e2e_admin:e2e_ci_throwaway_only@127.0.0.1:5432/postgres
+          E2E_BUNKER_API_DIR: ${{ github.workspace }}/_bunker/api
+          E2E_OUT_DIR: ${{ runner.temp }}/e2e
+        run: node --import tsx ../../tooling/e2e/training-link.e2e.mjs

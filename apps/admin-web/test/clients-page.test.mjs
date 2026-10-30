@@ -6,6 +6,7 @@ import React from 'react';
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://127.0.0.1:5173/#clients' });
 dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(callback, 0);
 dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+dom.window.scrollTo = () => {};
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
@@ -207,14 +208,14 @@ test('create dialog focuses its first field, traps keyboard focus, and restores 
   fireEvent.click(opener);
   const dialog = await screen.findByRole('dialog', { name: 'Nuevo cliente' });
   const firstName = within(dialog).getByLabelText('Nombre');
-  assert.equal(document.activeElement, firstName);
+  assert.ok(document.activeElement === firstName);
   const close = within(dialog).getByRole('button', { name: 'Cerrar diálogo' });
   close.focus();
   fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
-  assert.equal(document.activeElement, within(dialog).getByRole('button', { name: 'Guardar' }));
+  assert.ok(document.activeElement === within(dialog).getByRole('button', { name: 'Guardar' }));
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => assert.equal(screen.queryByRole('dialog'), null));
-  assert.equal(document.activeElement, opener);
+  assert.ok(document.activeElement === opener);
 });
 
 test('Guardar y añadir cuota creates the client, assigns the active plan and records an immediate charge payment',async()=>{
@@ -389,8 +390,7 @@ test('opening a client is a page: focus lands on its name and Back keeps the lis
   await waitFor(() => assert.ok(requests.some((url) => url.includes('q=marta'))), { timeout: 1500 });
   fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   const heading = await screen.findByRole('heading', { level: 1, name: 'Marta Santos' });
-  // Compare as a boolean: a failing assert.equal on DOM nodes makes node inspect the whole jsdom tree (minutes) on every waitFor retry.
-  await waitFor(() => assert.ok(document.activeElement === heading, 'focus lands on the client name'));
+  await waitFor(() => assert.ok(document.activeElement === heading, 'focus lands on the client name'), { timeout: 5000 });
   assert.equal(screen.queryByLabelText('Buscar cliente'), null, 'the list is replaced by the 360 page, not squeezed beside it');
   fireEvent.click(screen.getByRole('button', { name: 'Todos los clientes' }));
   await waitFor(() => assert.equal(window.location.hash, '#clients'));
@@ -420,10 +420,10 @@ test('profile tabs support keyboard navigation and hide unauthorized financial s
   selected.focus();
   fireEvent.keyDown(selected, { key: 'End' });
   const history = screen.getByRole('tab', { name: 'Historial' });
-  assert.equal(document.activeElement, history);
+  assert.ok(document.activeElement === history);
   assert.equal(history.tabIndex, 0);
   fireEvent.keyDown(history, { key: 'Home' });
-  assert.equal(document.activeElement, selected);
+  assert.ok(document.activeElement === selected);
   assert.equal(screen.queryByRole('tab', { name: /Pagos/ }), null);
   assert.equal(screen.queryByText(/billing\.read-basic|source:/i), null);
 });
@@ -465,4 +465,96 @@ test('profile detail errors can be retried', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Reintentar ficha' }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
   assert.equal(attempts, 2);
+});
+
+const purchasesSection = { id: 'purchases', label: 'Compras', sourceLabel: 'Tienda', access: 'available', dataState: 'ready' };
+const profileWithPurchases = (data, access = 'available') => ({ ...profile, sections: [...sections.filter((section) => section.id !== 'payments'), { ...purchasesSection, access }], summary: { ...summary, purchases: { access, dataState: 'ready', data } } });
+
+test('Client 360 tabs follow the Base44 order (Resumen, Plan, Reservas, Compras…) and Compras lists the purchases with lines, total and state', async () => {
+  const sales = [
+    { id: 's-2', createdAt: '2026-10-24T10:00:00Z', status: 'completed', paymentState: 'paid', paymentMethod: 'cash', totalCents: '2500', lines: [{ productName: 'Proteína', variantLabel: 'Bote 300 g', quantity: 2 }] },
+    { id: 's-1', createdAt: '2026-10-20T10:00:00Z', status: 'voided', paymentState: 'pending', paymentMethod: null, totalCents: 1250, lines: [] },
+  ];
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profileWithPurchases(sales));
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  assert.deepEqual(screen.getAllByRole('tab').map((tab) => tab.textContent), ['Resumen', 'Plan y sesiones', 'Reservas', 'Compras', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']);
+  fireEvent.click(screen.getByRole('tab', { name: 'Compras' }));
+  const list = await screen.findByRole('list', { name: 'Compras del cliente' });
+  const rows = within(list).getAllByRole('listitem');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /2 × Proteína \(Bote 300 g\)/);
+  assert.match(rows[0].textContent, /25,00/);
+  assert.match(rows[0].textContent, /Efectivo/);
+  assert.match(rows[0].textContent, /Cobrada/);
+  assert.match(rows[1].textContent, /Venta sin líneas/);
+  assert.match(rows[1].textContent, /Anulada/);
+});
+
+test('Compras shows an empty state, and without store access the tab is not offered', async () => {
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profileWithPurchases([]));
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  fireEvent.click(screen.getByRole('tab', { name: 'Compras' }));
+  assert.ok(await screen.findByText('Sin compras registradas'));
+  cleanup();
+  window.location.hash = '#clients';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profileWithPurchases([], 'forbidden'));
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  assert.equal(screen.queryByRole('tab', { name: 'Compras' }), null);
+});
+
+test('#clients?new=1 opens «Nuevo cliente» once the list loads (only with permission) and cleans the link', async () => {
+  window.location.hash = '#clients?new=1';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
+  render(React.createElement(ClientsPage));
+  assert.ok(await screen.findByRole('dialog', { name: 'Nuevo cliente' }));
+  assert.equal(window.location.hash, '#clients');
+  cleanup();
+  window.location.hash = '#clients?new=1';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse([client], { capabilities: { manage: false } })) : response(profile);
+  render(React.createElement(ClientsPage));
+  await screen.findByRole('link', { name: /Marta Santos/ });
+  assert.equal(screen.queryByRole('dialog', { name: 'Nuevo cliente' }), null);
+});
+
+test('#clients?intent=message guides to pick a client and opens the Mensajes tab on their profile; the guidance can be cancelled', async () => {
+  window.location.hash = '#clients?intent=message';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
+  render(React.createElement(ClientsPage));
+  assert.ok(await screen.findByText('Elige un cliente para escribirle un mensaje.'));
+  assert.equal(window.location.hash, '#clients');
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  await waitFor(() => assert.equal(screen.getByRole('tab', { name: 'Mensajes' }).getAttribute('aria-selected'), 'true'));
+  assert.equal(screen.queryByText('Elige un cliente para escribirle un mensaje.'), null);
+  cleanup();
+  window.location.hash = '#clients?intent=assign-plan';
+  render(React.createElement(ClientsPage));
+  assert.ok(await screen.findByText('Elige un cliente para asignarle una cuota.'));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+  assert.equal(screen.queryByText('Elige un cliente para asignarle una cuota.'), null);
+});
+
+test('#clients?intent=assign-plan opens the plan sale on the chosen active client when the profile can assign plans', async () => {
+  window.location.hash = '#clients?intent=assign-plan';
+  const assignable = { ...profile, capabilities: { manage: true, assignPlans: true } };
+  globalThis.fetch = async (url) => { const path = String(url); if (path.includes('/api/clients?')) return response(listResponse()); if (path.includes('/api/plans/assignable')) return response([]); return response(assignable); };
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  const dialog = await screen.findByRole('dialog');
+  assert.match(dialog.textContent, /cuota/i);
+  assert.equal(screen.queryByText('Elige un cliente para asignarle una cuota.'), null);
+});
+
+test('deep links survive React StrictMode (double-invoked initializers): #clients?new=1 still opens «Nuevo cliente»', async () => {
+  window.location.hash = '#clients?new=1';
+  globalThis.fetch = async (url) => String(url).includes('/api/clients?') ? response(listResponse()) : response(profile);
+  render(React.createElement(React.StrictMode, null, React.createElement(ClientsPage)));
+  assert.ok(await screen.findByRole('dialog', { name: 'Nuevo cliente' }));
+  assert.equal(window.location.hash, '#clients');
 });

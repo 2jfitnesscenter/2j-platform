@@ -7,16 +7,31 @@ import './styles.css';
 import './shell-v2.css';
 import './summary-v2.css';
 import './clients-v2.css';
+import './agenda-v2.css';
+import './services-v2.css';
+import './store-v2.css';
+import './caja-v2.css';
 import { ServicesPage } from './services-page.js';
 import { ClientsPage } from './clients-page.js';
 import { CalendarPage } from './calendar-page.js';
 import { EconomicsPage } from './economics-page.js';
 import { StaffPage } from './staff-page.js';
+import { MyGymPage } from './my-gym-page.js';
+import { ReportsPage } from './reports-page.js';
+import { ImportPage } from './import-page.js';
+import { MonitoringPage } from './monitoring-page.js';
+import { ManagementPage } from './management-page.js';
+import { ContractsPage } from './contracts-page.js';
+import { PromotionsPage } from './promotions-page.js';
+import { TimeClockPage } from './timeclock-page.js';
 import { CommunicationsPage } from './communications-page.js';
 import { AppShell, getProfessionalPageContext } from './app-shell.js';
 import { CommandCenter } from './command-center.js';
+import { ActivityPage } from './activity-page.js';
 import { NotificationSettings } from './notification-settings.js';
+import { SettingsPage } from './settings-page.js';
 import { NewsPage } from './news-page.js';
+import { CajaPage } from './caja-page.js';
 import { StorePage } from './store-page.js';
 import { usePageResetOnModuleChange } from './route-focus.js';
 
@@ -29,7 +44,7 @@ function App() {
   }, []);
   React.useEffect(() => { document.title = `${getProfessionalPageContext(route).page} · 2J Platform`; }, [route]);
   usePageResetOnModuleChange(route);
-  const page = route === 'store' ? <StorePage/> : route === 'news' ? <NewsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'services' ? <ServicesPage/> : <CommandCenter/>;
+  const page = route === 'import' ? <ImportPage/> : route === 'store' ? <StorePage/> : route === 'activity' ? <ActivityPage/> : route === 'news' ? <NewsPage/> : route === 'settings' ? <SettingsPage/> : route === 'notification-settings' ? <NotificationSettings/> : route === 'clients' ? <ClientsPage/> : route === 'calendar' ? <CalendarPage/> : route === 'caja' ? <CajaPage/> : route === 'economics' ? <EconomicsPage/> : route === 'staff' ? <StaffPage/> : route === 'my-gym' ? <MyGymPage/> : route === 'reports' ? <ReportsPage/> : route === 'timeclock' ? <TimeClockPage/> : route === 'communications' ? <CommunicationsPage/> : route === 'spaces' ? <ServicesPage section="areas"/> : route === 'services' ? <ServicesPage section="services"/> : route === 'contracts' ? <ContractsPage/> : route === 'promotions' ? <PromotionsPage/> : route === 'management' ? <ManagementPage/> : route === 'monitoring' ? <MonitoringPage/> : route === 'plans' ? <ServicesPage section="plans"/> : <CommandCenter/>;
   return <AppShell>{page}</AppShell>;
 }
 
