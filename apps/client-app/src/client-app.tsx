@@ -25,7 +25,7 @@ type MemberTrainingSummary =
   | { status: 'linked'; summaryStatus: 'available'; summary: { trainingStatus: 'active'; asOf: string; currentProgram?: { name: string }; recentActivity?: { lastTrainingAt: string | null; sessionsLast30Days: number } } };
 type MemberEvolution =
   | { v: 1; state: 'not_linked' | 'consent_required' | 'not_available' | 'unavailable' }
-  | { v: 1; state: 'available'; consentVersion: number; asOf: string; nextCursor: { snapshotId: string; offset: number } | null; workouts: Array<{ date: string; durationSeconds?: number; exercises: Array<{ exerciseId: string; sets: Array<{ reps?: number; rpe?: number; minutes?: number; speed?: number; resistance?: number; distance?: number; incline?: number; seconds?: number; weight?: { value: number; unit: 'kg' | 'lb' }; completed?: boolean }> }> }> };
+  | { v: 1; state: 'available'; consentVersion: number; asOf: string; nextCursor: string | null; workouts: Array<{ date: string; durationSeconds?: number; exercises: Array<{ exerciseId: string; sets: Array<{ reps?: number; rpe?: number; minutes?: number; speed?: number; resistance?: number; distance?: number; incline?: number; seconds?: number; weight?: { value: number; unit: 'kg' | 'lb' }; completed?: boolean }> }> }> };
 type TrainingCapabilities = {
   contract: '2J-CAPABILITIES-V2.1'; revision: 1; version: 2;
   capabilityLevel: 'full' | 'autonomous' | 'baseline' | 'blocked';

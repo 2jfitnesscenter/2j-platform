@@ -1,12 +1,18 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import Ajv2020 from 'ajv/dist/2020.js';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
 import { createBookingEligibilityResolver } from '../src/booking-eligibility.ts';
 import { createTrainingLinkTransactions } from '../src/training-link-protocol.ts';
 import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
+
+const evolutionContract = JSON.parse(readFileSync(new URL('../../../contracts/2J-home-evolution-member-v1.schema.json', import.meta.url), 'utf8'));
+const validateEvolutionContract = new Ajv2020({ allErrors: true, strict: false, validateFormats: false }).compile(evolutionContract);
+const assertEvolutionContract = value => assert.equal(validateEvolutionContract(value), true, JSON.stringify(validateEvolutionContract.errors));
 
 process.env.NODE_ENV ??= 'test';
 
@@ -56,7 +62,7 @@ const trainingAdapter = { getSummary: async trainingUserId => {
 const trainingEvolutionAdapter = { getEvolution: async input => {
   evolutionRequests.push(input);
   return { status: 'available', evolution: { schema: '2j-home-evolution-export/v1', source: 'bunker', personId: input.personId, trainingUserId: input.trainingUserId,
-    exportedAt: new Date().toISOString(), snapshotId: 'a'.repeat(64), nextCursor: null,
+    exportedAt: new Date().toISOString(), snapshotId: 'a'.repeat(64), nextCursor: evolutionRequests.length === 1 ? { snapshotId: 'a'.repeat(64), offset: 100 } : null,
     workouts: [{ date: '2026-10-23', exercises: [{ exerciseId: 'squat', sets: [{ reps: 8, completed: true }] }] }] } };
 } };
 const [area] = await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;
@@ -82,7 +88,6 @@ for (const client of [a, b]) {
 const evolutionConsent = await admin.inject({ method: 'POST', url: '/api/consents', payload: { name: 'Consentimiento sintético Mi evolución', consentType: 'home_evolution', required: true, title: 'Uso de Mi evolución', body: 'Texto sintético de aceptación para pruebas de integración.' } });
 assert.equal(evolutionConsent.statusCode, 201, evolutionConsent.body);
 assert.equal((await admin.inject({ method: 'POST', url: `/api/consents/${evolutionConsent.json().id}/activate`, payload: {} })).statusCode, 200);
-const [evolutionConsentVersion] = await sql`SELECT active_version_id AS id FROM client_consents WHERE id=${evolutionConsent.json().id}::uuid`;
 const startsAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
 const [session] = await sql`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,created_by) VALUES (${service.id},${area.id},${startsAt},45,1,'client-app-test') RETURNING id`;
 const byClient = clientId => buildServer(process.env.DATABASE_URL, {
@@ -129,6 +134,15 @@ test('Member preferences are canonical-person scoped, persisted, strict and avai
 });
 
 test('self-service facade derives the identity server-side and hides another client’s bookings', async () => {
+  const policy = await appA.inject({ method: 'GET', url: '/api/me/evolution/consent' });
+  assert.equal(policy.statusCode, 200); assert.deepEqual(policy.json(), { v: 1, status: 'unpublished' });
+  assertEvolutionContract(policy.json());
+  const unpublishedGrant = await appA.inject({ method: 'POST', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173' }, payload: { v: 1, version: 1, typedName: 'Ada Prueba', idempotencyKey: randomUUID() } });
+  assert.equal(unpublishedGrant.statusCode, 409); assert.deepEqual(unpublishedGrant.json(), { error: 'consent_unpublished' });
+  const publishedVersion = await admin.inject({ method: 'POST', url: `/api/consents/${evolutionConsent.json().id}/versions`, payload: { title: 'Uso de Mi evolución', body: 'Texto sintético de aceptación para pruebas de integración.', effectiveAt: new Date().toISOString() } });
+  assert.equal(publishedVersion.statusCode, 201, publishedVersion.body);
+  assert.equal((await admin.inject({ method: 'POST', url: `/api/consents/${evolutionConsent.json().id}/activate`, payload: {} })).statusCode, 200);
+  const [evolutionConsentVersion] = await sql`SELECT active_version_id AS id FROM client_consents WHERE id=${evolutionConsent.json().id}::uuid`;
   const me = await appA.inject({ method: 'GET', url: '/api/me' });
   assert.equal(me.statusCode, 200); assert.equal(me.json().profile.id, a.id);
   const noConsent = await appA.inject({ method: 'GET', url: '/api/me/training-summary' });
@@ -140,10 +154,11 @@ test('self-service facade derives the identity server-side and hides another cli
   assert.deepEqual(evolutionRequests, [], 'missing entitlement or consent never calls the A68 transport');
   const noEntitlement = await appD.inject({ method: 'GET', url: '/api/me/training-summary' });
   assert.deepEqual(noEntitlement.json(), { status: 'linked', summaryStatus: 'blocked', reason: 'entitlement_required' });
-  const policy = await appA.inject({ method: 'GET', url: '/api/me/evolution/consent' });
-  assert.equal(policy.statusCode, 200); assert.equal(policy.json().status, 'required'); assert.equal(policy.json().currentVersion, 1);
-  assert.match(policy.json().body, /sintético/);
-  assert.equal(policy.json().effectiveAt, null, 'an unpublished effective date stays empty instead of being invented from row creation time');
+  const requiredPolicy = await appA.inject({ method: 'GET', url: '/api/me/evolution/consent' });
+  assert.equal(requiredPolicy.statusCode, 200); assert.equal(requiredPolicy.json().status, 'required'); assert.equal(requiredPolicy.json().currentVersion, 2);
+  assert.match(requiredPolicy.json().body, /sintético/);
+  assert.ok(requiredPolicy.json().publishedAt); assert.equal('effectiveAt' in requiredPolicy.json(), false);
+  assertEvolutionContract(requiredPolicy.json());
   const genericConsents = await appA.inject({ method: 'GET', url: '/api/client-portal/consents' });
   assert.deepEqual(genericConsents.json(), [], 'home_evolution is governed only by its revocable append-only consent ledger');
   const genericAccept = await appA.inject({ method: 'POST', url: `/api/client-portal/consents/${evolutionConsentVersion.id}/accept`, headers: { origin: 'http://127.0.0.1:5173', 'idempotency-key': randomUUID() }, payload: { typedName: 'Ada Prueba', accepted: true } });
@@ -154,12 +169,21 @@ test('self-service facade derives the identity server-side and hides another cli
   assert.equal(assistedAccept.statusCode, 409, 'staff-assisted generic acceptance cannot bypass the home_evolution ledger');
   const genericRequirement = await admin.inject({ method: 'POST', url: '/api/document-requirements', payload: { scopeType: 'center', requirementType: 'consent', consentId: evolutionConsent.json().id, required: true } });
   assert.equal(genericRequirement.statusCode, 409, 'home_evolution cannot become a booking/document requirement backed by a different acceptance ledger');
-  const grant = await appA.inject({ method: 'POST', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173' }, payload: { v: 1, version: 1, typedName: 'Ada Prueba', idempotencyKey: randomUUID() } });
+  const grant = await appA.inject({ method: 'POST', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173' }, payload: { v: 1, version: 2, typedName: 'Ada Prueba', idempotencyKey: randomUUID() } });
   assert.equal(grant.statusCode, 201, grant.body);
+  const acceptedPolicy = await appA.inject({ method: 'GET', url: '/api/me/evolution/consent' });
+  assert.equal(acceptedPolicy.json().status, 'accepted'); assert.ok(acceptedPolicy.json().acceptedAt); assertEvolutionContract(acceptedPolicy.json());
   const memberEvolution = await appA.inject({ method: 'GET', url: '/api/me/evolution' });
-  assert.deepEqual(memberEvolution.json(), { v: 1, state: 'available', consentVersion: 1, asOf: memberEvolution.json().asOf,
-    workouts: [{ date: '2026-10-23', exercises: [{ exerciseId: 'squat', sets: [{ reps: 8, completed: true }] }] }], nextCursor: null });
-  assert.equal(evolutionRequests.length, 1); assert.equal(evolutionRequests[0].consentVersion, 1);
+  assert.deepEqual(memberEvolution.json(), { v: 1, state: 'available', consentVersion: 2, asOf: memberEvolution.json().asOf,
+    workouts: [{ date: '2026-10-23', exercises: [{ exerciseId: 'squat', sets: [{ reps: 8, completed: true }] }] }], nextCursor: memberEvolution.json().nextCursor });
+  assertEvolutionContract(memberEvolution.json());
+  assert.equal(typeof memberEvolution.json().nextCursor, 'string', 'member cursor is opaque text in both request and response contracts');
+  const memberNextCursor = memberEvolution.json().nextCursor;
+  const nextPage = await appA.inject({ method: 'GET', url: `/api/me/evolution?cursor=${encodeURIComponent(memberNextCursor)}` });
+  assertEvolutionContract(nextPage.json());
+  assert.equal(nextPage.json().nextCursor, null);
+  assert.deepEqual(evolutionRequests[1].cursor, { snapshotId: 'a'.repeat(64), offset: 100 }, 'an opaque returned cursor round-trips to the transport');
+  assert.equal(evolutionRequests.length, 2); assert.equal(evolutionRequests[0].consentVersion, 2);
   assert.equal(JSON.stringify(memberEvolution.json()).includes(trainingUserA), false, 'the member API never exposes remote identity');
   assert.equal(JSON.stringify(memberEvolution.json()).toLowerCase().includes('bodyweight'), false);
   assert.equal(JSON.stringify(memberEvolution.json()).toLowerCase().includes('measurements'), false);
@@ -173,14 +197,15 @@ test('self-service facade derives the identity server-side and hides another cli
   assert.equal(JSON.stringify(linkedSummary.json()).includes('program-private-id'), false, 'remote program IDs stay server-side');
   const revoke = await appA.inject({ method: 'DELETE', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173', 'idempotency-key': randomUUID() } });
   assert.equal(revoke.statusCode, 200, revoke.body);
-  assert.equal((await appA.inject({ method: 'GET', url: '/api/me/evolution/consent' })).json().status, 'revoked');
+  const revokedPolicy = await appA.inject({ method: 'GET', url: '/api/me/evolution/consent' });
+  assert.equal(revokedPolicy.json().status, 'revoked'); assert.ok(revokedPolicy.json().revokedAt); assertEvolutionContract(revokedPolicy.json());
   assert.deepEqual((await appA.inject({ method: 'GET', url: '/api/me/training-summary' })).json(), { status: 'linked', summaryStatus: 'blocked', reason: 'consent_revoked' });
   assert.deepEqual((await appA.inject({ method: 'GET', url: '/api/me/evolution' })).json(), { v: 1, state: 'consent_required' });
-  assert.equal(evolutionRequests.length, 1, 'revoked consent blocks the A68 transport');
-  const regrant = await appA.inject({ method: 'POST', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173' }, payload: { v: 1, version: 1, typedName: 'Ada Prueba', idempotencyKey: randomUUID() } });
+  assert.equal(evolutionRequests.length, 2, 'revoked consent blocks the A68 transport');
+  const regrant = await appA.inject({ method: 'POST', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173' }, payload: { v: 1, version: 2, typedName: 'Ada Prueba', idempotencyKey: randomUUID() } });
   assert.equal(regrant.statusCode, 201, regrant.body, 'an explicit re-acceptance appends a new event for the same immutable version');
   const accessAudit = await sql`SELECT event_type AS type,decision,consent_version_id AS "consentVersionId",typed_name AS "typedName" FROM platform_member_evolution_events WHERE client_id IN (${a.id}::uuid,${d.id}::uuid) ORDER BY occurred_at,id`;
-  assert.deepEqual(accessAudit.filter(row => row.type === 'summary_requested').map(row => row.decision), ['consent_required','consent_required','entitlement_required','entitlement_required','allowed','allowed','consent_revoked','consent_revoked']);
+  assert.deepEqual(accessAudit.filter(row => row.type === 'summary_requested').map(row => row.decision), ['consent_required','consent_required','entitlement_required','entitlement_required','allowed','allowed','allowed','consent_revoked','consent_revoked']);
   assert.equal(accessAudit.every(row => row.typedName == null || row.type === 'consent_granted'), true, 'access audit never contains consent text or Training response data');
   assert.deepEqual((await appB.inject({ method: 'GET', url: `/api/me/training-summary?trainingUserId=${trainingUserA}` })).json(), { status: 'not_linked' }, 'revoked links and browser-supplied alternate IDs are ignored');
   assert.deepEqual((await appC.inject({ method: 'GET', url: '/api/me/training-summary' })).json(), { status: 'not_linked' }, 'a verified-but-pending canonical link is not exposed');

@@ -79,12 +79,12 @@ export function registerClientAppRoutes(
     const personId = await canonicalPersonId(actor);
     if (!personId) return reply.code(409).send({ error: 'member_identity_unavailable' });
     const consent = await activeEvolutionConsent();
-    if (!consent) return { v: 1, status: 'unpublished' as const };
+    if (!consent || !consent.effectiveAt) return { v: 1, status: 'unpublished' as const };
     const [event] = await db`SELECT event_type AS type,occurred_at AS "occurredAt" FROM platform_member_evolution_events
       WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
       ORDER BY occurred_at DESC,id DESC LIMIT 1`;
     const status = event?.type === 'consent_granted' ? 'accepted' : event?.type === 'consent_revoked' ? 'revoked' : 'required';
-    return { v: 1, status, currentVersion: Number(consent.version), title: String(consent.title), body: String(consent.body), effectiveAt: consent.effectiveAt ? new Date(consent.effectiveAt).toISOString() : null, ...(status === 'accepted' && event?.occurredAt ? { acceptedAt: new Date(event.occurredAt).toISOString() } : {}), ...(status === 'revoked' && event?.occurredAt ? { revokedAt: new Date(event.occurredAt).toISOString() } : {}) };
+    return { v: 1, status, currentVersion: Number(consent.version), title: String(consent.title), body: String(consent.body), publishedAt: new Date(consent.effectiveAt).toISOString(), ...(status === 'accepted' && event?.occurredAt ? { acceptedAt: new Date(event.occurredAt).toISOString() } : {}), ...(status === 'revoked' && event?.occurredAt ? { revokedAt: new Date(event.occurredAt).toISOString() } : {}) };
   });
 
   app.post('/api/me/evolution/consent', async (request, reply) => {
@@ -101,10 +101,10 @@ export function registerClientAppRoutes(
         const [prior] = await tx`SELECT request_hash AS hash,consent_version_id AS "versionId" FROM platform_member_evolution_events
           WHERE client_id=${actor.clientId}::uuid AND idempotency_key=${body.idempotencyKey}::uuid`;
         if (prior) return prior.hash.trim() === hash ? { versionId: String(prior.versionId), replay: true as const } : { error: 'idempotency_conflict' as const };
-        const [consent] = await tx`SELECT v.id AS "versionId",v.version,v.content_sha256 AS "contentHash" FROM client_consents c
+        const [consent] = await tx`SELECT v.id AS "versionId",v.version,v.content_sha256 AS "contentHash",v.effective_at AS "effectiveAt" FROM client_consents c
           JOIN client_consent_versions v ON v.id=c.active_version_id AND v.status='active'
           WHERE c.consent_type='home_evolution' AND c.status='active' ORDER BY c.updated_at DESC,c.id LIMIT 1 FOR SHARE OF c,v`;
-        if (!consent) return { error: 'consent_unpublished' as const };
+        if (!consent || !consent.effectiveAt) return { error: 'consent_unpublished' as const };
         if (Number(consent.version) !== body.version) return { error: 'consent_version_changed' as const };
         const [latest] = await tx`SELECT event_type AS type FROM platform_member_evolution_events
           WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
@@ -131,10 +131,10 @@ export function registerClientAppRoutes(
         await tx`SELECT id FROM clients WHERE id=${actor.clientId}::uuid FOR UPDATE`;
         const [prior] = await tx`SELECT request_hash AS hash FROM platform_member_evolution_events WHERE client_id=${actor.clientId}::uuid AND idempotency_key=${key.data}::uuid`;
         if (prior) return prior.hash.trim() === hash ? { replay: true as const } : { error: 'idempotency_conflict' as const };
-        const [consent] = await tx`SELECT v.id AS "versionId",v.content_sha256 AS "contentHash" FROM client_consents c
+        const [consent] = await tx`SELECT v.id AS "versionId",v.content_sha256 AS "contentHash",v.effective_at AS "effectiveAt" FROM client_consents c
           JOIN client_consent_versions v ON v.id=c.active_version_id AND v.status='active'
           WHERE c.consent_type='home_evolution' AND c.status='active' ORDER BY c.updated_at DESC,c.id LIMIT 1 FOR SHARE OF c,v`;
-        if (!consent) return { error: 'consent_unpublished' as const };
+        if (!consent || !consent.effectiveAt) return { error: 'consent_unpublished' as const };
         const [latest] = await tx`SELECT event_type AS type FROM platform_member_evolution_events
           WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
           ORDER BY occurred_at DESC,id DESC LIMIT 1`;
@@ -252,7 +252,7 @@ export function registerClientAppRoutes(
     const entitled = entitlements.effective.assignments.some(assignment => assignment.operationalAccess === 'active' && assignment.rights.some(right => right.rightType === 'training_access'));
     if (!entitled) { await audit('entitlement_required'); return { v: 1, state: 'not_available' as const }; }
     const consent = await activeEvolutionConsent();
-    if (!consent) { await audit('consent_unpublished'); return { v: 1, state: 'consent_required' as const }; }
+    if (!consent || !consent.effectiveAt) { await audit('consent_unpublished'); return { v: 1, state: 'consent_required' as const }; }
     const [consentEvent] = await db`SELECT event_type AS type FROM platform_member_evolution_events
       WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
       ORDER BY occurred_at DESC,id DESC LIMIT 1`;
@@ -277,7 +277,7 @@ export function registerClientAppRoutes(
     catch { result = { status: 'unavailable' as const }; }
     if (result.status !== 'available' || !result.evolution) return { v: 1, state: 'unavailable' as const };
     const remote = result.evolution;
-    const nextCursor = remote.nextCursor;
+    const nextCursor = remote.nextCursor ? Buffer.from(JSON.stringify(remote.nextCursor), 'utf8').toString('base64url') : null;
     return { v: 1, state: 'available' as const, consentVersion: Number(consent.version), asOf: remote.exportedAt,
       workouts: remote.workouts, nextCursor };
   });
