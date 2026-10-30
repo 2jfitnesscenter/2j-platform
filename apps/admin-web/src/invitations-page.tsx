@@ -2,6 +2,7 @@ import React from 'react';
 import { apiFetch } from './api-fetch.js';
 import { Button, Card, CardHeader, EmptyState, PageHeader, StatusChip, icons } from '@2j/ui';
 import { Modal } from './modal.js';
+import { useProfessionalCapabilities } from './app-shell.js';
 
 const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 type ReviewStatus = 'open' | 'approved' | 'rejected' | 'dismissed';
@@ -19,6 +20,7 @@ type ReviewEvent = { action: string; actor: string; occurredAt: string };
 type Detail = { v: 1; case: ReviewCase; events: ReviewEvent[] };
 type LoadState = 'loading' | 'ready' | 'denied' | 'error';
 type Action = 'approve' | 'reject' | 'dismiss';
+type MemberInvitation = { id: string; createdBy: string; createdAt: string; expiresAt: string; status: 'pending' | 'revoked' | 'expired' };
 
 const reasonLabels: Record<string, string> = {
   lost_device: 'Ha perdido el dispositivo de acceso',
@@ -32,6 +34,9 @@ const dateTime = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary',
 
 /** Bandeja real de revisiones H13 existentes. No crea invitaciones ni activa cuentas en Búnker. */
 export function InvitationsPage() {
+  const capabilities = useProfessionalCapabilities();
+  const canManageInvitations = capabilities?.memberInvitationManage === true;
+  const canReviewLinks = capabilities?.linkReviewManage === true;
   const [items, setItems] = React.useState<ReviewCase[]>([]);
   const [filter, setFilter] = React.useState<'open' | 'all'>('open');
   const [state, setState] = React.useState<LoadState>('loading');
@@ -46,6 +51,14 @@ export function InvitationsPage() {
   const [busy, setBusy] = React.useState(false);
   const [feedback, setFeedback] = React.useState('');
   const [dialogError, setDialogError] = React.useState('');
+  const [memberInvitations, setMemberInvitations] = React.useState<MemberInvitation[]>([]);
+  const [memberInvitationsState, setMemberInvitationsState] = React.useState<LoadState>('loading');
+  const [memberInvitationsError, setMemberInvitationsError] = React.useState('');
+  const [issuedSecret, setIssuedSecret] = React.useState<{ id: string; value: string } | null>(null);
+  const [invitationBusy, setInvitationBusy] = React.useState(false);
+  const [revokeInvitation, setRevokeInvitation] = React.useState<MemberInvitation | null>(null);
+  const [revokeReason, setRevokeReason] = React.useState('');
+  const [revokeError, setRevokeError] = React.useState('');
 
   const load = React.useCallback(async () => {
     setState('loading'); setError('');
@@ -59,7 +72,51 @@ export function InvitationsPage() {
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudieron cargar las solicitudes.'); setState('error'); }
   }, [filter]);
 
-  React.useEffect(() => { void load(); }, [load]);
+  React.useEffect(() => { if (canReviewLinks) void load(); else { setState('denied'); setItems([]); setSelected(null); setDetail(null); } }, [load, canReviewLinks]);
+
+  const loadMemberInvitations = React.useCallback(async () => {
+    if (!canManageInvitations) { setMemberInvitationsState('denied'); return; }
+    setMemberInvitationsState('loading'); setMemberInvitationsError('');
+    try {
+      const response = await apiFetch(`${api}/api/platform/v1/member-invitations?status=all&limit=50`, { cache: 'no-store' });
+      if (response.status === 401 || response.status === 403) { setMemberInvitationsState('denied'); return; }
+      if (!response.ok) throw new Error('No se pudieron cargar las invitaciones.');
+      const body = await response.json() as { v: 1; invitations: MemberInvitation[] };
+      if (!Array.isArray(body.invitations)) throw new Error('La respuesta de invitaciones no tiene el formato esperado.');
+      setMemberInvitations(body.invitations); setMemberInvitationsState('ready');
+    } catch (caught) { setMemberInvitationsError(caught instanceof Error ? caught.message : 'No se pudieron cargar las invitaciones.'); setMemberInvitationsState('error'); }
+  }, [canManageInvitations]);
+
+  React.useEffect(() => { void loadMemberInvitations(); }, [loadMemberInvitations]);
+
+  async function createMemberInvitation() {
+    if (!canManageInvitations || invitationBusy) return;
+    setInvitationBusy(true); setMemberInvitationsError(''); setIssuedSecret(null);
+    try {
+      const response = await apiFetch(`${api}/api/platform/v1/member-invitations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      if (response.status === 401 || response.status === 403) throw new Error('Tu perfil no puede crear invitaciones.');
+      if (!response.ok) throw new Error('No se pudo crear la invitación.');
+      const body = await response.json() as { invitation: MemberInvitation; secret: string };
+      setIssuedSecret({ id: body.invitation.id, value: body.secret });
+      await loadMemberInvitations();
+    } catch (caught) { setMemberInvitationsError(caught instanceof Error ? caught.message : 'No se pudo crear la invitación.'); }
+    finally { setInvitationBusy(false); }
+  }
+
+  async function revokeMemberInvitation(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canManageInvitations || !revokeInvitation || revokeReason.trim().length < 10) return;
+    setInvitationBusy(true); setRevokeError('');
+    try {
+      const response = await apiFetch(`${api}/api/platform/v1/member-invitations/${revokeInvitation.id}/revoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: revokeReason.trim() }) });
+      if (response.status === 409) throw new Error('La invitación ya venció o cambió de estado. Actualiza la lista.');
+      if (response.status === 401 || response.status === 403) throw new Error('Tu perfil no puede revocar invitaciones.');
+      if (!response.ok) throw new Error('No se pudo revocar la invitación.');
+      setIssuedSecret(current => current?.id === revokeInvitation.id ? null : current);
+      setRevokeInvitation(null); setRevokeReason(''); await loadMemberInvitations();
+    } catch (caught) { setRevokeError(caught instanceof Error ? caught.message : 'No se pudo revocar la invitación.'); }
+    finally { setInvitationBusy(false); }
+  }
 
   async function openDetail(item: ReviewCase) {
     setSelected(item); setDetail(null); setDetailLoading(true); setFeedback('');
@@ -98,11 +155,20 @@ export function InvitationsPage() {
   }
 
   return <main className="summary invitations-page app-page" id="invitations" data-2j-design="v2">
-    <PageHeader title="Invitaciones" description="Revisa solicitudes de vinculación de personas ya registradas en Platform." actions={<Button icon={icons.RefreshCw} loading={state === 'loading'} onClick={() => void load()}>Actualizar</Button>} />
-    <Card className="invitations-boundary" role="note"><strong>Alcance actual</strong><span>Esta bandeja registra revisiones H13. No envía invitaciones, no crea cuentas en Búnker y una aprobación no activa el vínculo ni el acceso.</span><span>La activación asistida con confirmación de Búnker sigue <b>No conectada</b>.</span></Card>
-    <section className="invitations-layout" aria-label="Bandeja de vinculaciones">
+    <PageHeader title="Invitaciones" description="Códigos de incorporación y revisiones asistidas de vínculo." actions={<Button icon={icons.RefreshCw} loading={state === 'loading' || memberInvitationsState === 'loading'} onClick={() => { if (canReviewLinks) void load(); if (canManageInvitations) void loadMemberInvitations(); }}>Actualizar</Button>} />
+    <Card className="invitations-boundary" role="note"><strong>Alcance actual</strong><span>La invitación no crea una identidad ni una cuenta Búnker. El código se entrega manualmente y solo se muestra una vez.</span><span>El canje autenticado, la entrega al socio y la activación bilateral con confirmación de Búnker siguen <b>No conectados</b>. No se busca ni empareja por correo o teléfono.</span></Card>
+    {canManageInvitations && <Card as="section" className="invitations-issue" aria-labelledby="member-invitations-title">
+      <CardHeader title="Invitaciones de incorporación" titleId="member-invitations-title" description="Emite un código temporal para entregar fuera de la plataforma. No incluye datos de una persona." actions={<Button variant="primary" loading={invitationBusy} onClick={() => void createMemberInvitation()}>Crear invitación</Button>} />
+      {memberInvitationsState === 'loading' && <p role="status">Cargando invitaciones…</p>}
+      {memberInvitationsState === 'error' && <p role="alert">{memberInvitationsError} <Button variant="ghost" onClick={() => void loadMemberInvitations()}>Reintentar</Button></p>}
+      {memberInvitationsError && memberInvitationsState !== 'error' && <p role="alert">{memberInvitationsError}</p>}
+      {issuedSecret && <div className="invitations-secret" role="status"><strong>Código mostrado una sola vez</strong><code>{issuedSecret.value}</code><Button variant="secondary" onClick={() => void navigator.clipboard?.writeText(issuedSecret.value)}>Copiar código</Button><Button variant="ghost" onClick={() => setIssuedSecret(null)}>Ocultar código</Button><small>Al ocultarlo no podrás recuperarlo; podrás crear otro. No lo incluyas en notas, correos ni capturas.</small></div>}
+      {memberInvitationsState === 'ready' && memberInvitations.length === 0 && <p className="invitations-empty">Aún no hay invitaciones. No se han creado plantillas ni destinatarios por defecto.</p>}
+      {memberInvitationsState === 'ready' && memberInvitations.length > 0 && <ul className="invitations-items" aria-label="Invitaciones emitidas">{memberInvitations.map(item => <li key={item.id} className="invitations-issued-item"><span><strong>{item.status === 'pending' ? 'Pendiente' : item.status === 'expired' ? 'Vencida' : 'Revocada'}</strong><small>Creada {dateTime.format(new Date(item.createdAt))} · vence {dateTime.format(new Date(item.expiresAt))}</small></span>{item.status === 'pending' && <Button variant="ghost" disabled={invitationBusy} onClick={() => { setRevokeInvitation(item); setRevokeReason(''); setRevokeError(''); }}>Revocar</Button>}</li>)}</ul>}
+    </Card>}
+    {canReviewLinks && <section className="invitations-layout" aria-label="Revisiones de vinculación Búnker H13">
       <Card as="section" padding="none" className="summary-card invitations-list" aria-labelledby="invitations-list-title">
-        <div className="summary-card-head"><CardHeader title="Solicitudes" titleId="invitations-list-title" description="Revisiones de acceso a una cuenta Búnker existente." actions={state === 'ready' ? <StatusChip tone="neutral" icon={null}>{items.length}</StatusChip> : null} /></div>
+        <div className="summary-card-head"><CardHeader title="Solicitudes H13" titleId="invitations-list-title" description="Revisiones de acceso a una cuenta Búnker existente." actions={state === 'ready' ? <StatusChip tone="neutral" icon={null}>{items.length}</StatusChip> : null} /></div>
         <div className="invitations-filter"><label>Mostrar<select aria-label="Filtrar solicitudes" value={filter} onChange={event => setFilter(event.target.value as 'open' | 'all')}><option value="open">Pendientes</option><option value="all">Todas</option></select></label></div>
         {(state === 'loading') && <div className="summary-state" role="status"><span className="spinner" /> Cargando solicitudes…</div>}
         {state === 'denied' && <div className="summary-empty" role="alert"><strong>Tu perfil no puede revisar vinculaciones</strong><span>Esta información está reservada a personal autorizado para gestionar identidades.</span></div>}
@@ -124,7 +190,10 @@ export function InvitationsPage() {
           </>}
         </div>}
       </Card>
-    </section>
+    </section>}
+    {revokeInvitation && <Modal titleId="member-invitation-revoke-title" title="Revocar invitación" description="El código dejará de ser válido de inmediato. La acción queda auditada." onClose={() => { if (!invitationBusy) setRevokeInvitation(null); }} closeDisabled={invitationBusy}>
+      <form className="invitations-resolve-form" onSubmit={revokeMemberInvitation}><label>Motivo (mínimo 10 caracteres)<textarea data-modal-initial-focus value={revokeReason} onChange={event => setRevokeReason(event.target.value)} minLength={10} maxLength={300} required /></label>{revokeError && <p role="alert">{revokeError}</p>}<div className="invitations-dialog-actions"><Button type="button" variant="ghost" disabled={invitationBusy} onClick={() => setRevokeInvitation(null)}>Cancelar</Button><Button type="submit" variant="primary" loading={invitationBusy} disabled={invitationBusy || revokeReason.trim().length < 10}>Revocar</Button></div></form>
+    </Modal>}
     {action && selected && <Modal titleId="invitations-resolve-title" title={action === 'approve' ? 'Aprobar revisión' : action === 'reject' ? 'Rechazar solicitud' : 'Descartar solicitud'} description={action === 'approve' ? 'Confirma la comprobación de titularidad. Esta aprobación no enlaza ni activa la cuenta de Búnker.' : 'La resolución quedará registrada y no se podrá cambiar desde esta solicitud.'} onClose={() => setAction(null)} closeDisabled={busy}>
       <form className="invitations-resolve-form" onSubmit={resolve}>
         {action === 'approve' && <><label>Identificador de la cuenta Búnker verificada<input data-modal-initial-focus autoComplete="off" value={trainingUserId} onChange={event => setTrainingUserId(event.target.value)} maxLength={200} required /></label><label>Comprobación<select value={verification} onChange={event => setVerification(event.target.value as typeof verification)}><option value="in_person">Comprobación presencial</option><option value="other_verified">Otro canal verificado</option></select></label><p className="invitations-form-note">No uses correo, teléfono ni nombre para buscar o emparejar la cuenta. El vínculo H13 bilateral aún no está conectado.</p></>}

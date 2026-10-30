@@ -57,6 +57,7 @@ export function registerDashboardRoutes(
       staff: can(context, 'staff.read'),
       ownerPanel: can(context, 'owner.panel.read'),
       linkReviewManage: can(context, 'platform_link_issue'),
+      memberInvitationManage: can(context, 'member.invitations.manage'),
       notificationSettings: can(context, 'settings.manage'),
       news: can(context, 'news.manage'),
       reservationManage: can(context, 'reservations.manage'),

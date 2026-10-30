@@ -2,6 +2,13 @@
   display:grid;
   gap:16px
 }
+.invitations-issue{margin-block:1rem;padding:1.25rem;display:grid;gap:1rem}
+.invitations-secret{display:grid;gap:.6rem;padding:1rem;border:1px solid var(--2j-color-border);border-radius:var(--2j-radius-md);background:var(--2j-color-surface-subtle)}
+.invitations-secret code{display:block;overflow-wrap:anywhere;font-size:1rem;padding:.8rem;border-radius:var(--2j-radius-sm);background:var(--2j-color-surface);color:var(--2j-color-text-primary);user-select:all}
+.invitations-secret small,.invitations-issued-item small{color:var(--2j-color-text-secondary)}
+.invitations-empty{color:var(--2j-color-text-secondary)}
+.invitations-issued-item{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.9rem 0;border-top:1px solid var(--2j-color-border)}
+.invitations-issued-item>span{display:grid;gap:.3rem}
 .invitations-boundary{
   display:grid;
   gap:5px;

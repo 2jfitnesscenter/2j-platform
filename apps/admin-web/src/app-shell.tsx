@@ -20,7 +20,7 @@ export type CommandCenterModel = {
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
 export const useProfessionalCapabilities = () => React.useContext(CommandContext).capabilities;
-export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean;linkReviewManage?:boolean};
+export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean;linkReviewManage?:boolean;memberInvitationManage?:boolean};
 export function ProfessionalCapabilitiesProvider({capabilities,children}:{capabilities:NavigationCapabilities|null;children:React.ReactNode}) {
   return <CommandContext.Provider value={{data:null,state:'loading',error:'',reload:()=>{},capabilities}}>{children}</CommandContext.Provider>;
 }
@@ -48,7 +48,7 @@ const routes={
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
   import:{id:'import',label:'Importar clientes',href:'#import',permission:'notificationSettings',icon:icons.Users},
-  invitations:{id:'invitations',label:'Invitaciones',href:'#invitations',permission:'linkReviewManage',icon:icons.UserRound},
+  invitations:{id:'invitations',label:'Invitaciones',href:'#invitations',permission:'memberInvitationManage',icon:icons.UserRound},
   settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
   'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
@@ -63,7 +63,7 @@ const defaultOpenGroups=['operation','commercial','management','administration']
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */
 export const hasProfessionalRoute = (id: string) => Object.hasOwn(routes, id);
 const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
-function hasNavigationCapability(route:NavRoute,capabilities:NavigationCapabilities|null){return route.permission===null||capabilities?.[route.permission]===true;}
+function hasNavigationCapability(route:NavRoute,capabilities:NavigationCapabilities|null){if(route.id==='invitations')return capabilities?.memberInvitationManage===true||capabilities?.linkReviewManage===true;return route.permission===null||capabilities?.[route.permission]===true;}
 export function getProfessionalNavigation(capabilities:NavigationCapabilities|null,activeRoute=routeId()){
   return navSections.flatMap(section=>{
     if(section.route)return hasNavigationCapability(section.route,capabilities)?[{...section,active:section.route.id===activeRoute}]:[];
