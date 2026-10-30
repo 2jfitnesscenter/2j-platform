@@ -6,6 +6,7 @@ export type { LucideIcon } from 'lucide-react';
 export {
   Activity,
   Archive,
+  BadgePercent,
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
