@@ -25,7 +25,7 @@ La integración debe tener tests de autorización, revisión no aprobada, person
 
 ## Migración y orden
 
-La revisión de ramas abiertas no encontró ningún uso de `0060`. El orden vigente permanece: #124 `0053`, #125 `0054`, main `0055`, #140 `0056`, #138 `0057`, #141 `0058`, #132 `0059`. La implementación podrá reservar `0060_training_assisted_link.sql` cuando arranque; esta propuesta no crea migración.
+La secuencia ya integrada en `main` llega a `0062_store_settings.sql`: #153 ocupa `0060_client_import_commit.sql`, #154 ocupa `0061_invoice_settings.sql` y #158 ocupa `0062_store_settings.sql`. Esta propuesta no crea ni reserva migración. Cuando empiece la implementación, se debe volver a inspeccionar `main` y todas las ramas/PR abiertas antes de elegir el siguiente prefijo; no se debe reutilizar `0060`.
 
 ## Límites y revisión
 
