@@ -75,6 +75,14 @@ test('person identity administration is restricted to Admin', () => {
   assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'identity.people.manage'), true);
 });
 
+test('member invitation management is separately permissioned and denied by default outside Admin', () => {
+  assert.equal(knownPermissions.has('member.invitations.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'member.invitations.manage'), true);
+  for (const role of ['trainer', 'reception-management', 'accountant', 'owner']) assert.equal(can({ actorId: 'fixture', role }, 'member.invitations.manage'), false);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer', explicitPermissions: ['member.invitations.manage'] }, 'member.invitations.manage'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'trainer', explicitPermissions: ['member.invitations.manage'], deniedPermissions: ['member.invitations.manage'] }, 'member.invitations.manage'), false);
+});
+
 test('limited Member booking cohort management is restricted to Admin', () => {
   for (const role of ['trainer', 'reception-management', 'accountant']) assert.equal(can({ actorId: 'fixture', role }, 'member.pilot.booking.manage'), false);
   assert.equal(can({ actorId: 'fixture', role: 'admin' }, 'member.pilot.booking.manage'), true);

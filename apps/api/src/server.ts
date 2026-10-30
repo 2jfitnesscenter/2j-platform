@@ -39,6 +39,7 @@ import { registerPlatformPasskeyRoutes } from './platform-passkeys.js';
 import { createStaffAuth } from './staff-auth.js';
 import { createTrainingLinkTransactions, registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
 import { registerTrainingLinkReviewRoutes } from './training-link-review.js';
+import { registerMemberInvitationRoutes } from './member-invitations.js';
 import { createTrainingLinkFlow, createTrainingServiceClient, registerTrainingLinkFlowRoutes, type TrainingServiceClient } from './training-link-flow.js';
 import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, createTrainingEvolutionAdapter, type TrainingAdapter, type TrainingEvolutionAdapter } from './training-integration.js';
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
@@ -308,6 +309,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const canIssue = isOwnerActor || isOwnerPerson || isConfiguredIssuer;
     const explicitPermissions = (context.explicitPermissions ?? []).filter(permission => permission !== 'platform_link_issue');
     if (canIssue) explicitPermissions.push('platform_link_issue');
+    if (isOwnerActor || isOwnerPerson) explicitPermissions.push('member.invitations.manage');
     return { ...context, explicitPermissions: [...new Set(explicitPermissions)] };
   };
   const trustedAuthorizationResolver = async (request: import('fastify').FastifyRequest) => {
@@ -316,7 +318,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const granted = grantLinkIssue(context);
     if (!granted) return null;
     if (!ownerActorId || granted.actorId !== ownerActorId) return granted;
-    return { ...granted, explicitPermissions: [...new Set([...(granted.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read', 'platform_link_issue'])] };
+    return { ...granted, explicitPermissions: [...new Set([...(granted.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read', 'platform_link_issue', 'member.invitations.manage'])] };
   };
   if (options.ownerPersonId != null && !z.string().uuid().safeParse(options.ownerPersonId).success) throw new Error('ownerPersonId must be a trusted Platform person UUID.');
   const ownerPersonId = options.ownerPersonId?.toLowerCase() ?? null;
@@ -465,6 +467,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerInvoicingRoutes(app, client, authorizationResolver, objectStorage);
   registerMemberInvoiceRoutes(app, client, clientAuthorizationResolver, objectStorage);
   registerDashboardRoutes(app, client, authorizationResolver);
+  registerMemberInvitationRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
     enabled: options.trainingVerifiedLinkingEnabled === true,

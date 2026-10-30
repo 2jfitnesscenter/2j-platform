@@ -60,6 +60,7 @@
     "staff.timeclock.correct",
     "identity.people.manage",
     "platform_link_issue",
+    "member.invitations.manage",
     "member.pilot.booking.manage",
     "settings.manage",
     "training.suspension.manage",
