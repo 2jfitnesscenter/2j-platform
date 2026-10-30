@@ -4,6 +4,7 @@ import type { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, RefObject
 import { Button, Card, CardHeader, EmptyState, Icon, IconButton, PageHeader, SearchField, SegmentedControl, StatusChip, Tabs, icons } from '@2j/ui';
 import { clearDeepLink, readDeepLink } from './deep-link.js';
 import { ClientFilesPanel } from './client-files-panel.js';
+import { InvoiceDialog } from './invoice-ui.js';
 import { ClientAvatar, SECTION_LABEL, SECTION_ORDER, chargeChip, clientPlanChip, euros, planStatusChip, reservationChip, reservationRightsLabel, rightLine } from './client-presenters.js';
 
 type Client = { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; birthDate?:string|null; status: 'active' | 'archived'; createdAt: string; updatedAt?: string };
@@ -74,6 +75,7 @@ export function ClientsPage() {
   const [profileState, setProfileState] = useState<'idle' | 'loading' | 'ready' | 'error' | 'unauthorized'>('idle');
   const [profileError, setProfileError] = useState('');
   const [profileRetry, setProfileRetry] = useState(0);
+  const [invoiceCharge, setInvoiceCharge] = useState<{ id: string; concept: string } | null>(null);
   const [documentsData, setDocumentsData] = useState<{forms:ClientFormItem[];consents:ClientConsentItem[]}|null>(null);
   const [followupData, setFollowupData] = useState<FollowupItem[]|null>(null);
   const [operationState, setOperationState] = useState<'loading'|'ready'|'error'>('ready');
@@ -555,7 +557,8 @@ export function ClientsPage() {
               <li><Card padding="none" className="client-fact"><span className="client-fact-label">Cargos vencidos</span><strong className="client-fact-value">{Number(paymentData?.overdueCount ?? 0)}</strong></Card></li>
             </ul>
             <Card as="section" aria-labelledby="client-charges-title"><CardHeader title="Cargos recientes" titleId="client-charges-title" level={2} actions={<Button variant="ghost" size="sm" href="#economics">Abrir Pagos</Button>} />
-              {(paymentData?.charges ?? []).length ? <ul className="client-list">{(paymentData?.charges ?? []).map((item) => <li key={item.id} className="client-list-row"><div className="client-list-main"><strong>{item.concept}</strong><span>{item.dueOn}</span></div><div className="client-list-side">{chargeChip(item.status)}<strong>{money(Number(item.balanceCents))}{item.status === 'refunded' ? ' devuelto' : ' pendiente'}</strong></div></li>)}</ul> : <p className="client-muted">No hay cargos recientes.</p>}
+              {(paymentData?.charges ?? []).length ? <ul className="client-list">{(paymentData?.charges ?? []).map((item) => <li key={item.id} className="client-list-row"><div className="client-list-main"><strong>{item.concept}</strong><span>{item.dueOn}</span></div><div className="client-list-side">{chargeChip(item.status)}<strong>{money(Number(item.balanceCents))}{item.status === 'refunded' ? ' devuelto' : ' pendiente'}</strong>{item.status !== 'void' && Number(item.amountCents) > Number(item.balanceCents) && <Button variant="ghost" size="sm" onClick={() => setInvoiceCharge(item)}>Factura</Button>}</div></li>)}</ul> : <p className="client-muted">No hay cargos recientes.</p>}
+              {invoiceCharge && <InvoiceDialog chargeId={invoiceCharge.id} title={invoiceCharge.concept} onClose={() => setInvoiceCharge(null)} />}
             </Card>
             <Card as="section" aria-labelledby="client-moves-title"><CardHeader title="Movimientos recientes" titleId="client-moves-title" level={2} />
               {(paymentData?.movements ?? []).length ? <ul className="client-list">{(paymentData?.movements ?? []).map((item) => <li key={item.id} className="client-list-row"><div className="client-list-main"><strong>{item.kind === 'refund' ? 'Devolución' : 'Pago'} · {item.concept}</strong><span>{new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Atlantic/Canary' }).format(new Date(item.createdAt))}</span></div><strong>{money(Number(item.amountCents))}</strong></li>)}</ul> : <p className="client-muted">No hay movimientos recientes.</p>}

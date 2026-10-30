@@ -31,6 +31,7 @@ const serve = (handler) => {
   globalThis.fetch = async (url, init) => {
     const path = String(url);
     if (path.includes('/api/settings/overview') || path.includes('/api/admin/center-profile') || path.includes('/api/center/') || path.includes('/api/staff')) return handler(path, init);
+    if (path.includes('/api/economics/invoice-settings')) return response({ issuerName: null, issuerTaxId: null, issuerAddress: null, issuerPostalCode: null, issuerLocality: null, issuerProvince: null, defaultIgicBasisPoints: 300, defaultSeriesId: null, footerText: null, legalText: null, hasLogo: false, logoMime: null, series: [], missing: ['nombre o razón social'], canManage: false });
     if (path.includes('/api/dashboard/command-center')) return response(model);
     if (path.includes('/api/session/capabilities')) return response({ calendar: true, clients: true, communications: true, billing: true, staff: true, notificationSettings: true });
     return response({ groups: [] });
@@ -39,11 +40,11 @@ const serve = (handler) => {
 const mount = () => { window.location.hash = '#settings'; return render(React.createElement(AppShell, null, React.createElement(SettingsPage))); };
 const openTab = async (name) => { fireEvent.click(await screen.findByRole('tab', { name })); return screen.findByRole('tabpanel'); };
 
-test('Configuración offers the eight tabs and only shows authoritative links for rules owned by other modules', async () => {
+test('Configuración offers its nine tabs and keeps rules owned by other modules authoritative', async () => {
   serve(() => response(overview)); mount();
   assert.ok(await screen.findByRole('heading', { name: 'Configuración' }));
   const tabs = await screen.findAllByRole('tab');
-  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Centro', 'Horario y turnos', 'Apariencia', 'Reservas', 'Pagos', 'Tienda', 'Permisos', 'Integraciones']);
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Centro', 'Horario y turnos', 'Apariencia', 'Reservas', 'Pagos', 'Facturación', 'Tienda', 'Permisos', 'Integraciones']);
   const appearance = await openTab('Apariencia');
   assert.match(appearance.textContent, /Grafito · Lima #A4D65E/);
   assert.equal(appearance.querySelectorAll('input').length, 0, 'brand tokens are not editable per center');
@@ -53,6 +54,9 @@ test('Configuración offers the eight tabs and only shows authoritative links fo
   const store = await openTab('Tienda');
   assert.match(store.textContent, /Productos, variantes, inventario y ventas se gestionan en Tienda/);
   assert.equal(within(store).getByRole('link', { name: /Abrir Tienda/ }).getAttribute('href'), '#store');
+  const invoicing = await openTab('Facturación');
+  assert.ok(within(invoicing).getByRole('heading', { name: 'Emisor' }));
+  for (const name of ['Apariencia', 'Reservas', 'Tienda']) assert.equal((await openTab(name)).querySelector('form'), null, `${name} does not imply editable settings`);
 });
 
 test('Centro reads and saves the existing audited Platform profile API without fiscal fields', async () => {

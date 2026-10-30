@@ -1,6 +1,7 @@
 import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, PageHeader, StatusChip, Tabs, icons } from '@2j/ui';
+import { InvoiceSettingsPanel } from './invoice-ui.js';
 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
@@ -15,7 +16,7 @@ type LoadState = { status: 'loading' } | { status: 'ready'; data: Overview } | {
 
 const TABS = [
   { id: 'center', label: 'Centro' }, { id: 'operations', label: 'Horario y turnos' }, { id: 'appearance', label: 'Apariencia' }, { id: 'booking', label: 'Reservas' }, { id: 'payments', label: 'Pagos' },
-  { id: 'store', label: 'Tienda' }, { id: 'permissions', label: 'Permisos' }, { id: 'integrations', label: 'Integraciones' },
+  { id: 'invoicing', label: 'Facturación' }, { id: 'store', label: 'Tienda' }, { id: 'permissions', label: 'Permisos' }, { id: 'integrations', label: 'Integraciones' },
 ];
 const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', other: 'Otro' };
 const integrationLabel: Record<string, string> = {
@@ -194,6 +195,7 @@ export function SettingsPage() {
     const payments = data.payments;
     switch (tab) {
       case 'operations': return <OperationsSettings />;
+      case 'invoicing': return <InvoiceSettingsPanel />;
       case 'center': return <CenterProfileSettings timezone={data.timezone} onOpenOperations={() => setTab('operations')} />;
       case 'appearance': return <>
         <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Identidad 2J</StatusChip><span>La aplicación utiliza los tokens oficiales de 2J. Los colores corporativos no se editan por centro.</span></div>
