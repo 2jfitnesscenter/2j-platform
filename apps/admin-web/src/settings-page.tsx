@@ -61,11 +61,11 @@ function CenterProfileSettings({ timezone, onOpenOperations }: { timezone: strin
     <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Los cambios se guardan en Platform y quedan auditados. No incluye datos fiscales.</span></div>
     <form className="settings-grid" onSubmit={save}>
       <label className="settings-field">Nombre comercial<input aria-label="Nombre comercial" maxLength={120} required value={profile.businessName} onChange={event => change('businessName', event.target.value)} /></label>
-      <label className="settings-field">Teléfono<input aria-label="Teléfono" inputMode="tel" maxLength={80} value={profile.contactPhone ?? ''} onChange={event => change('contactPhone', event.target.value)} /></label>
+      <label className="settings-field">Teléfono<input aria-label="Teléfono" inputMode="tel" maxLength={40} value={profile.contactPhone ?? ''} onChange={event => change('contactPhone', event.target.value)} /></label>
       <label className="settings-field">Correo de contacto<input aria-label="Correo de contacto" type="email" maxLength={254} value={profile.contactEmail ?? ''} onChange={event => change('contactEmail', event.target.value)} /></label>
-      <label className="settings-field wide">Dirección<input aria-label="Dirección" maxLength={400} value={profile.address ?? ''} onChange={event => change('address', event.target.value)} /></label>
-      <label className="settings-field">Ciudad<input aria-label="Ciudad" maxLength={200} value={profile.city ?? ''} onChange={event => change('city', event.target.value)} /></label>
-      <label className="settings-field">Código postal<input aria-label="Código postal" maxLength={40} value={profile.postalCode ?? ''} onChange={event => change('postalCode', event.target.value)} /></label>
+      <label className="settings-field wide">Dirección<input aria-label="Dirección" maxLength={200} value={profile.address ?? ''} onChange={event => change('address', event.target.value)} /></label>
+      <label className="settings-field">Ciudad<input aria-label="Ciudad" maxLength={100} value={profile.city ?? ''} onChange={event => change('city', event.target.value)} /></label>
+      <label className="settings-field">Código postal<input aria-label="Código postal" maxLength={20} value={profile.postalCode ?? ''} onChange={event => change('postalCode', event.target.value)} /></label>
       <div className="settings-inline-actions"><Button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar datos del centro'}</Button>{feedback && <span role="status">{feedback}</span>}</div>
     </form>
     <h3 className="settings-subtitle">Zona horaria</h3>

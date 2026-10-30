@@ -74,6 +74,10 @@ test('Centro reads and saves the existing audited Platform profile API without f
   const panel = await openTab('Centro');
   const businessName = await within(panel).findByLabelText('Nombre comercial');
   assert.equal(businessName.value, '');
+  assert.equal(within(panel).getByLabelText('Teléfono').maxLength, 40);
+  assert.equal(within(panel).getByLabelText('Dirección').maxLength, 200);
+  assert.equal(within(panel).getByLabelText('Ciudad').maxLength, 100);
+  assert.equal(within(panel).getByLabelText('Código postal').maxLength, 20);
   fireEvent.change(businessName, { target: { value: '2J Fitness Center' } });
   fireEvent.change(within(panel).getByLabelText('Correo de contacto'), { target: { value: 'hola@example.test' } });
   fireEvent.change(within(panel).getByLabelText('Teléfono'), { target: { value: '+34 600 000 000' } });
