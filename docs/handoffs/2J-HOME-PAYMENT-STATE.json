@@ -1,0 +1,47 @@
+{
+  "task": "2J-HOME-PAYMENT-STATE",
+  "branch": "agent/codex/2J-HOME-PAYMENT-STATE",
+  "base": "5e1d6b26079228aa13c5f32e37cd75199e7c1a7b",
+  "dependency": {
+    "pullRequest": 110,
+    "state": "merged",
+    "mergeCommit": "e90a649f15b87c2350dc27a35f2b00bb9f10f047",
+    "endpoint": "GET /api/me/membership",
+    "source": "assignments[].payment"
+  },
+  "implementation": {
+    "changedFiles": [
+      "apps/client-app/src/client-app.tsx",
+      "apps/client-app/src/styles.css",
+      "apps/client-app/test/client-app.test.mjs",
+      "docs/evidence/2J-HOME-PAYMENT-STATE/profile-payment-demo.png",
+      "docs/handoffs/2J-HOME-PAYMENT-STATE.md",
+      "docs/handoffs/2J-HOME-PAYMENT-STATE.json"
+    ],
+    "serverRemainsAuthority": true,
+    "homeCalculatesPaymentOrAccess": false,
+    "partialPaymentEventsRendered": true,
+    "writesAdded": false,
+    "syntheticFixtureClearlyLabeled": true,
+    "runtimeStagingVerified": false
+  },
+  "validation": {
+    "clientTests": "46/46",
+    "typecheck": "pass",
+    "build": "pass",
+    "demoBuild": "pass",
+    "diffCheck": "pass"
+  },
+  "relatedWork": {
+    "waitlistEligibilityPR": 116,
+    "waitlistPRState": "open_draft",
+    "waitlistPRHead": "a0aadc980aab9262c2594b8587582ff29cde0e1c",
+    "waitlistPRBase": "codex/2J-HOME-READ-IMPLEMENTATION-PR",
+    "duplicatePRCreated": false
+  },
+  "deferred": [
+    "Gap-check items 3–8 until owner tests staging",
+    "Measurements until Platform publishes the measurements contract"
+  ],
+  "publication": "payment-state branch remains local; no push, merge or deployment"
+}
