@@ -1,0 +1,27 @@
+{
+  "task": "2J-ADMIN-IP-ALLOWLIST",
+  "status": "implementation_prepared_for_independent_review",
+  "review_level": 2,
+  "base": "6d46f06523285882e518de0512af11e11be46461",
+  "implementation": {
+    "staging_config": "ADMIN_ALLOW_IPS in /etc/2j-staging.conf",
+    "allowlist_matcher": "Caddy remote_ip direct peer",
+    "production_allowlist_implemented": false,
+    "passkey_auth_changed": false
+  },
+  "validation": {
+    "allowlist_and_seed_tests": "6/6 PASS in Linux container",
+    "bash_syntax": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "changed_files": [
+    "tooling/staging/setup-staging.sh",
+    "tooling/staging/setup-staging-admin-allowlist.test.mjs",
+    "docs/runbooks/admin-ip-allowlist.md",
+    "docs/runbooks/staging-2jfit-com.md",
+    "docs/handoffs/2J-ADMIN-IP-ALLOWLIST.md",
+    "docs/handoffs/2J-ADMIN-IP-ALLOWLIST.json"
+  ],
+  "server_changes": false,
+  "production_changes": false
+}

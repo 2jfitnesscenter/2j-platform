@@ -806,21 +806,29 @@ EOF
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 validate_conf() {
   case "$STAGING_HOME_MODE" in real|demo) ;; *) die "STAGING_HOME_MODE debe ser real o demo (valor actual: '$STAGING_HOME_MODE')";; esac
-  local ip n
-  for ip in $ADMIN_ALLOW_IPS; do
-    case "$ip" in
-      */*) n="${ip#*/}"; ip="${ip%/*}";;
-      *) n="";;
-    esac
-    if [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
-      for o in "${BASH_REMATCH[@]:1}"; do [ "$o" -le 255 ] || die "ADMIN_ALLOW_IPS: IP no válida: $ip"; done
-      [ -z "$n" ] || { [[ "$n" =~ ^[0-9]{1,2}$ ]] && [ "$n" -ge 24 ] && [ "$n" -le 32 ]; } || die "ADMIN_ALLOW_IPS: máscara /$n demasiado ancha (mínimo /24): $ip/$n"
-    elif [[ "$ip" =~ ^[0-9a-fA-F:]+$ ]] && [[ "$ip" == *:* ]]; then
-      [ -z "$n" ] || { [[ "$n" =~ ^[0-9]{1,3}$ ]] && [ "$n" -ge 64 ] && [ "$n" -le 128 ]; } || die "ADMIN_ALLOW_IPS: prefijo IPv6 /$n demasiado ancho (mínimo /64)"
-    else
-      die "ADMIN_ALLOW_IPS: valor no válido: '$ip' (usa IPs como 83.57.105.60 o 83.57.105.0/24; nunca 0.0.0.0/0)"
-    fi
-  done
+  validate_admin_allow_ips
+}
+
+# This list is an optional network-layer restriction for the staging Admin host only.
+# Caddy's `remote_ip` matcher uses the TCP peer and does not trust X-Forwarded-For.
+validate_admin_allow_ips() {
+  python3 - "$ADMIN_ALLOW_IPS" <<'PY'
+import ipaddress
+import sys
+
+raw = sys.argv[1]
+entries = raw.split()
+if len(entries) > 32:
+    raise SystemExit("ADMIN_ALLOW_IPS: máximo 32 IP/CIDR.")
+for value in entries:
+    try:
+        network = ipaddress.ip_network(value, strict=True)
+    except ValueError:
+        raise SystemExit("ADMIN_ALLOW_IPS: formato IP/CIDR no válido o host bits activos.")
+    minimum = 24 if network.version == 4 else 64
+    if network.prefixlen < minimum:
+        raise SystemExit(f"ADMIN_ALLOW_IPS: prefijo demasiado amplio; mínimo /{minimum}.")
+PY
 }
 
 main() {
