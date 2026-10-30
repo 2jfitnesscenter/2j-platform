@@ -84,6 +84,11 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
   assert.ok(ui.getByText(/Tus datos personales son de consulta en Home/));
   assert.equal(ui.queryByRole('button', { name: /Editar perfil|Editar datos personales/ }), null, 'D238 keeps member personal details read-only in Home');
+  assert.ok(ui.getByRole('heading', { name: 'Mis facturas' }));
+  assert.ok(ui.getByRole('status').textContent.includes('No conectado'));
+  assert.ok(ui.getByText(/endpoint autenticado para socios/));
+  assert.equal(ui.queryByRole('button', { name: /descargar factura/i }), null, 'Home does not simulate invoice downloads before a member endpoint exists');
+  assert.equal(requests.some(item => String(item.url).startsWith('/api/economics/')), false, 'Home never calls staff-scoped economic invoice routes');
   assert.ok(ui.getByText('No tienes ninguna cuota activa.'));
   assert.ok(ui.getByText('Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.'));
   assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));

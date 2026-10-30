@@ -1,8 +1,8 @@
 {
   "task": "2J-HOME-A67-MEMBER-CONTINUATION",
   "branch": "agent/codex/2J-HOME-A67-MEMBER-CONTINUATION",
-  "base": "dfcb1256b233c94ec41e0d177ecd699636258fa4",
-  "status": "local-review-candidate",
+  "base": "PR #157 head 2f620ff1ec042d056300c3646452c7d42d0aeb1a",
+  "status": "implementation-complete-independent-review-pending",
   "deployment": "not-performed",
   "sourceChanges": [
     { "work": "#116 waitlist eligibility", "commit": "a0aadc9", "integration": "local cherry-pick" },
@@ -14,17 +14,18 @@
     "El modo demo etiqueta la vista No conectado y no consulta API ni fabrica valores.",
     "Mediciones, gráficos, evaluaciones y salud permanecen No conectado.",
     "Perfil permanece de consulta conforme a D238/D239.",
-    "Compras usa el endpoint de socio existente GET /api/me/store/purchases."
+    "Compras usa el endpoint de socio existente GET /api/me/store/purchases.",
+    "A64/A66 permite facturas en Home; Mis facturas queda No conectado hasta que Platform publique listado y PDF autenticados y auto-acotados al socio."
   ],
   "notImplemented": [
-    "Edición de perfil: contradice D238/D239.",
-    "Descarga de facturas: D106/A63 mantienen cerrado el gate fiscal y no existe endpoint de descarga para el socio.",
+    "Descarga de facturas: Platform main solo expone rutas económicas con billing.read-tax; falta el contrato de listado/PDF para socio. Home no llama esas rutas internas.",
+    "Edición de perfil: D238/D239 mantienen el perfil de solo lectura.",
     "Historial de mediciones/evolución: no forma parte del contrato 2J-089."
   ],
   "independentReview": {
-    "status": "completed-no-findings",
+    "status": "previous-sha-reviewed-not-current-change",
     "reviewedHead": "5f47137989179798cb96ab406d801ee072af23a6",
-    "limitations": ["remote CI", "secret scan", "staging", "real authenticated session"]
+    "limitations": ["no cubre Mis facturas", "remote CI", "secret scan", "staging", "real authenticated session"]
   },
   "remoteCi": "not-queried",
   "tests": {
