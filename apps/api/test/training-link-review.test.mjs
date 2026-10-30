@@ -11,12 +11,17 @@ const sql = postgres(process.env.DATABASE_URL, { max: 6, connect_timeout: 5 });
 await migrateDatabase(sql);
 
 const ORIGIN = 'http://127.0.0.1:5173';
+const issuerPersonId = '22222222-2222-4222-8222-222222222222';
 const people = new Map();                // x-test-person -> { personId, ... }
 const roles = new Map();                 // x-test-role -> { actorId, role }
-const options = { memberAppOrigin: ORIGIN, resolvePersonAuth: async request => people.get(String(request.headers['x-test-person'] ?? '')) ?? null, authorizationResolver: async request => roles.get(String(request.headers['x-test-role'] ?? '')) ?? null };
+const options = { memberAppOrigin: ORIGIN, ownerActorId: 'review-owner', platformLinkIssuers: [issuerPersonId], resolvePersonAuth: async request => people.get(String(request.headers['x-test-person'] ?? '')) ?? null, authorizationResolver: async request => roles.get(String(request.headers['x-test-role'] ?? '')) ?? null };
 const on = buildServer(process.env.DATABASE_URL, { ...options, trainingLinkReviewEnabled: true });
 const off = buildServer(process.env.DATABASE_URL, options);
-roles.set('admin', { actorId: 'review-admin', role: 'admin' }); roles.set('trainer', { actorId: 'review-trainer', role: 'trainer' });
+roles.set('admin', { actorId: 'review-admin', role: 'admin', explicitPermissions: ['platform_link_issue'] });
+roles.set('plain-admin', { actorId: 'plain-admin', role: 'admin' });
+roles.set('owner', { actorId: 'review-owner', role: 'owner' });
+roles.set('issuer', { actorId: 'review-issuer', personId: issuerPersonId, role: 'admin' });
+roles.set('trainer', { actorId: 'review-trainer', role: 'trainer' });
 after(async () => { await on.close(); await off.close(); await sql.end({ timeout: 2 }); });
 
 async function member(name = 'Lia') {
@@ -28,8 +33,8 @@ async function member(name = 'Lia') {
   people.set(key, { personId, provider: 'fixture-central-auth', providerVersion: 1, authSubject: `s-${randomUUID()}` });
   return { personId, header: { 'x-test-person': key, origin: ORIGIN } };
 }
-const open = (who, payload = { reason: 'lost_passkey', note: 'Perdí el móvil' }) => on.inject({ method: 'POST', url: '/api/me/training/link-review', headers: who.header, payload });
-const resolve = (id, payload, role = 'admin') => on.inject({ method: 'POST', url: `/api/platform/v1/training-link-review/${id}/resolve`, headers: { 'x-test-role': role }, payload });
+const open = (who, payload = { reason: 'lost_device', note: 'Perdí el móvil' }) => on.inject({ method: 'POST', url: '/api/me/training/link-review', headers: who.header, payload });
+const resolve = (id, payload, role = 'issuer') => on.inject({ method: 'POST', url: `/api/platform/v1/training-link-review/${id}/resolve`, headers: { 'x-test-role': role }, payload });
 const approval = (extra = {}) => ({ action: 'approve', note: 'Verificado en persona con DNI en recepción', verification: { method: 'in_person' }, trainingUserId: `training-${randomUUID()}`, ...extra });
 
 test('it does nothing unless explicitly enabled: every route answers 423', async () => {
@@ -41,9 +46,9 @@ test('it does nothing unless explicitly enabled: every route answers 423', async
 
 test('member: authenticated, same-origin, strict body; one open case per person; the answer never names a Training account', async () => {
   const who = await member();
-  assert.equal((await on.inject({ method: 'POST', url: '/api/me/training/link-review', headers: { origin: ORIGIN }, payload: { reason: 'lost_passkey' } })).statusCode, 401);
+  assert.equal((await on.inject({ method: 'POST', url: '/api/me/training/link-review', headers: { origin: ORIGIN }, payload: { reason: 'lost_device' } })).statusCode, 401);
   assert.equal((await open({ header: { ...who.header, origin: 'https://evil.example' } })).statusCode, 403);
-  assert.equal((await open(who, { reason: 'lost_passkey', trainingUserId: 'someone-else' })).statusCode, 400, 'a member cannot name a Training account');
+  assert.equal((await open(who, { reason: 'lost_device', trainingUserId: 'someone-else' })).statusCode, 400, 'a member cannot name a Training account');
   assert.equal((await open(who, { reason: 'bogus' })).statusCode, 400);
   assert.equal((await open(who, { reason: 'other', note: 'x'.repeat(501) })).statusCode, 400);
   const first = await open(who); assert.equal(first.statusCode, 201, first.body);
@@ -55,6 +60,30 @@ test('member: authenticated, same-origin, strict body; one open case per person;
   assert.equal((await on.inject({ method: 'GET', url: '/api/me/training/link-review' })).statusCode, 401);
 });
 
+test('A28 contract reasons are accepted and returned canonically while legacy stored reason values remain compatible', async () => {
+  const mapping = { lost_device: 'lost_passkey', no_home_access: 'no_access_to_training_account', support_request: 'proof_failed', other: 'other' };
+  for (const [contractReason, legacyReason] of Object.entries(mapping)) {
+    const who = await member();
+    const response = await open(who, { reason: contractReason, note: 'Necesita ayuda para recuperar el acceso.' });
+    assert.equal(response.statusCode, 201, response.body);
+    const mine = await on.inject({ method: 'GET', url: '/api/me/training/link-review', headers: who.header });
+    assert.equal(mine.json().case.reason, contractReason);
+    const queue = await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review?status=all&limit=200', headers: { 'x-test-role': 'issuer' } });
+    assert.equal(queue.statusCode, 200, queue.body);
+    const queuedCase = queue.json().cases.find(item => item.id === response.json().id);
+    assert.ok(queuedCase, `newly opened case ${response.json().id} should appear in the review queue`);
+    assert.equal(queuedCase.reason, contractReason, 'review queue uses the same public vocabulary');
+    const detail = await on.inject({ method: 'GET', url: `/api/platform/v1/training-link-review/${response.json().id}`, headers: { 'x-test-role': 'issuer' } });
+    assert.equal(detail.json().case.reason, contractReason, 'review detail uses the same public vocabulary');
+    const [stored] = await sql`SELECT reason FROM training_link_review_cases WHERE id=${response.json().id}::uuid`;
+    assert.equal(stored.reason, legacyReason, 'existing DB constraint and historical storage remain unchanged');
+  }
+  const legacyMember = await member();
+  const legacy = await open(legacyMember, { reason: 'proof_failed' });
+  assert.equal(legacy.statusCode, 201);
+  assert.equal((await on.inject({ method: 'GET', url: '/api/me/training/link-review', headers: legacyMember.header })).json().case.reason, 'support_request');
+});
+
 test('member: someone who already has (or is getting) a link has nothing to review', async () => {
   const who = await member();
   await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${who.personId}::uuid,${`t-${randomUUID()}`},'explicit_admin','review-test','review-test')`;
@@ -62,18 +91,26 @@ test('member: someone who already has (or is getting) a link has nothing to revi
   assert.equal(response.statusCode, 409); assert.equal(response.json().error, 'link_already_in_progress_or_active');
 });
 
-test('admin queue: only administrators (not trainers, not anonymous); the case shows who the person is; resolution notes stay internal', async () => {
+test('A29: queue and resolution require explicit platform_link_issue, not Admin wildcard; authorized issuer sees the case and internal notes stay protected', async () => {
   const who = await member('Nerea'); const { id } = (await open(who)).json();
   assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review' })).statusCode, 401);
   assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'trainer' } })).statusCode, 403, 'D143: trainers do not resolve');
+  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'plain-admin' } })).statusCode, 403, 'Admin wildcard does not imply A29');
+  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'admin' } })).statusCode, 403, 'an explicit permission on a non-allowlisted person cannot grant A29');
+  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'plain-admin', 'x-test-person-id': issuerPersonId } })).statusCode, 403, 'a browser-supplied personId cannot grant A29');
+  assert.equal((await resolve(id, approval(), 'admin')).statusCode, 403, 'a non-allowlisted actor with an explicit permission cannot resolve cases');
+  assert.equal((await resolve(id, approval(), 'plain-admin')).statusCode, 403, 'Admin wildcard does not imply A29');
+  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'owner' } })).statusCode, 200, 'owner can hold the explicit A29 grant');
+  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'issuer' } })).statusCode, 200, 'configured personId allowlist grants A29');
   assert.equal((await resolve(id, approval(), 'trainer')).statusCode, 403);
-  const list = (await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review?status=open&limit=200', headers: { 'x-test-role': 'admin' } })).json();
+  const list = (await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review?status=open&limit=200', headers: { 'x-test-role': 'issuer' } })).json();
   const row = list.cases.find(item => item.id === id);
   assert.equal(row.personId, who.personId); assert.match(row.person.displayName, /^Nerea /); assert.equal(row.status, 'open');
-  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review?status=bogus', headers: { 'x-test-role': 'admin' } })).statusCode, 400);
-  const detail = (await on.inject({ method: 'GET', url: `/api/platform/v1/training-link-review/${id}`, headers: { 'x-test-role': 'admin' } })).json();
+  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review?status=bogus', headers: { 'x-test-role': 'issuer' } })).statusCode, 400);
+  const detail = (await on.inject({ method: 'GET', url: `/api/platform/v1/training-link-review/${id}`, headers: { 'x-test-role': 'issuer' } })).json();
   assert.deepEqual(detail.events.map(event => event.action), ['opened']);
-  assert.equal((await on.inject({ method: 'GET', url: `/api/platform/v1/training-link-review/${randomUUID()}`, headers: { 'x-test-role': 'admin' } })).statusCode, 404);
+  assert.equal((await resolve(id, approval(), 'issuer')).statusCode, 200, 'configured issuer can resolve without receiving the Admin role or wildcard');
+  assert.equal((await on.inject({ method: 'GET', url: `/api/platform/v1/training-link-review/${randomUUID()}`, headers: { 'x-test-role': 'issuer' } })).statusCode, 404);
 });
 
 test('resolve: approval needs an identity check, a note and the Training user; reject/dismiss need a note and carry nothing else; strict bodies', async () => {
@@ -95,11 +132,11 @@ test('resolve: approval records the decision but creates NO link; it is idempote
   const [{ links }] = await sql`SELECT count(*)::int AS links FROM training_account_links WHERE person_id=${who.personId}::uuid`;
   assert.equal(links, 0, 'the review never links by itself');
   const [stored] = await sql`SELECT status,training_user_id,verification_method,resolved_by,resolution_note FROM training_link_review_cases WHERE id=${id}::uuid`;
-  assert.deepEqual({ status: stored.status, uid: stored.training_user_id, method: stored.verification_method, by: stored.resolved_by }, { status: 'approved', uid: body.trainingUserId, method: 'in_person', by: 'review-admin' });
+  assert.deepEqual({ status: stored.status, uid: stored.training_user_id, method: stored.verification_method, by: stored.resolved_by }, { status: 'approved', uid: body.trainingUserId, method: 'in_person', by: 'review-issuer' });
   const replay = await resolve(id, body); assert.equal(replay.statusCode, 200); assert.equal(replay.json().replay, true);
   assert.equal((await resolve(id, approval())).statusCode, 409, 'a different Training user for a resolved case');
   assert.equal((await resolve(id, { action: 'reject', note: 'Cambio de opinión del administrador' })).statusCode, 409, 'a resolved case is final');
-  assert.deepEqual((await sql`SELECT action,actor FROM training_link_review_events WHERE case_id=${id}::uuid ORDER BY occurred_at,id`).map(row => `${row.action}:${row.actor.startsWith('person:') ? 'person' : row.actor}`), ['opened:person', 'approved:review-admin']);
+  assert.deepEqual((await sql`SELECT action,actor FROM training_link_review_events WHERE case_id=${id}::uuid ORDER BY occurred_at,id`).map(row => `${row.action}:${row.actor.startsWith('person:') ? 'person' : row.actor}`), ['opened:person', 'approved:review-issuer']);
   // The member can ask again after a resolution (a new case), and the original stays as it was.
   const second = await open(who); assert.equal(second.statusCode, 201); assert.notEqual(second.json().id, id);
   // A Training user that already belongs to another person, and a person that already has a link, cannot be approved.

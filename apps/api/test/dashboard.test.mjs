@@ -16,8 +16,9 @@ const admin = make('admin');
 const trainer = make('trainer');
 const reception = make('reception-management');
 const accountant = make('accountant');
+const owner = buildServer(process.env.DATABASE_URL, { ownerActorId: 'dashboard-configured-owner', authorizationResolver: async () => ({ actorId: 'dashboard-configured-owner', role: 'owner' }) });
 const anonymous = buildServer(process.env.DATABASE_URL);
-after(async () => { await Promise.all([admin.close(), trainer.close(), reception.close(), accountant.close(), anonymous.close(), sql.end()]); });
+after(async () => { await Promise.all([admin.close(), trainer.close(), reception.close(), accountant.close(), owner.close(), anonymous.close(), sql.end()]); });
 
 test('Command Center denies anonymous access and filters each domain on the server by role capabilities', async () => {
   const denied = await anonymous.inject({ method: 'GET', url: '/api/dashboard/command-center' });
@@ -127,11 +128,14 @@ test('navigation capabilities remain authorized and independent of Command Cente
     reception.inject({method:'GET',url:'/api/session/capabilities'}),
     accountant.inject({method:'GET',url:'/api/session/capabilities'}),
   ]);
-  assert.deepEqual(adminCaps.json(),{calendar:true,clients:true,communications:true,billing:true,invoices:true,staff:true,ownerPanel:false,news:true,notificationSettings:true,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:true,paymentsManage:true,communicationSend:true,documentsRead:true,formsRead:true,formsManage:true,consentsRead:true,consentsManage:true,timeclockSelf:true,capacityOverride:true,catalogPricingManage:true,store:true,cash:true});
-  assert.deepEqual(trainerCaps.json(),{calendar:true,clients:true,communications:true,billing:false,invoices:false,staff:true,ownerPanel:false,news:false,notificationSettings:false,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:false,paymentsManage:false,communicationSend:true,documentsRead:true,formsRead:true,formsManage:false,consentsRead:true,consentsManage:false,timeclockSelf:true,capacityOverride:true,catalogPricingManage:false,store:false,cash:true});
-  assert.deepEqual(receptionCaps.json(),{calendar:true,clients:true,communications:true,billing:true,invoices:false,staff:true,ownerPanel:false,news:false,notificationSettings:false,reservationManage:true,attendanceManage:false,entitlementsRead:true,entitlementsManage:true,paymentsManage:false,communicationSend:true,documentsRead:true,formsRead:true,formsManage:false,consentsRead:true,consentsManage:false,timeclockSelf:true,capacityOverride:false,catalogPricingManage:false,store:false,cash:false});
-  assert.deepEqual(accountantCaps.json(),{calendar:false,clients:false,communications:false,billing:true,invoices:true,staff:false,ownerPanel:false,news:false,notificationSettings:false,reservationManage:false,attendanceManage:false,entitlementsRead:false,entitlementsManage:false,paymentsManage:false,communicationSend:false,documentsRead:false,formsRead:false,formsManage:false,consentsRead:false,consentsManage:false,timeclockSelf:false,capacityOverride:false,catalogPricingManage:false,store:false,cash:false});
+  assert.deepEqual(adminCaps.json(),{calendar:true,clients:true,communications:true,billing:true,invoices:true,staff:true,ownerPanel:false,linkReviewManage:false,news:true,notificationSettings:true,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:true,paymentsManage:true,communicationSend:true,documentsRead:true,formsRead:true,formsManage:true,consentsRead:true,consentsManage:true,timeclockSelf:true,capacityOverride:true,catalogPricingManage:true,store:true,cash:true});
+  assert.deepEqual(trainerCaps.json(),{calendar:true,clients:true,communications:true,billing:false,invoices:false,staff:true,ownerPanel:false,linkReviewManage:false,news:false,notificationSettings:false,reservationManage:true,attendanceManage:true,entitlementsRead:true,entitlementsManage:false,paymentsManage:false,communicationSend:true,documentsRead:true,formsRead:true,formsManage:false,consentsRead:true,consentsManage:false,timeclockSelf:true,capacityOverride:true,catalogPricingManage:false,store:false,cash:true});
+  assert.deepEqual(receptionCaps.json(),{calendar:true,clients:true,communications:true,billing:true,invoices:false,staff:true,ownerPanel:false,linkReviewManage:false,news:false,notificationSettings:false,reservationManage:true,attendanceManage:false,entitlementsRead:true,entitlementsManage:true,paymentsManage:false,communicationSend:true,documentsRead:true,formsRead:true,formsManage:false,consentsRead:true,consentsManage:false,timeclockSelf:true,capacityOverride:false,catalogPricingManage:false,store:false,cash:false});
+  assert.deepEqual(accountantCaps.json(),{calendar:false,clients:false,communications:false,billing:true,invoices:true,staff:false,ownerPanel:false,linkReviewManage:false,news:false,notificationSettings:false,reservationManage:false,attendanceManage:false,entitlementsRead:false,entitlementsManage:false,paymentsManage:false,communicationSend:false,documentsRead:false,formsRead:false,formsManage:false,consentsRead:false,consentsManage:false,timeclockSelf:false,capacityOverride:false,catalogPricingManage:false,store:false,cash:false});
   assert.equal(adminCaps.headers['cache-control'],'no-store');
+  const ownerCaps = await owner.inject({method:'GET',url:'/api/session/capabilities'});
+  assert.equal(ownerCaps.statusCode,200);
+  assert.equal(ownerCaps.json().linkReviewManage,true,'configured owner receives the dedicated A29 grant');
 });
 
 test('direct business API routes stay fail-closed when a Trainer lacks business capabilities',async()=>{

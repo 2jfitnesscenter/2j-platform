@@ -1,0 +1,215 @@
+.invitations-page{
+  display:grid;
+  gap:16px
+}
+.invitations-boundary{
+  display:grid;
+  gap:5px;
+  padding:14px 17px;
+  color:var(--2j-color-text-secondary);
+  font-size:13px;
+  line-height:1.5
+}
+.invitations-boundary strong{
+  color:var(--2j-color-text-primary)
+}
+.invitations-boundary b{
+  color:var(--2j-color-warning,var(--2j-color-text-primary))
+}
+.invitations-layout{
+  display:grid;
+  grid-template-columns:minmax(300px,.8fr) minmax(0,1.2fr);
+  align-items:start;
+  gap:16px
+}
+.invitations-list,.invitations-detail{
+  min-width:0
+}
+.invitations-filter{
+  padding:0 16px 12px
+}
+.invitations-filter label,.invitations-resolve-form label{
+  display:grid;
+  gap:6px;
+  color:var(--2j-color-text-secondary);
+  font-size:12px;
+  font-weight:var(--2j-type-weight-semibold)
+}
+.invitations-filter select,.invitations-resolve-form :is(input,select,textarea){
+  width:100%;
+  min-height:44px;
+  padding:10px 12px;
+  border:1px solid var(--2j-color-border-input);
+  border-radius:var(--2j-radius-md);
+  background:var(--2j-color-surface);
+  color:var(--2j-color-text-primary)
+}
+.invitations-items{
+  max-height:70vh;
+  overflow:auto
+}
+.invitations-item{
+  width:100%;
+  min-height:76px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:13px 16px;
+  border:0;
+  border-top:1px solid var(--2j-color-border);
+  background:transparent;
+  text-align:left;
+  cursor:pointer
+}
+.invitations-item:hover,.invitations-item.is-selected{
+  background:var(--2j-color-surface-subtle)
+}
+.invitations-item-copy{
+  min-width:0;
+  display:grid;
+  gap:4px
+}
+.invitations-item-copy strong{
+  color:var(--2j-color-text-primary);
+  font-size:14px
+}
+.invitations-item-copy small,.invitations-item-copy time{
+  color:var(--2j-color-text-secondary);
+  font-size:12px
+}
+.invitations-item-copy small{
+  overflow-wrap:anywhere
+}
+.invitations-detail-body{
+  display:grid;
+  gap:18px;
+  padding:0 18px 18px
+}
+.invitations-facts{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;
+  margin:0
+}
+.invitations-facts>div{
+  display:grid;
+  gap:4px;
+  padding:12px;
+  border-radius:var(--2j-radius-md);
+  background:var(--2j-color-surface-subtle)
+}
+.invitations-facts dt{
+  color:var(--2j-color-text-secondary);
+  font-size:11px
+}
+.invitations-facts dd{
+  margin:0;
+  color:var(--2j-color-text-primary);
+  font-size:13px;
+  overflow-wrap:anywhere
+}
+.invitations-member-note,.invitations-history{
+  padding-top:14px;
+  border-top:1px solid var(--2j-color-border)
+}
+.invitations-member-note h3,.invitations-history h3{
+  margin:0 0 8px;
+  font-size:13px
+}
+.invitations-member-note p{
+  margin:0;
+  color:var(--2j-color-text-secondary);
+  line-height:1.55;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere
+}
+.invitations-history ol{
+  display:grid;
+  gap:8px;
+  margin:0;
+  padding:0;
+  list-style:none
+}
+.invitations-history li{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  color:var(--2j-color-text-primary);
+  font-size:12px
+}
+.invitations-history time{
+  color:var(--2j-color-text-secondary);
+  white-space:nowrap
+}
+.invitations-actions,.invitations-dialog-actions{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:8px
+}
+.invitations-feedback{
+  margin:0;
+  color:var(--2j-color-text-secondary);
+  font-size:13px
+}
+.invitations-resolve-form{
+  display:grid;
+  gap:14px
+}
+.invitations-resolve-form textarea{
+  min-height:100px;
+  resize:vertical
+}
+.invitations-form-note{
+  margin:0;
+  padding:10px 12px;
+  border-radius:var(--2j-radius-md);
+  background:var(--2j-color-surface-subtle);
+  color:var(--2j-color-text-secondary);
+  font-size:12px;
+  line-height:1.5
+}
+.invitations-error{
+  margin:0;
+  color:var(--2j-color-danger);
+  font-size:13px
+}
+.invitations-dialog-actions{
+  justify-content:flex-end;
+  padding-top:4px
+}
+.invitations-page :is(button,select,input,textarea):focus-visible{
+  outline:3px solid var(--2j-color-focus);
+  outline-offset:2px
+}
+@media(max-width:880px){
+  .invitations-layout{
+  grid-template-columns:minmax(0,1fr)
+}
+.invitations-items{
+  max-height:360px
+}
+
+}
+@media(max-width:600px){
+  .invitations-page{
+  gap:12px
+}
+.invitations-item{
+  align-items:flex-start;
+  padding:12px
+}
+.invitations-facts{
+  grid-template-columns:minmax(0,1fr)
+}
+.invitations-history li{
+  align-items:flex-start;
+  flex-direction:column;
+  gap:3px
+}
+.invitations-actions .button{
+  flex:1 1 120px
+}
+
+}
