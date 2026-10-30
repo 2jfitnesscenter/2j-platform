@@ -7,7 +7,7 @@ import { StaffLogin } from './staff-login.js';
 const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 export type CommandCenterModel = {
   timezone: string;
-  permissions: { calendar:boolean; clients:boolean; communications:boolean; documents:boolean; sensitiveReview:boolean; followup:boolean; billing:boolean; cash:boolean; transfers:boolean; staff:boolean; absences:boolean; timeclock:boolean };
+  permissions: { calendar:boolean; clients:boolean; communications:boolean; documents:boolean; sensitiveReview:boolean; followup:boolean; billing:boolean; invoices?:boolean; cash:boolean; transfers:boolean; staff:boolean; absences:boolean; timeclock:boolean };
   today: { sessionCount:number; upcomingCount:number; capacity:number; occupied:number; waitlistCount:number; unassignedCount:number; sessions:Array<{id:string;serviceName:string;professionalName:string|null;startsAt:string;occupied:number;capacity:number;free:number;waitlistCount:number;isNow:boolean;state:'upcoming'|'in_progress'|'finished'}>; nextSession:{id:string;serviceName:string;startsAt:string;professionalName:string|null}|null };
   clients: { active:number; recentSignups:number }|null;
   attention: Array<{id:string;kind:string;title:string;summary:string;href:string;ageAt:string|null}>;
@@ -15,7 +15,7 @@ export type CommandCenterModel = {
   team: {active:number;workingNow:number;activeAbsences:number;substitutions:number}|null;
   unread: number;
   quickActions: Array<{id:string;label:string;href:string}>;
-  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null; expiringPlans?:Array<{assignmentId:string;clientId:string;clientName:string;planName:string;endsOn:string}>|null; recentMovements?:Array<{id:string;kind:'payment'|'refund';amountCents:number;concept:string;clientName:string;occurredAt:string}>|null };
+  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null; expiringPlans?:Array<{assignmentId:string;clientId:string;clientName:string;planName:string;endsOn:string}>|null; recentMovements?:Array<{id:string;chargeId?:string;kind:'payment'|'refund';amountCents:number;concept:string;clientName:string;occurredAt:string}>|null };
 };
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
