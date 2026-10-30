@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://2jfitnesscenter.com/contracts/2J-home-evolution-member-v1.schema.json",
+  "title": "2J Home Member Evolution V1",
+  "description": "Canonical read-only Home member contract. Training-only; no body measurements, health data, PII, or Platform identifiers.",
+  "oneOf": [
+    { "$ref": "#/$defs/memberResponse" },
+    { "$ref": "#/$defs/trainingRequest" },
+    { "$ref": "#/$defs/trainingResponse" }
+  ],
+  "$defs": {
+    "utcInstant": { "type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$" },
+    "opaqueId": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+    "cursor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["snapshotId", "offset"],
+      "properties": {
+        "snapshotId": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "offset": { "type": "integer", "minimum": 0, "maximum": 10000000 }
+      }
+    },
+    "setResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "reps": { "type": "number", "minimum": 0 },
+        "rpe": { "type": "number", "minimum": 0 },
+        "minutes": { "type": "number", "minimum": 0 },
+        "speed": { "type": "number", "minimum": 0 },
+        "resistance": { "type": "number", "minimum": 0 },
+        "distance": { "type": "number", "minimum": 0 },
+        "incline": { "type": "number", "minimum": 0 },
+        "seconds": { "type": "number", "minimum": 0 },
+        "weight": {
+          "type": "object", "additionalProperties": false,
+          "required": ["value", "unit"],
+          "properties": { "value": { "type": "number", "minimum": 0 }, "unit": { "enum": ["kg", "lb"] } }
+        },
+        "completed": { "type": "boolean" }
+      }
+    },
+    "workout": {
+      "type": "object", "additionalProperties": false,
+      "required": ["date", "exercises"],
+      "properties": {
+        "date": { "type": "string", "format": "date", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "durationSeconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+        "exercises": {
+          "type": "array", "maxItems": 300,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["exerciseId", "sets"],
+            "properties": {
+              "exerciseId": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[A-Za-z0-9._:-]+$" },
+              "sets": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/setResult" } }
+            }
+          }
+        }
+      }
+    },
+    "memberResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["v", "state"],
+      "properties": {
+        "v": { "const": 1 },
+        "state": { "enum": ["available", "consent_required", "not_available", "not_linked", "unavailable"] },
+        "consentVersion": { "type": "integer", "minimum": 1 },
+        "asOf": { "$ref": "#/$defs/utcInstant" },
+        "workouts": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/workout" } },
+        "nextCursor": { "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "available" } }, "required": ["state"] },
+          "then": { "required": ["consentVersion", "asOf", "workouts", "nextCursor"] },
+          "else": { "not": { "anyOf": [{ "required": ["workouts"] }, { "required": ["nextCursor"] }, { "required": ["asOf"] }] } }
+        }
+      ]
+    },
+    "consent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["purpose", "status", "version", "checkedAt"],
+      "properties": {
+        "purpose": { "const": "home_evolution" },
+        "status": { "const": "granted" },
+        "version": { "type": "integer", "minimum": 1 },
+        "checkedAt": { "$ref": "#/$defs/utcInstant" }
+      }
+    },
+    "authorization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["permission", "permissionGranted", "capability", "capabilityGranted", "accessState", "checkedAt", "consent"],
+      "properties": {
+        "permission": { "const": "training.read" },
+        "permissionGranted": { "const": true },
+        "capability": { "const": "workoutHistory" },
+        "capabilityGranted": { "const": true },
+        "accessState": { "const": "entitled" },
+        "checkedAt": { "$ref": "#/$defs/utcInstant" },
+        "consent": { "$ref": "#/$defs/consent" }
+      }
+    },
+    "trainingRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["v", "personId", "trainingUserId", "authorization", "cursor", "limit"],
+      "properties": {
+        "v": { "const": 1 },
+        "personId": { "type": "string", "format": "uuid" },
+        "trainingUserId": { "$ref": "#/$defs/opaqueId" },
+        "authorization": { "$ref": "#/$defs/authorization" },
+        "cursor": { "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }] },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "trainingResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "source", "personId", "trainingUserId", "exportedAt", "snapshotId", "nextCursor", "workouts"],
+      "properties": {
+        "schema": { "const": "2j-home-evolution-export/v1" },
+        "source": { "const": "bunker" },
+        "personId": { "type": "string", "format": "uuid" },
+        "trainingUserId": { "$ref": "#/$defs/opaqueId" },
+        "exportedAt": { "$ref": "#/$defs/utcInstant" },
+        "snapshotId": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "nextCursor": { "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }] },
+        "workouts": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/workout" } }
+      }
+    }
+  }
+}

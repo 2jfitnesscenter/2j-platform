@@ -1,6 +1,6 @@
 # Contrato de Evolución Home ↔ Platform v1
 
-**Estado:** propuesta de contrato para consumo de Home; no hay API ni modelo de mediciones implementados en `origin/main` `e33113c311171fb7d63da9964774db39eaca4630`. No añade migraciones ni habilita datos reales.
+**Estado:** contrato canónico de «Mi evolución» para consumo de Home. La API de mediciones/evaluaciones de Platform sigue siendo propuesta y no está implementada. El flujo de entrenamiento Búnker descrito abajo es de solo lectura; tampoco se habilita hasta integrar su implementación y superar revisión independiente. No añade migraciones ni habilita datos reales.
 
 Este contrato separa dos fuentes: las mediciones/evaluaciones administradas por Platform y el resumen de entrenamiento propiedad de Búnker. La ficha Búnker relacionada documenta el contrato ya integrado `POST /api/platform/v1/training-summary`; no se crea una segunda ruta person-scoped.
 
@@ -62,7 +62,30 @@ El esquema JSON machine-readable asociado define el catálogo, lectura paginada,
 
 ## Búnker y pantalla “Mi evolución”
 
-Home presenta por separado “Mediciones y evaluaciones de Platform” y “Entrenamiento de Búnker”. Para el segundo bloque solo usa el resumen existente de Platform (`GET /api/me/training-summary`), con `linked/not_linked` y `available/unavailable`; ese resumen no es un contrato de gráficas. No consulta `/api/data`, no pide `trainingUserId` al navegador, no copia registros de Búnker y no borra datos originales.
+El flujo canónico de miembro será:
+
+```text
+Home (sesión de miembro) → Platform GET /api/me/evolution → comprobaciones Platform
+  → Platform POST /api/platform/v1/training-evolution → Búnker → Platform → Home
+```
+
+Home nunca llama a Búnker directamente ni elige `personId`, `clientId` o `trainingUserId`. Platform deriva la identidad exclusivamente de la sesión, resuelve el vínculo canónico activo de Training y comprueba, antes de cada llamada remota:
+
+1. persona y faceta de cliente activas;
+2. al menos un derecho `training_access` vigente y operativo `active` en una asignación efectiva; un baseline gratuito, un derecho provisional, bloqueado, vencido o una reserva no sustituyen este requisito;
+3. consentimiento específico `consent_type='home_evolution'`, publicado, vigente y aceptado por el cliente para su versión activa exacta. Un consentimiento no publicado, archivado, revocado o con nueva versión no aceptada falla cerrado.
+
+Sin consentimiento, Platform no llama a Búnker y responde `state: "consent_required"`; sin derecho vigente responde `state: "not_available"` y no incluye datos; un vínculo ausente o remoto no disponible tampoco incluye datos. Home presenta esos casos como estado vacío/indisponible. Los errores y estados no revelan datos de otra persona.
+
+La ruta firmada reutiliza exactamente el envelope `2J-SERVICE-AUTH-V1` de 2J-089: firma canónica de método, ruta fija, timestamp, request UUID y digest del cuerpo, anti-replay, límites de respuesta, timeout y `redirect: error`. El cuerpo firmado incluye `authorization.consent.purpose: "home_evolution"`; Búnker registra y valida ese mismo propósito. No se inventa otro protocolo de autenticación. Cada petición y resultado de autorización genera auditoría en Platform con identidad opaca, propósito, versión de consentimiento, evaluación de derecho, resultado e instante; nunca guarda cuerpo, respuesta ni valores de entrenamiento. La llamada y la respuesta llevan `Cache-Control: no-store` en el lado HTTP correspondiente.
+
+La respuesta aceptada por Platform es una allowlist estricta de historial de entrenamientos finalizados: fecha, ejercicio, series y resultados deportivos necesarios para visualizar rendimiento. No incluye peso corporal, medidas antropométricas/biométricas, salud, programa actual, nombres, notas, fotos, PII ni IDs seleccionables por el navegador. Campos extra —incluidas `bodyweight` o `measurements` del exportador propuesto en Búnker #77— se rechazan; Platform no los persiste, filtra para mostrarlos ni los reenvía. La revisión actual de #77 confirma que ese PR aún proyecta peso y medidas, por lo que **no es compatible con A68 tal como está** y debe restringirse antes de integrarse. D43 mantiene Búnker como fuente de rendimiento; D33 excluye salud de este contrato.
+
+El endpoint de miembro queda definido como `GET /api/me/evolution` (consulta paginada con cursor opaco, límite máximo 100). Su respuesta versionada es `contracts/2J-home-evolution-member-v1.schema.json`; los identificadores de persona/Training, consentimiento, derecho y auditoría nunca se exponen a Home. Se mantiene `GET /api/me/training-summary` como contrato 2J-089 separado y compatible; no sustituye ni evita las comprobaciones de «Mi evolución».
+
+El PR #163 («Evolución») ya integrado añade una sección de solo lectura a la ficha profesional/Admin y su endpoint `/api/clients/:id/training-summary`, con permiso `training.read`. Es una vista de personal distinta del endpoint del socio; #135 no duplica ni modifica ese módulo. Home consume el endpoint autenticado del socio definido aquí.
+
+Home presenta por separado “Mediciones y evaluaciones de Platform” y “Entrenamiento de Búnker”. La API de mediciones de Platform sigue siendo un contrato independiente; sus datos de salud no se mezclan con esta llamada Búnker. No se consulta `/api/data`, no se copia el historial a Platform y no se borran originales de Búnker.
 
 Una futura ampliación de gráficas de rendimiento de Búnker necesita una allowlist aprobada de claves/unidades por Work Búnker y límites explícitos. Se rechaza `metrics[]` genérico, no tipado por el proveedor. El DTO actual no contiene medidas corporales ni salud.
 
@@ -71,8 +94,8 @@ Una futura ampliación de gráficas de rendimiento de Búnker necesita una allow
 1. La API de mediciones no existe en la base revisada; cada endpoint, permiso, validación y modelo requiere implementación y tests en PRs separados.
 2. La API de formularios no sustituye evaluaciones ni historial de medidas.
 3. Los textos legales los aporta el propietario. Sin versión publicada, el flujo de salud permanece cerrado.
-4. La selección de métricas de rendimiento Búnker exige respuesta de Búnker; no es bloqueo para implementar medidas Platform ni para que Home consuma el resumen actual.
-5. Antes de elegir migración, comparar todas las ramas y PR abiertos. Este PR no asigna número ni ejecuta migraciones.
+4. Búnker #77 debe adaptar su exportador para responder solo con la allowlist deportiva de A68, omitir peso/medidas y usar el mismo propósito firmado `home_evolution`; permanece Draft hasta que #135 esté integrado y se alinee al contrato final.
+5. La implementación Platform requiere una migración aditiva para admitir `home_evolution` como tipo de consentimiento y registrar auditoría de acceso sin contenido. `0063` es el siguiente número libre después de comparar migraciones de `origin/main` y los archivos de todas las PR abiertas consultadas el 30-10-2026. No se ejecuta migración real.
 6. Antes de habilitar lecturas o escritura de datos personales/sanitarios, revisión independiente y pruebas con datos sintéticos; no usar capturas con datos reales.
 
 ## Evidencia consultada
