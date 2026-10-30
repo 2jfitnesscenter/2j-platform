@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { createDatabase } from './db.js';
 import type { ClientAuthorizationContext } from './communications.js';
@@ -8,10 +9,13 @@ import type { TrainingAdapter } from './training-integration.js';
 import { memberTrainingCapabilities } from './training-capabilities-api.js';
 import { canaryBusinessDate, canaryLocalMidnightUtc } from '@2j/domain';
 import { evaluateTermPaymentAccess } from './term-payment-access.js';
+import { resolveEffectiveClientAssignments } from './entitlements.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const safeName = z.string().max(320).transform(value => value.normalize('NFKC').trim()).pipe(z.string().min(1).max(160));
+const requestHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 /** Self-service reads always derive the client id from the authenticated session resolver. */
 export function registerClientAppRoutes(
@@ -44,6 +48,104 @@ export function registerClientAppRoutes(
     if (!person) { reply.code(409).send({ error: 'member_identity_unavailable' }); return null; }
     return String(person.id);
   }
+
+  async function canonicalPersonId(actor: { clientId: string; personId?: string }) {
+    const [person] = await db`
+      SELECT p.id FROM platform_person_clients pc
+      JOIN platform_persons p ON p.id=pc.person_id AND p.status='active'
+      WHERE pc.client_id=${actor.clientId}::uuid
+        AND (${actor.personId ?? null}::uuid IS NULL OR pc.person_id=${actor.personId ?? null}::uuid)
+      LIMIT 1`;
+    return person ? String(person.id) : null;
+  }
+
+  async function activeEvolutionConsent() {
+    const [row] = await db`
+      SELECT c.id AS "consentId",v.id AS "versionId",v.version,v.title,v.body,v.content_sha256 AS "contentHash",v.effective_at AS "effectiveAt"
+      FROM client_consents c JOIN client_consent_versions v ON v.id=c.active_version_id
+      WHERE c.consent_type='home_evolution' AND c.status='active' AND v.status='active'
+      ORDER BY c.updated_at DESC,c.id LIMIT 1`;
+    return row ?? null;
+  }
+
+  async function appendEvolutionEvent(input: { clientId: string; personId: string | null; eventType: string; decision?: string | null; consentVersionId?: string | null; consentHash?: string | null; typedName?: string | null; idempotencyKey?: string | null; requestHash?: string | null }) {
+    await db`INSERT INTO platform_member_evolution_events(client_id,person_id,event_type,decision,consent_version_id,consent_content_sha256,typed_name,idempotency_key,request_hash)
+      VALUES (${input.clientId}::uuid,${input.personId}::uuid,${input.eventType},${input.decision ?? null},${input.consentVersionId ?? null}::uuid,${input.consentHash ?? null},${input.typedName ?? null},${input.idempotencyKey ?? null}::uuid,${input.requestHash ?? null})`;
+  }
+
+  app.get('/api/me/evolution/consent', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    const personId = await canonicalPersonId(actor);
+    if (!personId) return reply.code(409).send({ error: 'member_identity_unavailable' });
+    const consent = await activeEvolutionConsent();
+    if (!consent) return { v: 1, status: 'unpublished' as const };
+    const [event] = await db`SELECT event_type AS type,occurred_at AS "occurredAt" FROM platform_member_evolution_events
+      WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
+      ORDER BY occurred_at DESC,id DESC LIMIT 1`;
+    const status = event?.type === 'consent_granted' ? 'accepted' : event?.type === 'consent_revoked' ? 'revoked' : 'required';
+    return { v: 1, status, currentVersion: Number(consent.version), title: String(consent.title), body: String(consent.body), effectiveAt: consent.effectiveAt ? new Date(consent.effectiveAt).toISOString() : null, ...(status === 'accepted' && event?.occurredAt ? { acceptedAt: new Date(event.occurredAt).toISOString() } : {}), ...(status === 'revoked' && event?.occurredAt ? { revokedAt: new Date(event.occurredAt).toISOString() } : {}) };
+  });
+
+  app.post('/api/me/evolution/consent', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    const personId = await canonicalPersonId(actor);
+    if (!personId) return reply.code(409).send({ error: 'member_identity_unavailable' });
+    const parsed = z.object({ v: z.literal(1), version: z.number().int().positive(), typedName: safeName, idempotencyKey: uuid }).strict().safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const body = parsed.data;
+    const hash = requestHash({ v: body.v, version: body.version, typedName: body.typedName });
+    try {
+      const result = await db.begin(async tx => {
+        await tx`SELECT id FROM clients WHERE id=${actor.clientId}::uuid FOR UPDATE`;
+        const [prior] = await tx`SELECT request_hash AS hash,consent_version_id AS "versionId" FROM platform_member_evolution_events
+          WHERE client_id=${actor.clientId}::uuid AND idempotency_key=${body.idempotencyKey}::uuid`;
+        if (prior) return prior.hash.trim() === hash ? { versionId: String(prior.versionId), replay: true as const } : { error: 'idempotency_conflict' as const };
+        const [consent] = await tx`SELECT v.id AS "versionId",v.version,v.content_sha256 AS "contentHash" FROM client_consents c
+          JOIN client_consent_versions v ON v.id=c.active_version_id AND v.status='active'
+          WHERE c.consent_type='home_evolution' AND c.status='active' ORDER BY c.updated_at DESC,c.id LIMIT 1 FOR SHARE OF c,v`;
+        if (!consent) return { error: 'consent_unpublished' as const };
+        if (Number(consent.version) !== body.version) return { error: 'consent_version_changed' as const };
+        const [latest] = await tx`SELECT event_type AS type FROM platform_member_evolution_events
+          WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
+          ORDER BY occurred_at DESC,id DESC LIMIT 1`;
+        if (latest?.type === 'consent_granted') return { versionId: String(consent.versionId), replay: true as const };
+        await tx`INSERT INTO platform_member_evolution_events(client_id,person_id,event_type,consent_version_id,consent_content_sha256,typed_name,idempotency_key,request_hash)
+          VALUES (${actor.clientId}::uuid,${personId}::uuid,'consent_granted',${consent.versionId},${consent.contentHash},${body.typedName},${body.idempotencyKey}::uuid,${hash})`;
+        return { versionId: String(consent.versionId), replay: false as const };
+      });
+      if ('error' in result) return reply.code(result.error === 'consent_unpublished' ? 409 : result.error === 'idempotency_conflict' ? 409 : 409).send({ error: result.error });
+      return reply.code(result.replay ? 200 : 201).send({ v: 1, status: 'accepted', version: body.version });
+    } catch { request.log.error({ route: 'POST /api/me/evolution/consent' }, 'evolution consent acceptance failed'); return reply.code(500).send({ error: 'internal_error' }); }
+  });
+
+  app.delete('/api/me/evolution/consent', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    const personId = await canonicalPersonId(actor);
+    if (!personId) return reply.code(409).send({ error: 'member_identity_unavailable' });
+    const key = uuid.safeParse(request.headers['idempotency-key']);
+    if (!key.success) return reply.code(400).send({ error: 'idempotency_key_required' });
+    const hash = requestHash({ action: 'revoke_home_evolution_consent' });
+    try {
+      const result = await db.begin(async tx => {
+        await tx`SELECT id FROM clients WHERE id=${actor.clientId}::uuid FOR UPDATE`;
+        const [prior] = await tx`SELECT request_hash AS hash FROM platform_member_evolution_events WHERE client_id=${actor.clientId}::uuid AND idempotency_key=${key.data}::uuid`;
+        if (prior) return prior.hash.trim() === hash ? { replay: true as const } : { error: 'idempotency_conflict' as const };
+        const [consent] = await tx`SELECT v.id AS "versionId",v.content_sha256 AS "contentHash" FROM client_consents c
+          JOIN client_consent_versions v ON v.id=c.active_version_id AND v.status='active'
+          WHERE c.consent_type='home_evolution' AND c.status='active' ORDER BY c.updated_at DESC,c.id LIMIT 1 FOR SHARE OF c,v`;
+        if (!consent) return { error: 'consent_unpublished' as const };
+        const [latest] = await tx`SELECT event_type AS type FROM platform_member_evolution_events
+          WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
+          ORDER BY occurred_at DESC,id DESC LIMIT 1`;
+        if (latest?.type !== 'consent_granted') return { error: 'consent_not_accepted' as const };
+        await tx`INSERT INTO platform_member_evolution_events(client_id,person_id,event_type,consent_version_id,consent_content_sha256,idempotency_key,request_hash)
+          VALUES (${actor.clientId}::uuid,${personId}::uuid,'consent_revoked',${consent.versionId},${consent.contentHash},${key.data}::uuid,${hash})`;
+        return { replay: false as const };
+      });
+      if ('error' in result) return reply.code(409).send({ error: result.error });
+      return { v: 1, status: 'revoked' as const };
+    } catch { request.log.error({ route: 'DELETE /api/me/evolution/consent' }, 'evolution consent revocation failed'); return reply.code(500).send({ error: 'internal_error' }); }
+  });
 
   const defaultPreferences = { appearance: 'system' as const, language: 'es' as const };
   app.get('/api/me/preferences', async (request, reply) => {
@@ -100,12 +202,29 @@ export function registerClientAppRoutes(
 
   app.get('/api/me/training-summary', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;
-    if (!actor.personId) return { status: 'not_linked' as const };
+    const personId = await canonicalPersonId(actor);
+    const audit = (decision: string) => appendEvolutionEvent({ clientId: actor.clientId, personId, eventType: 'summary_requested', decision });
+    if (!personId) { await audit('not_linked'); return { status: 'not_linked' as const }; }
     const [link] = await db`SELECT l.training_user_id AS "trainingUserId"
       FROM training_account_links l JOIN platform_persons p ON p.id=l.person_id
-      WHERE l.person_id=${actor.personId}::uuid AND l.status='active' AND p.status='active'`;
-    if (!link) return { status: 'not_linked' as const };
-    const result = await trainingAdapter?.getSummary(String(link.trainingUserId)) ?? { status: 'disabled' as const };
+      WHERE l.person_id=${personId}::uuid AND l.status='active' AND p.status='active'`;
+    if (!link) { await audit('not_linked'); return { status: 'not_linked' as const }; }
+    const entitlements = await resolveEffectiveClientAssignments(db, actor.clientId, memberNow());
+    const hasActiveTrainingEntitlement = entitlements.effective.assignments.some(assignment => assignment.operationalAccess === 'active' && assignment.rights.some(right => right.rightType === 'training_access'));
+    if (!hasActiveTrainingEntitlement) { await audit('entitlement_required'); return { status: 'linked' as const, summaryStatus: 'blocked' as const, reason: 'entitlement_required' as const }; }
+    const consent = await activeEvolutionConsent();
+    if (!consent) { await audit('consent_unpublished'); return { status: 'linked' as const, summaryStatus: 'blocked' as const, reason: 'consent_unpublished' as const }; }
+    const [consentEvent] = await db`SELECT event_type AS type FROM platform_member_evolution_events
+      WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
+      ORDER BY occurred_at DESC,id DESC LIMIT 1`;
+    if (consentEvent?.type !== 'consent_granted') {
+      const reason = consentEvent?.type === 'consent_revoked' ? 'consent_revoked' as const : 'consent_required' as const;
+      await audit(reason); return { status: 'linked' as const, summaryStatus: 'blocked' as const, reason };
+    }
+    await audit('allowed');
+    let result: Awaited<ReturnType<NonNullable<typeof trainingAdapter>['getSummary']>> | { status: 'disabled' };
+    try { result = await trainingAdapter?.getSummary(String(link.trainingUserId)) ?? { status: 'disabled' as const }; }
+    catch { result = { status: 'unavailable' as const }; }
     if (result.status !== 'available' || !result.summary) return { status: 'linked' as const, summaryStatus: 'unavailable' as const };
     const { trainingStatus, asOf, currentProgram, recentActivity } = result.summary;
     return {

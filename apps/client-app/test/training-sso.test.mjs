@@ -118,6 +118,16 @@ test('connected Búnker entry is off by default: the current link stays and no S
   close();
 });
 
+test('Home renders a consent or entitlement blocked Training summary as sin datos, not as a retryable outage', async () => {
+  const { ui, close } = await mountLoggedIn({}, () => { throw new Error('SSO must not be requested'); }, {
+    summary: { status: 'linked', summaryStatus: 'blocked', reason: 'consent_required' },
+  });
+  assert.ok(ui.getByText('Sin datos disponibles.'));
+  assert.equal(ui.queryByText('Información de entrenamiento temporalmente no disponible.'), null);
+  assert.equal(ui.queryByRole('button', { name: 'Intentar de nuevo' }), null);
+  close();
+});
+
 test('with the flag on, "Abrir Búnker" only leaves for Training\'s start page: nothing is minted at the tap, and a second tap does nothing', async () => {
   const { ui, fireEvent, requests, navigations, close } = await mountLoggedIn({ trainingSsoEnabledOverride: true }, () => { throw new Error('no code may be requested at the tap'); });
   assert.equal(ui.queryByRole('link', { name: /^Abrir Búnker/ }), null, 'the primary action is the SSO button');

@@ -150,7 +150,7 @@ export function registerDashboardRoutes(
             ORDER BY COALESCE(a.due_at,a.assigned_at),a.id LIMIT 8` : Promise.resolve([]),
           permissions.documents && permissions.clients ? db`SELECT c.id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",x.name,xv.title,x.required,xv.id AS "versionId"
             FROM client_consents x JOIN client_consent_versions xv ON xv.id=x.active_version_id JOIN clients c ON c.status='active'
-            WHERE x.status='active' AND x.required=true AND NOT EXISTS (SELECT 1 FROM client_consent_acceptances a WHERE a.client_id=c.id AND a.consent_version_id=xv.id)
+            WHERE x.status='active' AND x.consent_type<>'home_evolution' AND x.required=true AND NOT EXISTS (SELECT 1 FROM client_consent_acceptances a WHERE a.client_id=c.id AND a.consent_version_id=xv.id)
             ORDER BY x.name,c.last_name,c.first_name LIMIT 8` : Promise.resolve([]),
           permissions.calendar ? db`SELECT s.id,s.starts_at AS "startsAt",s.professional_id AS "professionalId",sv.name AS "serviceName"
             FROM calendar_sessions s JOIN services sv ON sv.id=s.service_id
