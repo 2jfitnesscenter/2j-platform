@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://2jfitnesscenter.com/contracts/2J-platform-home-evolution-v1.schema.json",
+  "title": "2J Platform Home Evolution V1",
+  "description": "Proposed wire DTOs for Platform-owned measurements, evaluations and consent. Not implemented.",
+  "oneOf": [
+    { "$ref": "#/$defs/catalogResponse" },
+    { "$ref": "#/$defs/measurementListResponse" },
+    { "$ref": "#/$defs/measurementCreateRequest" },
+    { "$ref": "#/$defs/evaluationListResponse" },
+    { "$ref": "#/$defs/healthConsentResponse" },
+    { "$ref": "#/$defs/healthConsentAcceptance" }
+  ],
+  "$defs": {
+    "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "civilDate": { "type": "string", "format": "date", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "metricDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "valueType", "unit", "precision", "canWrite"],
+      "properties": {
+        "key": { "$ref": "#/$defs/key" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "valueType": { "enum": ["integer", "decimal"] },
+        "unit": { "type": ["string", "null"], "maxLength": 24 },
+        "precision": { "type": "integer", "minimum": 0, "maximum": 6 },
+        "canWrite": { "type": "boolean" }
+      }
+    },
+    "measurementValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": { "key": { "$ref": "#/$defs/key" }, "value": { "type": "number" } }
+    },
+    "measurementSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "measuredOn", "recordedAt", "source", "values"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "measuredOn": { "$ref": "#/$defs/civilDate" },
+        "recordedAt": { "type": "string", "format": "date-time" },
+        "source": { "enum": ["member", "staff", "device"] },
+        "values": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/measurementValue" } }
+      }
+    },
+    "catalogResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "definitions"],
+      "properties": {
+        "v": { "const": 1 },
+        "definitions": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/metricDefinition" } }
+      }
+    },
+    "measurementListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "items", "nextCursor"],
+      "properties": {
+        "v": { "const": 1 },
+        "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/measurementSession" } },
+        "nextCursor": { "type": ["string", "null"], "maxLength": 512 }
+      }
+    },
+    "measurementCreateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "measuredOn", "values"],
+      "properties": {
+        "v": { "const": 1 },
+        "measuredOn": { "$ref": "#/$defs/civilDate" },
+        "values": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/measurementValue" } }
+      }
+    },
+    "evaluationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "templateName", "publishedAt", "documentAvailable"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "templateName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "publishedAt": { "type": "string", "format": "date-time" },
+        "documentAvailable": { "type": "boolean" }
+      }
+    },
+    "evaluationListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "items", "nextCursor"],
+      "properties": {
+        "v": { "const": 1 },
+        "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/evaluationSummary" } },
+        "nextCursor": { "type": ["string", "null"], "maxLength": 512 }
+      }
+    },
+    "healthConsentResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "state", "currentVersion", "acceptedAt"],
+      "properties": {
+        "v": { "const": 1 },
+        "state": { "enum": ["unpublished", "required", "accepted", "revoked"] },
+        "currentVersion": { "type": ["string", "null"], "maxLength": 80 },
+        "publishedAt": { "type": ["string", "null"], "format": "date-time" },
+        "text": { "type": ["string", "null"], "maxLength": 50000 },
+        "acceptedAt": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "healthConsentAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "version"],
+      "properties": { "v": { "const": 1 }, "version": { "type": "string", "minLength": 1, "maxLength": 80 } }
+    }
+  }
+}
