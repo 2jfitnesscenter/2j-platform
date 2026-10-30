@@ -205,6 +205,25 @@ test('consent text is never prefilled, creates a versioned draft, and publishes 
   assert.ok(serveUrls.some(url => url.includes('/api/consents')));
 });
 
+test('archived consent is labeled archived, keeps history readable, and hides all mutations', async () => {
+  const calls = [];
+  serve({ consents: async (path, init) => {
+    calls.push({ path, method: init?.method ?? 'GET' });
+    if (path.includes('/versions?')) return response({ items: [{ id: 'archived-v1', version: 1, title: 'Texto histórico', body: 'Contenido histórico', effectiveAt: null, status: 'draft' }] });
+    return response({ items: [{ id: 'archived-consent', name: 'Texto archivado', consentType: 'other', required: false, status: 'archived', activeVersionId: null, activeVersion: null, latestVersionId: 'archived-v1', latestVersion: 1, latestVersionStatus: 'draft' }] });
+  } });
+  window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' });
+  fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' }));
+  const article = (await screen.findByText('Texto archivado')).closest('article');
+  assert.ok(within(article).getByText('Archivado'));
+  assert.equal(within(article).queryByRole('button', { name: 'Nueva versión' }), null);
+  assert.equal(within(article).queryByRole('button', { name: 'Publicar borrador' }), null);
+  assert.equal(within(article).queryByRole('button', { name: 'Archivar' }), null);
+  fireEvent.click(within(article).getByRole('button', { name: 'Ver versiones' }));
+  assert.ok(await within(article).findByText('Contenido histórico'));
+  assert.equal(calls.some(call => call.method === 'POST'), false);
+});
+
 test('403 read permission does not expose templates or actions', async () => {
   const urls = serve({ sessionCapabilities: () => response({ ...capabilities, formsRead: false, formsManage: false, consentsRead: false, consentsManage: false }) }); window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' });
   fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' }));

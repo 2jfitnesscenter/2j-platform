@@ -1137,6 +1137,10 @@ export function registerCommunicationRoutes(
       return reply.code(400).send({ error: "invalid_consent_id" });
     try {
       const result = await db.begin(async (tx) => {
+        const [consent]: any[] =
+          await tx`SELECT id,status FROM client_consents WHERE id=${p.data.consentId} FOR UPDATE`;
+        if (!consent) return null;
+        if (consent.status === "archived") return { error: "consent_archived" as const };
         const [v]: any[] =
           await tx`SELECT id,version FROM client_consent_versions WHERE consent_id=${p.data.consentId} AND status='draft' ORDER BY version DESC LIMIT 1 FOR UPDATE`;
         if (!v) return null;
@@ -1154,8 +1158,8 @@ export function registerCommunicationRoutes(
         );
         return { version: v!.version };
       });
-      if (!result)
-        return reply.code(409).send({ error: "draft_version_unavailable" });
+      if (!result) return reply.code(409).send({ error: "draft_version_unavailable" });
+      if ("error" in result) return reply.code(409).send({ error: result.error });
       return result;
     } catch {
       req.log.error(
