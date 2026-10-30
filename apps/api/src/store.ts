@@ -48,11 +48,38 @@ async function variantStock(tx: any, variantId: string) {
 }
 
 export function registerStoreRoutes(app: FastifyInstance, db: DB, resolveStaff: (request: FastifyRequest) => Promise<AuthorizationContext | null>, resolveMember: (request: FastifyRequest) => Promise<ClientAuthorizationContext | null>) {
+  app.get('/api/settings/store', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const actor = await staffContext(request, reply, resolveStaff, 'settings.manage');
+    if (!actor) return;
+    const [settings] = await db`SELECT low_stock_threshold AS "lowStockThreshold",updated_at AS "updatedAt" FROM store_settings WHERE center_key=${centerKey}`;
+    if (!settings) return reply.code(503).send({ error: 'store_settings_unavailable' });
+    return settings;
+  });
+
+  app.put('/api/settings/store', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const actor = await staffContext(request, reply, resolveStaff, 'settings.manage');
+    if (!actor) return;
+    const body = z.object({ lowStockThreshold: z.number().int().min(0).max(100_000) }).strict().safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: 'validation_error' });
+    const result = await db.begin(async tx => {
+      const [current] = await tx`SELECT id,low_stock_threshold AS "lowStockThreshold",updated_at AS "updatedAt" FROM store_settings WHERE center_key=${centerKey} FOR UPDATE`;
+      if (!current) return { error: 'store_settings_unavailable' as const };
+      if (Number(current.lowStockThreshold) === body.data.lowStockThreshold) return { settings: { lowStockThreshold: Number(current.lowStockThreshold), updatedAt: current.updatedAt } };
+      const [saved] = await tx`UPDATE store_settings SET low_stock_threshold=${body.data.lowStockThreshold},updated_by=${actor.actorId},updated_at=now() WHERE id=${current.id} RETURNING low_stock_threshold AS "lowStockThreshold",updated_at AS "updatedAt"`;
+      await audit(tx, actor.actorId, 'store.settings.updated', 'store_settings', current.id, { lowStockThreshold: { from: Number(current.lowStockThreshold), to: body.data.lowStockThreshold } });
+      return { settings: saved };
+    });
+    if ('error' in result) return reply.code(503).send({ error: result.error });
+    return result.settings;
+  });
+
   app.get('/api/me/store/catalog', async (request, reply) => {
     if (!await memberContext(request,reply,db,resolveMember)) return;
-    const items = await db`SELECT p.id,p.category,p.name,p.description,v.id AS "variantId",v.label AS "variantLabel",v.size,v.flavor,v.price_cents AS "priceCents",CASE WHEN NOT v.stock_tracked THEN 'disponible' WHEN COALESCE(stock.balance,0)<=0 THEN 'agotado' WHEN COALESCE(stock.balance,0)<=3 THEN 'pocas_unidades' ELSE 'disponible' END AS availability
-      FROM store_products p JOIN store_product_variants v ON v.product_id=p.id AND v.active LEFT JOIN LATERAL (SELECT sum(m.quantity_delta)::int AS balance FROM store_inventory_movements m WHERE m.variant_id=v.id) stock ON true
-      WHERE p.center_key=${centerKey} AND p.active ORDER BY p.category,p.name,v.label,v.id`;
+    const items = await db`SELECT p.id,p.category,p.name,p.description,v.id AS "variantId",v.label AS "variantLabel",v.size,v.flavor,v.price_cents AS "priceCents",CASE WHEN NOT v.stock_tracked THEN 'disponible' WHEN COALESCE(stock.balance,0)<=0 THEN 'agotado' WHEN COALESCE(stock.balance,0)<=settings.low_stock_threshold THEN 'pocas_unidades' ELSE 'disponible' END AS availability
+      FROM store_products p JOIN store_product_variants v ON v.product_id=p.id AND v.active CROSS JOIN store_settings settings LEFT JOIN LATERAL (SELECT sum(m.quantity_delta)::int AS balance FROM store_inventory_movements m WHERE m.variant_id=v.id) stock ON true
+      WHERE p.center_key=${centerKey} AND p.active AND settings.center_key=${centerKey} ORDER BY p.category,p.name,v.label,v.id`;
     const products = new Map<string, any>();
     for (const row of items) { const product = products.get(row.id) ?? { id:row.id,category:row.category,name:row.name,description:row.description,variants:[] }; product.variants.push({ id:row.variantId,label:row.variantLabel,size:row.size,flavor:row.flavor,priceCents:money(row.priceCents),availability:row.availability }); products.set(row.id,product); }
     return { items:[...products.values()] };

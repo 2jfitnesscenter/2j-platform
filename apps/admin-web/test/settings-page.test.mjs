@@ -30,7 +30,7 @@ const overview = {
 const serve = (handler) => {
   globalThis.fetch = async (url, init) => {
     const path = String(url);
-    if (path.includes('/api/settings/overview') || path.includes('/api/admin/center-profile') || path.includes('/api/center/') || path.includes('/api/staff')) return handler(path, init);
+    if (path.includes('/api/settings/overview') || path.includes('/api/admin/center-profile') || path.includes('/api/settings/store') || path.includes('/api/center/') || path.includes('/api/staff')) return handler(path, init);
     if (path.includes('/api/economics/invoice-settings')) return response({ issuerName: null, issuerTaxId: null, issuerAddress: null, issuerPostalCode: null, issuerLocality: null, issuerProvince: null, defaultIgicBasisPoints: 300, defaultSeriesId: null, footerText: null, legalText: null, hasLogo: false, logoMime: null, series: [], missing: ['nombre o razón social'], canManage: false });
     if (path.includes('/api/dashboard/command-center')) return response(model);
     if (path.includes('/api/session/capabilities')) return response({ calendar: true, clients: true, communications: true, billing: true, staff: true, notificationSettings: true });
@@ -41,7 +41,7 @@ const mount = () => { window.location.hash = '#settings'; return render(React.cr
 const openTab = async (name) => { fireEvent.click(await screen.findByRole('tab', { name })); return screen.findByRole('tabpanel'); };
 
 test('Configuración offers its nine tabs and keeps rules owned by other modules authoritative', async () => {
-  serve(() => response(overview)); mount();
+  serve((path) => path.includes('/api/settings/store') ? response({ lowStockThreshold: 3 }) : response(overview)); mount();
   assert.ok(await screen.findByRole('heading', { name: 'Configuración' }));
   const tabs = await screen.findAllByRole('tab');
   assert.deepEqual(tabs.map((tab) => tab.textContent), ['Centro', 'Horario y turnos', 'Apariencia', 'Reservas', 'Pagos', 'Facturación', 'Tienda', 'Permisos', 'Integraciones']);
@@ -54,9 +54,33 @@ test('Configuración offers its nine tabs and keeps rules owned by other modules
   const store = await openTab('Tienda');
   assert.match(store.textContent, /Productos, variantes, inventario y ventas se gestionan en Tienda/);
   assert.equal(within(store).getByRole('link', { name: /Abrir Tienda/ }).getAttribute('href'), '#store');
+  assert.equal(within(store).getByLabelText('Avisar cuando queden').value, '3');
+  assert.equal(within(store).getByRole('button', { name: 'Guardar aviso de stock' }).disabled, false);
   const invoicing = await openTab('Facturación');
   assert.ok(within(invoicing).getByRole('heading', { name: 'Emisor' }));
-  for (const name of ['Apariencia', 'Reservas', 'Tienda']) assert.equal((await openTab(name)).querySelector('form'), null, `${name} does not imply editable settings`);
+  for (const name of ['Apariencia', 'Reservas']) assert.equal((await openTab(name)).querySelector('form'), null, `${name} does not imply unsupported settings`);
+});
+
+test('Tienda reads and saves the real stock warning threshold through the settings API', async () => {
+  const calls = [];
+  let saved = 3;
+  serve(async (path, init) => {
+    if (path.includes('/api/settings/store')) {
+      calls.push({ method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+      if (init?.method === 'PUT') { saved = JSON.parse(init.body).lowStockThreshold; return response({ lowStockThreshold: saved }); }
+      return response({ lowStockThreshold: saved });
+    }
+    return response(overview);
+  });
+  mount();
+  const panel = await openTab('Tienda');
+  const field = await within(panel).findByLabelText('Avisar cuando queden');
+  fireEvent.change(field, { target: { value: '5' } });
+  fireEvent.click(within(panel).getByRole('button', { name: 'Guardar aviso de stock' }));
+  await waitFor(() => assert.match(panel.textContent, /actualizado y auditado/));
+  assert.deepEqual(calls.map((call) => call.method), ['GET', 'PUT']);
+  assert.deepEqual(calls[1].body, { lowStockThreshold: 5 });
+  assert.equal(field.value, '5');
 });
 
 test('Centro reads and saves the existing audited Platform profile API without fiscal fields', async () => {

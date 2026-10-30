@@ -172,6 +172,47 @@ function ReadOnlyRow({ label, value, detail }: { label: string; value: React.Rea
  * Configuración (paridad visual 11, referencia: Settings.jsx de Base44). Centro usa la API auditada existente; las reglas de reservas y el catálogo
  * siguen siendo propiedad de sus módulos. Los tokens de marca se mantienen globales y las reglas económicas continúan en solo lectura.
  */
+function StoreSettings() {
+  const [threshold, setThreshold] = React.useState('3');
+  const [state, setState] = React.useState<'loading' | 'ready' | 'denied' | 'error'>('loading');
+  const [saving, setSaving] = React.useState(false);
+  const [feedback, setFeedback] = React.useState('');
+  const load = React.useCallback(async () => {
+    setState('loading');
+    try {
+      const response = await apiFetch(`${apiUrl}/api/settings/store`);
+      if (response.status === 401 || response.status === 403) { setState('denied'); return; }
+      if (!response.ok) throw new Error('load_failed');
+      const body = await response.json() as { lowStockThreshold: number };
+      setThreshold(String(body.lowStockThreshold)); setState('ready');
+    } catch { setState('error'); }
+  }, []);
+  React.useEffect(() => { void load(); }, [load]);
+  const save = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setSaving(true); setFeedback('');
+    try {
+      const response = await apiFetch(`${apiUrl}/api/settings/store`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lowStockThreshold: Number(threshold) }) });
+      if (response.status === 401 || response.status === 403) { setState('denied'); return; }
+      if (!response.ok) throw new Error('save_failed');
+      const body = await response.json() as { lowStockThreshold: number };
+      setThreshold(String(body.lowStockThreshold)); setFeedback('Aviso de stock actualizado y auditado.');
+    } catch { setFeedback('No se pudo guardar el umbral de stock. Revisa el valor e inténtalo de nuevo.'); }
+    finally { setSaving(false); }
+  };
+  if (state === 'loading') return <div className="summary-state" role="status"><span className="spinner" /> Cargando ajustes de tienda…</div>;
+  if (state === 'denied') return <EmptyState icon={icons.ShieldCheck} title="Tu perfil no puede cambiar los ajustes de tienda" role="status">La autorización se valida en el servidor.</EmptyState>;
+  if (state === 'error') return <div className="summary-state summary-error" role="alert"><strong>No se pudieron cargar los ajustes de tienda</strong><Button onClick={() => void load()}>Reintentar</Button></div>;
+  return <>
+    <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Este umbral cambia el aviso de pocas unidades; no bloquea ventas.</span></div>
+    <form className="settings-grid" onSubmit={save}>
+      <label className="settings-field">Avisar cuando queden<input aria-label="Avisar cuando queden" type="number" min="0" max="100000" step="1" required value={threshold} onChange={event => setThreshold(event.target.value)} /><span>unidades o menos en una variante con stock controlado</span></label>
+      <div className="settings-inline-actions"><Button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar aviso de stock'}</Button>{feedback && <span role="status">{feedback}</span>}</div>
+    </form>
+    <p className="settings-hint">El valor inicial de 3 unidades conserva el criterio actual. Las variantes sin control de stock quedan fuera del aviso.</p>
+    <p className="settings-hint">Productos, variantes, inventario y ventas se gestionan en Tienda. <a href="#store">Abrir Tienda</a></p>
+  </>;
+}
+
 export function SettingsPage() {
   const [tab, setTab] = React.useState('center');
   const [state, setState] = React.useState<LoadState>({ status: 'loading' });
@@ -216,8 +257,8 @@ export function SettingsPage() {
         </dl></> : <EmptyState icon={icons.Wallet} title="Sin reglas de pago configuradas" role="status">Economía aún no tiene sus reglas iniciales.</EmptyState>;
       case 'store': return <>
         <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Catálogo conectado</StatusChip><span>Productos, variantes, inventario y ventas se gestionan en Tienda.</span></div>
-        <a className="settings-link" href="#store">Abrir Tienda para gestionar el catálogo</a>
-        <p className="settings-hint">La configuración de stock no muestra un umbral editable hasta que exista una regla aprobada y guardada por Platform.</p></>;
+        <StoreSettings />
+      </>;
       case 'permissions': return <>
         <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Los permisos van por perfiles, nunca por persona. Estos perfiles se leen de la configuración real; cambiarlos requiere aprobación del propietario.</span></div>
         <div className="settings-profiles">{data.profiles.map((profile) => <Card as="section" key={profile.id} className="settings-profile" aria-label={`Perfil ${profile.label}`}>
