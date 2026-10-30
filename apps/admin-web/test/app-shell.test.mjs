@@ -8,6 +8,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, H
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 const { AppShell, getProfessionalNavigation, getProfessionalPageContext, environmentLabelForHost } = await import('../src/app-shell.tsx');
+const { apiFetch } = await import('../src/api-fetch.ts');
 const { CommandCenter } = await import('../src/command-center.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
 after(() => dom.window.close());
@@ -21,6 +22,22 @@ const model = {
 };
 const capabilities = {calendar:true,clients:true,communications:true,billing:false,staff:true};
 
+test('Admin API requests include the host-only session cookie across API ports', async () => {
+  let options;
+  globalThis.fetch = async (_url, init) => { options = init; return response({}); };
+  await apiFetch('http://localhost:3100/api/session/capabilities');
+  assert.equal(options.credentials, 'include');
+});
+
+test('unauthenticated Admin shows passkey login without rendering operational screens', async () => {
+  globalThis.fetch = async () => response({ error: 'authentication_required' }, 401);
+  render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
+  assert.ok(await screen.findByRole('heading', { name: 'Acceso del equipo' }));
+  assert.equal(screen.queryByRole('navigation', { name: 'Secciones' }), null);
+  assert.equal(screen.queryByText('Próximas sesiones'), null);
+  assert.ok(screen.getByRole('button', { name: 'Continuar con passkey' }));
+});
+
 test('environment label identifies local, staging and production hosts',()=>{
   assert.equal(environmentLabelForHost('127.0.0.1'),'Entorno local');
   assert.equal(environmentLabelForHost('admin.2jfit.es'),'Staging');
@@ -30,7 +47,7 @@ test('environment label identifies local, staging and production hosts',()=>{
   assert.equal(environmentLabelForHost('admin.2jfitnesscenter.com'),'Producción');
 });
 
-test('Admin sees the three active groups (Operación, Comercial, Gestión) and only their existing authorized routes', async () => {
+test('Admin sees the professional sections and only their existing authorized routes', async () => {
   const adminCapabilities={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true};
   globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : String(url).includes('/api/session/capabilities') ? response(adminCapabilities) : response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell, null, React.createElement(CommandCenter)));

@@ -1,7 +1,8 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, PageHeader, StatusChip, Tabs, icons } from '@2j/ui';
 
-const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
 type Profile = { id: string; label: string; wildcard: boolean; permissionCount: number | null; groups: Array<{ id: string; label: string; permissions: string[] }> };
 type Overview = {
@@ -131,7 +132,7 @@ export function SettingsPage() {
   const [state, setState] = React.useState<LoadState>({ status: 'loading' });
   const load = React.useCallback(async (signal?: AbortSignal) => {
     try {
-      const response = await fetch(`${apiUrl}/api/settings/overview`, signal ? { signal } : undefined);
+      const response = await apiFetch(`${apiUrl}/api/settings/overview`, signal ? { signal } : undefined);
       if (response.status === 403 || response.status === 401) { setState({ status: 'denied' }); return; }
       if (!response.ok) throw new Error(String(response.status));
       setState({ status: 'ready', data: await response.json() as Overview });

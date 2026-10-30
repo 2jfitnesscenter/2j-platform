@@ -1,8 +1,9 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Icon, icons } from '@2j/ui';
 import { MAX_PHOTOS_PER_PRODUCT, PHOTO_ACCEPT, moveBy, remainingPhotoSlots, roomMessage, validatePhotoSelection, withPrimary, MAX_PHOTO_BYTES } from './store-media';
 
-const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 export type Media = { id: string; position: number; isPrimary: boolean; mimeType: string; sizeBytes: number };
 export const photoUrl = (mediaId: string) => `${api}/api/admin/store/media/${mediaId}/file`;
 
@@ -13,7 +14,7 @@ const reasons: Record<string, string> = {
 };
 const reasonOf = (code: unknown) => reasons[typeof code === 'string' ? code : ''] ?? 'No se pudo completar la operación.';
 async function call(path: string, init: RequestInit) {
-  const response = await fetch(`${api}${path}`, { ...init, cache: 'no-store' });
+  const response = await apiFetch(`${api}${path}`, { ...init, cache: 'no-store' });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error ?? 'internal_error');
   return body;
