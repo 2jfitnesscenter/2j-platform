@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
+import type { TrainingAdapter } from './training-integration.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
 type ClientStatus = 'active' | 'archived';
@@ -27,6 +28,7 @@ const updateClientInput = createClientInput;
 
 const sectionDefinitions = [
   { id: 'summary', label: 'Resumen', permission: 'clients.read', sourceLabel: 'Datos del perfil' },
+  { id: 'training', label: 'Evolución', permission: 'training.read', sourceLabel: 'Búnker' },
   { id: 'plans', label: 'Cuotas', permission: 'entitlements.read', sourceLabel: 'Planes asignados' },
   { id: 'reservations', label: 'Reservas', permission: 'calendar.read', sourceLabel: 'Calendario' },
   { id: 'payments', label: 'Pagos', permission: 'billing.read-basic', sourceLabel: 'Pagos' },
@@ -80,6 +82,7 @@ export function registerClientRoutes(
   app: FastifyInstance<any, any, any, any, any>,
   database: SqlClient,
   resolveAuthorization: (request: FastifyRequest) => Promise<AuthorizationContext | null>,
+  trainingSummaryAdapter?: TrainingAdapter,
 ) {
   async function authorized(request: FastifyRequest, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, permission: string) {
     const context = await resolveAuthorization(request);
@@ -117,6 +120,45 @@ export function registerClientRoutes(
       const nextCursor = hasMore && last ? encodeCursor({ lastName: last.cursorLastName, firstName: last.cursorFirstName, id: last.id }) : null;
       return { items, limit: query.data.limit, nextCursor, hasMore, capabilities: { manage: can(context, 'clients.manage'), assignPlans: can(context, 'entitlements.manage'), collectPayments: can(context, 'billing.payments.manage') } };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients' }, 'client list failed'); return reply.code(500).send({ error: 'internal_error' }); }
+  });
+
+  app.get('/api/clients/:clientId/training-summary', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const context = await authorized(request, reply, 'training.read');
+    if (!context) return;
+    const params = z.object({ clientId: uuid }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_client_id' });
+    try {
+      // Resolve every identity edge on the server. Never accept personId or Training IDs from callers.
+      const [link] = await database`
+        SELECT l.training_user_id AS "trainingUserId"
+        FROM clients c
+        JOIN platform_person_clients f ON f.client_id=c.id
+        JOIN platform_persons p ON p.id=f.person_id AND p.status='active'
+        JOIN training_account_links l ON l.person_id=p.id AND l.status='active'
+        WHERE c.id=${params.data.clientId} AND c.status='active'
+        LIMIT 1`;
+      if (!link) return { status: 'not_linked' as const };
+      let result: Awaited<ReturnType<TrainingAdapter['getSummary']>>;
+      try {
+        result = await (trainingSummaryAdapter ?? { getSummary: async () => ({ status: 'disabled' as const }) }).getSummary(link.trainingUserId);
+      } catch {
+        return { status: 'unavailable' as const };
+      }
+      if (result.status === 'disabled') return { status: 'disabled' as const };
+      if (result.status === 'unavailable' || !result.summary) return { status: 'unavailable' as const };
+      const { summary } = result;
+      return {
+        status: 'linked' as const,
+        summary: {
+          ...(summary.currentProgram ? { currentProgram: { name: summary.currentProgram.name } } : {}),
+          ...(summary.recentActivity ? { recentActivity: summary.recentActivity } : {}),
+        },
+      };
+    } catch (error) {
+      app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId/training-summary' }, 'client training summary failed');
+      return reply.code(500).send({ error: 'internal_error' });
+    }
   });
 
   app.post('/api/clients', async (request, reply) => {
@@ -228,7 +270,7 @@ export function registerClientRoutes(
         summary,
         reservations,
         waitlistEntries,
-        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', ...(section.id === 'documents' ? { canManage: can(context, 'documents.manage') } : {}), dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) || (section.id === 'purchases' && can(context, 'store.sales.read')) ? 'ready' : 'not_connected' })),
+        sections: sectionDefinitions.map(({ permission, ...section }) => ({ ...section, access: can(context, permission) ? 'available' : 'forbidden', ...(section.id === 'documents' ? { canManage: can(context, 'documents.manage') } : {}), dataState: ['summary', 'history', 'messages', 'documents', 'followup','plans','training'].includes(section.id) || (section.id === 'reservations' && can(context, 'calendar.read')) || (section.id === 'payments' && can(context, 'billing.read-basic')) || (section.id === 'purchases' && can(context, 'store.sales.read')) ? 'ready' : 'not_connected' })),
         history: events.map((event) => ({ id: event.id, eventType: event.eventType, actorLabel: actorLabel(event.actorRole), occurredAt: event.occurredAt })),
       };
     } catch (error) { app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId' }, 'client detail failed'); return reply.code(500).send({ error: 'internal_error' }); }

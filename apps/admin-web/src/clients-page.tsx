@@ -22,6 +22,7 @@ function planTypeSummary(plan:AssignablePlan|undefined) { if(!plan)return ''; if
 type PlanAction = {assignment:ClientPlanAssignment;action:'pause'|'resume'|'cancel'|'adjust'|'movements';rightId?:string};
 type PlanMovementData = {movements:Array<{id:string;rightKey:string;entryType:string;quantity:number;reason:string;occurredAt:string}>;events:Array<{id:string;eventType:string;effectiveOn:string;reason:string|null;createdAt:string}>};
 type ClientProfile = { client: Client; capabilities: { manage: boolean; readEntitlements?:boolean;manageCatalogPrice?:boolean; assignPlans?:boolean; collectPayments?:boolean; pauseEntitlements?:boolean;cancelEntitlements?:boolean;adjustEntitlements?:boolean;renewEntitlements?:boolean }; summary: Record<string, { access: 'available' | 'forbidden'; dataState: string; data: unknown }>; sections: ClientSection[]; history: ClientEvent[]; reservations: ClientReservation[]; waitlistEntries?:ClientWaitlistEntry[] };
+type TrainingSummaryView = { status: 'not_linked'|'disabled'|'unavailable' } | { status: 'linked'; summary: { currentProgram?: { name: string }; recentActivity?: { lastTrainingAt: string|null; sessionsLast30Days: number } } };
 type ClientList = { items: Client[]; capabilities: { manage: boolean; assignPlans?:boolean }; hasMore: boolean; nextCursor: string | null };
 type ClientFormItem = { id:string; formId:string; name:string; category:string; status:string; version:number; dueAt:string|null; assignedAt:string; answers:Record<string,unknown>|null; canReview:boolean; sensitiveReadable:boolean; submittedAt:string|null; reviews:{decision:string;note:string;actorLabel:string;reviewedAt:string}[] };
 type ClientConsentItem = { consentId:string; versionId:string; name:string; version:number; title:string; body:string; accepted:boolean; acceptedAt:string|null; canAcceptAssisted:boolean };
@@ -30,7 +31,7 @@ type FollowupItem = { id:string; name:string; status:string; dueAt:string|null; 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 const statusLabel = { active: 'Activo', archived: 'Archivado' };
 const moduleLabels: Record<string, string> = { reservations: 'Reservas', training: 'Entrenamiento', nutrition: 'Nutrición', health: 'Salud', clients: 'Clientes', communication: 'Comunicación' };
-const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'purchases', 'documents', 'messages', 'followup', 'history']);
+const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'purchases', 'training', 'documents', 'messages', 'followup', 'history']);
 
 function displayName(client: Client) { return `${client.firstName} ${client.lastName}`; }
 function dateLabel(value: string) { return new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(value)); }
@@ -78,6 +79,8 @@ export function ClientsPage() {
   const [invoiceCharge, setInvoiceCharge] = useState<{ id: string; concept: string } | null>(null);
   const [documentsData, setDocumentsData] = useState<{forms:ClientFormItem[];consents:ClientConsentItem[]}|null>(null);
   const [followupData, setFollowupData] = useState<FollowupItem[]|null>(null);
+  const [trainingData, setTrainingData] = useState<TrainingSummaryView|null>(null);
+  const [trainingState, setTrainingState] = useState<'idle'|'loading'|'ready'|'error'>('idle');
   const [operationState, setOperationState] = useState<'loading'|'ready'|'error'>('ready');
   const [operationError, setOperationError] = useState('');
   const [reviewNotes, setReviewNotes] = useState<Record<string,string>>({});
@@ -217,6 +220,22 @@ export function ClientsPage() {
     void requests.then(data=>{if(!current)return;if('forms' in data)setDocumentsData(data as {forms:ClientFormItem[];consents:ClientConsentItem[]});else setFollowupData(data.followup as FollowupItem[]);setOperationState('ready');}).catch((error:unknown)=>{if(current){setOperationError(error instanceof Error?error.message:'No se pudieron cargar los datos.');setOperationState('error');}});
     return ()=>{current=false;};
   },[selectedId,activeSection,refreshKey]);
+
+  useEffect(() => {
+    if (!selectedId || activeSection !== 'training') return;
+    let current = true;
+    const controller = new AbortController();
+    setTrainingState('loading');
+    void apiFetch(`${apiUrl}/api/clients/${selectedId}/training-summary`, { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        if (response.status === 401 || response.status === 403) throw new Error('No se pudo autorizar la consulta de evolución.');
+        if (!response.ok) throw new Error('No se pudo cargar la evolución de Búnker.');
+        return response.json() as Promise<TrainingSummaryView>;
+      })
+      .then(data => { if (current) { setTrainingData(data); setTrainingState('ready'); } })
+      .catch(() => { if (current && !controller.signal.aborted) setTrainingState('error'); });
+    return () => { current = false; controller.abort(); };
+  }, [selectedId, activeSection, refreshKey]);
 
   async function reviewForm(item:ClientFormItem, decision:'approved'|'rejected') {
     if(!selectedId)return;setDocumentBusy(true);setOperationError('');
@@ -514,6 +533,22 @@ export function ClientsPage() {
 
           {activeSection === 'history' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-history-title"><CardHeader title="Historial del cliente" titleId="client-history-title" level={2} description="Registro del perfil" />
             {profile.history.length ? <ol className="client-timeline">{profile.history.map((event) => <li key={event.id}><span className="client-timeline-dot" aria-hidden="true" /><div><strong>{{ 'client.created': 'Cliente dado de alta', 'client.archived': 'Cliente archivado', 'client.profile_updated': 'Datos del perfil actualizados' }[event.eventType] ?? 'Actividad del cliente'}</strong><span>{dateLabel(event.occurredAt)} · {event.actorLabel || 'Equipo 2J'}</span></div></li>)}</ol> : <EmptyState icon={icons.History} title="Aún no hay actividad">Los cambios del perfil quedarán registrados aquí.</EmptyState>}
+          </Card>}
+
+          {activeSection === 'training' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-training-title"><CardHeader title="Evolución" titleId="client-training-title" level={2} description="Actividad de entrenamiento sincronizada desde Búnker." />
+            {trainingState === 'loading' && <p className="client-muted" role="status">Cargando evolución…</p>}
+            {trainingState === 'error' && <div role="alert" className="ui-form-error">No se pudo cargar la evolución de Búnker. <Button size="sm" onClick={() => setRefreshKey((value) => value + 1)}>Reintentar</Button></div>}
+            {trainingState === 'ready' && trainingData?.status === 'not_linked' && <p className="client-muted">Este perfil no está vinculado a una cuenta de Búnker.</p>}
+            {trainingState === 'ready' && trainingData?.status === 'disabled' && <p className="client-muted">La conexión con Búnker está desactivada.</p>}
+            {trainingState === 'ready' && trainingData?.status === 'unavailable' && <p className="client-muted" role="status">Búnker no está disponible ahora. Inténtalo de nuevo más tarde.</p>}
+            {trainingState === 'ready' && trainingData?.status === 'linked' && <>
+              <p className="client-muted">Cuenta de Búnker vinculada</p>
+              <dl className="client-facts">
+                {trainingData.summary.currentProgram && <div><dt>Programa actual</dt><dd>{trainingData.summary.currentProgram.name}</dd></div>}
+                {trainingData.summary.recentActivity && <><div><dt>Último entrenamiento</dt><dd>{trainingData.summary.recentActivity.lastTrainingAt ? dateLabel(`${trainingData.summary.recentActivity.lastTrainingAt}T12:00:00`) : 'Sin actividad reciente'}</dd></div><div><dt>Sesiones en los últimos 30 días</dt><dd>{trainingData.summary.recentActivity.sessionsLast30Days}</dd></div></>}
+              </dl>
+            </>}
+            <p className="client-muted">Mediciones de Platform: No conectado</p>
           </Card>}
 
           {activeSection === 'reservations' && activeSectionData?.access === 'available' && <div className="client-stack">
