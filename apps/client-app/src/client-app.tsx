@@ -23,6 +23,9 @@ type MemberTrainingSummary =
   | { status: 'linked'; summaryStatus: 'blocked'; reason: 'entitlement_required' | 'consent_unpublished' | 'consent_required' | 'consent_revoked' }
   | { status: 'linked'; summaryStatus: 'unavailable' }
   | { status: 'linked'; summaryStatus: 'available'; summary: { trainingStatus: 'active'; asOf: string; currentProgram?: { name: string }; recentActivity?: { lastTrainingAt: string | null; sessionsLast30Days: number } } };
+type MemberEvolution =
+  | { v: 1; state: 'not_linked' | 'consent_required' | 'not_available' | 'unavailable' }
+  | { v: 1; state: 'available'; consentVersion: number; asOf: string; nextCursor: string | null; workouts: Array<{ date: string; durationSeconds?: number; exercises: Array<{ exerciseId: string; sets: Array<{ reps?: number; rpe?: number; minutes?: number; speed?: number; resistance?: number; distance?: number; incline?: number; seconds?: number; weight?: { value: number; unit: 'kg' | 'lb' }; completed?: boolean }> }> }> };
 type TrainingCapabilities = {
   contract: '2J-CAPABILITIES-V2.1'; revision: 1; version: 2;
   capabilityLevel: 'full' | 'autonomous' | 'baseline' | 'blocked';
@@ -461,6 +464,10 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const [trainingSummaryLoading, setTrainingSummaryLoading] = React.useState(false);
   const [trainingSummaryFailed, setTrainingSummaryFailed] = React.useState(false);
   const [trainingSummaryRetry, setTrainingSummaryRetry] = React.useState(0);
+  const [memberEvolution, setMemberEvolution] = React.useState<MemberEvolution | null>(null);
+  const [memberEvolutionLoading, setMemberEvolutionLoading] = React.useState(false);
+  const [memberEvolutionFailed, setMemberEvolutionFailed] = React.useState(false);
+  const [memberEvolutionRetry, setMemberEvolutionRetry] = React.useState(0);
   const [trainingLinkTransaction, setTrainingLinkTransaction] = React.useState<{ transactionId: string; challenge: string; expiresAt: string } | null>(null);
   const [trainingLinkCode, setTrainingLinkCode] = React.useState('');
   const [trainingLinkBusy, setTrainingLinkBusy] = React.useState(false);
@@ -628,7 +635,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
     return () => { current = false; };
   }, [preview, previewMode, hasActiveMembership, selectedDate.slice(0, 7), scheduleVersion]);
   React.useEffect(() => {
-    if ((view !== 'bunker' && view !== 'training-link' && view !== 'evolution') || previewMode || !profile) return;
+    if ((view !== 'bunker' && view !== 'training-link') || previewMode || !profile) return;
     let current = true;
     setTrainingSummaryLoading(true); setTrainingSummaryFailed(false); setTrainingSummary(null);
     void api<MembershipResponse>('/api/me/membership').then(result => { if (current) setTrainingCapabilities(result.trainingCapabilities ?? null); }).catch(() => { if (current) setTrainingCapabilities(null); });
@@ -638,6 +645,16 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
       .finally(() => { if (current) setTrainingSummaryLoading(false); });
     return () => { current = false; };
   }, [view, previewMode, profile?.id, trainingSummaryRetry]);
+  React.useEffect(() => {
+    if (view !== 'evolution' || previewMode || !profile) return;
+    let current = true;
+    setMemberEvolutionLoading(true); setMemberEvolutionFailed(false); setMemberEvolution(null);
+    void api<MemberEvolution>('/api/me/evolution')
+      .then(result => { if (current) setMemberEvolution(result); })
+      .catch(() => { if (current) setMemberEvolutionFailed(true); })
+      .finally(() => { if (current) setMemberEvolutionLoading(false); });
+    return () => { current = false; };
+  }, [view, previewMode, profile?.id, memberEvolutionRetry]);
   React.useEffect(() => {
     if (!trainingCapabilities) return;
     const remaining = Date.parse(trainingCapabilities.expiresAt) - Date.now();
@@ -934,13 +951,13 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
         </>}
         {view === 'evolution' && <>
           <div className="page-intro"><p className="eyebrow">PERFIL</p><h1>Mi evolución</h1><p>Tu progreso del centro, en un solo lugar.</p></div><button className="text-button contextual-link" onClick={() => setView('profile')}>← Volver al perfil</button>
-          <section className="settings-card evolution-detail" aria-labelledby="evolution-summary-title"><div><p className="eyebrow">BÚNKER · SOLO LECTURA</p><h2 id="evolution-summary-title">Resumen de actividad</h2><p>Resumen limitado del contrato 2J-089. Búnker conserva el historial y Platform verifica la vinculación.</p></div>
+          <section className="settings-card evolution-detail" aria-labelledby="evolution-summary-title"><div><p className="eyebrow">BÚNKER · SOLO LECTURA</p><h2 id="evolution-summary-title">Actividad de entrenamiento</h2><p>Historial de entrenamientos finalizados, compartido con tu consentimiento y cuota vigentes. Platform comprueba ambas condiciones antes de consultar Búnker.</p></div>
             {previewMode ? <div className="settings-note" role="status"><strong>No conectado</strong> · DEMO · Datos ficticios. Esta vista no consulta Búnker ni muestra actividad simulada.</div>
-              : trainingSummaryLoading ? <p role="status">Consultando el resumen de Búnker…</p>
-              : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'blocked' ? <p role="status">Sin datos disponibles.</p>
-              : trainingSummaryFailed ? <div role="alert"><p>No se ha podido consultar el resumen de actividad.</p><button className="text-button" type="button" onClick={() => setTrainingSummaryRetry(value => value + 1)}>Intentar de nuevo</button></div>
-              : trainingSummary?.status === 'linked' && trainingSummary.summaryStatus === 'available' ? <div className="evolution-summary-data" role="status">{trainingSummary.summary.currentProgram && <p>Programa actual: <strong>{trainingSummary.summary.currentProgram.name}</strong></p>}{trainingSummary.summary.recentActivity && <p>{trainingSummary.summary.recentActivity.lastTrainingAt ? `Última actividad: ${dateLabel(`${trainingSummary.summary.recentActivity.lastTrainingAt}T12:00:00.000Z`)}` : 'Todavía no hay actividad reciente.'} · {trainingSummary.summary.recentActivity.sessionsLast30Days} {trainingSummary.summary.recentActivity.sessionsLast30Days === 1 ? 'entreno' : 'entrenos'} en los últimos 30 días</p>}<small>Actualizado: {dateLabel(trainingSummary.summary.asOf)}</small></div>
-              : <div className="settings-note" role="status"><strong>No conectado</strong> · {trainingSummary?.status === 'not_linked' ? 'Vincula tu cuenta de Búnker para consultar el resumen.' : 'El resumen de Búnker no está disponible en este entorno.'}</div>}
+              : memberEvolutionLoading ? <p role="status">Consultando tu historial de entrenamiento…</p>
+              : memberEvolutionFailed ? <div role="alert"><p>No se ha podido consultar tu historial.</p><button className="text-button" type="button" onClick={() => setMemberEvolutionRetry(value => value + 1)}>Intentar de nuevo</button></div>
+              : memberEvolution?.state === 'available' ? memberEvolution.workouts.length ? <div className="evolution-summary-data" role="status"><ol aria-label="Entrenamientos recientes">{[...memberEvolution.workouts].reverse().map((workout,index)=><li key={`${workout.date}-${index}`}><strong>{dateLabel(`${workout.date}T12:00:00.000Z`)}</strong><span>{workout.exercises.length} {workout.exercises.length===1?'ejercicio':'ejercicios'} · {workout.exercises.reduce((sum,exercise)=>sum+exercise.sets.length,0)} {workout.exercises.reduce((sum,exercise)=>sum+exercise.sets.length,0)===1?'serie':'series'}</span></li>)}</ol><small>Actualizado: {dateLabel(memberEvolution.asOf)}</small></div> : <p role="status">Todavía no hay entrenamientos finalizados para mostrar.</p>
+              : memberEvolution?.state === 'not_linked' ? <div className="settings-note" role="status"><strong>No conectado</strong> · Vincula tu cuenta de Búnker para consultar tu historial.</div>
+              : <p role="status">Sin datos disponibles.</p>}
           </section>
           {!evolutionSection ? <section className="evolution-list" aria-label="Secciones de Mi evolución">{evolutionSections.map(item => <button key={item.id} className="profile-link-card" type="button" onClick={() => setEvolutionSection(item.id)}><span><strong>{item.label}</strong><small>{item.description} · No conectado</small></span><span aria-hidden="true">→</span></button>)}</section> : <section className="settings-card evolution-detail" aria-labelledby="evolution-detail-title"><button className="text-button" type="button" onClick={() => setEvolutionSection(null)}>← Mi evolución</button><p className="eyebrow">{evolutionSections.find(item => item.id === evolutionSection)?.label}</p><h2 id="evolution-detail-title">{evolutionSections.find(item => item.id === evolutionSection)?.label}</h2><p>{evolutionSection === 'health' ? 'Los datos de salud requieren consentimiento expreso y permisos verificados por Platform.' : evolutionSections.find(item => item.id === evolutionSection)?.description}</p><div className="settings-note" role="status"><strong>No conectado</strong> · El contrato de Búnker 2J-089 solo permite el resumen de actividad mostrado arriba. No existe todavía un contrato miembro para mediciones, gráficos ni evaluaciones; no se consultan ni muestran esos datos. La salud permanece separada y sujeta a D02/D16–D23.</div></section>}
         </>}

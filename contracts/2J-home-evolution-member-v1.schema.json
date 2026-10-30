@@ -68,7 +68,7 @@
         "consentVersion": { "type": "integer", "minimum": 1 },
         "asOf": { "$ref": "#/$defs/utcInstant" },
         "workouts": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/workout" } },
-        "nextCursor": { "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }] }
+        "nextCursor": { "type": ["string", "null"], "maxLength": 512 }
       },
       "allOf": [
         {

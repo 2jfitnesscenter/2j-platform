@@ -40,7 +40,7 @@ import { createStaffAuth } from './staff-auth.js';
 import { createTrainingLinkTransactions, registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
 import { registerTrainingLinkReviewRoutes } from './training-link-review.js';
 import { createTrainingLinkFlow, createTrainingServiceClient, registerTrainingLinkFlowRoutes, type TrainingServiceClient } from './training-link-flow.js';
-import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, type TrainingAdapter } from './training-integration.js';
+import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, createTrainingEvolutionAdapter, type TrainingAdapter, type TrainingEvolutionAdapter } from './training-integration.js';
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
@@ -222,6 +222,7 @@ export type ServerOptions = {
   trainingCanonicalLinkingEnabled?: boolean;
   trainingSummaryEnabled?: boolean;
   trainingSummaryAdapter?: TrainingAdapter;
+  trainingEvolutionAdapter?: TrainingEvolutionAdapter;
   trainingCapabilitiesKeys?: InternalServiceKeys;
   /** One-time Training SSO (Platform -> Búnker). Off by default; never enabled implicitly. */
   trainingSsoEnabled?: boolean;
@@ -357,6 +358,21 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     } catch { return createTrainingAdapter(); }
   })()
     : createTrainingAdapter();
+  const trainingEvolutionAdapter = options.trainingSummaryEnabled === true && options.trainingServiceCallsEnabled === true
+    ? options.trainingEvolutionAdapter ?? (() => {
+      try {
+        const baseUrl = process.env.TRAINING_SERVICE_BASE_URL ?? '';
+        const keyId = process.env.TRAINING_SERVICE_KEY_ID ?? '';
+        const encodedSecret = process.env.TRAINING_SERVICE_SECRET ?? '';
+        const secret = Buffer.from(encodedSecret, 'base64url');
+        const origins = (process.env.TRAINING_SERVICE_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
+        const base = new URL(baseUrl);
+        if (!/^[A-Za-z0-9._-]{1,80}$/.test(keyId) || secret.length < 32 || secret.toString('base64url') !== encodedSecret || !origins.includes(base.origin)) return createTrainingEvolutionAdapter();
+        return createTrainingEvolutionAdapter({ enabled: true, baseUrl, allowedOrigins: origins, keyId, fetcher: globalThis.fetch,
+          signRequest: async canonical => createHmac('sha256', secret).update(Buffer.from(canonical, 'utf8')).digest('base64url') });
+      } catch { return createTrainingEvolutionAdapter(); }
+    })()
+    : createTrainingEvolutionAdapter();
   const memberOrigin = options.memberAppOrigin ?? null;
   for (const configuredOrigin of [allowedOrigin, ...(memberOrigin ? [memberOrigin] : []), ...(staffOrigin ? [staffOrigin] : [])]) {
     const parsedOrigin = new URL(configuredOrigin);
@@ -415,7 +431,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     return Boolean(row);
   };
   registerCalendarRoutes(app, client, authorizationResolver, bookingEligibilityResolver, clientAuthorizationResolver, allowMemberBooking);
-  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter, options.memberNowProvider);
+  registerClientAppRoutes(app, client, clientAuthorizationResolver, bookingEligibilityResolver, options.memberPilotBookingEnabled === true, trainingSummaryAdapter, options.memberNowProvider, trainingEvolutionAdapter);
   registerMemberBookingCohortRoutes(app, client, authorizationResolver, options.memberPilotCohortManagementEnabled === true);
   const pushEnabled = options.pushEnabled === true;
   const vapid = { publicKey: options.pushVapidPublicKey ?? process.env.PUSH_VAPID_PUBLIC_KEY ?? '', privateKey: process.env.PUSH_VAPID_PRIVATE_KEY ?? '', subject: process.env.PUSH_VAPID_SUBJECT ?? '' };

@@ -59,6 +59,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
   Object.defineProperty(dom.window.URL, 'revokeObjectURL', { configurable: true, value: () => {} });
   dom.window.HTMLAnchorElement.prototype.click = function () { downloadedFiles.push(this.download); };
   let trainingSummaryResponse = { status: 'linked', summaryStatus: 'available', summary: { trainingStatus: 'active', asOf: '2026-10-13T12:00:00.000Z', currentProgram: { name: 'Fuerza base' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } } };
+  let memberEvolutionResponse = { v: 1, state: 'available', consentVersion: 1, asOf: '2026-10-13T12:00:00.000Z', nextCursor: null, workouts: [{ date: '2026-10-12', exercises: [{ exerciseId: 'squat', sets: [{ reps: 8, completed: true }] }] }] };
   globalThis.fetch = async (url, init = {}) => {
     requests.push({ url: String(url), init });
     if (url === '/api/pilot/member/login') { assert.deepEqual(JSON.parse(init.body), { code: '2j-member-a-local' }); loggedIn = true; return new Response(JSON.stringify({ expiresAt: new Date(Date.now() + 3_600_000).toISOString() }), { headers: { 'content-type': 'application/json' } }); }
@@ -77,6 +78,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
     if (url === '/api/me/training-summary') return new Response(JSON.stringify(trainingSummaryResponse));
     if (url === '/api/me/invoices') return new Response(JSON.stringify({ items: invoices }), { headers: { 'content-type': 'application/json' } });
     if (String(url).startsWith('/api/me/invoices/') && String(url).endsWith('/pdf')) return new Response('%PDF-1.7 synthetic member invoice', { headers: { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="factura-F-2026-0001.pdf"' } });
+    if (url === '/api/me/evolution') return new Response(JSON.stringify(memberEvolutionResponse));
     return new Response('{}');
   };
   const { render, cleanup, fireEvent, within, ClientApp } = await uiHarness();
@@ -121,13 +123,12 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(ui.getByText(/4 entrenos en los últimos 30 días/));
   fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
   fireEvent.click(await ui.findByRole('button', { name: /Abrir Mi evolución/ }));
-  assert.ok(await ui.findByRole('heading', { name: 'Resumen de actividad' }));
-  assert.ok(await ui.findByText('Fuerza base'));
-  assert.ok(ui.getByText(/4 entrenos en los últimos 30 días/));
-  assert.ok(ui.getByText(/contrato 2J-089/));
+  assert.ok(await ui.findByRole('heading', { name: 'Actividad de entrenamiento' }));
+  assert.ok(await ui.findByText('1 ejercicio · 1 serie'));
+  assert.ok(ui.getByText(/Historial de entrenamientos finalizados/));
   assert.ok(ui.getByText(/Medidas y pliegues registrados\. · No conectado/));
   fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
-  trainingSummaryResponse = { status: 'linked', summaryStatus: 'blocked', reason: 'consent_required' };
+  memberEvolutionResponse = { v: 1, state: 'consent_required' };
   fireEvent.click(await ui.findByRole('button', { name: /Abrir Mi evolución/ }));
   assert.ok(await ui.findByText('Sin datos disponibles.'));
   assert.equal(ui.queryByText(/no está disponible en este entorno/), null, 'A68 consent blocks are not shown as connectivity failures');
@@ -672,7 +673,7 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   assert.ok(ui.getByText(/La demo no consulta ni envía mensajes/));
   fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
   fireEvent.click(ui.getByRole('button', { name: /Abrir Mi evolución/ }));
-  assert.ok(await ui.findByRole('heading', { name: 'Resumen de actividad' }));
+  assert.ok(await ui.findByRole('heading', { name: 'Actividad de entrenamiento' }));
   assert.ok([...ui.container.querySelectorAll('[role="status"]')].some(item => /No conectado.*DEMO.*Datos ficticios/.test(item.textContent ?? '')));
   assert.ok(ui.getByText(/Medidas y pliegues registrados\. · No conectado/));
   assert.equal(requests.length, 0);

@@ -11,7 +11,7 @@ import * as schema from '../src/schema.ts';
 import { getEffectiveEntitlements } from '../src/entitlements.ts';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
-import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
+import { buildTrainingServiceAuthHeaders, canonicalizeTrainingServiceRequest, createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler, createTrainingAdapter, createTrainingEvolutionAdapter, platformSubjectSchema, linkProposalSchema, accessGrantSchema, trainingSummarySchema } from '../src/training-integration.ts';
 import { createTrainingLinkTransactions, TRAINING_LINK_TTL_MS } from '../src/training-link-protocol.ts';
 import { createTrainingCanonicalLinkLifecycle } from '../src/training-link-lifecycle.ts';
 import { activateSettledEntitlementPeriods, materializeRecurringEntitlementPeriods } from '../src/assignment-periods.ts';
@@ -648,6 +648,30 @@ test('2J-078B identity stays person-scoped and 2J-089 summary contract is strict
   assert.equal(calls, 1);
   const failSoft = createTrainingAdapter({ enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1', fetcher: async () => new Response('bad', { status: 503 }), signRequest: async () => 'A'.repeat(43) });
   assert.deepEqual(await failSoft.getSummary(trainingUserId), { status: 'unavailable' });
+
+  const evolutionPersonId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const exportDto = { schema: '2j-home-evolution-export/v1', source: 'bunker', personId: evolutionPersonId, trainingUserId,
+    exportedAt: new Date().toISOString(), snapshotId: 'a'.repeat(64), nextCursor: null,
+    workouts: [{ date: '2026-10-23', exercises: [{ exerciseId: 'squat', sets: [{ reps: 8, completed: true }] }] }] };
+  const evolutionAdapter = createTrainingEvolutionAdapter({ enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1',
+    fetcher: async (url, init) => {
+      assert.equal(String(url), 'https://training.example.test/api/platform/v1/training-evolution');
+      assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'error'); assert.equal(init.headers['cache-control'], 'no-store');
+      const payload = JSON.parse(init.body);
+      assert.equal(payload.authorization.consent.purpose, 'home_evolution');
+      assert.equal(payload.authorization.consent.status, 'granted');
+      assert.equal(payload.authorization.accessState, 'entitled');
+      assert.equal(payload.personId, evolutionPersonId); assert.equal(payload.trainingUserId, trainingUserId);
+      return new Response(JSON.stringify(exportDto), { status: 200, headers: { 'content-type': 'application/json' } });
+    }, signRequest: async canonical => { assert.match(canonical, /\/api\/platform\/v1\/training-evolution/); return 'A'.repeat(43); } });
+  const evolution = await evolutionAdapter.getEvolution({ personId: evolutionPersonId, trainingUserId, consentVersion: 3, cursor: null, limit: 100 });
+  assert.equal(evolution.status, 'available');
+  assert.deepEqual(evolution.evolution.workouts, exportDto.workouts);
+  for (const forbiddenField of ['bodyMeasurements', 'measurements', 'bodyweight']) {
+    const leaksBodyMeasurements = createTrainingEvolutionAdapter({ enabled: true, baseUrl: 'https://training.example.test', allowedOrigins: ['https://training.example.test'], keyId: 'test-v1',
+      fetcher: async () => new Response(JSON.stringify({ ...exportDto, [forbiddenField]: [{ value: 80 }] }), { status: 200, headers: { 'content-type': 'application/json' } }), signRequest: async () => 'A'.repeat(43) });
+    assert.deepEqual(await leaksBodyMeasurements.getEvolution({ personId: evolutionPersonId, trainingUserId, consentVersion: 3, cursor: null, limit: 100 }), { status: 'unavailable' }, `strict A68 response parsing rejects ${forbiddenField}`);
+  }
 });
 
 test('Training service auth canonicalization signs request identity, method, path and raw body digest', async () => {
