@@ -69,6 +69,12 @@ export function registerClientAppRoutes(
     return row ?? null;
   }
 
+  function isPublishedEvolutionConsent<T extends { effectiveAt?: Date | string | null }>(consent: T | null | undefined): consent is T & { effectiveAt: Date | string } {
+    if (!consent?.effectiveAt) return false;
+    const effectiveAt = new Date(consent.effectiveAt).getTime();
+    return Number.isFinite(effectiveAt) && effectiveAt <= memberNow().getTime();
+  }
+
   async function appendEvolutionEvent(input: { clientId: string; personId: string | null; eventType: string; decision?: string | null; consentVersionId?: string | null; consentHash?: string | null; typedName?: string | null; idempotencyKey?: string | null; requestHash?: string | null }) {
     await db`INSERT INTO platform_member_evolution_events(client_id,person_id,event_type,decision,consent_version_id,consent_content_sha256,typed_name,idempotency_key,request_hash)
       VALUES (${input.clientId}::uuid,${input.personId}::uuid,${input.eventType},${input.decision ?? null},${input.consentVersionId ?? null}::uuid,${input.consentHash ?? null},${input.typedName ?? null},${input.idempotencyKey ?? null}::uuid,${input.requestHash ?? null})`;
@@ -79,7 +85,7 @@ export function registerClientAppRoutes(
     const personId = await canonicalPersonId(actor);
     if (!personId) return reply.code(409).send({ error: 'member_identity_unavailable' });
     const consent = await activeEvolutionConsent();
-    if (!consent || !consent.effectiveAt) return { v: 1, status: 'unpublished' as const };
+    if (!isPublishedEvolutionConsent(consent)) return { v: 1, status: 'unpublished' as const };
     const [event] = await db`SELECT event_type AS type,occurred_at AS "occurredAt" FROM platform_member_evolution_events
       WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
       ORDER BY occurred_at DESC,id DESC LIMIT 1`;
@@ -104,7 +110,7 @@ export function registerClientAppRoutes(
         const [consent] = await tx`SELECT v.id AS "versionId",v.version,v.content_sha256 AS "contentHash",v.effective_at AS "effectiveAt" FROM client_consents c
           JOIN client_consent_versions v ON v.id=c.active_version_id AND v.status='active'
           WHERE c.consent_type='home_evolution' AND c.status='active' ORDER BY c.updated_at DESC,c.id LIMIT 1 FOR SHARE OF c,v`;
-        if (!consent || !consent.effectiveAt) return { error: 'consent_unpublished' as const };
+        if (!isPublishedEvolutionConsent(consent)) return { error: 'consent_unpublished' as const };
         if (Number(consent.version) !== body.version) return { error: 'consent_version_changed' as const };
         const [latest] = await tx`SELECT event_type AS type FROM platform_member_evolution_events
           WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
@@ -134,7 +140,7 @@ export function registerClientAppRoutes(
         const [consent] = await tx`SELECT v.id AS "versionId",v.content_sha256 AS "contentHash",v.effective_at AS "effectiveAt" FROM client_consents c
           JOIN client_consent_versions v ON v.id=c.active_version_id AND v.status='active'
           WHERE c.consent_type='home_evolution' AND c.status='active' ORDER BY c.updated_at DESC,c.id LIMIT 1 FOR SHARE OF c,v`;
-        if (!consent || !consent.effectiveAt) return { error: 'consent_unpublished' as const };
+        if (!isPublishedEvolutionConsent(consent)) return { error: 'consent_unpublished' as const };
         const [latest] = await tx`SELECT event_type AS type FROM platform_member_evolution_events
           WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
           ORDER BY occurred_at DESC,id DESC LIMIT 1`;
@@ -252,7 +258,7 @@ export function registerClientAppRoutes(
     const entitled = entitlements.effective.assignments.some(assignment => assignment.operationalAccess === 'active' && assignment.rights.some(right => right.rightType === 'training_access'));
     if (!entitled) { await audit('entitlement_required'); return { v: 1, state: 'not_available' as const }; }
     const consent = await activeEvolutionConsent();
-    if (!consent || !consent.effectiveAt) { await audit('consent_unpublished'); return { v: 1, state: 'consent_required' as const }; }
+    if (!isPublishedEvolutionConsent(consent)) { await audit('consent_unpublished'); return { v: 1, state: 'consent_required' as const }; }
     const [consentEvent] = await db`SELECT event_type AS type FROM platform_member_evolution_events
       WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
       ORDER BY occurred_at DESC,id DESC LIMIT 1`;
