@@ -2,6 +2,7 @@ import React from 'react';
 import { Button, Card, CardHeader, Icon, PageHeader, StatusChip, icons, type LucideIcon, type StatusTone } from '@2j/ui';
 import { hasProfessionalRoute, useCommandCenter, type CommandCenterModel } from './app-shell.js';
 import { PLATFORM_CHANGELOG } from './platform-changelog.js';
+import { InvoiceDialog } from './invoice-ui.js';
 
 const pendingKinds = new Set(['sensitive_review', 'document_pending', 'consent_pending', 'overdue_checkin', 'pending_transfers']);
 
@@ -208,19 +209,26 @@ function ExpiringPlansCard({ plans }: { plans: NonNullable<NonNullable<CommandCe
 }
 
 /** Últimos cobros y devoluciones registrados (no es el historial de auditoría, que vive en Actividad). */
-function RecentMovementsCard({ movements }: { movements: NonNullable<NonNullable<CommandCenterModel['commercial']>['recentMovements']> }) {
-  return <Card as="section" padding="none" className="summary-card" aria-labelledby="summary-movements-title">
+function RecentMovementsCard({ movements, canReadInvoices }: { movements: NonNullable<NonNullable<CommandCenterModel['commercial']>['recentMovements']>; canReadInvoices: boolean }) {
+  const [invoice, setInvoice] = React.useState<{ chargeId: string; title: string } | null>(null);
+  return <>
+  <Card as="section" padding="none" className="summary-card" aria-labelledby="summary-movements-title">
     <div className="summary-card-head"><CardHeader title="Últimos movimientos" titleId="summary-movements-title" description="Cobros y devoluciones recientes" actions={<Button variant="ghost" size="sm" href="#economics">Ver economía</Button>} /></div>
     {movements.length === 0
       ? <div className="summary-empty"><span className="summary-empty-icon"><Icon icon={icons.Wallet} size={24} /></span><strong>Sin movimientos registrados</strong><span>Los cobros y devoluciones aparecerán aquí.</span></div>
       : <ul className="summary-list" aria-label="Últimos movimientos">{movements.map(movement => <li key={movement.id}>
-        <ItemLink href="#economics" className="summary-row">
-          <span className="summary-row-copy"><strong>{movement.concept}</strong><small>{movement.clientName} · <time dateTime={movement.occurredAt}>{date(movement.occurredAt)}</time></small></span>
-          <span className="summary-row-meta"><StatusChip tone={movement.kind === 'refund' ? 'danger' : 'success'}>{movement.kind === 'refund' ? 'Devolución' : 'Cobro'}</StatusChip><strong>{movement.kind === 'refund' ? '−' : ''}{money(movement.amountCents)}</strong></span>
-          <Icon icon={icons.ChevronRight} size={16} className="summary-row-arrow" />
-        </ItemLink>
+        <div className="summary-movement-item">
+          <ItemLink href="#economics" className="summary-row">
+            <span className="summary-row-copy"><strong>{movement.concept}</strong><small>{movement.clientName} · <time dateTime={movement.occurredAt}>{date(movement.occurredAt)}</time></small></span>
+            <span className="summary-row-meta"><StatusChip tone={movement.kind === 'refund' ? 'danger' : 'success'}>{movement.kind === 'refund' ? 'Devolución' : 'Cobro'}</StatusChip><strong>{movement.kind === 'refund' ? '−' : ''}{money(movement.amountCents)}</strong></span>
+            <Icon icon={icons.ChevronRight} size={16} className="summary-row-arrow" />
+          </ItemLink>
+          {canReadInvoices && movement.chargeId && <Button size="sm" onClick={() => setInvoice({ chargeId: movement.chargeId!, title: `${movement.clientName} · ${movement.concept}` })}>Factura y ticket</Button>}
+        </div>
       </li>)}</ul>}
-  </Card>;
+  </Card>
+  {invoice && <InvoiceDialog chargeId={invoice.chargeId} title={invoice.title} onClose={() => setInvoice(null)} />}
+  </>;
 }
 
 const fullDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'long', year: 'numeric' });
@@ -300,7 +308,7 @@ export function CommandCenter() {
 
     {(expiringPlans || recentMovements) && <div className={`summary-columns ${expiringPlans && recentMovements ? '' : 'is-single'}`}>
       {expiringPlans && <ExpiringPlansCard plans={expiringPlans} />}
-      {recentMovements && <RecentMovementsCard movements={recentMovements} />}
+      {recentMovements && <RecentMovementsCard movements={recentMovements} canReadInvoices={permissions.invoices === true} />}
     </div>}
 
     {permissions.staff && data.team && <Card as="section" className="summary-team" aria-labelledby="summary-team-title">

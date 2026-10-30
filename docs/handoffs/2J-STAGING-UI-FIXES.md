@@ -4,7 +4,7 @@
 
 - `Staff > profesional > Horario`: conservar la referencia al formulario antes de esperar la respuesta y reiniciarlo tras guardar.
 - `Configuración > Centro`: quitar los campos de horario duplicados y enlazar con la pestaña conectada `Horario y turnos`.
-- App Shell: mostrar `Staging` para los dominios `2jfit.es` y `2jfit.com`, sin alterar la autenticación ni la configuración del entorno.
+- App Shell: mostrar `Staging` para `2jfit.com`; los dominios `.es` ya no se etiquetan como staging.
 
 ## Verificación
 

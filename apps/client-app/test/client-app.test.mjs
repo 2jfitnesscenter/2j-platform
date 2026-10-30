@@ -98,7 +98,7 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(ui.getByText('Programa actual: Fuerza base'));
   assert.ok(ui.getByText(/4 entrenos en los últimos 30 días/));
   fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
-  fireEvent.click(ui.getByRole('button', { name: /Abrir buzón/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Notificaciones.*avisos sin leer/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));
   assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
   fireEvent.click(within(ui.getByRole('navigation', { name: 'Navegación principal' })).getByRole('button', { name: 'Ajustes' }));
@@ -120,7 +120,7 @@ test('preference save failure keeps the immediate appearance and offers a workin
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
   Object.defineProperties(globalThis, { window:{configurable:true,value:dom.window}, document:{configurable:true,value:dom.window.document}, navigator:{configurable:true,value:dom.window.navigator}, HTMLElement:{configurable:true,value:dom.window.HTMLElement}, sessionStorage:{configurable:true,value:dom.window.sessionStorage} });
   let patchAttempts=0; let savedAppearance='dark';
-  globalThis.fetch=async (input,init={})=>{const url=String(input);if(url==='/api/me/preferences'&&init.method==='PATCH'){patchAttempts++;if(patchAttempts===1)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});savedAppearance=JSON.parse(init.body).appearance;return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));}if(url==='/api/me/preferences')return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'a',firstName:'Eva',lastName:'Piloto',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[],active:[],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response('[]');if(url==='/api/me/booking-access')return new Response(JSON.stringify({enabled:false}));if(url==='/api/me/news')return new Response(JSON.stringify({items:[],featured:null}));if(url==='/api/me/store/catalog'||url==='/api/me/store/purchases')return new Response(JSON.stringify({items:[]}));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:0}));return new Response('{}');};
+  globalThis.fetch=async (input,init={})=>{const url=String(input);if(url==='/api/me/preferences'&&init.method==='PATCH'){patchAttempts++;if(patchAttempts===1)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});savedAppearance=JSON.parse(init.body).appearance;return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));}if(url==='/api/me/preferences')return new Response(JSON.stringify({preferences:{appearance:savedAppearance,language:'es'}}));if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'a',firstName:'Eva',lastName:'Piloto',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[],active:[],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response('[]');if(url==='/api/me/booking-access')return new Response(JSON.stringify({enabled:false}));if(url==='/api/me/news')return new Response(JSON.stringify({items:[],featured:null}));if(url==='/api/me/store/catalog'||url==='/api/me/store/purchases')return new Response(JSON.stringify({items:[]}));if(url==='/api/client-portal/conversation')return new Response(JSON.stringify({conversation:null,messages:[]}));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:0}));return new Response('{}');};
   const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));
   assert.ok(await ui.findByRole('heading',{name:'Hola, Eva'}));fireEvent.click(ui.getByRole('button',{name:'Ajustes'}));assert.ok(await ui.findByRole('heading',{name:'Apariencia'}));assert.ok(ui.getByRole('heading',{name:'Cuenta y seguridad'}));assert.ok(ui.getByRole('heading',{name:'Privacidad'}));assert.ok(ui.getByRole('heading',{name:'Notificaciones push'}));assert.ok(ui.getByText(/recuperación de cuenta y los métodos de acceso avanzados aún no están disponibles/i));assert.equal(ui.queryByRole('button',{name:/Cambiar contraseña|Añadir passkey|Recuperar cuenta/i}),null);fireEvent.click(ui.getByRole('radio',{name:/Claro/}));assert.ok(await ui.findByRole('alert'));assert.ok(ui.container.querySelector('.client-app')?.classList.contains('hub-theme-light'));assert.ok(ui.getByRole('button',{name:'Reintentar'}));fireEvent.click(ui.getByRole('button',{name:'Reintentar'}));assert.ok(await ui.findByText('Preferencia guardada.'));assert.equal(savedAppearance,'light');assert.equal(patchAttempts,2);
   cleanup();dom.window.close();
@@ -164,7 +164,7 @@ test('client notification bell opens a self-scoped inbox and marks notices read'
   const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/'});
   Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage},crypto:{configurable:true,value:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'}}});
   const item={id:'99999999-9999-4999-8999-999999999999',type:'booking_confirmed',title:'Reserva confirmada',body:'Tu plaza está confirmada.',deeplink:'/bookings',createdAt:'2026-10-10T10:00:00.000Z',readAt:null};
-  let failRead=true;globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}),{status:200});if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[{id:'12111111-1111-4111-8111-111111111111',planName:'Plan 2J',kind:'monthly',status:'active',startsOn:'2026-10-01',endsOn:null,lastEvent:'activated',rights:[],modules:[]}],active:[{id:'12111111-1111-4111-8111-111111111111',planName:'Plan 2J',kind:'monthly',status:'active',startsOn:'2026-10-01',endsOn:null,lastEvent:'activated',rights:[],modules:[]}],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){if(failRead)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
+  let failRead=true;globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}),{status:200});if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[{id:'12111111-1111-4111-8111-111111111111',planName:'Plan 2J',kind:'monthly',status:'active',startsOn:'2026-10-01',endsOn:null,lastEvent:'activated',rights:[],modules:[]}],active:[{id:'12111111-1111-4111-8111-111111111111',planName:'Plan 2J',kind:'monthly',status:'active',startsOn:'2026-10-01',endsOn:null,lastEvent:'activated',rights:[],modules:[]}],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/client-portal/conversation')return new Response(JSON.stringify({conversation:null,messages:[]}));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){if(failRead)return new Response(JSON.stringify({error:'temporary_failure'}),{status:503});item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
   const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));
   const bell=await ui.findByRole('button',{name:/Notificaciones, 1 sin leer/});fireEvent.click(bell);await ui.findByRole('heading',{name:'Notificaciones'});assert.ok(ui.getByText('Tu plaza está confirmada.'));fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Mis reservas'});assert.ok(await ui.findByText('No se ha podido marcar como leída. Puedes volver a intentarlo.'));assert.ok(await ui.findByRole('button',{name:/Notificaciones, 1 sin leer/}));assert.equal(item.readAt,null);
   failRead=false;fireEvent.click(ui.getByRole('button',{name:/Notificaciones, 1 sin leer/}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Reserva confirmada'}));await ui.findByRole('heading',{name:'Mis reservas'});await ui.findByRole('button',{name:'Notificaciones'});assert.equal(item.readAt!==null,true);
@@ -177,8 +177,8 @@ test('informational client messages are marked read without opening a nonexisten
   const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/'});
   Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage},crypto:{configurable:true,value:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'}}});
   const item={id:'99999999-9999-4999-8999-999999999998',type:'message_received',title:'Nuevo mensaje del centro',body:'El centro te ha enviado un mensaje.',deeplink:null,createdAt:'2026-10-10T10:00:00.000Z',readAt:null};
-  globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[],active:[],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
-  const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));fireEvent.click(await ui.findByRole('button',{name:/Notificaciones/}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Nuevo mensaje del centro'}));await ui.findByText('Este aviso es informativo; los mensajes del centro todavía no están disponibles aquí.');assert.equal(item.readAt!==null,true);assert.equal(ui.queryByRole('heading',{name:'Mensajes'}),null);item.deeplink='https://evil.test';item.readAt=null;fireEvent.click(ui.getByRole('button',{name:'Notificaciones'}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Nuevo mensaje del centro'}));assert.ok(await ui.findByText('Este aviso no tiene un destino disponible.'));assert.ok(ui.getByRole('heading',{name:'Notificaciones'}));cleanup();dom.window.close();
+  globalThis.fetch=async(input,init={})=>{const url=String(input);if(url==='/api/me')return new Response(JSON.stringify({profile:{id:'11111111-1111-4111-8111-111111111111',firstName:'María',lastName:'González',email:null,status:'active'}}));if(url==='/api/me/membership')return new Response(JSON.stringify({assignments:[],active:[],asOf:'2026-10-23',timezone:'Atlantic/Canary'}));if(url==='/api/me/bookings')return new Response(JSON.stringify({reservations:[],waitlist:[]}));if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));if(url==='/api/client-portal/conversation')return new Response(JSON.stringify({conversation:null,messages:[]}));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:item.readAt?0:1}));if(url==='/api/me/notifications')return new Response(JSON.stringify({items:[item],nextBefore:null,nextBeforeId:null}));if(url.endsWith('/read')&&init.method==='PATCH'){item.readAt=new Date().toISOString();return new Response(JSON.stringify({id:item.id,readAt:item.readAt}));}return new Response('{}');};
+  const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp));fireEvent.click(await ui.findByRole('button',{name:/Notificaciones/}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Nuevo mensaje del centro'}));await ui.findByRole('heading',{name:'Mensajes con el centro'});assert.equal(item.readAt!==null,true);assert.equal(ui.queryByRole('heading',{name:'Mensajes'}),null);item.deeplink='https://evil.test';item.readAt=null;fireEvent.click(ui.getByRole('button',{name:'Notificaciones'}));await ui.findByRole('heading',{name:'Notificaciones'});fireEvent.click(ui.getByRole('button',{name:'Abrir aviso: Nuevo mensaje del centro'}));assert.ok(await ui.findByText('Este aviso no tiene un destino disponible.'));assert.ok(ui.getByRole('heading',{name:'Notificaciones'}));cleanup();dom.window.close();
 });
 
 test('Member books one session after server eligibility and retries a lost response with the same key', async () => {
@@ -285,9 +285,10 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
   const service = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Funcional' };
   const date = '2026-10-13';
   const base = { serviceId: service.id, serviceName: service.name, areaName: 'La Sala', professionalName: 'Alex Rivera', durationMinutes: 45, capacity: 8, waitlistCount: 0, isIndividual: false, status: 'scheduled', myReservationStatus: null, myWaitlistStatus: null };
-  const free = { ...base, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: '2026-10-13T17:00:00.000Z', occupiedCount: 3, availability: 'available', availabilityReason: null };
-  const full = { ...base, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', startsAt: '2026-10-13T19:00:00.000Z', occupiedCount: 8, waitlistCount: 1, availability: 'full', availabilityReason: null };
-  const details = { [free.id]: { ...free, eligible: true, canJoinWaitlist: false, availableAlternatives: [] }, [full.id]: { ...full, eligible: false, eligibilityReason: 'session_full', canJoinWaitlist: true, availableAlternatives: [] } };
+  const free = { ...base, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', startsAt: '2026-10-13T17:00:00.000Z', occupiedCount: 3, availability: { status: 'available', reason: null, canJoinWaitlist: false } };
+  const full = { ...base, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', startsAt: '2026-10-13T19:00:00.000Z', occupiedCount: 8, waitlistCount: 1, availability: { status: 'full', reason: null, canJoinWaitlist: true } };
+  const fullIneligible = { ...base, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', startsAt: '2026-10-13T20:00:00.000Z', occupiedCount: 8, waitlistCount: 1, availability: { status: 'full', reason: 'no_entitlement', canJoinWaitlist: false } };
+  const details = { [free.id]: { ...free, eligible: true, canJoinWaitlist: false, availableAlternatives: [] }, [full.id]: { ...full, eligible: true, availability: { status: 'full', reason: null, canJoinWaitlist: true }, canJoinWaitlist: true, availableAlternatives: [] } };
   const mutations = []; let booked = false; let joinedWaitlist = false; let cancelled = false;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
@@ -296,13 +297,13 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
     if (url === '/api/me/booking-access') return new Response(JSON.stringify({ enabled: true }));
     if (url === '/api/me/bookings') return new Response(JSON.stringify(booked ? { reservations: [cancelled ? { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'cancelled', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false } : { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'reserved', sessionId: free.id, startsAt: free.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }], waitlist: joinedWaitlist ? [{ id: 'abababab-abab-4bab-8bab-abababababab', status: 'waiting', sessionId: full.id, startsAt: full.startsAt, durationMinutes: 45, serviceName: service.name, areaName: 'La Sala', sessionStatus: 'scheduled', isIndividual: false }] : [] } : { reservations: [], waitlist: [] }));
     if (url === '/api/me/booking-services') return new Response(JSON.stringify({ services: [service] }));
-    if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [free, full] }));
+    if (url.startsWith('/api/me/sessions?')) return new Response(JSON.stringify({ sessions: [free, full, fullIneligible] }));
     if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
     if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
     if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
     if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
     if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
-    if (url === `/api/me/sessions/${free.id}` || url === `/api/me/sessions/${full.id}`) { const sessionId = url.split('/').at(-1); return new Response(JSON.stringify({ session: details[sessionId] })); }
+    if (url === `/api/me/sessions/${free.id}` || url === `/api/me/sessions/${full.id}` || url === `/api/me/sessions/${fullIneligible.id}`) { const sessionId = url.split('/').at(-1); return new Response(JSON.stringify({ session: details[sessionId] ?? { ...fullIneligible, eligible: false, eligibilityReason: 'waitlist_not_allowed', canJoinWaitlist: false, availableAlternatives: [] } })); }
     if (url.endsWith('/cancellation-preview')) return new Response(JSON.stringify({ canCancel: true, cancellation: { summary: 'Si cancelas ahora, recuperarás la sesión.' } }));
     if (init.method === 'POST' && (url.endsWith('/reservations') || url.endsWith('/waitlist'))) { mutations.push({ url, key: new Headers(init.headers).get('idempotency-key') }); if(url.endsWith('/waitlist')) joinedWaitlist=true; else booked = true; return new Response(JSON.stringify({ status: url.endsWith('/waitlist') ? 'waiting' : 'reserved' }), { status: 201 }); }
     if (init.method === 'PATCH' && url.endsWith('/cancel')) { cancelled = true; return new Response(JSON.stringify({ status: 'cancelled' })); }
@@ -313,10 +314,11 @@ test('Member sees compact class cards, confirms waitlist, and finds both in Pró
   fireEvent.click(ui.getByRole('button', { name: /Ver horarios y reservar/ }));
   fireEvent.click(await ui.findByRole('button', { name: /Funcional/ }));
   fireEvent.click(ui.getByRole('button', { name: `${Number(date.slice(-2))}, hay sesiones` }));
-  assert.equal(ui.container.querySelectorAll('.session-card').length, 2);
+  assert.equal(ui.container.querySelectorAll('.session-card').length, 3);
   assert.doesNotMatch(ui.container.textContent, /Repetir cada semana|Todos los lunes|Reserva recurrente/i);
-  assert.equal(ui.container.querySelectorAll('.session-card-detail').length, 2);
+  assert.equal(ui.container.querySelectorAll('.session-card-detail').length, 3);
   assert.equal(ui.container.querySelectorAll('.session-waitlist-button').length, 1);
+  assert.equal(ui.container.querySelectorAll('.session-card')[2].querySelector('.session-waitlist-button'), null, 'no se ofrece lista de espera sin elegibilidad explícita del servidor');
   assert.equal(ui.container.querySelectorAll('.session-card')[1].textContent.includes(clientAppTestHelpers.timeLabel(full.startsAt)), true);
   assert.equal(ui.container.querySelectorAll('.session-card')[1].textContent.includes('en espera'), false);
   fireEvent.click(ui.container.querySelectorAll('.session-card-detail')[0]);
@@ -504,7 +506,7 @@ test('profile completes only the signed-in client’s form and records an explic
   assert.ok(ui.getByText('Pendiente de completar'));
   assert.ok(ui.getAllByText('Requerido').length >= 2);
   assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
-  fireEvent.click(ui.getByRole('button', { name: /Abrir buzón/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Notificaciones.*avisos sin leer/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));
   assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
   fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
@@ -628,7 +630,12 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   assert.ok(ui.getByText('Fuerza funcional'));
   assert.ok(ui.getAllByText(/8 disponibles/).length >= 2);
   assert.ok(ui.getByText('maria.gonzalez@example.test'));
-  assert.ok(ui.getByRole('button', { name: /Abrir buzón/ }));
+  assert.ok(ui.getByRole('button', { name: /Mensajes con el centro/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Mensajes con el centro/ }));
+  assert.ok(await ui.findByRole('heading', { name: 'Mensajes con el centro' }));
+  assert.ok(ui.getByText(/La demo no consulta ni envía mensajes/));
+  assert.equal(requests.length, 0);
+  fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
   assert.equal(within(navigation).getByRole('button', { name: 'Perfil' }).getAttribute('aria-current'), 'page');
   fireEvent.click(within(navigation).getByRole('button', { name: 'Inicio' }));
   for (const oldLabel of ['Reservar', 'Entrenar', 'Centro']) assert.equal(within(navigation).queryByRole('button', { name: oldLabel, exact: true }), null);
@@ -756,7 +763,7 @@ test('Inicio reads Center News independently from notifications and opens a newe
     if(url==='/api/me/booking-access')return new Response(JSON.stringify({enabled:false}));
     if(url.startsWith('/api/me/sessions?'))return new Response(JSON.stringify({sessions:[]}));
     if(url==='/api/client-portal/form-assignments'||url==='/api/client-portal/consents')return new Response(JSON.stringify([]));
-    if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:0}));
+    if(url==='/api/client-portal/conversation')return new Response(JSON.stringify({conversation:null,messages:[]}));if(url==='/api/me/notifications/unread-count')return new Response(JSON.stringify({count:0}));
     if(url==='/api/me/news'){newsRequests++;return new Response(JSON.stringify({items:[newer,olderFeatured],featured:olderFeatured}));}
     if(url.startsWith('/api/me/notifications')){notificationListRequests++;return new Response(JSON.stringify({items:[{id:'44444444-4444-4444-8444-444444444444',type:'center_notice',title:'No debe aparecer en Noticias',body:'Aviso de sistema.',createdAt:'2026-10-03T10:00:00Z',readAt:null,deeplink:null}]}));}
     throw new Error(`Unexpected request ${url}`);
@@ -816,7 +823,7 @@ test('preview Store uses fictional nutrition and merchandising fixtures without 
   const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp,{previewModeOverride:true}));
   fireEvent.click(ui.getByRole('button',{name:/Tienda/}));assert.ok(ui.getByRole('heading',{name:'Tienda'}));assert.ok(ui.getByRole('heading',{name:'Proteína 2J'}));assert.ok(ui.getByText('Creatina'));assert.equal(ui.queryByRole('button',{name:/Comprar|Carrito|Pagar/}),null);
   fireEvent.click(ui.getByRole('button',{name:'Merchandising'}));assert.ok(ui.getByRole('heading',{name:'Camiseta 2J'}));assert.ok(ui.getByText('Sudadera 2J'));
-  fireEvent.click(ui.getByRole('button',{name:'Perfil'}));assert.ok(ui.getByText('Proteína 2J · Chocolate · 900 g × 1'));assert.equal(fetchCount,0);
+  fireEvent.click(ui.getByRole('button',{name:'Perfil'}));assert.ok(ui.getByText('Proteína 2J · Chocolate · 900 g × 1'));assert.ok(ui.getByText('Cuota mensual · ejemplo'));assert.ok(ui.getByText('Pendiente de pago'));assert.ok(ui.getByText('Ejemplo ficticio · no refleja una cuenta real.'));assert.equal(fetchCount,0);
   cleanup();dom.window.close();
 });
 
@@ -856,5 +863,97 @@ test('live Store reads Platform catalog and purchase history, including D31 acce
   assert.equal(requests.some(request => request.url === '/api/me/store/catalog'), true);
   assert.equal(requests.some(request => request.url === '/api/me/store/purchases'), true);
   assert.equal(requests.some(request => request.method !== 'GET'), false);
+  cleanup(); dom.window.close();
+});
+
+test('Home Buzón reads and sends a member message through the authenticated Platform conversation API', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '11111111-1111-4111-8111-111111111111' } },
+  });
+  const conversation = { id: '22222222-2222-4222-8222-222222222222', status: 'active', lastMessageAt: null };
+  const sent = [];
+  const staffReply = { id: '55555555-5555-4555-8555-555555555555', body: 'El equipo te contestará por aquí.', createdAt: '2026-10-29T11:00:00.000Z', senderKind: 'staff', readByClient: false };
+  let readReceipt = false;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '33333333-3333-4333-8333-333333333333', firstName: 'Eva', lastName: 'Piloto', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
+    if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
+    if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    if (url === '/api/client-portal/conversation') return new Response(JSON.stringify({ conversation: sent.length ? conversation : null, messages: readReceipt ? [...sent, { ...staffReply, readByClient: true }] : [...sent, ...(sent.length ? [staffReply] : [])] }));
+    if (url === '/api/client-portal/conversations' && init.method === 'POST') return new Response(JSON.stringify(conversation), { status: 201 });
+    if (url === `/api/client-portal/conversations/${conversation.id}/messages` && init.method === 'POST') {
+      assert.equal(init.headers['idempotency-key'], '11111111-1111-4111-8111-111111111111');
+      const payload = JSON.parse(init.body); assert.equal(payload.body, 'Necesito ayuda con mi cuota.');
+      sent.push({ id: '44444444-4444-4444-8444-444444444444', body: payload.body, createdAt: '2026-10-29T10:00:00.000Z', senderKind: 'client', readByClient: null });
+      return new Response(JSON.stringify(sent[0]), { status: 201 });
+    }
+    if (url === `/api/client-portal/messages/${staffReply.id}/read` && init.method === 'POST') { readReceipt = true; return new Response(JSON.stringify({ read: true })); }
+    throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
+  };
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Eva' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
+  fireEvent.click(await ui.findByRole('button', { name: /Mensajes con el centro/ }));
+  assert.ok(await ui.findByRole('heading', { name: 'Mensajes con el centro' }));
+  const input = ui.getByLabelText('Tu mensaje');
+  fireEvent.change(input, { target: { value: 'Necesito ayuda con mi cuota.' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Enviar mensaje' }));
+  assert.ok(await ui.findByText('Necesito ayuda con mi cuota.'));
+  assert.equal(sent.length, 1);
+  fireEvent.click(await ui.findByRole('button', { name: 'Marcar como leído' }));
+  assert.ok(await ui.findByText('El equipo te contestará por aquí.'));
+  assert.equal(readReceipt, true);
+  cleanup(); dom.window.close();
+});
+
+test('Home assigns a fresh idempotency key if a member edits a message after an ambiguous send failure', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator }, HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: (() => { let id = 0; return () => `11111111-1111-4111-8111-${String(++id).padStart(12, '0')}`; })() } },
+  });
+  const conversation = { id: '22222222-2222-4222-8222-222222222222', status: 'active', lastMessageAt: null };
+  const keys = [];
+  let sends = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === '/api/me') return new Response(JSON.stringify({ profile: { id: '33333333-3333-4333-8333-333333333333', firstName: 'Eva', lastName: 'Piloto', email: null, status: 'active' } }));
+    if (url === '/api/me/membership') return new Response(JSON.stringify({ assignments: [], active: [], asOf: '2026-10-23', timezone: 'Atlantic/Canary' }));
+    if (url === '/api/client-portal/form-assignments' || url === '/api/client-portal/consents') return new Response('[]');
+    if (url === '/api/me/preferences') return new Response(JSON.stringify({ preferences: { appearance: 'dark', language: 'es' } }));
+    if (url === '/api/me/news') return new Response(JSON.stringify({ items: [], featured: null }));
+    if (url === '/api/me/store/catalog' || url === '/api/me/store/purchases') return new Response(JSON.stringify({ items: [] }));
+    if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
+    if (url === '/api/client-portal/conversation') return new Response(JSON.stringify({ conversation, messages: [] }));
+    if (url === `/api/client-portal/conversations/${conversation.id}/messages` && init.method === 'POST') {
+      keys.push(init.headers['idempotency-key']); sends++;
+      if (sends === 1) return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500 });
+      return new Response(JSON.stringify({ id: '44444444-4444-4444-8444-444444444444', body: JSON.parse(init.body).body, createdAt: '2026-10-29T10:00:00.000Z', senderKind: 'client', readByClient: null }), { status: 201 });
+    }
+    throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
+  };
+  const { render, cleanup, fireEvent, ClientApp } = await uiHarness();
+  const ui = render(React.createElement(ClientApp));
+  assert.ok(await ui.findByRole('heading', { name: 'Hola, Eva' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
+  fireEvent.click(await ui.findByRole('button', { name: /Mensajes con el centro/ }));
+  const input = await ui.findByLabelText('Tu mensaje');
+  fireEvent.change(input, { target: { value: 'Primer texto.' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Enviar mensaje' }));
+  assert.ok(await ui.findByText(/No se ha podido enviar el mensaje/));
+  fireEvent.change(input, { target: { value: 'Texto corregido.' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Enviar mensaje' }));
+  assert.ok(await ui.findByText('Texto corregido.'));
+  assert.equal(keys.length, 2);
+  assert.notEqual(keys[0], keys[1]);
   cleanup(); dom.window.close();
 });

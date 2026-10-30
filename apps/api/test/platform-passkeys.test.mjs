@@ -163,7 +163,7 @@ test('staff passkey login is isolated, bound to an active staff facet and resolv
   assert.equal((await sql`SELECT count(*)::int AS n FROM platform_staff_session_audit_events WHERE person_id=${personId} AND action IN ('session.created','session.revoked')`)[0].n, 4);
 });
 
-test('only the explicitly configured owner person receives owner.panel.read and it does not require a staff facet', async () => {
+test('only the explicitly configured owner person receives owner.panel.read and the A29 link-issue grant without a staff facet', async () => {
   actor = { actorId: 'qa-admin', role: 'admin' };
   const ownerPersonId = await createPerson();
   const ownerApp = buildServer(process.env.DATABASE_URL, { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: RP_ID, staffAuthEnabled: true, staffAppOrigin: STAFF_ORIGIN, staffPasskeyRpId: RP_ID, staffAuthMaxRequestsPerMinute: 10_000, ownerPersonId });
@@ -181,7 +181,7 @@ test('only the explicitly configured owner person receives owner.panel.read and 
     const session = await ownerApp.inject({ method: 'GET', url: '/api/staff/auth/session', headers: { cookie } });
     assert.equal(session.statusCode, 200); assert.equal(session.json().role, 'owner'); assert.equal(session.json().owner, true);
     const capabilities = await ownerApp.inject({ method: 'GET', url: '/api/session/capabilities', headers: { cookie } });
-    assert.equal(capabilities.statusCode, 200); assert.equal(capabilities.json().ownerPanel, true); assert.equal(capabilities.json().staff, false);
+    assert.equal(capabilities.statusCode, 200); assert.equal(capabilities.json().ownerPanel, true); assert.equal(capabilities.json().staff, false); assert.equal(capabilities.json().linkReviewManage, true);
     assert.equal((await ownerApp.inject({ method: 'GET', url: '/api/staff/capabilities', headers: { cookie } })).statusCode, 403, 'owner identity does not inherit admin staff capabilities');
     assert.equal((await sql`SELECT count(*)::int AS n FROM platform_person_staff WHERE person_id=${ownerPersonId}`)[0].n, 0);
   } finally { await ownerApp.close(); }

@@ -670,12 +670,6 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       return reply.code(result.replay ? 200 : 201).send({ id:result.id, status:'draft', officialNumber:null, officiallyIssued:false });
     } catch { return reply.code(500).send({ error:'invoice_draft_failed' }); }
   });
-  app.post('/api/economics/invoice-drafts/:draftId/issue', async (request, reply) => {
-    if (!await auth(request, reply, 'billing.invoices.manage')) return;
-    reply.header('Cache-Control','no-store');
-    const params = z.object({ draftId: uuid }).safeParse(request.params); if (!params.success) return reply.code(400).send({ error:'validation_error' });
-    return reply.code(423).send({ error:'legal_fiscal_gate_closed', message:'La emisión oficial seguirá bloqueada hasta aprobar requisitos fiscales y legales.' });
-  });
   app.get('/api/economics/document-policy',async(request,reply)=>{
     if(!await auth(request,reply,'billing.read-tax'))return;
     const [policy]=await db`SELECT retention_months AS "retentionMonths",updated_by AS "updatedBy",updated_at AS "updatedAt" FROM economic_document_policy WHERE singleton=true`;

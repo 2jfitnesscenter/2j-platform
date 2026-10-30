@@ -265,6 +265,17 @@ test("versioned forms preserve old responses, require PAR-Q review and deduplica
   });
   assert.equal(version.statusCode, 201, version.body);
   assert.equal(version.json().version, 2);
+  const draftVersions = await admin.inject({ method: "GET", url: `/api/forms/${form.json().id}/versions?limit=1` });
+  assert.equal(draftVersions.statusCode, 200, draftVersions.body);
+  assert.equal(draftVersions.json().items[0].status, "draft");
+  assert.deepEqual(draftVersions.json().items[0].fields, [
+    { id: "energy", label: "Energía", type: "scale", required: true },
+    { id: "sleep", label: "Sueño", type: "scale", required: false },
+  ]);
+  assert.equal("createdBy" in draftVersions.json().items[0], false, "history exposes schema metadata only, not staff identity or responses");
+  assert.equal((await trainer.inject({ method: "GET", url: `/api/forms/${form.json().id}/versions` })).statusCode, 403);
+  assert.equal((await reception.inject({ method: "GET", url: `/api/forms/${form.json().id}/versions` })).statusCode, 403);
+  assert.equal((await portal.inject({ method: "GET", url: `/api/forms/${form.json().id}/versions` })).statusCode, 401);
   const parq = await admin.inject({
     method: "POST",
     url: "/api/forms",
@@ -495,6 +506,23 @@ test("consent acceptance snapshots exact content, is idempotent and cannot be al
     sql`UPDATE client_consent_acceptances SET typed_name='Changed' WHERE client_id=${id}`,
     { code: "55000" },
   );
+
+  const archivedConsent = await admin.inject({ method: "POST", url: "/api/consents", payload: {
+    name: `Consentimiento archivado ${randomUUID()}`, consentType: "other", required: false,
+    title: "Versión conservada", body: "Historial que debe permanecer visible",
+  } });
+  assert.equal(archivedConsent.statusCode, 201, archivedConsent.body);
+  assert.equal((await admin.inject({ method: "POST", url: `/api/consents/${archivedConsent.json().id}/archive` })).statusCode, 200);
+  const activation = await admin.inject({ method: "POST", url: `/api/consents/${archivedConsent.json().id}/activate` });
+  assert.equal(activation.statusCode, 409, activation.body);
+  assert.equal(activation.json().error, "consent_archived");
+  const archivedState = await sql`SELECT c.status,c.active_version_id,v.status AS version_status FROM client_consents c JOIN client_consent_versions v ON v.consent_id=c.id WHERE c.id=${archivedConsent.json().id}`;
+  assert.equal(archivedState[0].status, "archived");
+  assert.equal(archivedState[0].active_version_id, null);
+  assert.equal(archivedState[0].version_status, "draft", "archiving preserves the draft history without publishing it");
+  const archivedHistory = await admin.inject({ method: "GET", url: `/api/consents/${archivedConsent.json().id}/versions` });
+  assert.equal(archivedHistory.statusCode, 200);
+  assert.equal(archivedHistory.json().items[0].title, "Versión conservada");
 });
 
 test("sensitive review content is not written to server logs",async()=>{

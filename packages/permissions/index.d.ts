@@ -2,6 +2,7 @@ export type ApprovedRole = 'admin' | 'trainer' | 'reception-management' | 'accou
 
 export interface AuthorizationContext {
   readonly actorId: string;
+  readonly personId?: string;
   readonly role: ApprovedRole;
   readonly deniedPermissions?: readonly string[];
   readonly explicitPermissions?: readonly string[];

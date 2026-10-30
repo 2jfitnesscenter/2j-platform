@@ -2,6 +2,7 @@ import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, PageHeader, SegmentedControl, StatusChip, icons, type StatusTone } from '@2j/ui';
 import { NewsPage } from './news-page.js';
+import { FormsConsentSettings } from './forms-consent-settings.js';
 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
@@ -148,10 +149,7 @@ function BusinessTab() {
 }
 
 function ConsentsTab() {
-  return <Card as="section" aria-labelledby="gym-consents-title">
-    <CardHeader title="Consentimientos" titleId="gym-consents-title" level={2} description="Formularios y consentimientos de los clientes." />
-    <EmptyState icon={icons.ShieldCheck} title="Se gestionan desde la ficha de cada cliente">Los formularios y consentimientos se asignan y revisan en la pestaña Documentos de cada cliente. La gestión central de versiones llegará con la validación jurídica (D16–D23 y D33); hasta entonces no se muestra aquí ningún consentimiento de salud.<p><a className="button secondary" href="#clients">Ir a Clientes</a></p></EmptyState>
-  </Card>;
+  return <FormsConsentSettings />;
 }
 
 /** Mi gimnasio (paridad visual 13): Panel (opción A de #96) · Datos del negocio · Novedades · Consentimientos. */

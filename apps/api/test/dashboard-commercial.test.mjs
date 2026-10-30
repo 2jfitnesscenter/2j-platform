@@ -81,6 +81,8 @@ test('Resumen lists the latest payments and the plans that expire within a week,
   const latest = commercial.recentMovements[0];
   assert.equal(latest.kind, 'payment');
   assert.equal(latest.amountCents, 3300);
+  assert.equal(latest.chargeId, charge.json().id, 'Resumen exposes the charge id needed to open its invoice documents');
+  assert.equal((await center()).permissions.invoices, true, 'invoice document links follow the server-side billing.read-tax permission');
   assert.equal(latest.concept, `Cuota ${tag}`);
   assert.equal(latest.clientName, `Movimiento Resumen ${tag}`);
   assert.ok(Array.isArray(commercial.expiringPlans), 'admins read plans');

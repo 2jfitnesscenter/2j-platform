@@ -6,11 +6,24 @@ import type { ResolvedPersonAuth } from './training-link-protocol.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
+const legacyReasonToContract = {
+  lost_passkey: 'lost_device',
+  no_access_to_training_account: 'no_home_access',
+  proof_failed: 'support_request',
+  other: 'other',
+} as const;
+const contractReasonToLegacy = {
+  lost_device: 'lost_passkey',
+  no_home_access: 'no_access_to_training_account',
+  support_request: 'proof_failed',
+  other: 'other',
+} as const;
+const toContractReason = (reason: keyof typeof legacyReasonToContract) => legacyReasonToContract[reason];
 
 /**
  * Manual review queue for Training links that cannot be completed with the owner's own passkey proof (A26, D143).
  *   member  opens ONE case (reason + optional short note); cannot name a Training account, cannot resolve anything.
- *   admin   lists, reads and resolves; only administrators (permission `identity.people.manage`, not held by trainers) — always with a verification method and a note.
+ *   authorized issuer lists, reads and resolves with the dedicated `platform_link_issue` permission (A29); the Admin wildcard alone does not grant it.
  * Resolving never links by itself: `approved` records the decision, the verified Training user and who checked what; the link still goes through the audited admin
  * link path (flag `trainingLinkingEnabled`). Off unless `enabled`.
  */
@@ -26,11 +39,11 @@ export function registerTrainingLinkReviewRoutes(app: FastifyInstance<any, any, 
     if (!options.enabled) { reply.code(423).send({ error: 'training_link_review_disabled' }); return null; }
     const actor = await options.resolveAuthorization(request);
     if (!actor) { reply.code(401).send({ error: 'authentication_required' }); return null; }
-    if (!can(actor, 'identity.people.manage')) { reply.code(403).send({ error: 'permission_denied' }); return null; }
+    if (!can(actor, 'platform_link_issue')) { reply.code(403).send({ error: 'permission_denied' }); return null; }
     return actor;
   };
   const view = (row: any) => ({
-    id: row.id, personId: row.personId, reason: row.reason, memberNote: row.memberNote ?? null, status: row.status, createdAt: row.createdAt,
+    id: row.id, personId: row.personId, reason: toContractReason(row.reason), memberNote: row.memberNote ?? null, status: row.status, createdAt: row.createdAt,
     ...(row.displayName ? { person: { displayName: row.displayName } } : {}),
     ...(row.status !== 'open' ? { resolution: { trainingUserId: row.trainingUserId ?? null, verificationMethod: row.verificationMethod ?? null, note: row.resolutionNote, resolvedAt: row.resolvedAt, resolvedBy: row.resolvedBy } } : {}),
   });
@@ -40,7 +53,7 @@ export function registerTrainingLinkReviewRoutes(app: FastifyInstance<any, any, 
     reply.header('Cache-Control', 'no-store');
     if (!options.enabled) return reply.code(423).send({ error: 'training_link_review_disabled' });
     if (!originOk(request)) return reply.code(403).send({ error: 'origin_rejected' });
-    const body = z.object({ reason: z.enum(['lost_passkey', 'no_access_to_training_account', 'proof_failed', 'other']), note: z.string().trim().max(500).optional() }).strict().safeParse(request.body);
+    const body = z.object({ reason: z.enum(['lost_device', 'no_home_access', 'support_request', 'other', 'lost_passkey', 'no_access_to_training_account', 'proof_failed']), note: z.string().trim().max(500).optional() }).strict().safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: 'validation_error' });
     const auth = await options.resolvePersonAuth(request);
     if (!auth) return reply.code(401).send({ error: 'authentication_required' });
@@ -53,7 +66,8 @@ export function registerTrainingLinkReviewRoutes(app: FastifyInstance<any, any, 
       if (linked) return { code: 409, body: { error: 'link_already_in_progress_or_active' } };
       const [open] = await tx`SELECT id,status,reason,created_at AS "createdAt" FROM training_link_review_cases WHERE person_id=${personId}::uuid AND status='open'`;
       if (open) return { code: 200, body: { v: 1, id: open.id, status: 'open', created: false } };
-      const [row] = await tx`INSERT INTO training_link_review_cases(person_id,reason,member_note) VALUES (${personId}::uuid,${body.data.reason},${body.data.note || null}) RETURNING id`;
+      const storedReason = body.data.reason in contractReasonToLegacy ? contractReasonToLegacy[body.data.reason as keyof typeof contractReasonToLegacy] : body.data.reason as keyof typeof legacyReasonToContract;
+      const [row] = await tx`INSERT INTO training_link_review_cases(person_id,reason,member_note) VALUES (${personId}::uuid,${storedReason},${body.data.note || null}) RETURNING id`;
       await tx`INSERT INTO training_link_review_events(case_id,action,actor) VALUES (${row!.id}::uuid,'opened',${`person:${personId}`})`;
       return { code: 201, body: { v: 1, id: row!.id, status: 'open', created: true } };
     });
@@ -67,7 +81,7 @@ export function registerTrainingLinkReviewRoutes(app: FastifyInstance<any, any, 
     const auth = await options.resolvePersonAuth(request);
     if (!auth) return reply.code(401).send({ error: 'authentication_required' });
     const [row] = await db`SELECT id,status,reason,created_at AS "createdAt",resolved_at AS "resolvedAt" FROM training_link_review_cases WHERE person_id=${String(auth.personId).toLowerCase()}::uuid ORDER BY created_at DESC LIMIT 1`;
-    return { v: 1, case: row ? { id: row.id, status: row.status, reason: row.reason, createdAt: row.createdAt, resolvedAt: row.resolvedAt ?? null } : null };   // no resolution notes: those are internal
+    return { v: 1, case: row ? { id: row.id, status: row.status, reason: toContractReason(row.reason), createdAt: row.createdAt, resolvedAt: row.resolvedAt ?? null } : null };   // no resolution notes: those are internal
   });
 
   // Admin: the queue.

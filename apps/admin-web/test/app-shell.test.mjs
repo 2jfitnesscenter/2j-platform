@@ -40,22 +40,21 @@ test('unauthenticated Admin shows passkey login without rendering operational sc
 
 test('environment label identifies local, staging and production hosts',()=>{
   assert.equal(environmentLabelForHost('127.0.0.1'),'Entorno local');
-  assert.equal(environmentLabelForHost('admin.2jfit.es'),'Staging');
   assert.equal(environmentLabelForHost('admin.2jfit.com'),'Staging');
-  assert.equal(environmentLabelForHost('2jfit.es'),'Staging');
+  assert.equal(environmentLabelForHost('admin.example.test'),'Entorno');
   assert.equal(environmentLabelForHost('2jfit.com'),'Staging');
   assert.equal(environmentLabelForHost('admin.2jfitnesscenter.com'),'Producción');
 });
 
 test('Admin sees the professional sections and only their existing authorized routes', async () => {
-  const adminCapabilities={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true};
+  const adminCapabilities={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true,linkReviewManage:true};
   globalThis.fetch = async (url) => String(url).includes('/api/dashboard/command-center') ? response(model) : String(url).includes('/api/session/capabilities') ? response(adminCapabilities) : response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav=within(document.querySelector('.app-navigation'));
   for(const label of ['Operación','Comercial','Gestión'])assert.ok(nav.getByRole('button',{name:label}));
   assert.equal(nav.queryByRole('button',{name:'Administración'}),null,'a group with no permitted child is not shown');
-  for(const label of ['Resumen','Avisos y auditoría','Fichaje','Agenda','Clientes','Espacios','Servicios','Economía','Tienda','Equipo','Noticias','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
+  for(const label of ['Resumen','Avisos y auditoría','Fichaje','Agenda','Clientes','Espacios','Servicios','Economía','Tienda','Equipo','Noticias','Invitaciones','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
   assert.ok(nav.getByRole('link',{name:/Mensajes/}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
   assert.ok(screen.getByText('2 mensajes sin leer'));
@@ -70,6 +69,7 @@ test('Trainer sees only capability-allowed professional sections and no business
   await screen.findByRole('heading',{name:'Próximas sesiones'});const nav=within(document.querySelector('.app-navigation'));
   for(const label of ['Operación','Comercial','Gestión'])assert.ok(nav.getByRole('button',{name:label}));
   for(const label of ['Resumen','Clientes','Equipo'])assert.ok(nav.getByRole('link',{name:label}));
+  assert.equal(nav.queryByRole('link',{name:'Invitaciones'}),null,'link-review capability is not granted to Trainers');
   assert.equal(nav.queryByRole('button',{name:'Administración'}),null);
   for(const label of ['Economía','Tienda','Noticias','Ajustes de avisos'])assert.equal(nav.queryByRole('link',{name:label}),null);
   assert.ok(nav.getByRole('link',{name:'Servicios'}));
@@ -77,13 +77,14 @@ test('Trainer sees only capability-allowed professional sections and no business
 });
 
 test('groups disappear when no child is allowed and partial grants expose only their matching subnavigation',()=>{
-  const none={calendar:false,clients:false,communications:false,billing:false,staff:false,notificationSettings:false,news:false,store:false};
+  const none={calendar:false,clients:false,communications:false,billing:false,staff:false,notificationSettings:false,news:false,store:false,linkReviewManage:false};
   assert.deepEqual(getProfessionalNavigation(none).map(item=>item.label),['Operación']);
   assert.deepEqual(getProfessionalNavigation(none)[0].children.map(item=>item.label),['Resumen']);
   const partial={...none,clients:true,notificationSettings:true};
   const nav=getProfessionalNavigation(partial);
   assert.deepEqual(nav.map(item=>item.label),['Operación','Gestión']);
   assert.deepEqual(nav.find(item=>item.id==='management').children.map(item=>item.label),['Importar clientes','Configuración','Ajustes de avisos']);
+  assert.ok(getProfessionalNavigation({...none,linkReviewManage:true}).find(item=>item.id==='management').children.some(item=>item.label==='Invitaciones'));
 });
 
 test('global search opens with Ctrl+K, groups permitted results and closes with Escape', async () => {

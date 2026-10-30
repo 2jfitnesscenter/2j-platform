@@ -58,7 +58,7 @@ Sin acceso a producción. El guardia existente **falla cerrado** y compara por b
 
 ## 7. Backlog de endurecimiento (añadido por decisión del propietario)
 1. **Activar auditd y un registro de despliegues en el servidor de producción** (quién despliega qué y cuándo; ficheros de configuración vigilados: Caddyfile, compose, `.env`, `data/`).
-2. **Plan de retirada de las rutas de staging del Caddy de producción** (`staging-home.` y el bloque de demos) cuando exista el nuevo staging (Contabo, 2jfit.es): verificar que el nuevo staging funciona → quitar los bloques y las redes externas del compose de producción en un cambio revisado → comprobar con `caddy validate` y sondas.
+2. **Plan de retirada de las rutas de staging del Caddy de producción** (`staging-home.` y el bloque de demos) cuando exista el nuevo staging (Contabo, 2jfit.com): verificar que el nuevo staging funciona → quitar los bloques y las redes externas del compose de producción en un cambio revisado → comprobar con `caddy validate` y sondas.
 3. Del informe de #59: pre-comprobación de redes y `compose config -q`, `caddy validate` + recarga controlada, sondas a home./staging-home./assetlinks, versión fija de Caddy, manifiesto real con los hashes, noindex/HSTS en staging.
 4. Platform: autenticación de personal apta para servidor (hoy el rol de demostración solo existe en `NODE_ENV=development`); mientras tanto el staging expone el admin con contraseña + lista de IP (ver runbook de staging).
 5. Zod 4: revisar los límites estrictos de `uuid`/`datetime` en esquemas sin test.
@@ -69,7 +69,7 @@ Sin acceso a producción. El guardia existente **falla cerrado** y compara por b
 ## 9. Actualización (misma jornada, tras #88 y #91)
 **Estado de CI:** con #88 (gitleaks) y #91 (undici 8.12.3, aviso high que rompía `pnpm audit` en `main` y en todos los PR) fusionados y `main` propagado por merge commit, las 14 ramas **#64, #65, #66, #67, #81, #74, #76, #77, #78, #82, #83, #84, #85, #86 quedan totalmente verdes** (`quality` con `pnpm audit` y `secret scan`). Siguen sin fusionarse: cada merge lo autoriza el propietario en ese momento, en el orden de §1.
 
-**Nuevos PR del integrador (todos borrador, sin fusionar):** #89 staging 2jfit.es (script + runbook; tiene dos revisiones independientes, texto íntegro en `docs/review/`; **no se ejecuta nada en el servidor** hasta una tercera revisión limitada al último commit si el propietario la pide), #90 workflow E2E (apilado sobre #67; necesita el secreto `BUNKER_REPO_READ_TOKEN`), Búnker #63 H13 asistida (permiso `platform_link_issue` para el propietario y el gerente, desactivada por defecto).
+**Histórico de PR del integrador:** #89 staging 2jfit.com (script + runbook; tiene dos revisiones independientes, texto íntegro en `docs/review/`; **no se ejecuta nada en el servidor** hasta una tercera revisión limitada al último commit si el propietario la pide), #90 workflow E2E (apilado sobre #67; necesita el secreto `BUNKER_REPO_READ_TOKEN`), Búnker #63 H13 asistida (permiso `platform_link_issue` para el propietario y el gerente, desactivada por defecto).
 
 **Vigilancia de solapes (tareas nuevas de los Works).** El integrador resuelve con commits de merge, sin force-push, y propone cada merge solo con CI verde:
 | Fichero | Quién lo toca | Riesgo |

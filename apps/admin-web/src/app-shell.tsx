@@ -7,7 +7,7 @@ import { StaffLogin } from './staff-login.js';
 const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 export type CommandCenterModel = {
   timezone: string;
-  permissions: { calendar:boolean; clients:boolean; communications:boolean; documents:boolean; sensitiveReview:boolean; followup:boolean; billing:boolean; cash:boolean; transfers:boolean; staff:boolean; absences:boolean; timeclock:boolean };
+  permissions: { calendar:boolean; clients:boolean; communications:boolean; documents:boolean; sensitiveReview:boolean; followup:boolean; billing:boolean; invoices?:boolean; cash:boolean; transfers:boolean; staff:boolean; absences:boolean; timeclock:boolean };
   today: { sessionCount:number; upcomingCount:number; capacity:number; occupied:number; waitlistCount:number; unassignedCount:number; sessions:Array<{id:string;serviceName:string;professionalName:string|null;startsAt:string;occupied:number;capacity:number;free:number;waitlistCount:number;isNow:boolean;state:'upcoming'|'in_progress'|'finished'}>; nextSession:{id:string;serviceName:string;startsAt:string;professionalName:string|null}|null };
   clients: { active:number; recentSignups:number }|null;
   attention: Array<{id:string;kind:string;title:string;summary:string;href:string;ageAt:string|null}>;
@@ -15,12 +15,12 @@ export type CommandCenterModel = {
   team: {active:number;workingNow:number;activeAbsences:number;substitutions:number}|null;
   unread: number;
   quickActions: Array<{id:string;label:string;href:string}>;
-  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null; expiringPlans?:Array<{assignmentId:string;clientId:string;clientName:string;planName:string;endsOn:string}>|null; recentMovements?:Array<{id:string;kind:'payment'|'refund';amountCents:number;concept:string;clientName:string;occurredAt:string}>|null };
+  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null; expiringPlans?:Array<{assignmentId:string;clientId:string;clientName:string;planName:string;endsOn:string}>|null; recentMovements?:Array<{id:string;chargeId?:string;kind:'payment'|'refund';amountCents:number;concept:string;clientName:string;occurredAt:string}>|null };
 };
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
 export const useProfessionalCapabilities = () => React.useContext(CommandContext).capabilities;
-export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean};
+export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean;linkReviewManage?:boolean};
 export function ProfessionalCapabilitiesProvider({capabilities,children}:{capabilities:NavigationCapabilities|null;children:React.ReactNode}) {
   return <CommandContext.Provider value={{data:null,state:'loading',error:'',reload:()=>{},capabilities}}>{children}</CommandContext.Provider>;
 }
@@ -48,13 +48,14 @@ const routes={
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
   import:{id:'import',label:'Importar clientes',href:'#import',permission:'notificationSettings',icon:icons.Users},
+  invitations:{id:'invitations',label:'Invitaciones',href:'#invitations',permission:'linkReviewManage',icon:icons.UserRound},
   settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
   'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
   {id:'operation',label:'Operación',icon:icons.LayoutDashboard,children:[routes.home,routes.activity,routes.timeclock,routes.calendar,routes.clients]},
   {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.contracts,routes.plans,routes.economics,routes.caja,routes.store,routes.promotions]},
-  {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.import,routes.settings,routes['notification-settings']]},
+  {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.invitations,routes.import,routes.settings,routes['notification-settings']]},
   {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.management,routes.monitoring]},
 ];
 /** Groups that start open on a wide sidebar. */
@@ -187,7 +188,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
 export function environmentLabelForHost(hostname: string): string {
   const host = hostname.toLowerCase();
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]') return 'Entorno local';
-  if (host === '2jfit.es' || host.endsWith('.2jfit.es') || host === '2jfit.com' || host.endsWith('.2jfit.com')) return 'Staging';
+  if (host === '2jfit.com' || host.endsWith('.2jfit.com')) return 'Staging';
   if (host === 'admin.2jfitnesscenter.com') return 'Producción';
   return 'Entorno';
 }
