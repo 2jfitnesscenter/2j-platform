@@ -16,6 +16,10 @@ const clients = [
   ['d0700000-0000-4000-8000-000000000012', 'Nico', 'Herrera', 'nico.herrera@example.test'],
 ].map(([id, first, last, email]) => ({ id, first, last, email }));
 
+// Only the validated CLI flow can obtain this capability. The exported seed helper
+// deliberately cannot be asked to issue a staging-only sample document.
+const stagingInvoiceCapability = Symbol('validated-staging-invoice-seed');
+
 const seedInvoice = async (tx: Parameters<Parameters<ReturnType<typeof createDatabase>['client']['begin']>[0]>[0]) => {
   const chargeId = 'd0700000-0000-4000-8000-000000000501';
   const transactionId = 'd0700000-0000-4000-8000-000000000602';
@@ -77,20 +81,23 @@ const seedInvoice = async (tx: Parameters<Parameters<ReturnType<typeof createDat
 
   await tx`INSERT INTO economic_invoice_drafts(id,client_id,series_id,series_name,invoice_number,concept,net_cents,tax_basis_points,tax_cents,gross_cents,tax_description,fiscal_snapshot,created_by,idempotency_key,request_hash,document_type,source_charge_id,line_items,tax_treatment,tax_rate_basis_points,payment_methods)
     VALUES (${draftId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,${seriesId}::uuid,NULL,NULL,'Documento sintético de demostración',${netCents},300,${taxCents},${grossCents},NULL,'{}'::jsonb,'2j-demo-seed',
-      'd0700000-0000-4000-8000-000000000608'::uuid,${requestHash},'simplified_ticket',${chargeId}::uuid,${lines}::jsonb,'taxable',300,'[{"method":"transfer","amountCents":4900}]'::jsonb)
+      'd0700000-0000-4000-8000-000000000608'::uuid,${requestHash},'simplified_ticket',${chargeId}::uuid,${JSON.stringify(lines)}::jsonb,'taxable',300,'[{"method":"transfer","amountCents":4900}]'::jsonb)
     ON CONFLICT(id) DO NOTHING`;
   const [number] = await tx`SELECT display_number AS "displayNumber" FROM economic_take_next_document_number(${seriesId}::uuid)`;
   if (!number?.displayNumber) throw new Error('Synthetic invoice series is inactive; refusing to issue the sample.');
   await tx`INSERT INTO economic_fiscal_documents(id,draft_id,document_type,status,series_id,series_name,document_number,source_charge_id,client_id,issuer_snapshot,client_snapshot,lines_snapshot,payment_methods,totals_snapshot,issued_by)
     VALUES (${documentId}::uuid,${draftId}::uuid,'simplified_ticket','issued',${seriesId}::uuid,${series.name},${number.displayNumber},${chargeId}::uuid,
-      'd0700000-0000-4000-8000-000000000001'::uuid,${issuer}::jsonb,${client}::jsonb,${lines}::jsonb,
-      '[{"method":"transfer","amountCents":4900}]'::jsonb,${totals}::jsonb,'2j-demo-seed')`;
+      'd0700000-0000-4000-8000-000000000001'::uuid,${JSON.stringify(issuer)}::jsonb,${JSON.stringify(client)}::jsonb,${JSON.stringify(lines)}::jsonb,
+      '[{"method":"transfer","amountCents":4900}]'::jsonb,${JSON.stringify(totals)}::jsonb,'2j-demo-seed')`;
   await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
     VALUES ('2j-demo-seed','invoice.issued','fiscal_document',${documentId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,
-      ${{ synthetic: true, documentNumber: number.displayNumber, grossCents, documentType: 'simplified_ticket' }}::jsonb)`;
+      ${JSON.stringify({ synthetic: true, documentNumber: number.displayNumber, grossCents, documentType: 'simplified_ticket' })}::jsonb)`;
 };
 
-export async function seedDemoData(client: ReturnType<typeof createDatabase>['client'], options: { includeSyntheticInvoice?: boolean } = {}) {
+async function seedDemoDataInternal(
+  client: ReturnType<typeof createDatabase>['client'],
+  invoiceCapability?: symbol,
+) {
   await client.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(2079079)`;
     const demoProfessionalId = 'd0700000-0000-4000-8000-000000000101';
@@ -266,8 +273,12 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
         '{"energy":"Buena, he mantenido el ritmo","sessions":2}'::jsonb,'d0700000-0000-4000-8000-000000000908'::uuid,${sha256('2j-owner-review-checkin-response')})
       ON CONFLICT(id) DO NOTHING`;
 
-    if (options.includeSyntheticInvoice === true) await seedInvoice(tx);
+    if (invoiceCapability === stagingInvoiceCapability) await seedInvoice(tx);
   });
+}
+
+export async function seedDemoData(client: ReturnType<typeof createDatabase>['client']) {
+  return seedDemoDataInternal(client);
 }
 
 const memberPilot = [
@@ -393,7 +404,7 @@ async function runDemoSeed() {
 
   const { client } = createDatabase(databaseUrl);
   try {
-    await seedDemoData(client, { includeSyntheticInvoice: mode === 'staging' });
+    await seedDemoDataInternal(client, mode === 'staging' ? stagingInvoiceCapability : undefined);
     console.log(`Synthetic ${mode} 2J-070 demo data is ready. The fixed synthetic admin/professional and trainer links were repaired if needed; existing non-demo rows were not changed.`);
   } finally {
     await client.end();
