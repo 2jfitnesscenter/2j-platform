@@ -375,7 +375,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   });
   let stopTrainingSignals: () => void = () => {};
   app.addHook('onClose', async () => { stopTrainingSignals(); await client.end(); });
-  registerClientRoutes(app, client, authorizationResolver);
+  registerClientRoutes(app, client, authorizationResolver, trainingSummaryAdapter);
   registerClientPlanRoutes(app, client, authorizationResolver);
   registerContractRoutes(app, client, authorizationResolver);
   registerEntitlementRoutes(app, client, authorizationResolver);

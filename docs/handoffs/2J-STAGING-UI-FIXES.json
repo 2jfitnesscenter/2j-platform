@@ -5,7 +5,7 @@
   "scope": [
     "Reset staff schedule form using a captured form reference after async save",
     "Remove duplicate disabled center opening-hour fields and link to Horario y turnos",
-    "Label the known 2jfit.es and 2jfit.com domains as Staging"
+    "Label 2jfit.com domains as Staging"
   ],
   "verification": {
     "admin_web_tests": { "passed": 358, "failed": 0 },

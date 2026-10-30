@@ -14,7 +14,7 @@ test('demo seed target stays loopback-only and staging requires the explicit 2jf
   assert.equal(validateDemoSeedTarget({ NODE_ENV: 'development', DATABASE_URL: 'postgres://127.0.0.1/2j_demo', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.com' }), 'staging');
   assert.throws(() => validateDemoSeedTarget({ ...local, STAGING_SEED: 'true', STAGING_SEED_HOST: '2jfit.com' }), /exactly 1/);
   assert.throws(() => validateDemoSeedTarget({ NODE_ENV: 'production', DATABASE_URL: 'postgres://127.0.0.1/2j_demo', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.com' }), /development runner/);
-  assert.throws(() => validateDemoSeedTarget({ NODE_ENV: 'development', DATABASE_URL: 'postgres://127.0.0.1/2j_demo', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.es' }), /exactly 2jfit.com/);
+  assert.throws(() => validateDemoSeedTarget({ NODE_ENV: 'development', DATABASE_URL: 'postgres://127.0.0.1/2j_demo', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.invalid' }), /exactly 2jfit.com/);
   assert.throws(() => validateDemoSeedTarget({ NODE_ENV: 'development', DATABASE_URL: 'postgres://production-db/production', STAGING_SEED: '1', STAGING_SEED_HOST: '2jfit.com' }), /isolated local 2j_demo/);
 });
 

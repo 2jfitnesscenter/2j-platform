@@ -6,6 +6,7 @@ const script = await readFile(new URL('./setup-staging.sh', import.meta.url), 'u
 const seed = script.slice(script.indexOf('cmd_seed() {'), script.indexOf('\n# ----------------------------------------------------------------------------------------------------------------------------------------------------\nvalidate_conf()'));
 
 test('staging seed requires the exact explicit target and matching staging domain before Docker runs', () => {
+  assert.match(script, /^DOMAIN="2jfit\.com"$/m, 'new staging installations default to the owner-confirmed .com domain');
   assert.match(seed, /--target-host/);
   assert.match(seed, /\[ "\$target_host" = "2jfit\.com" \]/);
   assert.match(seed, /\[ "\$DOMAIN" = "\$target_host" \]/);
