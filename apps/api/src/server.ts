@@ -49,7 +49,7 @@ import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
 import { registerStoreMediaRoutes } from './store-media.js';
 import { registerClientImportRoutes } from './client-import.js';
 import { registerClientDocumentRoutes } from './client-documents.js';
-import { registerInvoicingRoutes } from './invoicing.js';
+import { registerInvoicingRoutes, registerMemberInvoiceRoutes } from './invoicing.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -447,6 +447,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
   registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true, options.clientImportCommitEnabled === true, options.clientImportNowProvider);
   registerInvoicingRoutes(app, client, authorizationResolver, objectStorage);
+  registerMemberInvoiceRoutes(app, client, clientAuthorizationResolver, objectStorage);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
