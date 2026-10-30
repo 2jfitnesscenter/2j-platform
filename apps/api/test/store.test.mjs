@@ -33,6 +33,29 @@ test('store management and POS are denied to roles without explicit grants',asyn
   assert.equal((await trainer.inject({method:'POST',url:'/api/admin/store/sales',payload:{}})).statusCode,403);
 });
 
+test('store low-stock threshold preserves the default, requires settings permission, affects catalog availability and audits changes',async()=>{
+  const initial=await admin.inject({method:'GET',url:'/api/settings/store'});
+  assert.equal(initial.statusCode,200,initial.body);assert.equal(initial.json().lowStockThreshold,3);
+  assert.equal((await trainer.inject({method:'GET',url:'/api/settings/store'})).statusCode,403);
+  assert.equal((await trainer.inject({method:'PUT',url:'/api/settings/store',payload:{lowStockThreshold:1}})).statusCode,403);
+  const item=await product();const v=await variant(item.id,{label:'Umbral configurable'});await stock(v.id,2);
+  const catalog=()=>memberA.inject({method:'GET',url:'/api/me/store/catalog'});
+  const availability=async()=>{const response=await catalog();assert.equal(response.statusCode,200,response.body);return response.json().items.flatMap(p=>p.variants).find(row=>row.id===v.id)?.availability;};
+  assert.equal(await availability(),'pocas_unidades','default threshold 3 preserves current behavior');
+  const saved=await admin.inject({method:'PUT',url:'/api/settings/store',payload:{lowStockThreshold:1}});
+  assert.equal(saved.statusCode,200,saved.body);assert.equal(saved.json().lowStockThreshold,1);
+  assert.equal(await availability(),'disponible');
+  assert.equal((await post(`/api/admin/store/variants/${v.id}/movements`,{type:'adjustment_out',quantity:1,reason:'Prueba sintética de umbral'})).statusCode,201);
+  assert.equal(await availability(),'pocas_unidades');
+  const invalid=await admin.inject({method:'PUT',url:'/api/settings/store',payload:{lowStockThreshold:100001}});
+  assert.equal(invalid.statusCode,400);
+  const [auditCount]=await sql`SELECT count(*)::int AS count FROM store_audit_events WHERE action='store.settings.updated' AND actor_id='store-test-admin'`;
+  assert.equal(auditCount.count,1);
+  const [auditRow]=await sql`SELECT details FROM store_audit_events WHERE action='store.settings.updated' AND actor_id='store-test-admin' ORDER BY occurred_at DESC LIMIT 1`;
+  assert.deepEqual(auditRow.details,{lowStockThreshold:{from:3,to:1}});
+  assert.equal((await admin.inject({method:'PUT',url:'/api/settings/store',payload:{lowStockThreshold:3}})).statusCode,200,'restore the shared synthetic database default for following tests');
+});
+
 test('product, variant, price and stock edits append audit and movement records; stock cannot turn negative',async()=>{
   const item=await product();const v=await variant(item.id,{label:'Formato inicial'});
   assert.equal((await post(`/api/admin/store/variants/${v.id}/movements`,{type:'opening',quantity:5,reason:'Stock de apertura'})).statusCode,201);
