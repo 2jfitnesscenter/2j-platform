@@ -541,7 +541,7 @@ test('Drizzle table columns, checks and indexes match the SQL baseline', async (
       const databaseColumn = dbColumns.get(config.name).find((row) => row.column_name === column.name);
       assert.equal(databaseColumn.is_nullable === 'YES', !column.notNull, `${config.name}.${column.name} nullability drifted`);
       const rawType = column.getSQLType();
-      const expectedType = rawType.replace(/^char\(/, 'character(').replace(/^time$/, 'time without time zone');
+      const expectedType = rawType.replace(/^char\(/, 'character(').replace(/^time$/, 'time without time zone').replace(/^.+\[\]$/, 'ARRAY');
       assert.ok(databaseColumn.data_type === expectedType || (expectedType.startsWith('character(') && databaseColumn.data_type === 'character'), `${config.name}.${column.name} type drifted: ${databaseColumn.data_type} != ${expectedType}`);
       assert.equal(databaseColumn.column_default != null, column.hasDefault, `${config.name}.${column.name} default presence drifted`);
     }
@@ -2395,7 +2395,9 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   const seriesAfterDraft = await sql`SELECT next_number FROM economic_invoice_series WHERE id=${series.json().id}`;
   assert.equal(Number(seriesAfterDraft[0].next_number), 1, 'drafts must not consume official numbering');
   const issueBlocked = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/invoice-drafts/${draft.json().id}/issue`, payload: {} });
-  assert.equal(issueBlocked.statusCode, 423);
+  assert.equal(issueBlocked.statusCode, 409, 'with no issuer data filled in (A65) nothing can be issued');
+  assert.equal(issueBlocked.json().error, 'issuer_incomplete');
+  assert.ok(issueBlocked.json().missing.includes('NIF'));
   const nonSubject = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/invoice-drafts', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, seriesId: series.json().id, sourceChargeId: charge.json().id, concept: 'Línea no sujeta QA', netCents: 8000, taxTreatment: 'non_subject', taxDescription: 'Tratamiento pendiente de revisión legal' } });
   assert.equal(nonSubject.statusCode, 201, nonSubject.body);
   const [taxDraft] = await sql`SELECT tax_treatment,tax_rate_basis_points,tax_cents FROM economic_invoice_drafts WHERE id=${nonSubject.json().id}`;

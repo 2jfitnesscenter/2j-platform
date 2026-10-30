@@ -113,7 +113,7 @@ test("staff app loads a permission-aware home and hides unavailable links", asyn
   }
 });
 
-test("authentication failure stops the app and offers retry without exposing operational data", async () => {
+test("authentication failure shows passkey login without exposing operational data", async () => {
   const dom = setupDom();
   const original = globalThis.fetch;
   let calls = 0;
@@ -124,8 +124,9 @@ test("authentication failure stops the app and offers retry without exposing ope
   try {
     render(React.createElement(StaffApp));
     const q = within(document.body);
-    await q.findByRole("heading", { name: "No se puede abrir 2J Staff" });
+    await q.findByRole("heading", { name: "Acceso del equipo" });
     assert.equal(q.queryByRole("navigation"), null);
+    assert.ok(q.getByRole("button", { name: "Continuar con passkey" }));
     assert.equal(calls, 1);
   } finally {
     cleanup();

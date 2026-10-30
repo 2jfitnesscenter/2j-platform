@@ -9,10 +9,11 @@ import { parseTrustedProxies } from '../src/server.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: Platform passkey tests cannot be skipped.');
 process.env.NODE_ENV = 'test';
+process.env.CORS_ORIGIN = 'http://localhost:5173';
 const sql = postgres(process.env.DATABASE_URL, { max: 8, connect_timeout: 5 });
 await migrateDatabase(sql);
 
-const RP_ID = 'localhost', ORIGIN = 'http://localhost:5173';
+const RP_ID = 'localhost', ORIGIN = 'http://localhost:5173', STAFF_ORIGIN = 'http://localhost:5174';
 const b64 = value => Buffer.from(value).toString('base64url');
 const sha = value => createHash('sha256').update(value).digest();
 
@@ -54,8 +55,9 @@ let actor = { actorId: 'qa-admin', role: 'admin' };
 const flags = { logger: process.env.TEST_LOG ? { level: 'error' } : false, memberAppOrigin: ORIGIN, authorizationResolver: async () => actor };
 const app = buildServer(process.env.DATABASE_URL, { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: RP_ID, platformPasskeyMaxRequestsPerMinute: 10_000, trainingVerifiedLinkingEnabled: true });
 const throttled = buildServer(process.env.DATABASE_URL, { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: RP_ID, platformPasskeyMaxRequestsPerMinute: 3 });
+const staffApp = buildServer(process.env.DATABASE_URL, { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: RP_ID, staffAuthEnabled: true, staffAppOrigin: STAFF_ORIGIN, staffPasskeyRpId: RP_ID, staffAuthMaxRequestsPerMinute: 10_000 });
 const off = buildServer(process.env.DATABASE_URL, { ...flags, memberPilotAuthEnabled: true });
-after(async () => { await Promise.all([app.close(), off.close(), throttled.close()]); await sql.end(); });
+after(async () => { await Promise.all([app.close(), off.close(), throttled.close(), staffApp.close()]); await sql.end(); });
 
 const post = (server, url, payload, headers = {}) => server.inject({ method: 'POST', url, headers: { 'content-type': 'application/json', origin: ORIGIN, ...headers }, payload: payload ?? {} });
 async function createPerson() {
@@ -102,7 +104,132 @@ test('relying-party id must match the member origin; passkeys are off by default
   try { assert.throws(() => buildServer(process.env.DATABASE_URL, { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: RP_ID }), /restricted to development\/test/); } finally { process.env.NODE_ENV = previous; }
   const disabled = await post(off, '/api/me/passkeys/login/options');
   assert.equal(disabled.statusCode, 423); assert.equal(disabled.json().error, 'platform_passkeys_disabled');
+  assert.equal((await post(off, '/api/staff/auth/passkeys/login/options')).statusCode, 423, 'staff auth fails closed when not enabled');
+  assert.throws(() => buildServer(process.env.DATABASE_URL, { ...flags, staffAuthEnabled: true, staffAppOrigin: STAFF_ORIGIN, staffPasskeyRpId: 'evil.example' }), /exactly matches/);
+  const previousStaff = process.env.NODE_ENV; process.env.NODE_ENV = 'production';
+  try { assert.throws(() => buildServer(process.env.DATABASE_URL, { ...flags, staffAuthEnabled: true, staffAppOrigin: STAFF_ORIGIN, staffPasskeyRpId: RP_ID }), /restricted to development\/test/); } finally { process.env.NODE_ENV = previousStaff; }
   assert.equal((await post(off, `/api/platform/v1/persons/${randomUUID()}/passkey-enrollments`)).statusCode, 423);
+});
+
+test('staff passkey login is isolated, bound to an active staff facet and resolves capabilities from the server', async () => {
+  actor = { actorId: 'qa-admin', role: 'admin' };
+  const personId = await createPerson();
+  const staff = await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,status,base_role,auth_actor_id,created_by) VALUES ('Login','Trainer','Login Trainer','active','trainer',NULL,'staff-auth-test') RETURNING id`;
+  await sql`INSERT INTO platform_person_staff(person_id,professional_id,linked_by) VALUES (${personId},${staff[0].id},'staff-auth-test')`;
+  const issued = await post(staffApp, `/api/platform/v1/persons/${personId}/staff-passkey-enrollments`, {}, { origin: ORIGIN });
+  assert.equal(issued.statusCode, 201, issued.body);
+  const enrollmentToken = issued.json().enrollmentToken;
+  const [storedEnrollment] = await sql`SELECT token_hash FROM platform_staff_passkey_enrollments WHERE person_id=${personId}`;
+  assert.equal(storedEnrollment.token_hash.trim(), createHash('sha256').update(enrollmentToken).digest('hex'));
+  const device = createAuthenticator({ rpId: RP_ID, origin: STAFF_ORIGIN });
+  const begin = await post(staffApp, '/api/staff/auth/passkeys/register/options', { enrollmentToken }, { origin: STAFF_ORIGIN });
+  assert.equal(begin.statusCode, 200, begin.body); assert.equal(begin.json().options.rp.id, RP_ID);
+  const registration = await post(staffApp, '/api/staff/auth/passkeys/register/verify', { enrollmentToken, challengeId: begin.json().challengeId, response: device.register(begin.json().options.challenge) }, { origin: STAFF_ORIGIN });
+  assert.equal(registration.statusCode, 201, registration.body);
+  const actorId = (await sql`SELECT auth_subject FROM platform_person_auth_subjects WHERE person_id=${personId}`)[0].auth_subject;
+  assert.equal((await sql`SELECT auth_actor_id FROM staff_professionals WHERE id=${staff[0].id}`)[0].auth_actor_id, actorId);
+  const ceremony = await post(staffApp, '/api/staff/auth/passkeys/login/options', {}, { origin: STAFF_ORIGIN });
+  assert.equal(ceremony.statusCode, 200, ceremony.body);
+  const login = await post(staffApp, '/api/staff/auth/passkeys/login/verify', { challengeId: ceremony.json().challengeId, response: device.assert(ceremony.json().options.challenge) }, { origin: STAFF_ORIGIN });
+  assert.equal(login.statusCode, 200, login.body);
+  const loginReplay = await post(staffApp, '/api/staff/auth/passkeys/login/verify', { challengeId: ceremony.json().challengeId, response: device.assert(ceremony.json().options.challenge) }, { origin: STAFF_ORIGIN });
+  assert.equal(loginReplay.statusCode, 401, 'a staff authentication challenge is consumed atomically and cannot be replayed');
+  const cookie = cookieOf(login);
+  assert.match(String(login.headers['set-cookie']), /HttpOnly/); assert.match(String(login.headers['set-cookie']), /SameSite=Lax/);
+  const session = await staffApp.inject({ method: 'GET', url: '/api/staff/auth/session', headers: { cookie } });
+  assert.equal(session.statusCode, 200); assert.equal(session.json().role, 'trainer'); assert.equal(session.json().owner, false);
+  const capabilities = await staffApp.inject({ method: 'GET', url: '/api/session/capabilities', headers: { cookie } });
+  assert.equal(capabilities.statusCode, 200); assert.equal(capabilities.json().calendar, true); assert.equal(capabilities.json().ownerPanel, false);
+  assert.equal((await post(staffApp, '/api/staff/auth/logout', {}, { cookie, origin: 'https://evil.example' })).statusCode, 403);
+  assert.equal((await post(staffApp, '/api/staff/auth/logout', {}, { cookie, origin: STAFF_ORIGIN })).statusCode, 204);
+  assert.equal((await staffApp.inject({ method: 'GET', url: '/api/staff/auth/session', headers: { cookie } })).statusCode, 401);
+  const rejectedOrigin = await post(staffApp, '/api/staff/auth/passkeys/login/options', {}, { origin: 'https://evil.example' });
+  assert.equal(rejectedOrigin.statusCode, 403, 'unknown UI origins cannot begin a staff login');
+  const nextCeremony = await post(staffApp, '/api/staff/auth/passkeys/login/options', {}, { origin: ORIGIN });
+  const nextLogin = await post(staffApp, '/api/staff/auth/passkeys/login/verify', { challengeId: nextCeremony.json().challengeId, response: device.assert(nextCeremony.json().options.challenge, { origin: ORIGIN }) }, { origin: ORIGIN });
+  assert.equal(nextLogin.statusCode, 200, nextLogin.body);
+  const nextCookie = cookieOf(nextLogin);
+  // A previously issued, unused staff enrollment must die in the same revoke operation as passkeys.
+  const pending = await post(staffApp, `/api/platform/v1/persons/${personId}/staff-passkey-enrollments`, {}, { origin: ORIGIN });
+  assert.equal(pending.statusCode, 201, pending.body);
+  const pendingEnrollmentToken = pending.json().enrollmentToken;
+  const revoked = await post(staffApp, `/api/platform/v1/persons/${personId}/passkeys/revoke`, { reason: 'dispositivo perdido' }, { origin: ORIGIN });
+  assert.equal(revoked.statusCode, 200, revoked.body); assert.equal(revoked.json().revokedPasskeys, 1);
+  assert.equal((await staffApp.inject({ method: 'GET', url: '/api/staff/auth/session', headers: { cookie: nextCookie } })).statusCode, 401, 'passkey revocation invalidates the staff session');
+  const pendingReplay = await post(staffApp, '/api/staff/auth/passkeys/register/options', { enrollmentToken: pendingEnrollmentToken }, { origin: STAFF_ORIGIN });
+  assert.equal(pendingReplay.statusCode, 401, 'passkey revocation invalidates pending staff enrollment tokens');
+  assert.equal((await sql`SELECT consumed_at IS NOT NULL AS consumed FROM platform_staff_passkey_enrollments WHERE person_id=${personId} AND token_hash=${createHash('sha256').update(pendingEnrollmentToken).digest('hex')}`)[0].consumed, true);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM platform_staff_session_audit_events WHERE person_id=${personId} AND action='passkey.enrollment_revoked'`)[0].n, 1);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM platform_staff_session_audit_events WHERE person_id=${personId} AND action IN ('session.created','session.revoked')`)[0].n, 4);
+});
+
+test('only the explicitly configured owner person receives owner.panel.read and it does not require a staff facet', async () => {
+  actor = { actorId: 'qa-admin', role: 'admin' };
+  const ownerPersonId = await createPerson();
+  const ownerApp = buildServer(process.env.DATABASE_URL, { ...flags, platformPasskeysEnabled: true, platformPasskeyRpId: RP_ID, staffAuthEnabled: true, staffAppOrigin: STAFF_ORIGIN, staffPasskeyRpId: RP_ID, staffAuthMaxRequestsPerMinute: 10_000, ownerPersonId });
+  try {
+    const issued = await post(ownerApp, `/api/platform/v1/persons/${ownerPersonId}/staff-passkey-enrollments`, {}, { origin: STAFF_ORIGIN });
+    assert.equal(issued.statusCode, 201, issued.body);
+    const token = issued.json().enrollmentToken, device = createAuthenticator({ rpId: RP_ID, origin: STAFF_ORIGIN });
+    const begin = await post(ownerApp, '/api/staff/auth/passkeys/register/options', { enrollmentToken: token }, { origin: STAFF_ORIGIN });
+    assert.equal(begin.statusCode, 200, begin.body);
+    assert.equal((await post(ownerApp, '/api/staff/auth/passkeys/register/verify', { enrollmentToken: token, challengeId: begin.json().challengeId, response: device.register(begin.json().options.challenge) }, { origin: STAFF_ORIGIN })).statusCode, 201);
+    const ceremony = (await post(ownerApp, '/api/staff/auth/passkeys/login/options', {}, { origin: STAFF_ORIGIN })).json();
+    const login = await post(ownerApp, '/api/staff/auth/passkeys/login/verify', { challengeId: ceremony.challengeId, response: device.assert(ceremony.options.challenge) }, { origin: STAFF_ORIGIN });
+    assert.equal(login.statusCode, 200, login.body);
+    const cookie = cookieOf(login);
+    const session = await ownerApp.inject({ method: 'GET', url: '/api/staff/auth/session', headers: { cookie } });
+    assert.equal(session.statusCode, 200); assert.equal(session.json().role, 'owner'); assert.equal(session.json().owner, true);
+    const capabilities = await ownerApp.inject({ method: 'GET', url: '/api/session/capabilities', headers: { cookie } });
+    assert.equal(capabilities.statusCode, 200); assert.equal(capabilities.json().ownerPanel, true); assert.equal(capabilities.json().staff, false);
+    assert.equal((await ownerApp.inject({ method: 'GET', url: '/api/staff/capabilities', headers: { cookie } })).statusCode, 403, 'owner identity does not inherit admin staff capabilities');
+    assert.equal((await sql`SELECT count(*)::int AS n FROM platform_person_staff WHERE person_id=${ownerPersonId}`)[0].n, 0);
+  } finally { await ownerApp.close(); }
+});
+
+test('passkey revocation serializes with an in-flight registration and revokes its newly inserted credential', async () => {
+  actor = { actorId: 'qa-admin', role: 'admin' };
+  const personId = await createPerson();
+  const staff = await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,status,base_role,auth_actor_id,created_by) VALUES ('Race','Trainer','Race Trainer','active','trainer',NULL,'staff-auth-test') RETURNING id`;
+  await sql`INSERT INTO platform_person_staff(person_id,professional_id,linked_by) VALUES (${personId},${staff[0].id},'staff-auth-test')`;
+  const issued = await post(staffApp, `/api/platform/v1/persons/${personId}/staff-passkey-enrollments`, {}, { origin: ORIGIN });
+  assert.equal(issued.statusCode, 201, issued.body);
+  const enrollmentToken = issued.json().enrollmentToken;
+  const [enrollment] = await sql`SELECT id,auth_subject_link_id FROM platform_staff_passkey_enrollments WHERE token_hash=${createHash('sha256').update(enrollmentToken).digest('hex')}`;
+
+  let signalRegistrationReady;
+  const registrationReady = new Promise(resolve => { signalRegistrationReady = resolve; });
+  let releaseRegistration;
+  const registrationRelease = new Promise(resolve => { releaseRegistration = resolve; });
+  const credentialId = b64(randomBytes(32));
+  const registration = sql.begin(async tx => {
+    const claimed = await tx`UPDATE platform_staff_passkey_enrollments SET consumed_at=now() WHERE id=${enrollment.id} AND consumed_at IS NULL RETURNING id`;
+    assert.equal(claimed.length, 1);
+    await tx`INSERT INTO platform_passkeys(person_id,auth_subject_link_id,credential_id,public_key,rp_id) VALUES (${personId},${enrollment.auth_subject_link_id},${credentialId},${Buffer.alloc(32, 7)},${RP_ID})`;
+    signalRegistrationReady();
+    await registrationRelease;
+  });
+  await registrationReady;
+
+  let revokePromise;
+  try {
+    revokePromise = post(staffApp, `/api/platform/v1/persons/${personId}/passkeys/revoke`, { reason: 'concurrent registration test' }, { origin: ORIGIN });
+    let revokeWaitingOnEnrollment = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const [waiting] = await sql`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE '%platform_staff_passkey_enrollments%') AS waiting`;
+      if (waiting.waiting) { revokeWaitingOnEnrollment = true; break; }
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(revokeWaitingOnEnrollment, true, 'revocation must serialize behind the registration transaction holding the enrollment row');
+  } finally {
+    releaseRegistration();
+  }
+  await registration;
+  const revoked = await revokePromise;
+  assert.equal(revoked.statusCode, 200, revoked.body);
+  assert.equal(revoked.json().revokedPasskeys, 1);
+  const [key] = await sql`SELECT status FROM platform_passkeys WHERE credential_id=${credentialId}`;
+  assert.equal(key.status, 'revoked', 'the credential committed by the in-flight registration is revoked before revocation completes');
 });
 
 test('enrollment is admin-issued, single-use, hash-only; registration verifies a real WebAuthn attestation bound to rpId and origin', async () => {

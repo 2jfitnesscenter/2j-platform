@@ -36,6 +36,7 @@ import { registerCommunicationRoutes, type ClientAuthorizationContext } from './
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerPersonIdentityRoutes } from './person-identity.js';
 import { registerPlatformPasskeyRoutes } from './platform-passkeys.js';
+import { createStaffAuth } from './staff-auth.js';
 import { createTrainingLinkTransactions, registerTrainingLinkTransactionRoutes, type ResolvedPersonAuth, type TrainingLinkVerifier } from './training-link-protocol.js';
 import { registerTrainingLinkReviewRoutes } from './training-link-review.js';
 import { createTrainingLinkFlow, createTrainingServiceClient, registerTrainingLinkFlowRoutes, type TrainingServiceClient } from './training-link-flow.js';
@@ -43,9 +44,12 @@ import { createRemoteTrainingLinkVerifier, createRemoteTrainingReceiptReconciler
 import { createTrainingCanonicalLinkLifecycle } from './training-link-lifecycle.js';
 import { registerNotificationRoutes } from './notifications.js';
 import { registerCenterNewsRoutes } from './center-news.js';
+import { registerCenterProfileRoutes } from './center-profile.js';
 import { defaultObjectStorage, type ObjectStorage } from './object-storage.js';
 import { registerStoreMediaRoutes } from './store-media.js';
+import { registerClientImportRoutes } from './client-import.js';
 import { registerClientDocumentRoutes } from './client-documents.js';
+import { registerInvoicingRoutes } from './invoicing.js';
 import { registerStoreRoutes } from './store.js';
 import { createBookingEligibilityResolver, type BookingEligibilityResolver } from './booking-eligibility.js';
 import { can, type AuthorizationContext, type ApprovedRole } from '@2j/permissions';
@@ -181,14 +185,26 @@ export function parseTrustedProxies(value: unknown): string[] {
   });
 }
 
+export function clientImportRuntimeFlags(env: NodeJS.ProcessEnv = process.env) {
+  const previewEnabled = env.CLIENT_IMPORT_PREVIEW_ENABLED === 'true';
+  return {
+    clientImportPreviewEnabled: previewEnabled,
+    clientImportCommitEnabled: previewEnabled && env.CLIENT_IMPORT_COMMIT_ENABLED === 'true',
+  };
+}
+
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
   /** Exact trusted identity subject granted the owner-only panel capability. Never derived from request input or role. */
   ownerActorId?: string | null;
+  /** Stable Platform personId configured by a verified owner bootstrap; never supplied by a browser. */
+  ownerPersonId?: string | null;
   bookingEligibilityResolver?: BookingEligibilityResolver;
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
   /** Injectable clock for deterministic Member read-contract tests; defaults to the system clock. */
   memberNowProvider?: () => Date;
+  /** Injectable clock for deterministic TIMP import preview/confirmation boundaries. */
+  clientImportNowProvider?: () => Date;
   memberPilotAuthEnabled?: boolean;
   memberPilotBookingEnabled?: boolean;
   memberPilotCohortManagementEnabled?: boolean;
@@ -216,6 +232,11 @@ export type ServerOptions = {
   /** Exact relying-party id, immutable once credentials exist (for example home.2jfitnesscenter.com). */
   platformPasskeyRpId?: string | null;
   platformPasskeyMaxRequestsPerMinute?: number;
+  /** Staff/owner passkey sessions. Disabled by default and restricted to development/test pending independent security review. */
+  staffAuthEnabled?: boolean;
+  staffAppOrigin?: string | null;
+  staffPasskeyRpId?: string | null;
+  staffAuthMaxRequestsPerMinute?: number;
   /** Exact addresses/CIDRs of the reverse proxies allowed to set X-Forwarded-For/-Proto (empty = trust none, the default). Never `true` or a catch-all: see docs/runbooks/2J-INT-proxy-and-rate-limits.md. */
   trustedProxies?: string[];
   trainingLinkLifecycleEnabled?: boolean;
@@ -232,6 +253,9 @@ export type ServerOptions = {
   logger?: FastifyServerOptions['logger'];
   /** Where product photos are stored. Defaults to the local filesystem provider (development and pilot). */
   objectStorage?: ObjectStorage;
+  /** Allows controlled CSV dry-run previews only; there is no client-write import endpoint. Defaults off. */
+  clientImportPreviewEnabled?: boolean;
+  clientImportCommitEnabled?: boolean;
 };
 
 export function buildServer(databaseUrl = process.env.DATABASE_URL, options: ServerOptions = {}) {
@@ -241,6 +265,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   if (options.trainingProvisioningEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training provisioning is restricted to development/test environments until a later, explicitly approved phase.');
   if (options.trainingSignalsEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Training signals are a proof of concept, restricted to development/test environments until a later, explicitly approved phase.');
   if (options.platformPasskeysEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Platform passkeys are restricted to development/test environments until a security review approves a rollout.');
+  if (options.staffAuthEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Staff authentication is restricted to development/test until a security review approves a rollout.');
   if (options.memberPilotBookingEnabled && (!options.memberPilotAuthEnabled || !['development', 'test'].includes(process.env.NODE_ENV ?? ''))) throw new Error('Member booking pilot mutations require development/test Member pilot authentication.');
   if (options.memberPilotCohortManagementEnabled && !['development', 'test'].includes(process.env.NODE_ENV ?? '')) throw new Error('Member pilot cohort management is restricted to development/test environments.');
   const trustedProxies = parseTrustedProxies(options.trustedProxies);
@@ -268,10 +293,31 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     throw new Error('ownerActorId must be a trusted non-empty identity subject of at most 120 characters.');
   }
   const ownerActorId = options.ownerActorId?.trim() || null;
-  const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
+  const trustedAuthorizationResolver = async (request: import('fastify').FastifyRequest) => {
     const context = await baseAuthorizationResolver(request);
     if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
     return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read'])] };
+  };
+  if (options.ownerPersonId != null && !z.string().uuid().safeParse(options.ownerPersonId).success) throw new Error('ownerPersonId must be a trusted Platform person UUID.');
+  const ownerPersonId = options.ownerPersonId?.toLowerCase() ?? null;
+  const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
+  const staffOrigin = options.staffAppOrigin ?? null;
+  if (staffOrigin) {
+    const parsedOrigin = new URL(staffOrigin);
+    const host = parsedOrigin.hostname.replace(/^\[|\]$/g, '');
+    if (!['127.0.0.1', 'localhost', '::1'].includes(host) || parsedOrigin.origin !== staffOrigin.replace(/\/$/, '')) throw new Error('STAFF_APP_ORIGIN must be an exact loopback origin until production auth acceptance.');
+  }
+  const staffAuth = createStaffAuth(client, {
+    enabled: options.staffAuthEnabled === true,
+    rpId: options.staffPasskeyRpId ?? null,
+    origins: [...new Set([allowedOrigin, ...(staffOrigin ? [staffOrigin] : [])])],
+    ownerPersonId,
+    baseAuthorization: async request => authorizationResolver(request),
+    ...(options.staffAuthMaxRequestsPerMinute ? { maxRequestsPerMinute: options.staffAuthMaxRequestsPerMinute } : {}),
+  });
+  const authorizationResolver = async (request: import('fastify').FastifyRequest) => {
+    const session = await staffAuth.resolve(request);
+    return session ?? trustedAuthorizationResolver(request);
   };
   const memberPilotAuth = createMemberPilotAuth(client, { enabled: options.memberPilotAuthEnabled === true, memberOrigin: options.memberAppOrigin ?? null, passkeysEnabled: options.platformPasskeysEnabled === true });
   const clientAuthorizationResolver = options.clientAuthorizationResolver ?? (memberPilotAuth.enabled ? memberPilotAuth.resolve : async () => null);
@@ -292,15 +338,15 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     } catch { return createTrainingAdapter(); }
   })()
     : createTrainingAdapter();
-  const allowedOrigin = process.env.CORS_ORIGIN ?? 'http://127.0.0.1:5173';
   const memberOrigin = options.memberAppOrigin ?? null;
-  for (const configuredOrigin of [allowedOrigin, ...(memberOrigin ? [memberOrigin] : [])]) {
+  for (const configuredOrigin of [allowedOrigin, ...(memberOrigin ? [memberOrigin] : []), ...(staffOrigin ? [staffOrigin] : [])]) {
     const parsedOrigin = new URL(configuredOrigin);
     const originHost = parsedOrigin.hostname.replace(/^\[|\]$/g, '');
-    if (!['127.0.0.1', 'localhost', '::1'].includes(originHost) || parsedOrigin.origin !== configuredOrigin.replace(/\/$/, '')) throw new Error('CORS_ORIGIN and MEMBER_APP_ORIGIN must be exact loopback origins.');
+    if (!['127.0.0.1', 'localhost', '::1'].includes(originHost) || parsedOrigin.origin !== configuredOrigin.replace(/\/$/, '')) throw new Error('CORS_ORIGIN, MEMBER_APP_ORIGIN and STAFF_APP_ORIGIN must be exact loopback origins.');
   }
   if (options.memberPilotAuthEnabled && !memberOrigin) throw new Error('MEMBER_APP_ORIGIN is required when pilot member authentication is enabled.');
-  const corsOrigins = [...new Set([allowedOrigin, ...(memberOrigin ? [memberOrigin] : [])])];
+  if (options.staffAuthEnabled && (!staffOrigin || !options.staffPasskeyRpId)) throw new Error('STAFF_APP_ORIGIN and STAFF_PASSKEY_RP_ID are required when staff authentication is enabled.');
+  const corsOrigins = [...new Set([allowedOrigin, ...(memberOrigin ? [memberOrigin] : []), ...(staffOrigin ? [staffOrigin] : [])])];
   app.register(cors, { origin: corsOrigins, credentials: true, methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders: ['content-type', 'idempotency-key'] });
   app.addHook('onRequest', async (request, reply) => {
     const host = request.hostname?.replace(/^\[|\]$/g, '').toLowerCase();
@@ -310,6 +356,12 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const routePath = request.routeOptions.url ?? '';
     const memberMutation = routePath.startsWith('/api/me/') || routePath.startsWith('/api/client-portal/');
     if (memberPilotAuth.enabled && memberMutation && !['GET','HEAD','OPTIONS'].includes(request.method) && !memberPilotAuth.csrfAllowed(request)) return reply.code(403).send({ error: 'origin_rejected' });
+    const staffMutation = routePath.startsWith('/api/') && !memberMutation && !['GET','HEAD','OPTIONS'].includes(request.method);
+    if (staffAuth.enabled && staffMutation) {
+      const passkeyRevoke = routePath.endsWith('/passkeys/revoke');
+      const memberOriginMayRevoke = passkeyRevoke && memberOrigin !== null && request.headers.origin === memberOrigin;
+      if (!memberOriginMayRevoke && !staffAuth.csrfAllowed(request)) return reply.code(403).send({ error: 'origin_rejected' });
+    }
   });
   app.addHook('onSend', async (request, reply, payload) => {
     const route = request.routeOptions.url ?? '';
@@ -355,6 +407,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   app.addHook('onClose', async () => { push.stop(); });
   memberPilotAuth.register(app);
   registerPlatformPasskeyRoutes(app, client, { enabled: options.platformPasskeysEnabled === true, rpId: options.platformPasskeyRpId ?? null, origin: options.memberAppOrigin ?? null, startSession: memberPilotAuth.startSession, resolveAuthorization: authorizationResolver, ...(options.platformPasskeyMaxRequestsPerMinute ? { maxRequestsPerMinute: options.platformPasskeyMaxRequestsPerMinute } : {}) });
+  staffAuth.register(app, client);
   registerEconomicRoutes(app, client, authorizationResolver);
   registerEconomicExtensions(app, client, authorizationResolver);
   registerStaffRoutes(app, client, authorizationResolver);
@@ -368,10 +421,13 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerCommunicationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerNotificationRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   registerCenterNewsRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
+  registerCenterProfileRoutes(app, client, authorizationResolver);
   registerStoreRoutes(app, client, authorizationResolver, clientAuthorizationResolver);
   const objectStorage = options.objectStorage ?? defaultObjectStorage();
   registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
   registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
+  registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true, options.clientImportCommitEnabled === true, options.clientImportNowProvider);
+  registerInvoicingRoutes(app, client, authorizationResolver, objectStorage);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
@@ -761,6 +817,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
     ownerActorId: process.env.PLATFORM_OWNER_ACTOR_ID ?? null,
+    ...clientImportRuntimeFlags(),
+    ownerPersonId: process.env.PLATFORM_OWNER_PERSON_ID ?? null,
+    staffAuthEnabled: process.env.PLATFORM_STAFF_AUTH_ENABLED === 'true',
+    staffAppOrigin: process.env.STAFF_APP_ORIGIN ?? null,
+    staffPasskeyRpId: process.env.STAFF_PASSKEY_RP_ID ?? null,
     memberPilotAuthEnabled: process.env.PILOT_MEMBER_AUTH_ENABLED === 'true',
     memberPilotBookingEnabled: process.env.PILOT_MEMBER_BOOKING_ENABLED === 'true',
     memberPilotCohortManagementEnabled: process.env.PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED === 'true',
