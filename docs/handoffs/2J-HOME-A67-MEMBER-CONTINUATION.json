@@ -21,7 +21,11 @@
     "Descarga de facturas: D106/A63 mantienen cerrado el gate fiscal y no existe endpoint de descarga para el socio.",
     "Historial de mediciones/evolución: no forma parte del contrato 2J-089."
   ],
-  "independentReview": "required-for-member-and-economic-data",
+  "independentReview": {
+    "status": "completed-no-findings",
+    "reviewedHead": "5f47137989179798cb96ab406d801ee072af23a6",
+    "limitations": ["remote CI", "secret scan", "staging", "real authenticated session"]
+  },
   "remoteCi": "not-queried",
   "tests": {
     "clientApp": "48/48",

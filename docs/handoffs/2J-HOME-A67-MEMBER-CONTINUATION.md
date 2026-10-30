@@ -28,4 +28,4 @@ En el HEAD previo al commit: `pnpm --filter @2j/client-app test` 48/48; `typeche
 
 ## Revisión requerida
 
-Solicitada una única revisión independiente del diff final por contener presentación de importes y datos de miembro/mensajes. La revisión remota de CI/secret scan/E2E no se consultó; `gitleaks` y `trufflehog` no están instalados localmente.
+Revisión independiente completada por otro agente sobre `5f47137989179798cb96ab406d801ee072af23a6`: sin hallazgos. Verificó presentación de pagos sin recálculo, rutas autenticadas de mensajes y compras, alcance de 2J-089, elegibilidad explícita y respeto de D106/D238/D239. No verificó CI remoto, secret scan, staging ni una sesión real. `gitleaks` y `trufflehog` no están instalados localmente.
