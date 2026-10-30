@@ -267,6 +267,9 @@ export function CommandCenter() {
   const { data, state, error, reload } = useCommandCenter();
   const [updatedAt, setUpdatedAt] = React.useState<string | null>(null);
   React.useEffect(() => { if (data) setUpdatedAt(new Date().toISOString()); }, [data]);
+  // El shell carga el resumen una sola vez: al volver desde Cobrar, Vender, Caja o Mensajes se refresca solo, para no mostrar cifras viejas.
+  const hadDataOnEntry = React.useRef(Boolean(data));
+  React.useEffect(() => { if (hadDataOnEntry.current) void reload(); }, [reload]);
   const today = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
   const description = `${today} · Lo importante de hoy y lo que requiere tu atención.`;
 

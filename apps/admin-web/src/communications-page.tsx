@@ -1,7 +1,8 @@
 import { apiFetch } from './api-fetch.js';
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, EmptyState, PageHeader, SearchField, SegmentedControl, icons } from "@2j/ui";
 import { Modal } from "./modal.js";
+import { clearDeepLink, readDeepLink } from "./deep-link.js";
 
 type InboxItem = {
   clientId: string;
@@ -31,6 +32,16 @@ type Thread = {
 type MessageTemplate = { id:string; name:string; body:string; status:string };
 const api = import.meta.env?.VITE_API_URL ?? "http://localhost:3100";
 const uuid = () => crypto.randomUUID();
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Texto claro para cada rechazo de la API al enviar (nunca el código técnico). */
+function sendFailure(status: number, internal: boolean): string {
+  if (status === 401) return "Tu sesión ha caducado. Vuelve a entrar.";
+  if (status === 403) return internal ? "Tu perfil no puede escribir notas internas." : "Tu perfil puede leer mensajes pero no enviarlos.";
+  if (status === 404) return "Este cliente ya no está activo o la plantilla se archivó. Recarga la bandeja.";
+  if (status === 400) return "El mensaje está vacío o supera los 5000 caracteres.";
+  if (status === 409) return "Este envío ya se había registrado con otro texto. Revisa la conversación y vuelve a escribirlo.";
+  return internal ? "No se pudo guardar la nota. Inténtalo de nuevo." : "No se pudo enviar el mensaje. Inténtalo de nuevo; no se duplicará.";
+}
 export function CommunicationsPage() {
   const [items, setItems] = useState<InboxItem[]>([]),
     [selected, setSelected] = useState<InboxItem | null>(null),
@@ -46,6 +57,9 @@ export function CommunicationsPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  // Una sola clave por borrador: si el envío falla por red y se reintenta, el servidor lo reconoce y no duplica el mensaje.
+  const draftKey = useRef<{ clientId: string; body: string; templateId: string; key: string } | null>(null);
+  const [deepClientId] = useState(() => { const value = readDeepLink(["clientId"] as const).clientId; return value && UUID_PATTERN.test(value) ? value : null; });
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -110,6 +124,21 @@ export function CommunicationsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+  // Enlace desde la ficha del cliente o el Resumen: `#communications?clientId=…` abre directamente su conversación.
+  useEffect(() => {
+    if (!deepClientId) return;
+    clearDeepLink(["clientId"]);
+    let cancelled = false;
+    void (async () => {
+      let name = { firstName: "Cliente", lastName: "seleccionado" };
+      try {
+        const response = await apiFetch(`${api}/api/clients/${deepClientId}`);
+        if (response.ok) { const data = (await response.json()) as { client?: ClientHit }; if (data.client) name = { firstName: data.client.firstName, lastName: data.client.lastName }; }
+      } catch { /* sin permiso de ficha: se abre igualmente la conversación */ }
+      if (!cancelled) void loadThread({ clientId: deepClientId, ...name, conversationId: "", lastMessageAt: null, unreadCount: 0, pendingDocuments: 0, pendingConsents: 0, overdueCheckinDue: null });
+    })();
+    return () => { cancelled = true; };
+  }, [deepClientId, loadThread]);
   async function send(event: React.FormEvent) {
     event.preventDefault();
     if (!selected || !body.trim()) return;
@@ -119,22 +148,26 @@ export function CommunicationsPage() {
       const path = internal
         ? `/api/clients/${selected.clientId}/internal-notes`
         : `/api/clients/${selected.clientId}/messages`;
+      const current = draftKey.current;
+      const key = !internal && current && current.clientId === selected.clientId && current.body === body && current.templateId === selectedTemplateId ? current.key : uuid();
+      if (!internal) draftKey.current = { clientId: selected.clientId, body, templateId: selectedTemplateId, key };
       const response = await apiFetch(`${api}${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(internal ? {} : { "idempotency-key": uuid() }),
+          ...(internal ? {} : { "idempotency-key": key }),
         },
         body: JSON.stringify({ body, ...(internal || !selectedTemplateId ? {} : { templateId: selectedTemplateId }) }),
       });
-      if (!response.ok) throw new Error("No se pudo guardar el mensaje.");
+      if (!response.ok) throw new Error(sendFailure(response.status, internal));
+      draftKey.current = null;
       setBody("");
       await loadThread(selected);
-      setFeedback(internal ? "Nota interna guardada." : "Mensaje enviado.");
+      setFeedback(internal ? "Nota interna guardada." : "Mensaje enviado. El cliente lo verá en su app.");
       await load();
     } catch (e) {
       setFeedback(
-        e instanceof Error ? e.message : "No se pudo completar el envío.",
+        e instanceof Error ? e.message : "No se pudo completar el envío. Inténtalo de nuevo.",
       );
     } finally {
       setSending(false);
@@ -232,7 +265,7 @@ export function CommunicationsPage() {
                       </strong>
                       <small>
                         {item.unreadCount
-                          ? `${item.unreadCount} mensajes sin leer`
+                          ? `${item.unreadCount} ${item.unreadCount === 1 ? "mensaje sin leer" : "mensajes sin leer"}`
                           : "Conversación del centro"}
                       </small>
                       <span>
