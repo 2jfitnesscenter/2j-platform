@@ -818,7 +818,7 @@ test('preview Store uses fictional nutrition and merchandising fixtures without 
   const {render,cleanup,fireEvent,ClientApp}=await uiHarness();const ui=render(React.createElement(ClientApp,{previewModeOverride:true}));
   fireEvent.click(ui.getByRole('button',{name:/Tienda/}));assert.ok(ui.getByRole('heading',{name:'Tienda'}));assert.ok(ui.getByRole('heading',{name:'Proteína 2J'}));assert.ok(ui.getByText('Creatina'));assert.equal(ui.queryByRole('button',{name:/Comprar|Carrito|Pagar/}),null);
   fireEvent.click(ui.getByRole('button',{name:'Merchandising'}));assert.ok(ui.getByRole('heading',{name:'Camiseta 2J'}));assert.ok(ui.getByText('Sudadera 2J'));
-  fireEvent.click(ui.getByRole('button',{name:'Perfil'}));assert.ok(ui.getByText('Proteína 2J · Chocolate · 900 g × 1'));assert.equal(fetchCount,0);
+  fireEvent.click(ui.getByRole('button',{name:'Perfil'}));assert.ok(ui.getByText('Proteína 2J · Chocolate · 900 g × 1'));assert.ok(ui.getByText('Cuota mensual · ejemplo'));assert.ok(ui.getByText('Pendiente de pago'));assert.ok(ui.getByText('Ejemplo ficticio · no refleja una cuenta real.'));assert.equal(fetchCount,0);
   cleanup();dom.window.close();
 });
 
