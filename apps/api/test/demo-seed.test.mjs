@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
@@ -66,6 +68,14 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
     ]);
     assert.equal((await sql`SELECT count(*)::int AS count FROM communication_conversations WHERE client_id='d0700000-0000-4000-8000-000000000001'::uuid`)[0].count, 1, 'the primary review profile has a synthetic message thread');
     assert.equal((await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id='d0700000-0000-4000-8000-000000000001'::uuid AND state='pending'`)[0].count, 1, 'the primary review profile has a pending synthetic charge');
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_fiscal_documents`)[0].count, 0, 'local seed does not create fiscal documents by default');
+    const [blankInvoiceSettings] = await sql`SELECT issuer_name AS "issuerName",issuer_tax_id AS "issuerTaxId",issuer_address AS "issuerAddress",default_series_id AS "defaultSeriesId" FROM economic_invoice_settings WHERE singleton=true`;
+    assert.deepEqual(blankInvoiceSettings, { issuerName: null, issuerTaxId: null, issuerAddress: null, defaultSeriesId: null }, 'owner-editable issuer settings stay empty');
+
+    // Extra runtime arguments cannot opt the exported local/test helper into staging data.
+    await seedDemoData(sql, { includeSyntheticInvoice: true });
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_fiscal_documents`)[0].count, 0,
+      'the exported seed helper cannot issue the staging-only sample even if a caller passes the old option');
 
     await sql`UPDATE staff_professionals SET auth_actor_id=NULL WHERE id=${demoId}::uuid`;
     await seedDemoData(sql);
@@ -98,6 +108,68 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
   } finally {
     await Promise.all([trainer?.close(), adminStaff?.close(), unlinked?.close(), sql?.end()]);
     await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+    await admin.end();
+  }
+});
+
+test('validated staging CLI creates one idempotent synthetic ticket without filling owner settings', async () => {
+  const admin = postgres(process.env.DATABASE_URL, { max: 2, connect_timeout: 5 });
+  const existing = await admin`SELECT 1 FROM pg_database WHERE datname='2j_demo'`;
+  if (existing.length !== 0) {
+    await admin.end();
+    assert.fail('2j_demo must be absent so this test never overwrites an existing database');
+  }
+  let sql;
+  let api;
+  let created = false;
+  const databaseUrl = new URL(process.env.DATABASE_URL);
+  databaseUrl.pathname = '/2j_demo';
+  const seedScript = fileURLToPath(new URL('../scripts/seed-demo.ts', import.meta.url));
+  try {
+    await admin.unsafe('CREATE DATABASE "2j_demo"');
+    created = true;
+    sql = postgres(databaseUrl.toString(), { max: 8, connect_timeout: 5 });
+    await migrateDatabase(sql);
+    const env = {
+      ...process.env,
+      NODE_ENV: 'development',
+      DATABASE_URL: databaseUrl.toString(),
+      STAGING_SEED: '1',
+      STAGING_SEED_HOST: '2jfit.com',
+    };
+    const runStagingSeed = () => execFileSync(process.execPath, ['--import', 'tsx', seedScript], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)), env, encoding: 'utf8',
+    });
+    assert.match(runStagingSeed(), /Synthetic staging/);
+    assert.match(runStagingSeed(), /Synthetic staging/);
+
+    const [sampleInvoice] = await sql`SELECT d.document_number AS "documentNumber",d.status,d.document_type AS "documentType",d.payment_methods AS "paymentMethods",d.issuer_snapshot AS issuer,d.totals_snapshot AS totals
+      FROM economic_fiscal_documents d WHERE d.id='d0700000-0000-4000-8000-000000000606'::uuid`;
+    assert.ok(sampleInvoice, 'the validated staging CLI creates the sample ticket');
+    assert.equal(sampleInvoice.documentNumber, 'DEMO-1');
+    assert.equal(sampleInvoice.status, 'issued');
+    assert.equal(sampleInvoice.documentType, 'simplified_ticket');
+    assert.equal(sampleInvoice.issuer.name, 'MUESTRA SINTÉTICA 2J · NO VÁLIDA');
+    assert.match(sampleInvoice.issuer.footerText, /NO VÁLIDO FISCALMENTE/);
+    assert.deepEqual(sampleInvoice.paymentMethods, [{ method: 'transfer', amountCents: 4900 }]);
+    assert.equal(sampleInvoice.totals.grossCents, 4900);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_fiscal_documents`)[0].count, 1);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE id='d0700000-0000-4000-8000-000000000602'::uuid`)[0].count, 1);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_transfer_proofs WHERE id='d0700000-0000-4000-8000-000000000603'::uuid AND status='validated'`)[0].count, 1);
+    assert.equal(Number((await sql`SELECT next_number FROM economic_invoice_series WHERE id='d0700000-0000-4000-8000-000000000604'::uuid`)[0].next_number), 2,
+      'rerun reuses the same ticket without consuming another number');
+    const [settings] = await sql`SELECT issuer_name AS "issuerName",issuer_tax_id AS "issuerTaxId",issuer_address AS "issuerAddress",default_series_id AS "defaultSeriesId" FROM economic_invoice_settings WHERE singleton=true`;
+    assert.deepEqual(settings, { issuerName: null, issuerTaxId: null, issuerAddress: null, defaultSeriesId: null });
+
+    api = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'local-demo:admin', role: 'admin' }) });
+    const invoicePdf = await api.inject({ method: 'GET', url: '/api/economics/documents/d0700000-0000-4000-8000-000000000606/pdf?variant=ticket' });
+    assert.equal(invoicePdf.statusCode, 200, invoicePdf.body);
+    assert.match(invoicePdf.headers['content-type'], /application\/pdf/);
+    assert.ok(invoicePdf.rawPayload.subarray(0, 5).equals(Buffer.from('%PDF-')));
+  } finally {
+    await api?.close();
+    await sql?.end();
+    if (created) await admin.unsafe('DROP DATABASE "2j_demo" WITH (FORCE)');
     await admin.end();
   }
 });
