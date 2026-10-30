@@ -12,7 +12,7 @@ Los cuestionarios y textos comienzan vacíos, sin preguntas, copy legal, ejemplo
 
 Se añadió `GET /api/forms/:formId/versions`, protegido por `forms.manage`, para recuperar borradores y esquemas/versiones persistidos. Devuelve solo versión, estado, descripción, definición de campos y fecha; no incluye respuestas, asignaciones ni actor creador. Sin migración. Consentimientos ya tenía lectura de versiones bajo `consents.read`.
 
-## Validación local sobre `origin/main` d2796f4
+## Validación local sobre `origin/main` 5511974
 
 - Admin Web completo: 382/382 PASS.
 - Mi gimnasio focalizado: 12/12 PASS.
