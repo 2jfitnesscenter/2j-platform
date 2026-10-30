@@ -36,6 +36,62 @@ const settingsInput = z.object({
 
 const euros = (cents: number) => cents;
 
+type BuiltPdf = { pdf: Buffer; filename: string; length: number };
+/** Renders the stored, immutable document. `onlyClientId` makes a member lookup match only that client's own documents. */
+export async function buildDocumentPdf(db: DB, storage: ObjectStorage, documentId: string, variant: 'a4' | 'ticket', onlyClientId: string | null = null): Promise<BuiltPdf | null> {
+  const [row] = await db`SELECT d.*,o.document_number AS "originalNumber",o.document_date::text AS "originalDate" FROM economic_fiscal_documents d LEFT JOIN economic_fiscal_documents o ON o.id=d.rectifies_document_id WHERE d.id=${documentId}::uuid AND (${onlyClientId}::uuid IS NULL OR d.client_id=${onlyClientId}::uuid)`;
+  if (!row) return null;
+  const issuerSnapshot = row.issuer_snapshot as Record<string, any>;
+  let logo: InvoiceLogo | null = null;
+  if (issuerSnapshot.logo?.key) { const bytes = await storage.get(issuerSnapshot.logo.key); if (bytes) logo = { bytes, mime: issuerSnapshot.logo.mime }; }
+  const methods = (row.payment_methods as Array<{ method: string; amountCents: number }>) ?? [];
+  const totals = row.totals_snapshot as InvoiceDocumentData['totals'];
+  const data: InvoiceDocumentData = {
+    documentType: row.document_type, documentNumber: row.document_number, documentDate: String(row.document_date).slice(0, 10),
+    rectifies: row.rectifies_document_id ? { documentNumber: row.originalNumber, documentDate: String(row.originalDate), reason: row.rectification_reason } : null,
+    issuer: { name: issuerSnapshot.name, taxId: issuerSnapshot.taxId, address: issuerSnapshot.address, postalCode: issuerSnapshot.postalCode, locality: issuerSnapshot.locality, province: issuerSnapshot.province, footerText: issuerSnapshot.footerText, legalText: issuerSnapshot.legalText },
+    client: row.client_snapshot as InvoiceDocumentData['client'], lines: row.lines_snapshot as InvoiceLine[], totals,
+    paymentMethods: methods, paymentStatus: row.rectifies_document_id ? null : methods.reduce((sum, item) => sum + Number(item.amountCents), 0) >= Number(totals.grossCents) ? 'paid' : 'pending',
+  };
+  const pdf = await renderInvoicePdf(data, { logo, variant });
+  const safeNumber = String(row.document_number).replace(/[^A-Za-z0-9._-]/g, '_');
+  return { pdf, length: pdf.length, filename: `${data.rectifies ? 'rectificativa' : data.documentType === 'full_invoice' ? 'factura' : 'ticket'}-${safeNumber}.pdf` };
+}
+const sendPdf = (reply: any, built: BuiltPdf) => reply.header('Content-Type', 'application/pdf').header('Content-Length', built.length).header('Cache-Control', 'private, no-store').header('X-Content-Type-Options', 'nosniff')
+  .header('Content-Disposition', `inline; filename="${built.filename}"`).send(built.pdf);
+
+/**
+ * Member self-service: a member sees only the documents of the client the authenticated session resolves to (never a client id from the request).
+ * The list carries no issuer/client snapshots; the PDF is the same immutable document staff print. A document of another client answers 404.
+ */
+export function registerMemberInvoiceRoutes(app: FastifyInstance<any, any, any, any, any>, db: DB, resolveClient: (request: FastifyRequest) => Promise<{ clientId: string } | null>, storage: ObjectStorage) {
+  async function member(request: FastifyRequest, reply: any) {
+    reply.header('Cache-Control', 'private, no-store');
+    const actor = await resolveClient(request);
+    if (!actor || !uuid.safeParse(actor.clientId).success) { reply.code(401).send({ error: 'client_authentication_required' }); return null; }
+    const clientId = actor.clientId.toLowerCase();
+    const [active] = await db`SELECT id FROM clients WHERE id=${clientId}::uuid AND status='active'`;
+    if (!active) { reply.code(401).send({ error: 'client_authentication_required' }); return null; }
+    return clientId;
+  }
+  app.get('/api/me/invoices', async (request, reply) => {
+    const clientId = await member(request, reply); if (!clientId) return;
+    const items = await db`SELECT d.id,d.document_type AS "documentType",d.status,d.document_number AS "documentNumber",d.document_date::text AS "documentDate",(d.totals_snapshot->>'grossCents')::bigint AS "grossCents",
+        (d.rectifies_document_id IS NOT NULL) AS "isRectification",EXISTS(SELECT 1 FROM economic_fiscal_documents r WHERE r.rectifies_document_id=d.id) AS "isRectified"
+      FROM economic_fiscal_documents d WHERE d.client_id=${clientId}::uuid ORDER BY d.issued_at DESC,d.id DESC LIMIT 200`;
+    return { items: items.map((row: any) => ({ ...row, grossCents: Number(row.grossCents) })) };
+  });
+  app.get('/api/me/invoices/:invoiceId/pdf', async (request, reply) => {
+    const clientId = await member(request, reply); if (!clientId) return;
+    const params = z.object({ invoiceId: uuid }).strict().safeParse(request.params);
+    const query = z.object({ variant: z.enum(['a4', 'ticket']).default('a4') }).strict().safeParse(request.query);
+    if (!params.success || !query.success) return reply.code(400).send({ error: 'validation_error' });
+    const built = await buildDocumentPdf(db, storage, params.data.invoiceId, query.data.variant, clientId);
+    if (!built) return reply.code(404).send({ error: 'document_not_found' });
+    return sendPdf(reply, built);
+  });
+}
+
 export function registerInvoicingRoutes(app: FastifyInstance<any, any, any, any, any>, db: DB, resolve: (request: FastifyRequest) => Promise<AuthorizationContext | null>, storage: ObjectStorage) {
   async function auth(request: FastifyRequest, reply: any, permission: string) {
     const context = await resolve(request);
@@ -273,23 +329,8 @@ export function registerInvoicingRoutes(app: FastifyInstance<any, any, any, any,
     const params = z.object({ documentId: uuid }).strict().safeParse(request.params);
     const query = z.object({ variant: z.enum(['a4', 'ticket']).default('a4') }).strict().safeParse(request.query);
     if (!params.success || !query.success) return reply.code(400).send({ error: 'validation_error' });
-    const [row] = await db`SELECT d.*,o.document_number AS "originalNumber",o.document_date::text AS "originalDate" FROM economic_fiscal_documents d LEFT JOIN economic_fiscal_documents o ON o.id=d.rectifies_document_id WHERE d.id=${params.data.documentId}::uuid`;
-    if (!row) return reply.code(404).send({ error: 'document_not_found' });
-    const issuerSnapshot = row.issuer_snapshot as Record<string, any>;
-    let logo: InvoiceLogo | null = null;
-    if (issuerSnapshot.logo?.key) { const bytes = await storage.get(issuerSnapshot.logo.key); if (bytes) logo = { bytes, mime: issuerSnapshot.logo.mime }; }
-    const methods = (row.payment_methods as Array<{ method: string; amountCents: number }>) ?? [];
-    const totals = row.totals_snapshot as InvoiceDocumentData['totals'];
-    const data: InvoiceDocumentData = {
-      documentType: row.document_type, documentNumber: row.document_number, documentDate: String(row.document_date).slice(0, 10),
-      rectifies: row.rectifies_document_id ? { documentNumber: row.originalNumber, documentDate: String(row.originalDate), reason: row.rectification_reason } : null,
-      issuer: { name: issuerSnapshot.name, taxId: issuerSnapshot.taxId, address: issuerSnapshot.address, postalCode: issuerSnapshot.postalCode, locality: issuerSnapshot.locality, province: issuerSnapshot.province, footerText: issuerSnapshot.footerText, legalText: issuerSnapshot.legalText },
-      client: row.client_snapshot as InvoiceDocumentData['client'], lines: row.lines_snapshot as InvoiceLine[], totals,
-      paymentMethods: methods, paymentStatus: row.rectifies_document_id ? null : methods.reduce((sum, item) => sum + Number(item.amountCents), 0) >= Number(totals.grossCents) ? 'paid' : 'pending',
-    };
-    const pdf = await renderInvoicePdf(data, { logo, variant: query.data.variant });
-    const safeNumber = String(row.document_number).replace(/[^A-Za-z0-9._-]/g, '_');
-    return reply.header('Content-Type', 'application/pdf').header('Content-Length', pdf.length).header('Cache-Control', 'private, no-store').header('X-Content-Type-Options', 'nosniff')
-      .header('Content-Disposition', `inline; filename="${data.rectifies ? 'rectificativa' : data.documentType === 'full_invoice' ? 'factura' : 'ticket'}-${safeNumber}.pdf"`).send(pdf);
+    const built = await buildDocumentPdf(db, storage, params.data.documentId, query.data.variant);
+    if (!built) return reply.code(404).send({ error: 'document_not_found' });
+    return sendPdf(reply, built);
   });
 }
