@@ -83,7 +83,7 @@ test('groups disappear when no child is allowed and partial grants expose only t
   const partial={...none,clients:true,notificationSettings:true};
   const nav=getProfessionalNavigation(partial);
   assert.deepEqual(nav.map(item=>item.label),['Operación','Gestión']);
-  assert.deepEqual(nav.find(item=>item.id==='management').children.map(item=>item.label),['Configuración','Ajustes de avisos']);
+  assert.deepEqual(nav.find(item=>item.id==='management').children.map(item=>item.label),['Importar clientes','Configuración','Ajustes de avisos']);
 });
 
 test('global search opens with Ctrl+K, groups permitted results and closes with Escape', async () => {

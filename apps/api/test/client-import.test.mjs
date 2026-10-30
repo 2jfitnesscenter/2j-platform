@@ -12,7 +12,8 @@ process.env.NODE_ENV ??= 'test';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: client import API tests cannot be skipped.');
 const sql = postgres(process.env.DATABASE_URL, { max: 8, connect_timeout: 5 });
 await migrateDatabase(sql);
-const enabled = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'synthetic-import-admin', role: 'admin' }), clientImportPreviewEnabled: true });
+const importNow = new Date('2026-10-29T12:00:00.000Z');
+const enabled = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'synthetic-import-admin', role: 'admin' }), clientImportPreviewEnabled: true, clientImportNowProvider: () => importNow });
 const disabled = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'synthetic-import-admin', role: 'admin' }) });
 const trainer = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'synthetic-import-trainer', role: 'trainer' }), clientImportPreviewEnabled: true });
 const anon = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => null, clientImportPreviewEnabled: true });
@@ -114,6 +115,7 @@ test('TIMP legacy XLS preview includes all 1,390 synthetic rows, classifies 365 
   assert.equal(apiPreview.json().mode, 'dry_run');
   assert.equal(apiPreview.json().commitAvailable, false);
   assert.equal(apiPreview.json().rowCount, 1390);
+  assert.equal(apiPreview.json().timpSummary.asOfDate, '2026-10-29');
   assert.equal(apiPreview.json().timpSummary.active, 700);
   const [audit] = await sql`SELECT source_format AS "sourceFormat",row_count AS "rowCount" FROM client_import_preview_audit ORDER BY created_at DESC,id DESC LIMIT 1`;
   assert.deepEqual(audit, { sourceFormat: 'xls', rowCount: 1390 });
