@@ -1,0 +1,18 @@
+{
+  "task": "2J-HOME-PORTAL-PARITY-GAP-MAP",
+  "status": "documented",
+  "homeBase": "abd31b89ffc2ce64c9fae167f2226267234b2348",
+  "referenceRepository": "2jfitnesscenter/2jfit-admin",
+  "referenceMain": "ded5340d8404ed1577a9e4d404554cbef82173b7",
+  "document": "docs/reviews/2J-HOME-PORTAL-PARITY-GAP-MAP.md",
+  "draftPullRequest": 133,
+  "implementation": "No additional Home code change: existing supported flows are present or already covered by PRs #116/#126; remaining missing items have no safe published Platform contract or are blocked by D106.",
+  "independentReview": {
+    "pullRequest": 80,
+    "head": "9abb0cab982ea967e44232a6e4a0141c43f0c0bb",
+    "reproduction": "Disposable PostgreSQL 17; API client-app suite 9/9 passed.",
+    "finding": "D185 changes availability from the object contract merged in #110 to a string; this is incompatible with Home #116. Review comments posted before merge."
+  },
+  "productionTouched": false,
+  "tests": ["git diff --cached --check PASS", "API client-app.test.mjs 9/9 PASS on PR #80 isolated head"]
+}
