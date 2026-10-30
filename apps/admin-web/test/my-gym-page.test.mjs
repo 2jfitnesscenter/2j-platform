@@ -18,7 +18,7 @@ const model = {
   today: { sessionCount: 0, upcomingCount: 0, capacity: 0, occupied: 0, waitlistCount: 0, unassignedCount: 0, sessions: [], nextSession: null },
   clients: { active: 12, recentSignups: 2 }, attention: [], economics: null, team: null, unread: 0, quickActions: [],
 };
-const capabilities = { calendar: true, clients: true, communications: true, billing: true, staff: true, ownerPanel: true };
+const capabilities = { calendar: true, clients: true, communications: true, billing: true, staff: true, ownerPanel: true, formsRead: true, formsManage: true, consentsRead: true, consentsManage: true };
 const panelData = {
   timezone: 'Atlantic/Canary', asOf: '2026-10-25T12:00:00.000Z', localDate: '2026-10-25',
   today: {
@@ -42,15 +42,17 @@ const panelData = {
     bunkerLinkedClients: 11,
   },
 };
-const serve = ({ panel = () => response(panelData), settings = () => response({ dueDay: 10, timezone: 'Atlantic/Canary', debtBlocksNewReservations: false, fiscalLegalGateOpen: false, documentRetentionMonths: 60 }) } = {}) => {
+const serve = ({ panel = () => response(panelData), settings = () => response({ dueDay: 10, timezone: 'Atlantic/Canary', debtBlocksNewReservations: false, fiscalLegalGateOpen: false, documentRetentionMonths: 60 }), forms = () => response([]), consents = () => response({ items: [] }), sessionCapabilities = () => response(capabilities) } = {}) => {
   const urls = [];
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, init) => {
     const path = String(url); urls.push(path);
+    if (path.includes('/api/forms')) return forms(path, init);
+    if (path.includes('/api/consents')) return consents(path, init);
     if (path.includes('/api/admin/owner-panel')) return panel();
     if (path.includes('/api/economics/settings')) return settings();
     if (path.includes('/api/admin/news')) return response({ items: [] });
     if (path.includes('/api/dashboard/command-center')) return response(model);
-    if (path.includes('/api/session/capabilities')) return response(capabilities);
+    if (path.includes('/api/session/capabilities')) return sessionCapabilities();
     return response({ groups: [] });
   };
   return urls;
@@ -116,7 +118,7 @@ test('Datos del negocio shows what Platform stores and says plainly what is not 
   assert.ok(urls.some((path) => path.includes('/api/economics/settings')));
 });
 
-test('Novedades embeds the existing news screen with a single page heading, and Consentimientos points to the client file without health content', async () => {
+test('Novedades embeds the existing news screen with a single page heading, and Consentimientos starts blank', async () => {
   serve(); window.location.hash = '#my-gym'; mount();
   await screen.findByRole('heading', { level: 2, name: 'Hoy' });
   fireEvent.click(screen.getByRole('button', { name: 'Novedades' }));
@@ -124,8 +126,136 @@ test('Novedades embeds the existing news screen with a single page heading, and 
   assert.equal(screen.getAllByRole('heading', { level: 1 }).length, 1, 'no second h1');
   assert.equal(document.querySelectorAll('main').length, 1, 'no nested main');
   fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' }));
-  assert.ok(await screen.findByText('Se gestionan desde la ficha de cada cliente'));
-  assert.equal(screen.getByRole('link', { name: 'Ir a Clientes' }).getAttribute('href'), '#clients');
+  assert.ok(await screen.findByText('No hay textos de consentimiento'));
+  assert.ok(screen.getByRole('button', { name: 'Nuevo consentimiento' }));
+  assert.ok(screen.getByRole('button', { name: 'Cuestionarios' }));
+  assert.equal(document.querySelectorAll('textarea').length, 0, 'no default text is seeded');
+  assert.equal(document.body.textContent.includes('Acepto las normas'), false, 'no publishable sample legal copy');
+});
+
+test('questionnaires are saved as empty drafts, versioned, explicitly activated, and archived', async () => {
+  let items = []; let draftVersion = null; let draftFields = []; const calls = [];
+  const urls = serve({ forms: async (path, init) => {
+    calls.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+    if (path.includes('/versions?')) return response({ items: draftVersion ? [{ id: `version-${draftVersion}`, version: draftVersion, status: 'draft', fields: draftFields }] : [] });
+    if (init?.method === 'POST' && path.endsWith('/api/forms')) { const value = JSON.parse(init.body); draftVersion = 1; draftFields = value.fields; items = [{ id: 'form-1', ...value, status: 'draft', activeVersionId: null, version: null, description: value.description, fields: null }]; return response({ id: 'form-1', version: { id: 'version-1', version: 1, status: 'draft' } }, 201); }
+    if (init?.method === 'POST' && path.endsWith('/activate')) { items = items.map(item => ({ ...item, status: 'active', activeVersionId: `version-${draftVersion}`, version: draftVersion, fields: draftFields })); draftVersion = null; return response({ id: 'form-1', version: 1 }); }
+    if (init?.method === 'POST' && path.endsWith('/versions')) { draftVersion += 1; draftFields = JSON.parse(init.body).fields; return response({ id: 'form-1', version: draftVersion, status: 'draft' }, 201); }
+    if (init?.method === 'POST' && path.endsWith('/archive')) return response({ archived: true });
+    return response(items);
+  } });
+  window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' });
+  fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' })); fireEvent.click(screen.getByRole('button', { name: 'Cuestionarios' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Nuevo cuestionario' }));
+  fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'Cuestionario del centro' } });
+  fireEvent.change(screen.getByLabelText('Tipo'), { target: { value: 'par_q' } });
+  fireEvent.change(screen.getByLabelText('Pregunta o campo'), { target: { value: 'Pregunta aprobada por el propietario' } });
+  assert.ok(screen.getByText(/Este tipo contiene datos de salud/));
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
+  assert.ok(await screen.findByText('Cuestionario del centro'));
+  assert.ok(screen.getByText('Pregunta aprobada por el propietario · opcional'), 'the newly created schema is visible for review before activation');
+  assert.match(screen.getByRole('status').textContent, /Borrador creado/);
+  assert.equal(calls.filter(call => call.path.endsWith('/activate')).length, 0, 'creation never auto-publishes');
+  assert.equal(calls.find(call => call.method === 'POST' && call.path.endsWith('/api/forms')).body.sensitivity, 'health');
+  fireEvent.click(screen.getByRole('button', { name: 'Activar versión borrador' }));
+  await waitFor(() => assert.match(screen.getByText('Cuestionario del centro').closest('article').textContent, /Activo/));
+  assert.equal(calls.filter(call => call.path.endsWith('/activate')).length, 1);
+  fireEvent.click(screen.getByRole('button', { name: 'Nueva versión' }));
+  fireEvent.change(screen.getByLabelText('Pregunta o campo'), { target: { value: 'Pregunta revisada' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
+  await waitFor(() => assert.equal(calls.filter(call => call.method === 'POST' && call.path.endsWith('/versions')).length, 1));
+  assert.ok(screen.getByText('Pregunta revisada · opcional'), 'the persisted draft is fetched back and shown for review');
+  fireEvent.click(screen.getByRole('button', { name: 'Activar nueva versión' }));
+  await waitFor(() => assert.equal(calls.filter(call => call.method === 'POST' && call.path.endsWith('/activate')).length, 2));
+  window.confirm = () => true;
+  fireEvent.click(screen.getByRole('button', { name: 'Archivar' }));
+  await waitFor(() => assert.equal(calls.filter(call => call.method === 'POST' && call.path.endsWith('/archive')).length, 1));
+});
+
+test('consent text is never prefilled, creates a versioned draft, and publishes only after explicit action', async () => {
+  let items = []; const calls = [];
+  const serveUrls = serve({ consents: async (path, init) => {
+    calls.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+    if (path.includes('/versions?')) return response({ items: [{ id: 'cv1', version: 1, title: 'Normas aprobadas', body: 'Texto aportado por el propietario', effectiveAt: null, status: 'active' }] });
+    if (init?.method === 'POST' && path.endsWith('/api/consents')) { const value = JSON.parse(init.body); items = [{ id: 'consent-1', name: value.name, consentType: value.consentType, required: value.required, status: 'draft', activeVersionId: null, activeVersion: null, latestVersionId: 'cv1', latestVersion: 1, latestVersionStatus: 'draft' }]; return response({ id: 'consent-1', version: 1 }, 201); }
+    if (init?.method === 'POST' && path.endsWith('/activate')) { items = items.map(item => ({ ...item, status: 'active', activeVersionId: 'cv1', activeVersion: 1 })); return response({ version: 1 }); }
+    if (init?.method === 'POST' && path.endsWith('/versions')) return response({ id: 'consent-1', version: 2, status: 'draft' }, 201);
+    if (init?.method === 'POST' && path.endsWith('/archive')) return response({ archived: true });
+    return response({ items });
+  } });
+  window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' }); fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Nuevo consentimiento' }));
+  assert.equal(screen.getByLabelText('Texto aprobado').value, '', 'legal text field starts empty');
+  fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'Normas del centro' } }); fireEvent.change(screen.getByLabelText('Tipo'), { target: { value: 'center_rules' } });
+  fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Normas aprobadas' } }); fireEvent.change(screen.getByLabelText('Texto aprobado'), { target: { value: 'Texto aportado por el propietario' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar versión en borrador' }));
+  assert.ok(await screen.findByText('Normas del centro')); assert.match(screen.getByRole('status').textContent, /No se publica/);
+  assert.equal(calls.filter(call => call.path.endsWith('/activate')).length, 0, 'creation does not activate consent');
+  fireEvent.click(screen.getByRole('button', { name: 'Publicar borrador' }));
+  await waitFor(() => assert.match(screen.getByText('Normas del centro').closest('article').textContent, /Publicado/));
+  assert.equal(calls.filter(call => call.path.endsWith('/activate')).length, 1);
+  fireEvent.click(screen.getByRole('button', { name: 'Ver versiones' })); assert.ok(await screen.findByText('Texto aportado por el propietario'));
+  fireEvent.click(screen.getByRole('button', { name: 'Nueva versión' }));
+  assert.equal(screen.getByLabelText('Texto aprobado').value, '', 'new consent version starts empty');
+  fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Normas revisadas' } }); fireEvent.change(screen.getByLabelText('Texto aprobado'), { target: { value: 'Texto actualizado por el propietario' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar versión en borrador' }));
+  await waitFor(() => assert.equal(calls.filter(call => call.method === 'POST' && call.path.endsWith('/versions')).length, 1));
+  window.confirm = () => true; fireEvent.click(screen.getByRole('button', { name: 'Archivar' }));
+  await waitFor(() => assert.equal(calls.filter(call => call.method === 'POST' && call.path.endsWith('/archive')).length, 1));
+  assert.ok(serveUrls.some(url => url.includes('/api/consents')));
+});
+
+test('archived consent is labeled archived, keeps history readable, and hides all mutations', async () => {
+  const calls = [];
+  serve({ consents: async (path, init) => {
+    calls.push({ path, method: init?.method ?? 'GET' });
+    if (path.includes('/versions?')) return response({ items: [{ id: 'archived-v1', version: 1, title: 'Texto histórico', body: 'Contenido histórico', effectiveAt: null, status: 'draft' }] });
+    return response({ items: [{ id: 'archived-consent', name: 'Texto archivado', consentType: 'other', required: false, status: 'archived', activeVersionId: null, activeVersion: null, latestVersionId: 'archived-v1', latestVersion: 1, latestVersionStatus: 'draft' }] });
+  } });
+  window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' });
+  fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' }));
+  const article = (await screen.findByText('Texto archivado')).closest('article');
+  assert.ok(within(article).getByText('Archivado'));
+  assert.equal(within(article).queryByRole('button', { name: 'Nueva versión' }), null);
+  assert.equal(within(article).queryByRole('button', { name: 'Publicar borrador' }), null);
+  assert.equal(within(article).queryByRole('button', { name: 'Archivar' }), null);
+  fireEvent.click(within(article).getByRole('button', { name: 'Ver versiones' }));
+  assert.ok(await within(article).findByText('Contenido histórico'));
+  assert.equal(calls.some(call => call.method === 'POST'), false);
+});
+
+test('403 read permission does not expose templates or actions', async () => {
+  const urls = serve({ sessionCapabilities: () => response({ ...capabilities, formsRead: false, formsManage: false, consentsRead: false, consentsManage: false }) }); window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' });
+  fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' }));
+  assert.ok(await screen.findByText('Tu perfil no puede consultar esta sección'));
+  assert.equal(screen.queryByRole('button', { name: 'Nuevo consentimiento' }), null);
+  assert.equal(urls.some(path => path.includes('/api/consents?')), false, 'the UI does not request templates without the read capability');
+});
+
+test('read-only profiles can inspect templates but never see write, activate, or archive actions', async () => {
+  const urls = serve({ sessionCapabilities: () => response({ ...capabilities, formsManage: false, consentsManage: false }), forms: () => response([{ id: 'f-read', name: 'Cuestionario administrado', category: 'general', sensitivity: 'operational', status: 'active', activeVersionId: 'fv1', version: 1, description: '', fields: [] }]), consents: () => response({ items: [{ id: 'c-read', name: 'Texto administrado', consentType: 'center_rules', required: true, status: 'active', activeVersionId: 'cv1', activeVersion: 1, activeTitle: 'Texto', latestVersionId: 'cv1', latestVersion: 1, latestVersionStatus: 'active' }] }) }); window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' });
+  fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' })); assert.ok(await screen.findByText('Texto administrado')); assert.equal(screen.queryByRole('button', { name: 'Nuevo consentimiento' }), null); assert.equal(screen.queryByRole('button', { name: 'Archivar' }), null);
+  fireEvent.click(screen.getByRole('button', { name: 'Cuestionarios' })); assert.ok(await screen.findByText('Cuestionario administrado')); assert.equal(screen.queryByRole('button', { name: 'Nueva versión' }), null); assert.equal(screen.queryByRole('button', { name: 'Archivar' }), null);
+  assert.ok(urls.some(path => path.includes('/api/forms'))); assert.ok(urls.some(path => path.includes('/api/consents?')));
+});
+
+test('a 403 manage response hides further write actions for the session', async () => {
+  serve({ consents: async (path, init) => init?.method === 'POST' ? response({ error: 'permission_denied' }, 403) : response({ items: [] }) }); window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' });
+  fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' })); fireEvent.click(await screen.findByRole('button', { name: 'Nuevo consentimiento' }));
+  fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'Texto del centro' } }); fireEvent.change(screen.getByLabelText('Tipo'), { target: { value: 'center_rules' } });
+  fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Título aprobado' } }); fireEvent.change(screen.getByLabelText('Texto aprobado'), { target: { value: 'Texto proporcionado por el propietario' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar versión en borrador' }));
+  assert.ok(await screen.findByText(/El servidor ha denegado la solicitud/));
+  assert.equal(screen.queryByRole('button', { name: 'Nuevo consentimiento' }), null);
+});
+
+test('a failed template load is distinct from empty and offers retry', async () => {
+  let fail = true;
+  serve({ consents: () => fail ? response({ error: 'temporary_failure' }, 500) : response({ items: [] }) }); window.location.hash = '#my-gym'; mount(); await screen.findByRole('heading', { level: 2, name: 'Hoy' });
+  fireEvent.click(screen.getByRole('button', { name: 'Consentimientos' }));
+  assert.ok(await screen.findByText('No se pudo cargar esta sección.'));
+  fail = false; fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+  assert.ok(await screen.findByText('No hay textos de consentimiento'));
 });
 
 test('the navigation lists Mi gimnasio inside Gestión', async () => {
