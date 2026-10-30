@@ -1,68 +1,60 @@
-# Lista de preparación para producción — Platform (29 oct 2026)
+# Lista de preparación para producción — Platform (30 oct 2026)
 
-Solo documentación. Escrita por el agente Claude Code de Platform a partir del estado **real** de Git/GitHub a esta fecha. Lo que no se ha podido comprobar se marca `NO VERIFICADO`. Nada de lo de aquí se ha desplegado: **producción, migraciones sobre BD real, DNS, secretos, borrado de datos y visibilidad del repositorio son solo del propietario, con su frase literal.**
+Solo documentación, escrita a partir del estado **real** de Git/GitHub (`main` = `176763ea`). Lo no comprobado figura como `NO VERIFICADO`. Nada se ha desplegado: **producción, migraciones sobre BD real, DNS, secretos, borrado de datos y visibilidad del repositorio son solo del propietario, con su frase literal.** Siguiendo A67 no se pide verificación intermedia: esta lista es para la **única** pasada de staging cuando todo esté construido.
 
-## 1. Veredicto corto
+## 1. Veredicto
 
-Todavía **no** está listo para datos reales. Bloqueos, por orden de gravedad:
+La construcción de Platform admin está **integrada en `main`**. Para datos reales siguen faltando acciones que solo puede hacer el propietario y lo que aún no está construido (sección 4). El bloqueo histórico «sin login de personal» está **resuelto en código** (#125, passkeys); falta configurarlo en el servidor real.
 
-| # | Bloqueo | Estado |
-|---|---|---|
-| B1 | **No hay inicio de sesión del personal en producción.** El admin solo arranca con `LOCAL_DEMO_ROLE` (desarrollo, loopback) y, en staging, con Basic Auth delante. El script de staging lo dice: el día que entren datos de personas reales, la administración debe estar tras autenticación real. El PR de passkeys del personal es **#125** (abierto, **en conflicto con main**, migración 0054). | BLOQUEA |
-| B2 | Migraciones pendientes de integrar en orden: 0054 (#125), 0058 (#141), 0059 (#132), 0060 (#153), 0061 (#154). | Pendiente |
-| B3 | Ninguna comprobación en staging hecha por este agente tras los últimos lotes. | NO VERIFICADO |
-| B4 | Revisión independiente pendiente (nivel 2) de #153 (importación real) y #154 (facturas PDF); #141 y #132 siguen en espera de la suya. | Pendiente |
-| B5 | Datos fiscales, texto de privacidad/consentimientos y logo los rellena el propietario en Configuración (A65); mientras estén vacíos no se puede emitir factura. | Acción del propietario |
+## 2. Integrado en `main` (verificado en GitHub)
 
-## 2. Qué está en `main` (verificado en GitHub)
+- **Acceso y permisos:** login de personal con passkeys (#125, migración 0054), turnos y horario del centro (#124), perfiles por permiso.
+- **Operación:** menú en 4 grupos (#131), Resumen ampliado (#134), Agenda y detalle de sesión (#140), acciones rápidas (#139), Contratos (#136), Promociones visible sin efecto en precios (#137), Mensajes (#145), búsqueda global con atajos (#146).
+- **Dinero:** Caja con dos registros físicos y pantalla propia (#129, #150), Informes con KPIs, gráficos y Excel multihoja (#147), **facturas y tickets PDF con logo, numeración sin huecos y rectificativas** (#154, migración 0061).
+- **Gestión del propietario:** Panel de gestión (#143), Monitorización de solo lectura (#144), datos de Mi gimnasio y consentimientos (#132, migración 0059).
+- **Clientes:** documentos privados (#138, migración 0057) y su pestaña, **importación de TIMP**: vista previa (#141, 0058) y paso real con confirmación en pantalla (#153, 0060).
+- **Staging:** script e instrucciones (#89), seed sintético Admin+Trainer (#142), arreglos (#152).
 
-Menú en 4 grupos (#131), Promociones visible sin efecto (#137), Contratos (#136), Resumen ampliado (#134), Panel de gestión y Monitorización del propietario (#143, #144), búsqueda global con atajos (#146), Caja con dos registros físicos y pantalla propia (#129, #150), Mensajes (#145), Informes con pestaña de KPIs y Excel multihoja (#147), documentos privados de cliente (#138), detalle de sesión (#140), acciones rápidas (#139), seed sintético Admin+Trainer (#142), turnos y horario del centro (#124), arreglos de staging (#152).
+Numeración de migraciones en `main`: 0054, 0055, 0056, 0057, 0058, 0059, 0060, 0061 — sin huecos ni duplicados; no se reescribe.
 
 ## 3. Abierto (no está en `main`)
 
-| PR | Qué es | Nivel | Observación |
-|---|---|---|---|
-| #125 | Login de personal con passkeys | 2 | **Conflicto con main.** Migración 0054. Es B1. |
-| #141 | Vista previa de importación TIMP | 2 | Migración 0058. Base de #153. |
-| #153 | **Importación real de TIMP** con confirmación en pantalla (A63) | 2 | Migración 0060. Apilado sobre #141: no corre CI hasta que #141 entre y se retargetee a `main`. Validado en local contra Postgres desechable. |
-| #132 | Datos de Mi gimnasio y consentimientos (API) | 2 | Migración 0059. |
-| #154 | **Facturas y tickets en PDF** (A66) | 2 | Migración 0061. Retira la puerta cerrada de emisión. |
-| #126, #116 | Home: estado de pago y lista de espera con elegibilidad | — | Ramas de Codex/Home. |
-| #149, #148, #135, #133, #130, #128, #123, #100, #98, #89, #46, #9 | Documentación o propuestas (H13, diseño de invitaciones, cajas, turnos, staging, 2J-098…) | 1 | Sin efecto en producción. |
+| PR | Qué es | Nota |
+|---|---|---|
+| #158 | Conectar ajustes del centro (Centro) con Platform | Codex, borrador. Escritura de ajustes. |
+| #157, #126, #116 | Home: buzón de mensajes, estado de pago, lista de espera con elegibilidad | Bloque Home. |
+| #127 | Staging: refrescar el upstream web de Búnker | Codex; herramienta de staging (nivel 1). |
+| #130 | Diseño de invitaciones (H13 / fila 18) | Solo documento: **la pantalla de Invitaciones no está construida**. |
+| #149, #148, #135, #133, #128, #123, #100, #98, #46, #9 | Documentación o propuestas | Sin efecto en producción. |
 
-## 4. Orden de integración recomendado
+## 4. Qué NO está real todavía ("No conectado")
 
-1. #125 (resolver conflicto) → 0054.
-2. #141 → 0058, después retargetear #153 a `main` → 0060.
-3. #132 → 0059.
-4. #154 → 0061.
-5. Tras cada lote: CI (calidad, secret scan y e2e) en verde sobre el head exacto y redeploy de **staging** con datos sintéticos.
-La numeración no se reescribe: 0053 (#124) y 0056/0057 (#140/#138) ya están en `main`.
+- **Invitaciones** (pantalla y API) — solo diseño (#130).
+- **Evolución** (pantalla de solo lectura en el admin y endpoint) — depende del contrato Búnker→Home (#135, documento).
+- **Escritura de ajustes** de Apariencia, Reservas y Tienda — Centro y Facturación sí son editables (#132, #154, #158 pendiente); el resto no tiene efecto real definido y se muestra como «No conectado».
+- **Cuestionarios de salud y textos de consentimiento/privacidad** del propietario: la API de consentimientos existe (#132), pero los textos nacen vacíos (A65) y **no se puede pedir un consentimiento hasta que el propietario publique uno**. Salud (D33): fuera del producto.
+- **Multiárea** de «Entrenamiento personal», umbrales de atención/adherencia y motivos de atención: sin construir (faltan definiciones).
 
-## 5. Decisiones del propietario que condicionan la salida
+## 5. Decisiones tomadas por defecto (A67: sin preguntar)
 
-- **Facturación:** A63 decía «sin facturas»; A65/A66, posteriores, piden facturas y tickets PDF con logo. Este documento sigue la **más reciente (A66)**. Confirma que es lo que quieres: si no, #154 no se fusiona y la app sale sin emisión.
-- **Salud y cuestionarios (D33):** excluidos; nada de eso está en el producto.
-- **Agenda:** rejilla horaria (A63).
-- **App vacía:** sin datos al arrancar; la única vía de carga masiva es la importación de TIMP (#153) por el propietario.
-- **Umbrales de atención/adherencia, multiárea de «Entrenamiento personal», Invitaciones y Evolución:** siguen sin construirse (faltan definiciones o contratos con Búnker/Home); no bloquean la salida si se aceptan como fase posterior.
+- Facturación: se sigue **A66** (la más reciente) frente a A63; si el propietario no quiere emisión, basta con no rellenar Configuración → Facturación (sin datos no se emite).
+- Agenda: rejilla horaria. App: arranca vacía; la carga masiva es la importación de TIMP.
+- Importación: solo con perfil de administración, activada por variable de entorno y apagable tras usarla.
 
-## 6. Lista para el día de la salida (todo reservado al propietario)
+## 6. Lista para el día de la salida (todo del propietario, con frase literal)
 
-- [ ] B1 resuelto: login de personal real en producción; Basic Auth/`LOCAL_DEMO_ROLE` fuera.
-- [ ] Copia de seguridad restaurable probada y política de retención definida.
-- [ ] Migraciones 0054, 0058, 0059, 0060 y 0061 aplicadas **en ese orden** sobre la base real (frase literal).
-- [ ] `CLIENT_IMPORT_PREVIEW_ENABLED=true` y `CLIENT_IMPORT_COMMIT_ENABLED=true` solo durante la importación; después `CLIENT_IMPORT_COMMIT_ENABLED` vuelve a apagarse.
-- [ ] Configuración → Facturación rellenada (emisor, NIF, dirección, serie, IGIC, pie, logo) y una factura de prueba emitida y rectificada **fuera de producción**.
+- [ ] Login de personal real configurado en el servidor (passkeys); Basic Auth y `LOCAL_DEMO_ROLE` fuera. `PLATFORM_OWNER_ACTOR_ID` apuntando a la identidad real del propietario.
+- [ ] Copia de seguridad restaurable probada y retención definida.
+- [ ] Migraciones **0054 a 0061 en orden** sobre la base real.
+- [ ] `CLIENT_IMPORT_PREVIEW_ENABLED=true` y `CLIENT_IMPORT_COMMIT_ENABLED=true` solo durante la importación; después, apagar el segundo.
+- [ ] Configuración → Facturación rellenada (emisor, NIF, dirección, serie, IGIC, pie, logo); factura de prueba emitida y rectificada **en staging**.
 - [ ] Texto de privacidad y consentimientos publicado antes de pedirlos a ningún socio.
-- [ ] Importación de TIMP: subir el `.xls`, revisar la vista previa, confirmar; comprobar recuentos (activos = última reserva en 365 días; inactivos archivados; sin deuda; fichas incompletas marcadas).
-- [ ] Variables y secretos (llaves de servicio Home↔Platform↔Búnker, `OBJECT_STORAGE_DIR` privado) generados en el servidor; ninguno en Git ni en logs.
-- [ ] DNS y certificados; Home y Búnker apuntando a la API correcta.
-- [ ] Supervisión: pantalla Monitorización en verde y alerta externa de disponibilidad.
-- [ ] Plan de vuelta atrás: el script de staging hace `rollback` de código, **no** de base de datos; la base se restaura desde copia.
+- [ ] Importación de TIMP: subir el `.xls`, revisar y confirmar; comprobar recuentos (activos = última reserva en 365 días; inactivos archivados; sin deuda; fichas incompletas marcadas).
+- [ ] Secretos (llaves de servicio Home↔Platform↔Búnker, almacenamiento privado `OBJECT_STORAGE_DIR`) generados en el servidor; ninguno en Git ni en logs.
+- [ ] DNS, certificados, Home y Búnker apuntando a la API correcta.
+- [ ] Monitorización en verde y alerta externa de disponibilidad.
+- [ ] Vuelta atrás: `rollback` del script revierte código, **no** la base; la base se restaura desde copia.
 
-## 7. Qué se ha probado y cómo
+## 7. Pasada única de staging (cuando A67 diga que todo está construido)
 
-- Cada PR de Claude Code lleva sus pruebas (API contra PostgreSQL descartable y UI con jsdom), todas con datos sintéticos; las de API se ejecutaron en una base nueva por lote.
-- Importación real y facturas: probadas en local contra Postgres desechable (no CI todavía en #153).
-- **En staging: NO VERIFICADO** por este agente. Antes de la salida hace falta una pasada manual del propietario con el seed sintético (`2j-staging seed`) sobre: Resumen, Agenda, Clientes y ficha (Documentos, Pagos, Factura), Caja (abrir, cobrar, cerrar), Informes (descarga Excel), Configuración → Facturación, Importar clientes (con un archivo sintético) y Monitorización.
+Con `sudo 2j-staging deploy && sudo 2j-staging seed && sudo 2j-staging selftest`: Resumen, Agenda, Clientes y ficha (Documentos, Pagos, Factura), Caja (abrir, cobrar, cerrar), Informes (Excel), Configuración → Facturación, Importar clientes (archivo sintético), Panel de gestión, Monitorización. **En staging: NO VERIFICADO** hasta esa pasada.
