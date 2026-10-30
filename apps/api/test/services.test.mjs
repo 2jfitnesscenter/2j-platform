@@ -32,6 +32,7 @@ const clientsAccountantApp = buildServer(process.env.DATABASE_URL, { authorizati
 let evolutionAdapterResult = { status: 'available', summary: { v: 1, trainingUserId: 'remote-private-user', trainingStatus: 'active', asOf: '2026-10-30T12:00:00.000Z', currentProgram: { id: 'remote-private-program', name: 'Fuerza' }, recentActivity: { lastTrainingAt: '2026-10-29', sessionsLast30Days: 3 } } };
 const evolutionAdapterCalls = [];
 const clientEvolutionApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-admin', role: 'admin' }), trainingSummaryEnabled: true, trainingServiceCallsEnabled: true, trainingSummaryAdapter: { getSummary: async trainingUserId => { evolutionAdapterCalls.push(trainingUserId); if (evolutionAdapterResult.status === 'throw') throw new Error('synthetic adapter failure'); return evolutionAdapterResult; } } });
+const clientEvolutionTrainerApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-trainer', role: 'trainer' }), trainingSummaryEnabled: true, trainingServiceCallsEnabled: true, trainingSummaryAdapter: { getSummary: async trainingUserId => { evolutionAdapterCalls.push(trainingUserId); if (evolutionAdapterResult.status === 'throw') throw new Error('synthetic adapter failure'); return evolutionAdapterResult; } } });
 const ownerPanelApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-owner', role: 'admin', explicitPermissions: ['owner.panel.read'] }) });
 const configuredOwnerPanelApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-configured-owner', role: 'admin' }), ownerActorId: 'qa-configured-owner' });
 const nonOwnerPanelApp = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'qa-not-owner', role: 'admin' }), ownerActorId: 'qa-configured-owner' });
@@ -56,7 +57,7 @@ async function expectedCashCents(database,sessionId){const [row]=await database`
   -COALESCE((SELECT sum(o.amount_cents) FROM economic_cash_outflows o WHERE o.cash_session_id=s.id AND o.status='approved' AND (reopen.occurred_at IS NULL OR o.created_at>=reopen.occurred_at)),0) AS total
   FROM economic_cash_sessions s LEFT JOIN LATERAL(SELECT occurred_at,details FROM economic_audit_events WHERE resource_type='cash_session' AND resource_id=s.id AND action='cash.reopened' ORDER BY occurred_at DESC,id DESC LIMIT 1) reopen ON true WHERE s.id=${sessionId}`;return Number(row.total);}
 beforeEach(async () => { await ensureCashSessionForActor(sql,'qa-admin'); });
-after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), clientEvolutionApp.close(), ownerPanelApp.close(), configuredOwnerPanelApp.close(), nonOwnerPanelApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
+after(async () => { await Promise.all([app.close(), anonymousApp.close(), clientsAdminApp.close(), clientsTrainerApp.close(), clientsReceptionApp.close(), clientsAccountantApp.close(), clientEvolutionApp.close(), clientEvolutionTrainerApp.close(), ownerPanelApp.close(), configuredOwnerPanelApp.close(), nonOwnerPanelApp.close(), trainingLinkingAdminApp.close(), trainingLinkingTrainerApp.close(), trainingLinkingReceptionApp.close(), trainingLinkingAccountantApp.close(), trainingVerifiedLinkingApp.close(), trainingServiceCallsOnlyApp.close(), trainingCapabilitiesApp.close()]); await sql.end(); });
 
 function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
   const timestamp = overrides.timestamp ?? new Date().toISOString();
@@ -1326,6 +1327,9 @@ test('client PII endpoints deny by default and ignore caller-supplied role heade
   assert.equal(Object.hasOwn(trainer.json().client, 'birthDate'), false);
   assert.equal(trainer.json().sections.some((section) => ['progress', 'health'].includes(section.id)), false);
   assert.deepEqual(trainer.json().sections.find((section) => section.id === 'training'), { id: 'training', label: 'Evolución', sourceLabel: 'Búnker', access: 'available', dataState: 'ready' });
+  const receptionist = await clientsReceptionApp.inject({ method: 'GET', url: `/api/clients/${clientId}` });
+  assert.equal(receptionist.statusCode, 200);
+  assert.deepEqual(receptionist.json().sections.find((section) => section.id === 'training'), { id: 'training', label: 'Evolución', sourceLabel: 'Búnker', access: 'forbidden', dataState: 'ready' });
   assert.equal(trainer.json().summary.payments.access, 'forbidden');
   assert.equal(trainer.json().summary.payments.data, null);
   assert.equal(Object.hasOwn(trainer.json().summary, 'training'), false);
@@ -1365,6 +1369,18 @@ test('client Training evolution summary is permission-gated, server-scoped, priv
   const deniedAnonymous = await anonymousApp.inject({ method: 'GET', url: `/api/clients/${first.client.id}/training-summary` });
   assert.equal(deniedAnonymous.statusCode, 401);
   assert.equal((await clientsAccountantApp.inject({ method: 'GET', url: `/api/clients/${first.client.id}/training-summary` })).statusCode, 403);
+  const receptionProfile = await clientsReceptionApp.inject({ method: 'GET', url: `/api/clients/${first.client.id}` });
+  assert.equal(receptionProfile.json().sections.find((section) => section.id === 'training')?.access, 'forbidden');
+  const receptionDenied = await clientsReceptionApp.inject({ method: 'GET', url: `/api/clients/${first.client.id}/training-summary` });
+  assert.equal(receptionDenied.statusCode, 403);
+  assert.equal(receptionDenied.headers['cache-control'], 'no-store');
+  assert.deepEqual(evolutionAdapterCalls, [], 'Reception is denied before the Training adapter is called');
+
+  const trainerAllowed = await clientEvolutionTrainerApp.inject({ method: 'GET', url: `/api/clients/${first.client.id}/training-summary` });
+  assert.equal(trainerAllowed.statusCode, 200, trainerAllowed.body);
+  assert.equal(trainerAllowed.json().status, 'linked');
+  assert.deepEqual(evolutionAdapterCalls, [first.trainingUserId], 'the Trainer can read the server-resolved Training link for an authorized client');
+  evolutionAdapterCalls.length = 0;
 
   const linked = await clientEvolutionApp.inject({ method: 'GET', url: `/api/clients/${first.client.id}/training-summary?personId=${randomUUID()}&trainingUserId=${second.trainingUserId}` });
   assert.equal(linked.statusCode, 200, linked.body);

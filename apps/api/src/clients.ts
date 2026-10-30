@@ -28,7 +28,7 @@ const updateClientInput = createClientInput;
 
 const sectionDefinitions = [
   { id: 'summary', label: 'Resumen', permission: 'clients.read', sourceLabel: 'Datos del perfil' },
-  { id: 'training', label: 'Evolución', permission: 'clients.read', sourceLabel: 'Búnker' },
+  { id: 'training', label: 'Evolución', permission: 'training.read', sourceLabel: 'Búnker' },
   { id: 'plans', label: 'Cuotas', permission: 'entitlements.read', sourceLabel: 'Planes asignados' },
   { id: 'reservations', label: 'Reservas', permission: 'calendar.read', sourceLabel: 'Calendario' },
   { id: 'payments', label: 'Pagos', permission: 'billing.read-basic', sourceLabel: 'Pagos' },
@@ -124,7 +124,7 @@ export function registerClientRoutes(
 
   app.get('/api/clients/:clientId/training-summary', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    const context = await authorized(request, reply, 'clients.read');
+    const context = await authorized(request, reply, 'training.read');
     if (!context) return;
     const params = z.object({ clientId: uuid }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: 'invalid_client_id' });

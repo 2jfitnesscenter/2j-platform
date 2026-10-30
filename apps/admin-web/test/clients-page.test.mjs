@@ -128,6 +128,22 @@ test('client Evolución explains not-linked, disabled and unavailable states wit
   }
 });
 
+test('hides the client Evolución tab when the API denies training.read', async () => {
+  const requests = [];
+  const receptionProfile = { ...profile, sections: sections.map((section) => section.id === 'training' ? { ...section, access: 'forbidden' } : section) };
+  globalThis.fetch = async (url) => {
+    const path = String(url); requests.push(path);
+    if (path.includes('/api/clients?')) return response(listResponse());
+    if (path.endsWith(`/api/clients/${client.id}`)) return response(receptionProfile);
+    throw new Error(`Unexpected request ${path}`);
+  };
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  assert.equal(screen.queryByRole('tab', { name: 'Evolución' }), null);
+  assert.equal(requests.some((path) => path.endsWith('/training-summary')), false, 'a forbidden section never triggers its data request');
+});
+
 test('creates a client only when the server grants manage capability and refreshes its profile', async () => {
   const created = { ...client, id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', firstName: 'Ada', lastName: 'Lovelace' };
   let list = [];
