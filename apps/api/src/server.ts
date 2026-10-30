@@ -296,7 +296,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const trustedAuthorizationResolver = async (request: import('fastify').FastifyRequest) => {
     const context = await baseAuthorizationResolver(request);
     if (!context || !ownerActorId || context.actorId !== ownerActorId) return context;
-    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read'])] };
+    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read', 'platform_link_issue'])] };
   };
   if (options.ownerPersonId != null && !z.string().uuid().safeParse(options.ownerPersonId).success) throw new Error('ownerPersonId must be a trusted Platform person UUID.');
   const ownerPersonId = options.ownerPersonId?.toLowerCase() ?? null;

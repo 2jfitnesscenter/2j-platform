@@ -16,7 +16,10 @@ const roles = new Map();                 // x-test-role -> { actorId, role }
 const options = { memberAppOrigin: ORIGIN, resolvePersonAuth: async request => people.get(String(request.headers['x-test-person'] ?? '')) ?? null, authorizationResolver: async request => roles.get(String(request.headers['x-test-role'] ?? '')) ?? null };
 const on = buildServer(process.env.DATABASE_URL, { ...options, trainingLinkReviewEnabled: true });
 const off = buildServer(process.env.DATABASE_URL, options);
-roles.set('admin', { actorId: 'review-admin', role: 'admin' }); roles.set('trainer', { actorId: 'review-trainer', role: 'trainer' });
+roles.set('admin', { actorId: 'review-admin', role: 'admin', explicitPermissions: ['platform_link_issue'] });
+roles.set('plain-admin', { actorId: 'plain-admin', role: 'admin' });
+roles.set('owner', { actorId: 'review-owner', role: 'owner', explicitPermissions: ['platform_link_issue'] });
+roles.set('trainer', { actorId: 'review-trainer', role: 'trainer' });
 after(async () => { await on.close(); await off.close(); await sql.end({ timeout: 2 }); });
 
 async function member(name = 'Lia') {
@@ -62,10 +65,13 @@ test('member: someone who already has (or is getting) a link has nothing to revi
   assert.equal(response.statusCode, 409); assert.equal(response.json().error, 'link_already_in_progress_or_active');
 });
 
-test('admin queue: only administrators (not trainers, not anonymous); the case shows who the person is; resolution notes stay internal', async () => {
+test('A29: queue and resolution require explicit platform_link_issue, not Admin wildcard; authorized issuer sees the case and internal notes stay protected', async () => {
   const who = await member('Nerea'); const { id } = (await open(who)).json();
   assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review' })).statusCode, 401);
   assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'trainer' } })).statusCode, 403, 'D143: trainers do not resolve');
+  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'plain-admin' } })).statusCode, 403, 'Admin wildcard does not imply A29');
+  assert.equal((await resolve(id, approval(), 'plain-admin')).statusCode, 403, 'Admin wildcard does not imply A29');
+  assert.equal((await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review', headers: { 'x-test-role': 'owner' } })).statusCode, 200, 'owner can hold the explicit A29 grant');
   assert.equal((await resolve(id, approval(), 'trainer')).statusCode, 403);
   const list = (await on.inject({ method: 'GET', url: '/api/platform/v1/training-link-review?status=open&limit=200', headers: { 'x-test-role': 'admin' } })).json();
   const row = list.cases.find(item => item.id === id);

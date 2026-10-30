@@ -10,7 +10,7 @@ const uuid = z.string().uuid().transform(value => value.toLowerCase());
 /**
  * Manual review queue for Training links that cannot be completed with the owner's own passkey proof (A26, D143).
  *   member  opens ONE case (reason + optional short note); cannot name a Training account, cannot resolve anything.
- *   admin   lists, reads and resolves; only administrators (permission `identity.people.manage`, not held by trainers) — always with a verification method and a note.
+ *   authorized issuer lists, reads and resolves with the dedicated `platform_link_issue` permission (A29); the Admin wildcard alone does not grant it.
  * Resolving never links by itself: `approved` records the decision, the verified Training user and who checked what; the link still goes through the audited admin
  * link path (flag `trainingLinkingEnabled`). Off unless `enabled`.
  */
@@ -26,7 +26,7 @@ export function registerTrainingLinkReviewRoutes(app: FastifyInstance<any, any, 
     if (!options.enabled) { reply.code(423).send({ error: 'training_link_review_disabled' }); return null; }
     const actor = await options.resolveAuthorization(request);
     if (!actor) { reply.code(401).send({ error: 'authentication_required' }); return null; }
-    if (!can(actor, 'identity.people.manage')) { reply.code(403).send({ error: 'permission_denied' }); return null; }
+    if (!can(actor, 'platform_link_issue')) { reply.code(403).send({ error: 'permission_denied' }); return null; }
     return actor;
   };
   const view = (row: any) => ({
