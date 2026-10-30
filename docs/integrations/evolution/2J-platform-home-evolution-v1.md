@@ -30,6 +30,16 @@ Todas las rutas son autenticadas por sesión y no reciben un selector de persona
 | `DELETE /api/me/health/v1/consent` | Revoca el consentimiento actual; el efecto de autorización es inmediato y queda auditado. |
 | `GET /api/me/health/v1/measurements` | Datos de salud propios solo con consentimiento vigente; si el texto no está publicado o el consentimiento no está aceptado, falla cerrado. |
 
+Para el consentimiento específico del flujo A68, que no es consentimiento de salud, se añaden estas operaciones:
+
+| Método y ruta | Resultado |
+|---|---|
+| `GET /api/me/evolution/consent` | Devuelve estado `unpublished`, `required`, `accepted` o `revoked`, y solo si existe publica la versión/título/texto activo del consentimiento `home_evolution`. |
+| `POST /api/me/evolution/consent` | Acepta explícitamente la versión activa con nombre escrito e idempotencia. El servidor fija cliente, identidad, versión, texto/hash aceptado e instante. No acepta versiones obsoletas. |
+| `DELETE /api/me/evolution/consent` | Revoca inmediatamente el grant de la versión vigente mediante un evento append-only. No borra ni cambia la aceptación/snapshot previo. El socio puede volver a aceptar esa misma versión con un nuevo evento explícito. |
+
+Cada aceptación o revocación se registra con actor/instante/versión, sin modificar eventos anteriores. La autorización de `/api/me/evolution` usa el evento efectivo más reciente de la versión activa. La revocación se hace efectiva antes de cualquier llamada futura a Búnker; las respuestas son `no-store` y el endpoint no sirve una lectura ya cacheada.
+
 Los errores contractuales incluyen `401 authentication_required`, `403 permission_denied`, `409 active_entitlement_required`, `409 consent_required`, `409 consent_version_changed`, `404 not_found` y `400 validation_error`. Respuestas de salud y documentos incluyen `Cache-Control: no-store`. No hay fallback a datos de demostración ni a respuestas cacheadas.
 
 ## API profesional de Platform

@@ -5,6 +5,8 @@
   "description": "Canonical read-only Home member contract. Training-only; no body measurements, health data, PII, or Platform identifiers.",
   "oneOf": [
     { "$ref": "#/$defs/memberResponse" },
+    { "$ref": "#/$defs/consentResponse" },
+    { "$ref": "#/$defs/consentAcceptanceRequest" },
     { "$ref": "#/$defs/trainingRequest" },
     { "$ref": "#/$defs/trainingResponse" }
   ],
@@ -75,6 +77,44 @@
           "else": { "not": { "anyOf": [{ "required": ["workouts"] }, { "required": ["nextCursor"] }, { "required": ["asOf"] }] } }
         }
       ]
+    },
+    "consentResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["v", "status"],
+      "properties": {
+        "v": { "const": 1 },
+        "status": { "enum": ["unpublished", "required", "accepted", "revoked"] },
+        "currentVersion": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 30000 },
+        "publishedAt": { "$ref": "#/$defs/utcInstant" },
+        "acceptedAt": { "$ref": "#/$defs/utcInstant" },
+        "revokedAt": { "$ref": "#/$defs/utcInstant" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "enum": ["required", "accepted", "revoked"] } }, "required": ["status"] },
+          "then": { "required": ["currentVersion", "title", "body", "publishedAt"] }
+        },
+        {
+          "if": { "properties": { "status": { "const": "accepted" } }, "required": ["status"] },
+          "then": { "required": ["acceptedAt"] }
+        },
+        {
+          "if": { "properties": { "status": { "const": "revoked" } }, "required": ["status"] },
+          "then": { "required": ["revokedAt"] }
+        }
+      ]
+    },
+    "consentAcceptanceRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["v", "version", "typedName", "idempotencyKey"],
+      "properties": {
+        "v": { "const": 1 },
+        "version": { "type": "integer", "minimum": 1 },
+        "typedName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "idempotencyKey": { "type": "string", "format": "uuid" }
+      }
     },
     "consent": {
       "type": "object", "additionalProperties": false,
