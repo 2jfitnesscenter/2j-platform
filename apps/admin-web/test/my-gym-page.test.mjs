@@ -113,7 +113,8 @@ test('Datos del negocio shows what Platform stores and says plainly what is not 
   fireEvent.click(await screen.findByRole('button', { name: 'Datos del negocio' }));
   assert.ok(await screen.findByText('Sin definir'), 'a null retention is not printed as "null meses"');
   assert.equal(document.body.textContent.includes('null'), false);
-  assert.match(screen.getByRole('note').textContent, /No conectado/);
+  assert.match(screen.getByRole('note').textContent, /Configuración → Centro/);
+  assert.equal(/No conectado/.test(screen.getByRole('note').textContent), false, 'the centre profile is saved in Configuración → Centro, so it is not "no conectado"');
   assert.equal(document.querySelectorAll('input, textarea').length, 0, 'no editable field that would not save');
   assert.ok(urls.some((path) => path.includes('/api/economics/settings')));
 });
