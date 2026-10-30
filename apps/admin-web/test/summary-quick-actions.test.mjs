@@ -64,6 +64,29 @@ test('quick actions use Base44 verbs and deep links, and the strip is exactly wh
   ]);
 });
 
+test('Resumen opens invoice and ticket documents only when the server grants invoice-read permission', async () => {
+  const chargeId = 'f54f1b1a-ef3b-4ae3-8c95-f1b23b53e8a2';
+  const summary = { ...model, permissions: { ...permissions, billing: true, invoices: true }, commercial: { recentMovements: [{ id: 'payment-1', chargeId, kind: 'payment', amountCents: 1200, concept: 'Cuota mensual', clientName: 'Cliente Demo', occurredAt: '2026-10-30T09:00:00.000Z' }] } };
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes('/api/dashboard/command-center')) return response(summary);
+    if (target.includes('/api/session/capabilities')) return response(capabilities);
+    if (target.includes(`/api/economics/charges/${chargeId}/documents`)) return response({ items: [{ id: 'document-1', documentType: 'full_invoice', status: 'issued', documentNumber: 'F-2026-0001', documentDate: '2026-10-30', grossCents: 1200, isRectified: false }], canIssue: false });
+    return response({ groups: [] });
+  };
+  window.location.hash = '#home'; mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Factura y ticket' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Factura y ticket' });
+  assert.ok(within(dialog).getByText('Factura F-2026-0001'));
+  assert.ok(within(dialog).getByRole('link', { name: 'Descargar' }));
+  cleanup();
+
+  serve({ ...summary, permissions: { ...summary.permissions, invoices: false } });
+  window.location.hash = '#home'; mount();
+  await screen.findByRole('region', { name: 'Últimos movimientos' });
+  assert.equal(screen.queryByRole('button', { name: 'Factura y ticket' }), null);
+});
+
 test('the commercial tiles appear in the Base44 order only for the blocks the API grants; Ver informes links to #reports', async () => {
   serve({ ...model, permissions: { ...permissions, billing: true, transfers: true },
     today: { ...model.today, sessionCount: 1, capacity: 10, occupied: 4 },

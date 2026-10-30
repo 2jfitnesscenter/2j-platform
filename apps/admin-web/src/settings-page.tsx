@@ -1,6 +1,7 @@
 import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, PageHeader, StatusChip, Tabs, icons } from '@2j/ui';
+import { InvoiceSettingsPanel } from './invoice-ui.js';
 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
@@ -15,7 +16,7 @@ type LoadState = { status: 'loading' } | { status: 'ready'; data: Overview } | {
 
 const TABS = [
   { id: 'center', label: 'Centro' }, { id: 'operations', label: 'Horario y turnos' }, { id: 'appearance', label: 'Apariencia' }, { id: 'booking', label: 'Reservas' }, { id: 'payments', label: 'Pagos' },
-  { id: 'store', label: 'Tienda' }, { id: 'permissions', label: 'Permisos' }, { id: 'integrations', label: 'Integraciones' },
+  { id: 'invoicing', label: 'Facturación' }, { id: 'store', label: 'Tienda' }, { id: 'permissions', label: 'Permisos' }, { id: 'integrations', label: 'Integraciones' },
 ];
 const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', other: 'Otro' };
 const integrationLabel: Record<string, string> = {
@@ -150,6 +151,7 @@ export function SettingsPage() {
     const payments = data.payments;
     switch (tab) {
       case 'operations': return <OperationsSettings />;
+      case 'invoicing': return <InvoiceSettingsPanel />;
       case 'center': return <>
         <NotConnected>Los datos del centro son una maqueta.</NotConnected>
         <div className="settings-grid"><Field label="Nombre comercial" value="2J Fitness Center" /><Field label="Teléfono" /><Field label="Correo de contacto" /><Field label="Dirección" wide /><Field label="Ciudad" /><Field label="Código postal" /></div>
@@ -157,7 +159,7 @@ export function SettingsPage() {
         <dl className="settings-list"><ReadOnlyRow label="Zona horaria" value={<>{data.timezone} <StatusChip tone="success" icon={null}>Conectado</StatusChip></>} detail="Fija para todo el centro; las horas se muestran siempre en hora de Canarias." /></dl>
         <p className="settings-hint">El horario de apertura y los turnos asignados se gestionan en la pestaña Horario y turnos.</p>
         <Button variant="secondary" onClick={() => setTab('operations')}>Abrir Horario y turnos</Button>
-        <p className="settings-hint">Los datos fiscales (razón social, CIF/NIF, serie y pie de factura) no están aquí: la puerta fiscal sigue cerrada.</p></>;
+        <p className="settings-hint">Los datos fiscales (razón social, NIF, serie, IGIC, pie y logo de las facturas) se escriben en la pestaña Facturación.</p></>;
       case 'appearance': return <>
         <NotConnected>El logo y los colores son una maqueta.</NotConnected>
         <div className="settings-grid"><Field label="Logo (URL)" wide /><Field label="Color de acento" value="#B7F000" /><Field label="Color de fondo" value="#1B1D1F" /></div>
