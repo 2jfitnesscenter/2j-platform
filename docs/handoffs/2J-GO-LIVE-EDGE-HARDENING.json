@@ -1,0 +1,32 @@
+{
+  "task": "2J-GO-LIVE-EDGE-HARDENING",
+  "status": "documentation_prepared",
+  "base": "6d46f06523285882e518de0512af11e11be46461",
+  "scope": "production_edge_and_server_readiness_documentation_only",
+  "verified": {
+    "staging_seed_already_present": true,
+    "staging_seed_guards": [
+      "NODE_ENV=development",
+      "STAGING_SEED=1",
+      "STAGING_SEED_HOST=2jfit.com"
+    ],
+    "production_caddyfile_in_repository": false,
+    "admin_promotion_step_up_implemented": false,
+    "bunker_read_token_expiry_verified_in_github": false,
+    "auditd_rules_applied": false
+  },
+  "changed_files": [
+    "docs/release/PRODUCTION-EDGE-HARDENING.md",
+    "docs/release/PRODUCTION-READINESS-CHECKLIST.md",
+    "docs/handoffs/2J-GO-LIVE-EDGE-HARDENING.md",
+    "docs/handoffs/2J-GO-LIVE-EDGE-HARDENING.json"
+  ],
+  "invoice_seed_deferred_reason": "A65 keeps issuer and legal settings empty until the owner configures them; no synthetic legal invoice was fabricated.",
+  "server_or_real_database_changes": false,
+  "owner_actions_required": [
+    "Review and implement a production-specific Caddy route policy before exposure.",
+    "Implement and security-review owner promotion step-up.",
+    "Check BUNKER_REPO_READ_TOKEN expiry in GitHub and renew before expiry.",
+    "Review and apply auditd rules through a separately approved server change."
+  ]
+}
