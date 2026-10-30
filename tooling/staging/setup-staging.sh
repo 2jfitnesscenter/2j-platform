@@ -12,7 +12,7 @@
 #   setup-staging.sh lock-ssh --confirm   after you tested the new login: key-only SSH, no root, no passwords
 #   setup-staging.sh deploykeys    make two read-only deploy keys and print their PUBLIC halves
 #   setup-staging.sh deploy        fetch the code, build, create databases, start everything, HTTPS
-#   setup-staging.sh seed          load synthetic test data only
+#   setup-staging.sh seed --target-host 2jfit.com   load synthetic test data only (staging target is explicit)
 #   setup-staging.sh selftest      OK / FAIL per subdomain and per safety check
 #   setup-staging.sh status        what is running
 #   setup-staging.sh backup        one backup now (a daily one is installed by `deploy`)
@@ -443,6 +443,7 @@ services:
       HOST: 127.0.0.1
       PORT: "${PLATFORM_ADMIN_PORT}"
       LOCAL_DEMO_ROLE: admin
+      PLATFORM_OWNER_ACTOR_ID: local-demo:admin
       CORS_ORIGIN: http://127.0.0.1:5174
       PILOT_MEMBER_COHORT_MANAGEMENT_ENABLED: "true"
     healthcheck:
@@ -698,8 +699,21 @@ cmd_rollback() {
 
 cmd_seed() {
   need_root
+  local target_host=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --target-host)
+        [ "$#" -ge 2 ] || die "Uso: 2j-staging seed --target-host 2jfit.com"
+        target_host="$2"; shift 2;;
+      *) die "Argumento no admitido para seed. Uso: 2j-staging seed --target-host 2jfit.com";;
+    esac
+  done
+  [ "$target_host" = "2jfit.com" ] || die "El seed de staging solo admite --target-host 2jfit.com. Nada ejecutado."
+  [ "$DOMAIN" = "$target_host" ] || die "El destino no coincide con DOMAIN configurado ('$DOMAIN'). No se ha ejecutado el seed."
+  [ -f "$ROOT/secrets/platform-db.env" ] || die "Falta la configuración de base de datos de staging. Nada ejecutado."
+  docker image inspect 2j-platform:staging >/dev/null 2>&1 || die "No existe la imagen 2j-platform:staging. Despliega primero la rama aprobada."
   say "Datos de prueba SINTÉTICOS (personas @example.test) en la base de STAGING"
-  docker run --rm --network host --env-file "$ROOT/secrets/platform-db.env" -e NODE_ENV=development -w /repo/apps/api 2j-platform:staging node --import tsx scripts/seed-demo.ts
+  docker run --rm --network host --env-file "$ROOT/secrets/platform-db.env" -e NODE_ENV=development -e STAGING_SEED=1 -e "STAGING_SEED_HOST=$target_host" -w /repo/apps/api 2j-platform:staging node --import tsx scripts/seed-demo.ts
   ok "Hecho. (Códigos de acceso de miembro de prueba: ver runbook, sección «Datos de prueba».)"
 }
 
@@ -812,7 +826,7 @@ validate_conf() {
 main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
-    init) cmd_init;; base) cmd_base;; lock-ssh) cmd_lock_ssh "$@";; deploykeys) cmd_deploykeys;; deploy) cmd_deploy;; seed) cmd_seed;;
+    init) cmd_init;; base) cmd_base;; lock-ssh) cmd_lock_ssh "$@";; deploykeys) cmd_deploykeys;; deploy) cmd_deploy;; seed) cmd_seed "$@";;
     selftest) cmd_selftest;; status) cmd_status;; backup) cmd_backup;; restore-db) cmd_restore_db "$@";; rollback) cmd_rollback;; manifest) need_root; manifest_write "${1:?uso: manifest FICHERO}";; teardown) cmd_teardown "$@";; render) cmd_render "$@";;
     *) sed -n '2,26p' "$0";;
   esac

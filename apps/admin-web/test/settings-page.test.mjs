@@ -30,7 +30,8 @@ const overview = {
 const serve = (handler) => {
   globalThis.fetch = async (url, init) => {
     const path = String(url);
-    if (path.includes('/api/settings/overview') || path.includes('/api/center/') || path.includes('/api/staff')) return handler(path, init);
+    if (path.includes('/api/settings/overview') || path.includes('/api/admin/center-profile') || path.includes('/api/settings/store') || path.includes('/api/center/') || path.includes('/api/staff')) return handler(path, init);
+    if (path.includes('/api/economics/invoice-settings')) return response({ issuerName: null, issuerTaxId: null, issuerAddress: null, issuerPostalCode: null, issuerLocality: null, issuerProvince: null, defaultIgicBasisPoints: 300, defaultSeriesId: null, footerText: null, legalText: null, hasLogo: false, logoMime: null, series: [], missing: ['nombre o razón social'], canManage: false });
     if (path.includes('/api/dashboard/command-center')) return response(model);
     if (path.includes('/api/session/capabilities')) return response({ calendar: true, clients: true, communications: true, billing: true, staff: true, notificationSettings: true });
     return response({ groups: [] });
@@ -39,18 +40,80 @@ const serve = (handler) => {
 const mount = () => { window.location.hash = '#settings'; return render(React.createElement(AppShell, null, React.createElement(SettingsPage))); };
 const openTab = async (name) => { fireEvent.click(await screen.findByRole('tab', { name })); return screen.findByRole('tabpanel'); };
 
-test('Configuración offers the seven Base44 tabs and the unconnected ones say so visibly, with disabled fields and no save button', async () => {
-  serve(() => response(overview)); mount();
+test('Configuración offers its nine tabs and keeps rules owned by other modules authoritative', async () => {
+  serve((path) => path.includes('/api/settings/store') ? response({ lowStockThreshold: 3 }) : response(overview)); mount();
   assert.ok(await screen.findByRole('heading', { name: 'Configuración' }));
   const tabs = await screen.findAllByRole('tab');
   assert.deepEqual(tabs.map((tab) => tab.textContent), ['Centro', 'Horario y turnos', 'Apariencia', 'Reservas', 'Pagos', 'Facturación', 'Tienda', 'Permisos', 'Integraciones']);
-  for (const name of ['Apariencia', 'Reservas', 'Tienda']) {
-    const panel = await openTab(name);
-    assert.match(panel.textContent, /No conectado: estos ajustes todavía no se guardan/, name);
-    const inputs = panel.querySelectorAll('input');
-    assert.ok(inputs.length > 0 && [...inputs].every((input) => input.disabled), `${name}: every field disabled`);
-  }
-  assert.equal(screen.queryByRole('button', { name: /guardar/i }), null, 'no misleading save button');
+  const appearance = await openTab('Apariencia');
+  assert.match(appearance.textContent, /Grafito · Lima #A4D65E/);
+  assert.equal(appearance.querySelectorAll('input').length, 0, 'brand tokens are not editable per center');
+  const booking = await openTab('Reservas');
+  assert.match(booking.textContent, /se configuran en cada servicio/);
+  assert.equal(within(booking).getByRole('link', { name: /Abrir Servicios/ }).getAttribute('href'), '#services');
+  const store = await openTab('Tienda');
+  assert.match(store.textContent, /Productos, variantes, inventario y ventas se gestionan en Tienda/);
+  assert.equal(within(store).getByRole('link', { name: /Abrir Tienda/ }).getAttribute('href'), '#store');
+  assert.equal(within(store).getByLabelText('Avisar cuando queden').value, '3');
+  assert.equal(within(store).getByRole('button', { name: 'Guardar aviso de stock' }).disabled, false);
+  const invoicing = await openTab('Facturación');
+  assert.ok(within(invoicing).getByRole('heading', { name: 'Emisor' }));
+  for (const name of ['Apariencia', 'Reservas']) assert.equal((await openTab(name)).querySelector('form'), null, `${name} does not imply unsupported settings`);
+});
+
+test('Tienda reads and saves the real stock warning threshold through the settings API', async () => {
+  const calls = [];
+  let saved = 3;
+  serve(async (path, init) => {
+    if (path.includes('/api/settings/store')) {
+      calls.push({ method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+      if (init?.method === 'PUT') { saved = JSON.parse(init.body).lowStockThreshold; return response({ lowStockThreshold: saved }); }
+      return response({ lowStockThreshold: saved });
+    }
+    return response(overview);
+  });
+  mount();
+  const panel = await openTab('Tienda');
+  const field = await within(panel).findByLabelText('Avisar cuando queden');
+  fireEvent.change(field, { target: { value: '5' } });
+  fireEvent.click(within(panel).getByRole('button', { name: 'Guardar aviso de stock' }));
+  await waitFor(() => assert.match(panel.textContent, /actualizado y auditado/));
+  assert.deepEqual(calls.map((call) => call.method), ['GET', 'PUT']);
+  assert.deepEqual(calls[1].body, { lowStockThreshold: 5 });
+  assert.equal(field.value, '5');
+});
+
+test('Centro reads and saves the existing audited Platform profile API without fiscal fields', async () => {
+  const calls = [];
+  let savedProfile = null;
+  serve(async (path, init) => {
+    if (path.includes('/api/admin/center-profile')) {
+      calls.push({ method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+      if (init?.method === 'PUT') { savedProfile = JSON.parse(init.body); return response({ profile: savedProfile }); }
+      return response({ profile: savedProfile });
+    }
+    return response(overview);
+  });
+  mount();
+  const panel = await openTab('Centro');
+  const businessName = await within(panel).findByLabelText('Nombre comercial');
+  assert.equal(businessName.value, '');
+  assert.equal(within(panel).getByLabelText('Teléfono').maxLength, 40);
+  assert.equal(within(panel).getByLabelText('Dirección').maxLength, 200);
+  assert.equal(within(panel).getByLabelText('Ciudad').maxLength, 100);
+  assert.equal(within(panel).getByLabelText('Código postal').maxLength, 20);
+  fireEvent.change(businessName, { target: { value: '2J Fitness Center' } });
+  fireEvent.change(within(panel).getByLabelText('Correo de contacto'), { target: { value: 'hola@example.test' } });
+  fireEvent.change(within(panel).getByLabelText('Teléfono'), { target: { value: '+34 600 000 000' } });
+  fireEvent.click(within(panel).getByRole('button', { name: 'Guardar datos del centro' }));
+  await waitFor(() => assert.match(panel.textContent, /Datos guardados/));
+  assert.deepEqual(savedProfile, {
+    businessName: '2J Fitness Center', contactEmail: 'hola@example.test', contactPhone: '+34 600 000 000',
+    address: null, city: null, postalCode: null,
+  });
+  assert.deepEqual(calls.map((call) => call.method), ['GET', 'PUT']);
+  assert.match(panel.textContent, /quedan auditados/);
+  assert.equal(within(panel).queryByLabelText(/NIF|CIF|Razón social|serie de factura/i), null);
 });
 
 test('Centro does not duplicate opening-hour fields and links owners to Horario y turnos', async () => {

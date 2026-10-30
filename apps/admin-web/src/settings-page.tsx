@@ -24,6 +24,57 @@ const integrationLabel: Record<string, string> = {
   trainingProvisioning: 'Alta automática en Búnker', push: 'Notificaciones push', passkeys: 'Acceso con llaves de acceso (passkeys)', memberAuthPilot: 'Acceso de clientes (piloto)', memberBookingPilot: 'Reservas de clientes (piloto)',
 };
 
+type CenterProfile = { businessName: string; contactEmail: string | null; contactPhone: string | null; address: string | null; city: string | null; postalCode: string | null };
+
+function CenterProfileSettings({ timezone, onOpenOperations }: { timezone: string; onOpenOperations: () => void }) {
+  const empty: CenterProfile = { businessName: '', contactEmail: null, contactPhone: null, address: null, city: null, postalCode: null };
+  const [profile, setProfile] = React.useState<CenterProfile>(empty);
+  const [state, setState] = React.useState<'loading' | 'ready' | 'denied' | 'error'>('loading');
+  const [saving, setSaving] = React.useState(false);
+  const [feedback, setFeedback] = React.useState('');
+  React.useEffect(() => {
+    const controller = new AbortController();
+    void apiFetch(`${apiUrl}/api/admin/center-profile`, { signal: controller.signal }).then(async response => {
+      if (response.status === 401 || response.status === 403) { setState('denied'); return; }
+      if (!response.ok) throw new Error('load_failed');
+      const body = await response.json() as { profile: CenterProfile | null };
+      setProfile(body.profile ?? empty); setState('ready');
+    }).catch(error => { if ((error as Error).name !== 'AbortError') setState('error'); });
+    return () => controller.abort();
+  }, []);
+  const change = (field: keyof CenterProfile, value: string) => setProfile(current => ({ ...current, [field]: value || null }));
+  const save = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setSaving(true); setFeedback('');
+    try {
+      const response = await apiFetch(`${apiUrl}/api/admin/center-profile`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(profile) });
+      if (response.status === 401 || response.status === 403) { setState('denied'); return; }
+      if (!response.ok) throw new Error('save_failed');
+      const body = await response.json() as { profile: CenterProfile };
+      setProfile(body.profile); setFeedback('Datos guardados. El cambio queda registrado en la auditoría.');
+    } catch { setFeedback('No se pudieron guardar los datos del centro. Revisa los campos e inténtalo de nuevo.'); }
+    finally { setSaving(false); }
+  };
+  if (state === 'loading') return <div className="summary-state" role="status"><span className="spinner" /> Cargando datos del centro…</div>;
+  if (state === 'denied') return <EmptyState icon={icons.ShieldCheck} title="Tu perfil no puede editar los datos del centro" role="status">La autorización se valida en el servidor.</EmptyState>;
+  if (state === 'error') return <div className="summary-state summary-error" role="alert"><strong>No se pudieron cargar los datos del centro</strong><Button onClick={() => window.location.reload()}>Reintentar</Button></div>;
+  return <>
+    <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Los cambios se guardan en Platform y quedan auditados. No incluye datos fiscales.</span></div>
+    <form className="settings-grid" onSubmit={save}>
+      <label className="settings-field">Nombre comercial<input aria-label="Nombre comercial" maxLength={120} required value={profile.businessName} onChange={event => change('businessName', event.target.value)} /></label>
+      <label className="settings-field">Teléfono<input aria-label="Teléfono" inputMode="tel" maxLength={40} value={profile.contactPhone ?? ''} onChange={event => change('contactPhone', event.target.value)} /></label>
+      <label className="settings-field">Correo de contacto<input aria-label="Correo de contacto" type="email" maxLength={254} value={profile.contactEmail ?? ''} onChange={event => change('contactEmail', event.target.value)} /></label>
+      <label className="settings-field wide">Dirección<input aria-label="Dirección" maxLength={200} value={profile.address ?? ''} onChange={event => change('address', event.target.value)} /></label>
+      <label className="settings-field">Ciudad<input aria-label="Ciudad" maxLength={100} value={profile.city ?? ''} onChange={event => change('city', event.target.value)} /></label>
+      <label className="settings-field">Código postal<input aria-label="Código postal" maxLength={20} value={profile.postalCode ?? ''} onChange={event => change('postalCode', event.target.value)} /></label>
+      <div className="settings-inline-actions"><Button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar datos del centro'}</Button>{feedback && <span role="status">{feedback}</span>}</div>
+    </form>
+    <h3 className="settings-subtitle">Zona horaria</h3>
+    <dl className="settings-list"><ReadOnlyRow label="Zona horaria" value={<>{timezone} <StatusChip tone="success" icon={null}>Conectado</StatusChip></>} detail="Las reglas del centro usan siempre la hora de Canarias." /></dl>
+    <p className="settings-hint">El horario de apertura y los turnos asignados se gestionan en la pestaña Horario y turnos.</p>
+    <Button variant="secondary" onClick={onOpenOperations}>Abrir Horario y turnos</Button>
+  </>;
+}
+
 type OpeningInterval = { id: string; weekday: number; opensAt: string; closesAt: string; validFrom: string; validUntil: string | null; status: string };
 type Shift = { id: string; professionalId: string; displayName: string; localDate: string; startsAt: string; endsAt: string; status: string };
 type Professional = { id: string; displayName: string };
@@ -113,21 +164,55 @@ function OperationsSettings() {
   </div>;
 }
 
-/** Aviso visible en toda sección cuyos ajustes aún no tienen API: nada de lo que se ve en ella se guarda. */
-function NotConnected({ children }: { children?: React.ReactNode }) {
-  return <div className="settings-notice" role="note"><StatusChip tone="warning" icon={null}>No conectado</StatusChip><span><strong>No conectado: estos ajustes todavía no se guardan.</strong> {children}</span></div>;
-}
-function Field({ label, value, hint, wide }: { label: string; value?: string; hint?: string; wide?: boolean }) {
-  return <label className={wide ? 'settings-field is-wide' : 'settings-field'}>{label}<input type="text" disabled defaultValue={value ?? ''} aria-disabled="true" />{hint && <small>{hint}</small>}</label>;
-}
 function ReadOnlyRow({ label, value, detail }: { label: string; value: React.ReactNode; detail?: string }) {
   return <div className="settings-row"><dt>{label}</dt><dd>{value}{detail && <small>{detail}</small>}</dd></div>;
 }
 
 /**
- * Configuración (paridad visual 11, referencia: Settings.jsx de Base44). Solo lectura: lo que Platform ya gobierna (reglas de pago, perfiles, estado de
- * integraciones) se muestra con datos reales; el resto de pestañas es solo interfaz y lo dice de forma visible. No hay botón de guardar.
+ * Configuración (paridad visual 11, referencia: Settings.jsx de Base44). Centro usa la API auditada existente; las reglas de reservas y el catálogo
+ * siguen siendo propiedad de sus módulos. Los tokens de marca se mantienen globales y las reglas económicas continúan en solo lectura.
  */
+function StoreSettings() {
+  const [threshold, setThreshold] = React.useState('3');
+  const [state, setState] = React.useState<'loading' | 'ready' | 'denied' | 'error'>('loading');
+  const [saving, setSaving] = React.useState(false);
+  const [feedback, setFeedback] = React.useState('');
+  const load = React.useCallback(async () => {
+    setState('loading');
+    try {
+      const response = await apiFetch(`${apiUrl}/api/settings/store`);
+      if (response.status === 401 || response.status === 403) { setState('denied'); return; }
+      if (!response.ok) throw new Error('load_failed');
+      const body = await response.json() as { lowStockThreshold: number };
+      setThreshold(String(body.lowStockThreshold)); setState('ready');
+    } catch { setState('error'); }
+  }, []);
+  React.useEffect(() => { void load(); }, [load]);
+  const save = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setSaving(true); setFeedback('');
+    try {
+      const response = await apiFetch(`${apiUrl}/api/settings/store`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lowStockThreshold: Number(threshold) }) });
+      if (response.status === 401 || response.status === 403) { setState('denied'); return; }
+      if (!response.ok) throw new Error('save_failed');
+      const body = await response.json() as { lowStockThreshold: number };
+      setThreshold(String(body.lowStockThreshold)); setFeedback('Aviso de stock actualizado y auditado.');
+    } catch { setFeedback('No se pudo guardar el umbral de stock. Revisa el valor e inténtalo de nuevo.'); }
+    finally { setSaving(false); }
+  };
+  if (state === 'loading') return <div className="summary-state" role="status"><span className="spinner" /> Cargando ajustes de tienda…</div>;
+  if (state === 'denied') return <EmptyState icon={icons.ShieldCheck} title="Tu perfil no puede cambiar los ajustes de tienda" role="status">La autorización se valida en el servidor.</EmptyState>;
+  if (state === 'error') return <div className="summary-state summary-error" role="alert"><strong>No se pudieron cargar los ajustes de tienda</strong><Button onClick={() => void load()}>Reintentar</Button></div>;
+  return <>
+    <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Este umbral cambia el aviso de pocas unidades; no bloquea ventas.</span></div>
+    <form className="settings-grid" onSubmit={save}>
+      <label className="settings-field">Avisar cuando queden<input aria-label="Avisar cuando queden" type="number" min="0" max="100000" step="1" required value={threshold} onChange={event => setThreshold(event.target.value)} /><span>unidades o menos en una variante con stock controlado</span></label>
+      <div className="settings-inline-actions"><Button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar aviso de stock'}</Button>{feedback && <span role="status">{feedback}</span>}</div>
+    </form>
+    <p className="settings-hint">El valor inicial de 3 unidades conserva el criterio actual. Las variantes sin control de stock quedan fuera del aviso.</p>
+    <p className="settings-hint">Productos, variantes, inventario y ventas se gestionan en Tienda. <a href="#store">Abrir Tienda</a></p>
+  </>;
+}
+
 export function SettingsPage() {
   const [tab, setTab] = React.useState('center');
   const [state, setState] = React.useState<LoadState>({ status: 'loading' });
@@ -141,7 +226,7 @@ export function SettingsPage() {
   }, []);
   React.useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
 
-  const header = <PageHeader title="Configuración" description="Reglas del centro. De momento solo se consultan: ningún ajuste de esta pantalla se puede guardar." />;
+  const header = <PageHeader title="Configuración" description="Datos del centro conectados; las reglas de reservas siguen configurándose por servicio." />;
   if (state.status === 'denied') return <main className="summary settings-page" id="settings" data-2j-design="v2">{header}<Card><EmptyState icon={icons.ShieldCheck} title="Tu perfil no puede consultar la configuración" role="status">Solo Administración puede ver esta pantalla.</EmptyState></Card></main>;
   const data = state.status === 'ready' ? state.data : null;
 
@@ -152,22 +237,14 @@ export function SettingsPage() {
     switch (tab) {
       case 'operations': return <OperationsSettings />;
       case 'invoicing': return <InvoiceSettingsPanel />;
-      case 'center': return <>
-        <NotConnected>Los datos del centro son una maqueta.</NotConnected>
-        <div className="settings-grid"><Field label="Nombre comercial" value="2J Fitness Center" /><Field label="Teléfono" /><Field label="Correo de contacto" /><Field label="Dirección" wide /><Field label="Ciudad" /><Field label="Código postal" /></div>
-        <h3 className="settings-subtitle">Horario y agenda</h3>
-        <dl className="settings-list"><ReadOnlyRow label="Zona horaria" value={<>{data.timezone} <StatusChip tone="success" icon={null}>Conectado</StatusChip></>} detail="Fija para todo el centro; las horas se muestran siempre en hora de Canarias." /></dl>
-        <p className="settings-hint">El horario de apertura y los turnos asignados se gestionan en la pestaña Horario y turnos.</p>
-        <Button variant="secondary" onClick={() => setTab('operations')}>Abrir Horario y turnos</Button>
-        <p className="settings-hint">Los datos fiscales (razón social, NIF, serie, IGIC, pie y logo de las facturas) se escriben en la pestaña Facturación.</p></>;
+      case 'center': return <CenterProfileSettings timezone={data.timezone} onOpenOperations={() => setTab('operations')} />;
       case 'appearance': return <>
-        <NotConnected>El logo y los colores son una maqueta.</NotConnected>
-        <div className="settings-grid"><Field label="Logo (URL)" wide /><Field label="Color de acento" value="#B7F000" /><Field label="Color de fondo" value="#1B1D1F" /></div>
-        <div className="settings-preview" aria-label="Vista previa de ejemplo"><span className="settings-swatch" style={{ background: '#B7F000' }} /><span className="settings-swatch" style={{ background: '#1B1D1F' }} /><span>Vista previa de ejemplo</span></div></>;
+        <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Identidad 2J</StatusChip><span>La aplicación utiliza los tokens oficiales de 2J. Los colores corporativos no se editan por centro.</span></div>
+        <div className="settings-preview" aria-label="Paleta oficial de 2J"><span className="settings-swatch" style={{ background: 'var(--color-accent)' }} /><span className="settings-swatch" style={{ background: 'var(--color-ink)' }} /><span>Grafito · Lima #A4D65E</span></div>
+        <p className="settings-hint">El logo y las imágenes se administran en sus módulos privados. No se aceptan URLs externas ni se guardan archivos en el repositorio.</p></>;
       case 'booking': return <>
-        <NotConnected>Cada servicio ya tiene sus propias reglas de reserva; esta pantalla no las sustituye.</NotConnected>
-        <div className="settings-grid"><Field label="Horas mínimas para cancelar" /><Field label="Lista de espera" value="Activada" /></div>
-        <ul className="settings-switches"><li><input type="checkbox" disabled aria-label="La cancelación tardía consume sesión" /> La cancelación tardía consume sesión</li><li><input type="checkbox" disabled aria-label="La no asistencia consume sesión" /> La no asistencia consume sesión</li></ul></>;
+        <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Reglas por servicio</StatusChip><span>El plazo y la política de cancelación se configuran en cada servicio. Esta pantalla no crea reglas globales ni duplica esa configuración.</span></div>
+        <a className="settings-link" href="#services">Abrir Servicios para gestionar las reglas de reserva</a></>;
       case 'payments': return payments ? <>
         <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Estas reglas son las que aplica Economía hoy. Aquí solo se consultan; para cambiarlas hace falta un cambio aprobado por el propietario.</span></div>
         <dl className="settings-list">
@@ -179,8 +256,9 @@ export function SettingsPage() {
           <ReadOnlyRow label="Métodos de pago" value={<span className="settings-chips">{payments.methods.map((method) => <StatusChip key={method} tone="neutral" icon={null}>{methodLabel[method] ?? method}</StatusChip>)}</span>} />
         </dl></> : <EmptyState icon={icons.Wallet} title="Sin reglas de pago configuradas" role="status">Economía aún no tiene sus reglas iniciales.</EmptyState>;
       case 'store': return <>
-        <NotConnected>El catálogo de la tienda se gestiona desde Tienda.</NotConnected>
-        <div className="settings-grid"><Field label="Categorías activas" /><Field label="Avisar cuando el stock baje de" /></div></>;
+        <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Catálogo conectado</StatusChip><span>Productos, variantes, inventario y ventas se gestionan en Tienda.</span></div>
+        <StoreSettings />
+      </>;
       case 'permissions': return <>
         <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Los permisos van por perfiles, nunca por persona. Estos perfiles se leen de la configuración real; cambiarlos requiere aprobación del propietario.</span></div>
         <div className="settings-profiles">{data.profiles.map((profile) => <Card as="section" key={profile.id} className="settings-profile" aria-label={`Perfil ${profile.label}`}>
