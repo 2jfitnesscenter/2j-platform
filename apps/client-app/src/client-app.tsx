@@ -27,8 +27,10 @@ type TrainingCapabilities = {
   trainingSubject: { linkStatus: 'active' | 'not_linked' | 'revoked' };
   capabilities: { autonomousTraining: boolean; routineCreation: boolean; personalRoutineCreation: boolean; personalRoutineManagement: boolean; workoutRecording: boolean; workoutHistory: boolean; guidedTraining: boolean; premiumPrograms: boolean; aiCoach: boolean; professionalFollowUp: boolean };
 };
-type ClientSessionAvailability = { status: 'available' | 'full' | 'booked' | 'not_allowed_by_plan' | 'waitlisted' | 'waitlist_suspended'; reason: string | null; canJoinWaitlist: boolean };
-type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; eligible?: boolean; eligibilityReason?: string | null; availability?: ClientSessionAvailability; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
+type MemberSessionAvailability = { status: 'available' | 'full' | 'booked' | 'not_allowed_by_plan' | 'waitlisted' | 'waitlist_suspended'; reason: string | null; canJoinWaitlist: boolean };
+type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; availability?: MemberSessionAvailability; eligible?: boolean; eligibilityReason?: string | null; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
+type MemberSessionSelection = { session: ClientSession; mode: 'reserve' | 'waitlist'; assignmentId?: string };
+type MemberBookingResult = { selection: MemberSessionSelection; result: 'confirmed' | 'waitlist' | 'failed'; reason?: string };
 const sessionCanJoinWaitlist = (session: ClientSession) => session.availability?.canJoinWaitlist === true || session.canJoinWaitlist === true;
 type MemberBookingService = { id: string; name: string };
 type MemberCancellation = { kind: 'booking' | 'waitlist'; booking: Booking; summary?: string };

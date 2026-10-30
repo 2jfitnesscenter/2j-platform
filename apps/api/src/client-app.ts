@@ -278,7 +278,7 @@ function memberSessionAvailability(
 ): { status: 'available' | 'full' | 'booked' | 'not_allowed_by_plan' | 'waitlisted' | 'waitlist_suspended'; reason: string | null; canJoinWaitlist: boolean } {
   if (['reserved','attended','no_show','cancelled_late'].includes(String(reservationStatus))) return { status: 'booked', reason: null, canJoinWaitlist: false };
   const waitlisted = waitlistStatus === 'waiting';
-  if (waitlisted && !eligibility.eligible) return { status: 'waitlist_suspended', reason: null, canJoinWaitlist: false };
+  if (waitlisted && !eligibility.eligible) return { status: 'waitlist_suspended', reason: eligibility.reason === 'debt_restriction' ? null : memberEligibilityReason(eligibility.reason), canJoinWaitlist: false };
   if (waitlisted) return { status: 'waitlisted', reason: null, canJoinWaitlist: false };
   if (!eligibility.eligible) return { status: 'not_allowed_by_plan', reason: memberEligibilityReason(eligibility.reason), canJoinWaitlist: false };
   if (Number(eligibility.capacity?.available ?? 1) <= 0) return { status: 'full', reason: null, canJoinWaitlist: Boolean(eligibility.waitlistAllowed) };
