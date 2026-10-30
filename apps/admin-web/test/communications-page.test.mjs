@@ -106,7 +106,7 @@ test("inbox shows unread and document state, separates internal notes, sends cen
     target: { value: "Te esperamos a las 9." },
   });
   fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
-  await screen.findByText("Mensaje enviado.");
+  await screen.findByText(/^Mensaje enviado./);
   await waitFor(() =>
     assert.ok(
       requests.some((r) =>
@@ -141,7 +141,7 @@ test("active message template fills editable composer and keeps template referen
   assert.equal(composer.value,'Hola, {{nombre}}');
   fireEvent.change(composer,{target:{value:'Hola, Ana'}});
   fireEvent.click(screen.getByRole('button',{name:'Enviar mensaje'}));
-  await screen.findByText('Mensaje enviado.');
+  await screen.findByText(/^Mensaje enviado./);
   assert.deepEqual(sent,{body:'Hola, Ana',templateId:'cccccccc-cccc-4ccc-8ccc-cccccccccccc'});
 });
 
@@ -162,7 +162,7 @@ test("sending state disables composer controls and announces completion",async()
   assert.equal((await screen.findByRole('button',{name:'Enviando…'})).disabled,true);
   assert.equal(composer.disabled,true);
   finish();
-  await screen.findByText('Mensaje enviado.');
+  await screen.findByText(/^Mensaje enviado./);
 });
 
 test("Mensajes filters the inbox to unread conversations and labels what is not connected", async () => {
@@ -203,7 +203,7 @@ test("Nuevo mensaje searches clients and sends the first message with an idempot
   fireEvent.click(await screen.findByRole("button", { name: /Carla Nueva/ }));
   fireEvent.change(await screen.findByLabelText("Mensaje para el cliente"), { target: { value: "Bienvenida a 2J." } });
   fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
-  await screen.findByText("Mensaje enviado.");
+  await screen.findByText(/^Mensaje enviado./);
   const sent = requests.find((r) => r.path.endsWith(`/api/clients/${target.id}/messages`));
   assert.equal(JSON.parse(sent.options.body).body, "Bienvenida a 2J.");
   assert.match(sent.options.headers["Idempotency-Key"] ?? sent.options.headers["idempotency-key"], /^[0-9a-f-]{36}$/);
@@ -233,4 +233,62 @@ test("Mensajes filters unread conversations and starts a new message by searchin
   fireEvent.click(await within(dialog).findByRole("button", { name: /Marta Nueva/ }, { timeout: 1500 }));
   await waitFor(() => assert.ok(requests.some((url) => url.endsWith("/api/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd/conversation"))));
   assert.ok(await screen.findByLabelText("Mensaje para el cliente"));
+});
+
+const person = { id: "ffffffff-ffff-4fff-8fff-ffffffffffff", firstName: "Dora", lastName: "Enlace" };
+
+test("a #communications?clientId link (from the ficha or the Resumen) opens that client's conversation and removes the id from the URL", async () => {
+  dom.window.history.replaceState(null, "", `/#communications?clientId=${person.id}`);
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    const path = String(url); requests.push(path);
+    if (path.endsWith("/api/communications/inbox")) return response([]);
+    if (path.endsWith("/api/communications/templates")) return response([]);
+    if (path.endsWith(`/api/clients/${person.id}`)) return response({ client: person });
+    if (path.endsWith(`/api/clients/${person.id}/conversation`)) return response({ conversation: null, messages: [], internalNotes: [] });
+    return response({});
+  };
+  render(React.createElement(CommunicationsPage));
+  assert.ok(await screen.findByRole("heading", { level: 2, name: "Dora Enlace" }));
+  assert.ok(await screen.findByLabelText("Mensaje para el cliente"));
+  assert.equal(dom.window.location.hash.includes("clientId"), false, "the link is consumed once");
+  dom.window.history.replaceState(null, "", "/#communications?clientId=not-a-uuid");
+  cleanup();
+  render(React.createElement(CommunicationsPage));
+  await screen.findByRole("heading", { level: 1, name: "Mensajes" });
+  assert.equal(requests.filter((path) => path.endsWith("/conversation")).length, 1, "an invalid id never opens a conversation");
+  dom.window.history.replaceState(null, "", "/#communications");
+});
+
+test("a failed send says why in plain Spanish and the retry reuses the idempotency key, so it can never duplicate", async () => {
+  const target = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const keys = []; let status = 500;
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith("/api/communications/inbox")) return response([{ ...item, clientId: target }]);
+    if (path.endsWith("/api/communications/templates")) return response([]);
+    if (path.endsWith(`/api/clients/${target}/conversation`)) return response({ conversation: { id: item.conversationId, clientId: target }, messages: [], internalNotes: [] });
+    if (path.endsWith(`/api/clients/${target}/messages`)) { keys.push(options.headers["idempotency-key"]); return response(status === 201 ? { id: "m-ok" } : { error: "x" }, status); }
+    return response({});
+  };
+  render(React.createElement(CommunicationsPage));
+  fireEvent.click(await screen.findByRole("button", { name: /Ana Prueba/ }));
+  const box = await screen.findByLabelText("Mensaje para el cliente");
+  fireEvent.change(box, { target: { value: "Hola Ana." } });
+  fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
+  await screen.findByText("No se pudo enviar el mensaje. Inténtalo de nuevo; no se duplicará.");
+  status = 403;
+  fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
+  await screen.findByText("Tu perfil puede leer mensajes pero no enviarlos.");
+  status = 404;
+  fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
+  await screen.findByText(/ya no está activo/);
+  status = 201;
+  fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
+  await screen.findByText(/^Mensaje enviado. El cliente lo verá en su app./);
+  assert.equal(keys.length, 4); assert.equal(new Set(keys).size, 1, "the same draft keeps one key across retries");
+  fireEvent.change(await screen.findByLabelText("Mensaje para el cliente"), { target: { value: "Otro mensaje distinto." } });
+  fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
+  await waitFor(() => assert.equal(keys.length, 5));
+  assert.notEqual(keys[4], keys[0], "a new message gets a new key");
 });

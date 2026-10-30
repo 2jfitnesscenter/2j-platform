@@ -898,3 +898,38 @@ test("form, consent and document requirement archiving preserves history and is 
     1,
   );
 });
+
+test("a staff member writes first to a client with no conversation: it reaches the member, the rejections are exact, and nothing leaks", async () => {
+  const id = await createClient();
+  const send = (server, key, payload, clientRef = id) => server.inject({ method: "POST", url: `/api/clients/${clientRef}/messages`, headers: key === null ? {} : { "idempotency-key": key }, payload });
+  assert.equal((await portal.inject({ method: "GET", url: "/api/client-portal/conversation" })).json().conversation, null, "no conversation before the first message");
+  assert.equal((await send(accountant, randomUUID(), { body: "No debería" })).statusCode, 403, "a profile without communication.send cannot write");
+  assert.equal((await send(trainer, null, { body: "Sin clave" })).statusCode, 400);
+  assert.equal((await send(trainer, randomUUID(), { body: "   " })).statusCode, 400, "an empty message is refused");
+  assert.equal((await send(trainer, randomUUID(), { body: "x".repeat(5001) })).statusCode, 400, "the 5000 character limit holds");
+  assert.equal((await send(trainer, randomUUID(), { body: "Hola", extra: 1 })).statusCode, 400, "unknown fields are refused");
+  assert.equal((await send(trainer, randomUUID(), { body: "Hola" }, randomUUID())).statusCode, 404, "an unknown client is not found");
+  assert.equal((await send(trainer, randomUUID(), { body: "Hola", templateId: randomUUID() })).statusCode, 404, "an unknown template is refused");
+  assert.equal((await sql`SELECT id FROM communication_conversations WHERE client_id=${id}`).length, 0, "every refused attempt left nothing behind");
+  const key = randomUUID();
+  const first = await send(trainer, key, { body: "Bienvenida a 2J. Tu primera clase es el lunes." });
+  assert.equal(first.statusCode, 201, first.body);
+  const replay = await send(trainer, key, { body: "Bienvenida a 2J. Tu primera clase es el lunes." });
+  assert.equal(replay.statusCode, 200); assert.equal(replay.json().id, first.json().id, "a retry with the same key never duplicates");
+  const conflict = await send(trainer, key, { body: "Texto distinto con la misma clave" });
+  assert.equal(conflict.statusCode, 409); assert.equal(conflict.json().error, "idempotency_conflict");
+  const inbox = (await admin.inject({ method: "GET", url: "/api/communications/inbox" })).json();
+  assert.ok(inbox.some((row) => row.clientId === id), "the new conversation appears in the staff inbox");
+  const memberView = await portal.inject({ method: "GET", url: "/api/client-portal/conversation" });
+  assert.equal(memberView.statusCode, 200);
+  assert.deepEqual(memberView.json().messages.map((m) => [m.senderKind, m.body]), [["staff", "Bienvenida a 2J. Tu primera clase es el lunes."]], "the member sees exactly one staff message");
+  assert.equal(JSON.stringify(memberView.json()).includes("senderActorId"), false, "no staff identity reaches the member");
+  const reply = await portal.inject({ method: "POST", url: `/api/client-portal/conversations/${memberView.json().conversation.id}/messages`, headers: { "idempotency-key": randomUUID() }, payload: { body: "Perfecto, gracias" } });
+  assert.equal(reply.statusCode, 201, reply.body);
+  const row = (await admin.inject({ method: "GET", url: "/api/communications/inbox" })).json().find((entry) => entry.clientId === id);
+  assert.equal(row.unreadCount, 1, "the member's answer is unread for the center");
+  const thread = (await trainer.inject({ method: "GET", url: `/api/clients/${id}/conversation` })).json();
+  assert.deepEqual(thread.messages.map((m) => m.senderKind), ["staff", "client"]);
+  await sql`UPDATE clients SET status='archived' WHERE id=${id}`;
+  assert.equal((await send(trainer, randomUUID(), { body: "A un archivado" })).statusCode, 404, "an archived client cannot be written to");
+});

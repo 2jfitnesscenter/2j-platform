@@ -96,6 +96,7 @@ const createConsent = z
   })
   .strict();
 
+class TemplateNotFound extends Error {}
 export function registerCommunicationRoutes(
   app: FastifyInstance,
   db: SqlClient,
@@ -210,7 +211,8 @@ export function registerCommunicationRoutes(
             : { error: "idempotency_conflict" as const };
         if (b.data.templateId) {
           const [template]: any[] = await tx`SELECT id FROM communication_templates WHERE id=${b.data.templateId} AND status='active' FOR SHARE`;
-          if (!template) return { error: 'template_not_found' as const };
+          // Se revierte la transacción entera: un envío rechazado no deja una conversación vacía en la bandeja.
+          if (!template) throw new TemplateNotFound();
         }
         const [message]: any[] =
           await tx`INSERT INTO communication_messages(conversation_id,sender_kind,sender_actor_id,body,template_id,idempotency_key) VALUES(${conversation.id},'staff',${actor.actorId},${b.data.body},${b.data.templateId ?? null},${key.data}) RETURNING id,body,template_id AS "templateId",created_at AS "createdAt"`;
@@ -227,9 +229,10 @@ export function registerCommunicationRoutes(
         return { message, replay: false };
       });
       if ("error" in result)
-        return reply.code(404).send({ error: result.error });
+        return reply.code(result.error === "idempotency_conflict" ? 409 : 404).send({ error: result.error });
       return reply.code(result.replay ? 200 : 201).send(result.message);
-    } catch {
+    } catch (error) {
+      if (error instanceof TemplateNotFound) return reply.code(404).send({ error: "template_not_found" });
       req.log.error(
         { route: "POST /api/clients/:clientId/messages" },
         "message send failed",

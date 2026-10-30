@@ -601,7 +601,7 @@ export function ClientsPage() {
           </div>}
 
           {activeSection === 'purchases' && activeSectionData?.access === 'available' && <PurchasesPanel sales={(profile?.summary.purchases?.data as PurchaseRow[] | null) ?? []} />}
-          {activeSection === 'messages' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-msg-title"><CardHeader title="Conversación del centro" titleId="client-msg-title" level={2} actions={<Button variant="ghost" size="sm" href="#communications">Abrir bandeja</Button>} />
+          {activeSection === 'messages' && activeSectionData?.access === 'available' && <Card as="section" aria-labelledby="client-msg-title"><CardHeader title="Conversación del centro" titleId="client-msg-title" level={2} actions={<><Button variant="primary" size="sm" href={`#communications?clientId=${profile.client.id}`}>Escribir mensaje</Button><Button variant="ghost" size="sm" href="#communications">Abrir bandeja</Button></>} />
             <dl className="client-dl"><div><dt>Mensajes sin leer</dt><dd>{Number((profile.summary.messages?.data as { unreadCount?: number } | null)?.unreadCount ?? 0)}</dd></div><div><dt>Último mensaje</dt><dd>{(profile.summary.messages?.data as { lastMessageAt?: string | null } | null)?.lastMessageAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Atlantic/Canary' }).format(new Date((profile.summary.messages?.data as { lastMessageAt: string }).lastMessageAt)) : 'Sin conversación'}</dd></div></dl>
           </Card>}
 

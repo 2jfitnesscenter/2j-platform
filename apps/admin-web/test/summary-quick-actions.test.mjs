@@ -106,3 +106,22 @@ test('the commercial tiles appear in the Base44 order only for the blocks the AP
   const limited = await screen.findByRole('list', { name: 'Indicadores de hoy' });
   assert.deepEqual([...limited.querySelectorAll('.summary-metric-label')].map((node) => node.textContent), ['Clientes activos', 'Reservas hoy'], 'blocks without permission are not rendered');
 });
+
+test('coming back to the Resumen after Cobrar, Vender or Caja refreshes it by itself instead of showing stale figures', async () => {
+  let clients = 12; let loads = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/api/dashboard/command-center')) { loads += 1; return response({ ...model, clients: { active: clients, recentSignups: 2 } }); }
+    return String(url).includes('/api/session/capabilities') ? response(capabilities) : response({});
+  };
+  function Host() { const [away, setAway] = React.useState(false); return React.createElement('div', null, React.createElement('button', { onClick: () => setAway((value) => !value) }, 'alternar'), away ? React.createElement('p', null, 'otra pantalla') : React.createElement(CommandCenter)); }
+  render(React.createElement(AppShell, null, React.createElement(Host)));
+  await screen.findByText('12');
+  const firstLoads = loads;
+  assert.equal(firstLoads, 1, 'the first visit loads the summary once, with no duplicate request');
+  fireEvent.click(screen.getByRole('button', { name: 'alternar' }));
+  await screen.findByText('otra pantalla');
+  clients = 13;
+  fireEvent.click(screen.getByRole('button', { name: 'alternar' }));
+  await screen.findByText('13');
+  assert.equal(loads, firstLoads + 1, 'returning reloads exactly once');
+});
