@@ -168,6 +168,83 @@ function ReadOnlyRow({ label, value, detail }: { label: string; value: React.Rea
   return <div className="settings-row"><dt>{label}</dt><dd>{value}{detail && <small>{detail}</small>}</dd></div>;
 }
 
+type AppearanceTheme = 'light' | 'dark' | 'system';
+function applyAppearanceTheme(theme: AppearanceTheme) {
+  const dark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+}
+function AppearanceSettings() {
+  const [theme, setTheme] = React.useState<AppearanceTheme>('light');
+  const [state, setState] = React.useState<'loading'|'ready'|'denied'|'error'>('loading');
+  const [saving, setSaving] = React.useState(false);
+  const [feedback, setFeedback] = React.useState('');
+  const load = React.useCallback(async () => {
+    try {
+      const response = await apiFetch(`${apiUrl}/api/settings/appearance`);
+      if (response.status === 401 || response.status === 403) { setState('denied'); return; }
+      if (!response.ok) throw new Error();
+      const body = await response.json() as { theme: AppearanceTheme };
+      setTheme(body.theme); applyAppearanceTheme(body.theme); setState('ready');
+    } catch { setState('error'); }
+  }, []);
+  React.useEffect(() => { void load(); }, [load]);
+  React.useEffect(() => {
+    if (theme !== 'system') return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const update = () => applyAppearanceTheme('system');
+    media.addEventListener?.('change', update);
+    return () => media.removeEventListener?.('change', update);
+  }, [theme]);
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault(); setSaving(true); setFeedback('');
+    try {
+      const response = await apiFetch(`${apiUrl}/api/settings/appearance`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ theme }) });
+      if (response.status === 401 || response.status === 403) { setState('denied'); return; }
+      if (!response.ok) throw new Error();
+      applyAppearanceTheme(theme); setFeedback('Preferencia visual guardada para tu usuario.');
+    } catch { setFeedback('No se pudo guardar la preferencia visual.'); }
+    finally { setSaving(false); }
+  };
+  if (state === 'loading') return <div className="summary-state" role="status"><span className="spinner" /> Cargando apariencia…</div>;
+  if (state === 'denied') return <EmptyState icon={icons.ShieldCheck} title="Tu perfil no puede cambiar la apariencia" role="status">La autorización se valida en el servidor.</EmptyState>;
+  if (state === 'error') return <div className="summary-state summary-error" role="alert"><strong>No se pudo cargar la apariencia</strong><Button onClick={() => void load()}>Reintentar</Button></div>;
+  return <>
+    <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Identidad 2J</StatusChip><span>La aplicación utiliza los tokens oficiales de 2J. Colores, logotipo y marca permanecen fijos.</span></div>
+    <div className="settings-preview" aria-label="Paleta oficial de 2J"><span className="settings-swatch" style={{ background: 'var(--2j-color-brand)' }} /><span className="settings-swatch" style={{ background: 'var(--2j-color-text-primary)' }} /><span>Grafito · Lima #A4D65E</span></div>
+    <form className="settings-grid" onSubmit={save}>
+      <label className="settings-field">Tema de esta cuenta<select aria-label="Tema de esta cuenta" value={theme} onChange={event => setTheme(event.target.value as AppearanceTheme)}><option value="light">Claro</option><option value="dark">Oscuro</option><option value="system">Según el dispositivo</option></select><span>Solo cambia tu vista; no modifica la identidad visual del centro.</span></label>
+      <div className="settings-inline-actions"><Button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar apariencia'}</Button>{feedback && <span role="status" aria-live="polite">{feedback}</span>}</div>
+    </form>
+  </>;
+}
+
+type NotificationSettingsValue = { bookingRemindersEnabled: boolean; bookingReminderMinutes: number; entitlementExpiryEnabled: boolean; entitlementExpiryDays: number; lowBalanceEnabled: boolean; lowBalanceThreshold: number; documentRemindersEnabled: boolean };
+function BookingReminderSettings() {
+  const [settings, setSettings] = React.useState<NotificationSettingsValue|null>(null);
+  const [state, setState] = React.useState<'loading'|'ready'|'error'>('loading');
+  const [saving, setSaving] = React.useState(false);
+  const [feedback, setFeedback] = React.useState('');
+  const load = React.useCallback(async () => {
+    try { const response = await apiFetch(`${apiUrl}/api/settings/notifications`); if (!response.ok) throw new Error(); setSettings(await response.json() as NotificationSettingsValue); setState('ready'); }
+    catch { setState('error'); }
+  }, []);
+  React.useEffect(() => { void load(); }, [load]);
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault(); if (!settings) return; setSaving(true); setFeedback('');
+    try { const response = await apiFetch(`${apiUrl}/api/settings/booking-reminders`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bookingRemindersEnabled: settings.bookingRemindersEnabled, bookingReminderMinutes: settings.bookingReminderMinutes }) }); if (!response.ok) throw new Error(); setFeedback('Avisos de reserva guardados.'); }
+    catch { setFeedback('No se pudieron guardar los avisos de reserva.'); } finally { setSaving(false); }
+  };
+  if (state === 'loading') return <div className="summary-state" role="status"><span className="spinner" /> Cargando avisos de reserva…</div>;
+  if (state === 'error') return <div className="summary-state summary-error" role="alert"><strong>No se pudieron cargar los avisos de reserva</strong><Button onClick={() => void load()}>Reintentar</Button></div>;
+  if (!settings) return null;
+  return <form className="settings-grid" onSubmit={save}>
+    <h3 className="settings-subtitle">Recordatorios de reserva</h3>
+    <label className="settings-field"><span><input type="checkbox" checked={settings.bookingRemindersEnabled} onChange={event => setSettings({ ...settings, bookingRemindersEnabled: event.target.checked })} /> Activar recordatorios</span></label>
+    <label className="settings-field">Antelación<input aria-label="Antelación en minutos" type="number" min="15" max="10080" step="15" required disabled={!settings.bookingRemindersEnabled} value={settings.bookingReminderMinutes} onChange={event => setSettings({ ...settings, bookingReminderMinutes: Number(event.target.value) })} /><span>Minutos antes de la sesión (15–10.080).</span></label>
+    <div className="settings-inline-actions"><Button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar avisos'}</Button>{feedback && <span role="status" aria-live="polite">{feedback}</span>}</div>
+  </form>;
+}
+
 /**
  * Configuración (paridad visual 11, referencia: Settings.jsx de Base44). Centro usa la API auditada existente; las reglas de reservas y el catálogo
  * siguen siendo propiedad de sus módulos. Los tokens de marca se mantienen globales y las reglas económicas continúan en solo lectura.
@@ -238,13 +315,11 @@ export function SettingsPage() {
       case 'operations': return <OperationsSettings />;
       case 'invoicing': return <InvoiceSettingsPanel />;
       case 'center': return <CenterProfileSettings timezone={data.timezone} onOpenOperations={() => setTab('operations')} />;
-      case 'appearance': return <>
-        <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Identidad 2J</StatusChip><span>La aplicación utiliza los tokens oficiales de 2J. Los colores corporativos no se editan por centro.</span></div>
-        <div className="settings-preview" aria-label="Paleta oficial de 2J"><span className="settings-swatch" style={{ background: 'var(--color-accent)' }} /><span className="settings-swatch" style={{ background: 'var(--color-ink)' }} /><span>Grafito · Lima #A4D65E</span></div>
-        <p className="settings-hint">El logo y las imágenes se administran en sus módulos privados. No se aceptan URLs externas ni se guardan archivos en el repositorio.</p></>;
+      case 'appearance': return <AppearanceSettings />;
       case 'booking': return <>
         <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Reglas por servicio</StatusChip><span>El plazo y la política de cancelación se configuran en cada servicio. Esta pantalla no crea reglas globales ni duplica esa configuración.</span></div>
-        <a className="settings-link" href="#services">Abrir Servicios para gestionar las reglas de reserva</a></>;
+        <a className="settings-link" href="#services">Abrir Servicios para gestionar las reglas de reserva</a>
+        <BookingReminderSettings /></>;
       case 'payments': return payments ? <>
         <div className="settings-notice is-connected" role="note"><StatusChip tone="success" icon={null}>Conectado</StatusChip><span>Estas reglas son las que aplica Economía hoy. Aquí solo se consultan; para cambiarlas hace falta un cambio aprobado por el propietario.</span></div>
         <dl className="settings-list">

@@ -1,5 +1,6 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
@@ -24,6 +25,30 @@ test('the settings overview needs authentication and settings.manage: only Admin
   const response = await overview(admin);
   assert.equal(response.statusCode, 200, response.body);
   assert.equal(response.headers['cache-control'], 'no-store');
+});
+
+test('appearance preference is authenticated, permission-gated, validated and isolated per staff actor', async () => {
+  const uniqueActorId = `appearance-${randomUUID()}`;
+  const anotherActorId = `appearance-${randomUUID()}`;
+  const uniqueActor = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: uniqueActorId, role: 'admin' }) });
+  const anotherActor = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: anotherActorId, role: 'admin' }) });
+  const anonymousRead = await anonymous.inject({ method: 'GET', url: '/api/settings/appearance' });
+  assert.equal(anonymousRead.statusCode, 401);
+  assert.equal((await trainer.inject({ method: 'GET', url: '/api/settings/appearance' })).statusCode, 403);
+  assert.equal((await trainer.inject({ method: 'PUT', url: '/api/settings/appearance', payload: { theme: 'dark' } })).statusCode, 403);
+  try {
+    const first = await uniqueActor.inject({ method: 'GET', url: '/api/settings/appearance' });
+    assert.equal(first.statusCode, 200, first.body); assert.equal(first.json().theme, 'light');
+    assert.equal(first.headers['cache-control'], 'no-store');
+    const invalid = await uniqueActor.inject({ method: 'PUT', url: '/api/settings/appearance', payload: { theme: 'brand-green' } });
+    assert.equal(invalid.statusCode, 400);
+    const saved = await uniqueActor.inject({ method: 'PUT', url: '/api/settings/appearance', payload: { theme: 'dark' } });
+    assert.equal(saved.statusCode, 200, saved.body); assert.equal(saved.json().theme, 'dark');
+    const reread = await uniqueActor.inject({ method: 'GET', url: '/api/settings/appearance' });
+    assert.equal(reread.json().theme, 'dark');
+    const other = await anotherActor.inject({ method: 'GET', url: '/api/settings/appearance' });
+    assert.equal(other.statusCode, 200); assert.equal(other.json().theme, 'light', 'another administrator starts with their own default preference');
+  } finally { await Promise.all([uniqueActor.close(), anotherActor.close()]); }
 });
 
 test('payment rules come from economic_settings (day 10, grace days, timezone, fiscal gate closed) and the methods are the fixed list', async () => {

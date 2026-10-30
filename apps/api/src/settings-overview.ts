@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { can, rolePermissions, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
+import { z } from 'zod';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
 
@@ -19,6 +20,24 @@ const groupLabels: Record<string, string> = {
  * permisos. Requiere `settings.manage`. Los perfiles no se editan aquí: los cambios de permisos pasan por aprobación del propietario (D124, A48).
  */
 export function registerSettingsOverviewRoutes(app: FastifyInstance<any, any, any, any, any>, db: SqlClient, resolveAuthorization: (request: FastifyRequest) => Promise<AuthorizationContext | null>, integrations: IntegrationFlags) {
+  app.get('/api/settings/appearance', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const context = await resolveAuthorization(request);
+    if (!context) return reply.code(401).send({ error: 'authentication_required' });
+    if (!can(context, 'settings.manage')) return reply.code(403).send({ error: 'permission_denied' });
+    const [row] = await db`SELECT theme,updated_at AS "updatedAt" FROM staff_appearance_preferences WHERE actor_id=${context.actorId}`;
+    return { theme: row?.theme ?? 'light', updatedAt: row?.updatedAt ?? null };
+  });
+  app.put('/api/settings/appearance', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const context = await resolveAuthorization(request);
+    if (!context) return reply.code(401).send({ error: 'authentication_required' });
+    if (!can(context, 'settings.manage')) return reply.code(403).send({ error: 'permission_denied' });
+    const parsed = z.object({ theme: z.enum(['light','dark','system']) }).strict().safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const [row] = await db`INSERT INTO staff_appearance_preferences(actor_id,theme) VALUES (${context.actorId},${parsed.data.theme}) ON CONFLICT(actor_id) DO UPDATE SET theme=EXCLUDED.theme,updated_at=now() RETURNING theme,updated_at AS "updatedAt"`;
+    return row;
+  });
   app.get('/api/settings/overview', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const context = await resolveAuthorization(request);
