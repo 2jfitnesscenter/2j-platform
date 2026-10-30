@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://2jfitnesscenter.com/contracts/2J-training-performance-summary-v1.schema.json",
+  "title": "2J Training Summary V1",
+  "description": "Implemented response from Búnker to Platform POST /api/platform/v1/training-summary.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "trainingUserId", "trainingStatus", "asOf"],
+  "properties": {
+    "v": { "const": 1 },
+    "trainingUserId": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+    "trainingStatus": { "const": "active" },
+    "asOf": { "type": "string", "format": "date-time" },
+    "currentProgram": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 }
+      }
+    },
+    "recentActivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lastTrainingAt", "sessionsLast30Days"],
+      "properties": {
+        "lastTrainingAt": { "type": ["string", "null"], "format": "date" },
+        "sessionsLast30Days": { "type": "integer", "minimum": 0, "maximum": 10000 }
+      }
+    }
+  }
+}
