@@ -265,6 +265,17 @@ test("versioned forms preserve old responses, require PAR-Q review and deduplica
   });
   assert.equal(version.statusCode, 201, version.body);
   assert.equal(version.json().version, 2);
+  const draftVersions = await admin.inject({ method: "GET", url: `/api/forms/${form.json().id}/versions?limit=1` });
+  assert.equal(draftVersions.statusCode, 200, draftVersions.body);
+  assert.equal(draftVersions.json().items[0].status, "draft");
+  assert.deepEqual(draftVersions.json().items[0].fields, [
+    { id: "energy", label: "Energía", type: "scale", required: true },
+    { id: "sleep", label: "Sueño", type: "scale", required: false },
+  ]);
+  assert.equal("createdBy" in draftVersions.json().items[0], false, "history exposes schema metadata only, not staff identity or responses");
+  assert.equal((await trainer.inject({ method: "GET", url: `/api/forms/${form.json().id}/versions` })).statusCode, 403);
+  assert.equal((await reception.inject({ method: "GET", url: `/api/forms/${form.json().id}/versions` })).statusCode, 403);
+  assert.equal((await portal.inject({ method: "GET", url: `/api/forms/${form.json().id}/versions` })).statusCode, 401);
   const parq = await admin.inject({
     method: "POST",
     url: "/api/forms",

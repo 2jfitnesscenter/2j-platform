@@ -134,12 +134,13 @@ test('Novedades embeds the existing news screen with a single page heading, and 
 });
 
 test('questionnaires are saved as empty drafts, versioned, explicitly activated, and archived', async () => {
-  let items = []; const calls = [];
+  let items = []; let draftVersion = null; let draftFields = []; const calls = [];
   const urls = serve({ forms: async (path, init) => {
     calls.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
-    if (init?.method === 'POST' && path.endsWith('/api/forms')) { const value = JSON.parse(init.body); items = [{ id: 'form-1', ...value, status: 'draft', activeVersionId: null, version: null, description: value.description, fields: null }]; return response({ id: 'form-1', version: { id: 'version-1', version: 1, status: 'draft' } }, 201); }
-    if (init?.method === 'POST' && path.endsWith('/activate')) { items = items.map(item => ({ ...item, status: 'active', activeVersionId: 'version-1', version: 1 })); return response({ id: 'form-1', version: 1 }); }
-    if (init?.method === 'POST' && path.endsWith('/versions')) return response({ id: 'form-1', version: 2, status: 'draft' }, 201);
+    if (path.includes('/versions?')) return response({ items: draftVersion ? [{ id: `version-${draftVersion}`, version: draftVersion, status: 'draft', fields: draftFields }] : [] });
+    if (init?.method === 'POST' && path.endsWith('/api/forms')) { const value = JSON.parse(init.body); draftVersion = 1; draftFields = value.fields; items = [{ id: 'form-1', ...value, status: 'draft', activeVersionId: null, version: null, description: value.description, fields: null }]; return response({ id: 'form-1', version: { id: 'version-1', version: 1, status: 'draft' } }, 201); }
+    if (init?.method === 'POST' && path.endsWith('/activate')) { items = items.map(item => ({ ...item, status: 'active', activeVersionId: `version-${draftVersion}`, version: draftVersion, fields: draftFields })); draftVersion = null; return response({ id: 'form-1', version: 1 }); }
+    if (init?.method === 'POST' && path.endsWith('/versions')) { draftVersion += 1; draftFields = JSON.parse(init.body).fields; return response({ id: 'form-1', version: draftVersion, status: 'draft' }, 201); }
     if (init?.method === 'POST' && path.endsWith('/archive')) return response({ archived: true });
     return response(items);
   } });
@@ -163,6 +164,9 @@ test('questionnaires are saved as empty drafts, versioned, explicitly activated,
   fireEvent.change(screen.getByLabelText('Pregunta o campo'), { target: { value: 'Pregunta revisada' } });
   fireEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
   await waitFor(() => assert.equal(calls.filter(call => call.method === 'POST' && call.path.endsWith('/versions')).length, 1));
+  assert.ok(screen.getByText('Pregunta revisada · opcional'), 'the persisted draft is fetched back and shown for review');
+  fireEvent.click(screen.getByRole('button', { name: 'Activar nueva versión' }));
+  await waitFor(() => assert.equal(calls.filter(call => call.method === 'POST' && call.path.endsWith('/activate')).length, 2));
   window.confirm = () => true;
   fireEvent.click(screen.getByRole('button', { name: 'Archivar' }));
   await waitFor(() => assert.equal(calls.filter(call => call.method === 'POST' && call.path.endsWith('/archive')).length, 1));

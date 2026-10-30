@@ -2,26 +2,23 @@
 
 ## Alcance entregado
 
-Mi gimnasio > Consentimientos incorpora dos espacios independientes: cuestionarios y textos de consentimiento. La pantalla usa exclusivamente las rutas Communications existentes para listar, crear, versionar, activar y archivar. No asigna cuestionarios a clientes, no recoge ni muestra respuestas y no consulta datos de salud de personas.
+Mi gimnasio > Consentimientos incorpora espacios independientes para cuestionarios y textos de consentimiento. La pantalla lista, crea, versiona, activa y archiva catálogos. No asigna cuestionarios, no recoge ni muestra respuestas y no consulta datos de salud de personas.
 
-Los formularios y textos comienzan vacíos: no se incluyen preguntas, copy legal, ejemplos publicables ni plantillas por defecto. Crear y versionar guarda un borrador; activar/publicar exige una acción explícita. El esquema de cuestionario se etiqueta como sensible cuando corresponde y las versiones del consentimiento se conservan como historial.
+Los cuestionarios y textos comienzan vacíos, sin preguntas, copy legal, ejemplos publicables ni plantillas por defecto. Guardar crea una versión borrador; activar/publicar requiere acción explícita tras revisar el contenido devuelto por el servidor. Las versiones quedan inmutables.
 
-## Permisos
+## Permisos y API
 
-`GET /api/session/capabilities` añade solo cuatro booleanos calculados del actor autenticado: `formsRead`, `formsManage`, `consentsRead`, `consentsManage`. No expone listas de permisos ni datos de otros actores. La UI no solicita catálogos sin permiso de lectura y oculta creación, edición, activación y archivo cuando falta el permiso de gestión. Los endpoints siguen aplicando autorización server-side.
+`GET /api/session/capabilities` expone solo cuatro booleanos del actor autenticado: `formsRead`, `formsManage`, `consentsRead`, `consentsManage`. No devuelve permisos ni datos de otros actores. La UI solicita catálogos solo con read y oculta creación, edición, activación y archivo sin manage; el servidor vuelve a autorizar cada ruta.
 
-## Límite del API existente
+Se añadió `GET /api/forms/:formId/versions`, protegido por `forms.manage`, para recuperar borradores y esquemas/versiones persistidos. Devuelve solo versión, estado, descripción, definición de campos y fecha; no incluye respuestas, asignaciones ni actor creador. Sin migración. Consentimientos ya tenía lectura de versiones bajo `consents.read`.
 
-`GET /api/forms` devuelve los campos de la versión activa; no ofrece una ruta de lectura para recuperar el esquema de un borrador. La pantalla conserva en memoria el esquema recién creado para permitir su revisión antes de activarlo durante esa sesión. Si se vuelve a cargar la página, no permite activar ese borrador porque el API no devuelve el contenido que se debe revisar. No añadí una ruta nueva ni una migración.
+## Validación local sobre `origin/main` d2796f4
 
-El API de consentimientos sí ofrece GET de versiones; la pantalla lo usa para inspeccionar el texto histórico. Crear/versionar textos guarda el contenido en borrador y el botón de publicación es separado. No hay edición de metadatos de consentimientos porque no existe una ruta existente para ello.
-
-## Validación local
-
-- Admin Web completo: 380/380 PASS.
-- Pruebas focalizadas de Mi gimnasio: 12/12 PASS.
-- API `dashboard.test.mjs`: 16/16 PASS en PostgreSQL sintético efímero, recién creado y eliminado al terminar; comprobó Admin, Trainer, Reception, Accountant y anónimo.
-- Admin Web typecheck/build: PASS.
-- API typecheck/build: PASS.
-- `git diff --check`: PASS.
-- Build avisa de chunk de frontend >500 kB, existente en la aplicación.
+- Admin Web completo: 382/382 PASS.
+- Mi gimnasio focalizado: 12/12 PASS.
+- API `dashboard.test.mjs`: 16/16 PASS en PostgreSQL sintético efímero; Admin, Trainer, Reception, Accountant y anónimo.
+- API `communications.test.mjs`: 9/9 PASS en PostgreSQL sintético efímero; lectura persistida del esquema draft y denegación a Trainer/Reception/portal.
+- Admin Web y API typecheck: PASS.
+- Admin Web y API build: PASS; Vite conserva su aviso existente de chunk >500 kB.
+- `git diff --check origin/main...HEAD`: PASS.
+- No se ejecutaron migraciones en bases compartidas ni se usaron datos reales.

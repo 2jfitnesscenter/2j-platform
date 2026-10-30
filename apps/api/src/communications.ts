@@ -625,6 +625,23 @@ export function registerCommunicationRoutes(
       return reply.code(409).send({ error: "version_conflict" });
     }
   });
+  app.get("/api/forms/:formId/versions", async (req, reply) => {
+    const actor = await staff(req, reply, "forms.manage");
+    if (!actor) return;
+    const p = z.object({ formId: uuid }).safeParse(req.params);
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), offset: z.coerce.number().int().min(0).default(0) }).safeParse(req.query);
+    if (!p.success || !q.success) return reply.code(400).send({ error: "validation_error" });
+    try {
+      const [form]: any[] = await db`SELECT id FROM client_forms WHERE id=${p.data.formId} AND status<>'archived'`;
+      if (!form) return reply.code(404).send({ error: "form_not_found" });
+      const [count]: any[] = await db`SELECT count(*)::int AS total FROM client_form_versions WHERE form_id=${form.id}`;
+      const items = await db`SELECT id,version,status,description,fields,created_at AS "createdAt" FROM client_form_versions WHERE form_id=${form.id} ORDER BY version DESC LIMIT ${q.data.limit} OFFSET ${q.data.offset}`;
+      return { items, total: count?.total ?? 0, limit: q.data.limit, offset: q.data.offset };
+    } catch {
+      req.log.error({ route: "GET /api/forms/:formId/versions" }, "form versions read failed");
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
   app.get("/api/forms", async (req, reply) => {
     const actor = await staff(req, reply, "forms.read");
     if (!actor) return;
