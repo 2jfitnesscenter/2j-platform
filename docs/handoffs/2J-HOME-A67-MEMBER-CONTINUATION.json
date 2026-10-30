@@ -1,17 +1,17 @@
 {
   "task": "2J-HOME-A67-MEMBER-CONTINUATION",
   "branch": "agent/codex/2J-HOME-A67-MEMBER-CONTINUATION",
-  "base": "PR #157 head 2f620ff1ec042d056300c3646452c7d42d0aeb1a",
-  "status": "implementation-complete-independent-review-pending",
+  "base": "main fe899e900e66598779136fea351d488e8937db39",
+  "status": "rebased-local-awaiting-review-and-remote-ci",
   "deployment": "not-performed",
   "sourceChanges": [
-    { "work": "#116 waitlist eligibility", "commit": "a0aadc9", "integration": "local cherry-pick" },
-    { "work": "#126 payment state", "commits": ["0f12ddf", "181fad0", "a44b809"], "integration": "local cherry-picks" },
-    { "work": "#157 member messages", "commits": ["a227be5", "4347e38"], "integration": "local cherry-picks" }
+    { "work": "#116, #126, #157", "integration": "already merged in current main; excluded from this PR delta" },
+    { "work": "#169 A68 evolution consent and entitlement gate", "integration": "already merged in current main; Home consumes its blocked response" }
   ],
   "implemented": [
     "Mi evolución muestra únicamente el resumen de solo lectura del contrato 2J-089 cuando Platform lo devuelve como disponible.",
     "El modo demo etiqueta la vista No conectado y no consulta API ni fabrica valores.",
+    "Platform #169 is the authority for the A68 entitlement and consent gate; Home shows blocked states as Sin datos disponibles.",
     "Mediciones, gráficos, evaluaciones y salud permanecen No conectado.",
     "Perfil permanece de consulta conforme a D238/D239.",
     "Compras usa el endpoint de socio existente GET /api/me/store/purchases.",
@@ -23,13 +23,13 @@
     "Historial de mediciones/evolución: no forma parte del contrato 2J-089."
   ],
   "independentReview": {
-    "status": "previous-sha-reviewed-not-current-change",
-    "reviewedHead": "5f47137989179798cb96ab406d801ee072af23a6",
-    "limitations": ["no cubre Mis facturas", "remote CI", "secret scan", "staging", "real authenticated session"]
+    "status": "re-review-required-after-rebase",
+    "reviewedHead": "d60ed8cdd3e520b286214ddcc11fc8f2ab012175",
+    "limitations": ["A68 gate was not in the reviewed base", "remote CI", "secret scan", "staging", "real authenticated session"]
   },
-  "remoteCi": "not-queried",
+  "remoteCi": "to be rerun on rebased PR head",
   "tests": {
-    "clientApp": "48/48",
+    "clientApp": "49/49",
     "typecheck": "passed",
     "build": "passed",
     "demoBuild": "passed",

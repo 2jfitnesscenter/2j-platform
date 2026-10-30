@@ -3,15 +3,14 @@
 ## Estado
 
 - Rama local aislada: `agent/codex/2J-HOME-A67-MEMBER-CONTINUATION`.
-- Base de la continuación: PR #157 (`agent/codex/2J-HOME-MEMBER-MESSAGES-CLEAN`), con los cambios anteriores ya integrados en su main actualizado.
-- Publicación/fusión/despliegue: pendiente de publicar esta continuación. No se ha fusionado ni desplegado.
+- Base actualizada: `main` en `fe899e900e66598779136fea351d488e8937db39`; incluye #157 y la puerta A68 de Mi evolución (#169).
+- PR #168 se está restackeando sobre `main`; la rama publicada se actualizará con lease, sin sobrescribir cambios ajenos. No se ha fusionado ni desplegado.
 
 ## Alcance integrado
 
-- #116: la tarjeta de clase presenta lista de espera solo cuando Platform devuelve elegibilidad explícita.
-- #126: Perfil representa los estados y cantidades `assignment.payment` recibidos de `GET /api/me/membership`; Home no calcula saldos, vencimientos ni bloqueos.
-- #157: Buzón del socio usa los endpoints autenticados de conversación y conserva la idempotencia al reintentar un borrador editado.
+- #116, #126 y #157 ya están en la base `main`; no se duplican en el delta actual de PR #168.
 - Mi evolución usa el resumen de solo lectura 2J-089 (`GET /api/me/training-summary`) para mostrar programa y actividad agregada cuando Platform confirma una vinculación activa. No expone IDs de Búnker.
+- A68/#169 ya está en `main`: Platform exige entitlement efectivo y consentimiento publicado/aceptado/no revocado. Home presenta estados bloqueados como «Sin datos disponibles»; no replica la regla.
 - En demo, Mi evolución muestra `No conectado · DEMO · Datos ficticios`, no hace llamadas y no presenta métricas simuladas. Mediciones, gráficos, evaluaciones y salud quedan `No conectado` porque 2J-089 no incluye esos datos.
 - Perfil muestra los datos existentes en modo consulta y explica cómo solicitar cambios.
 - Compras ya estaba conectada a `GET /api/me/store/purchases`; la prueba actual verifica datos del endpoint y el estado de demo sintética.
@@ -26,8 +25,8 @@
 
 ## Validación
 
-Tras añadir Mis facturas: `pnpm --filter @2j/client-app test` 48/48; `typecheck` correcto; `build` correcto; `build:demo` correcto; `git diff --check` correcto. Son pruebas de cliente con respuestas sintéticas; no se probó una sesión real.
+Tras restack sobre `main`: `pnpm --filter @2j/client-app test` 49/49; `typecheck` correcto; `build` correcto; `build:demo` correcto; `git diff --check` correcto. Son pruebas de cliente con respuestas sintéticas; no se probó una sesión real.
 
 ## Revisión requerida
 
-Revisión independiente anterior completada sobre `5f47137989179798cb96ab406d801ee072af23a6`: sin hallazgos para ese SHA. No cubre Mis facturas y requiere revisión independiente sobre el SHA final. Tampoco verificó CI remoto, secret scan, staging ni una sesión real. `gitleaks` y `trufflehog` no están instalados localmente.
+La revisión independiente nivel 2 del commit anterior (`d60ed8cdd3e520b286214ddcc11fc8f2ab012175`) no encontró hallazgos en Mis facturas. Tras este restack requiere confirmación del delta exacto. CI remoto se volverá a ejecutar sobre el nuevo HEAD; no hay despliegue.
