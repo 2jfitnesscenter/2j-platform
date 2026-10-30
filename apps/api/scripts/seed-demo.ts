@@ -16,7 +16,81 @@ const clients = [
   ['d0700000-0000-4000-8000-000000000012', 'Nico', 'Herrera', 'nico.herrera@example.test'],
 ].map(([id, first, last, email]) => ({ id, first, last, email }));
 
-export async function seedDemoData(client: ReturnType<typeof createDatabase>['client']) {
+const seedInvoice = async (tx: Parameters<Parameters<ReturnType<typeof createDatabase>['client']['begin']>[0]>[0]) => {
+  const chargeId = 'd0700000-0000-4000-8000-000000000501';
+  const transactionId = 'd0700000-0000-4000-8000-000000000602';
+  const proofId = 'd0700000-0000-4000-8000-000000000603';
+  const seriesId = 'd0700000-0000-4000-8000-000000000604';
+  const draftId = 'd0700000-0000-4000-8000-000000000605';
+  const documentId = 'd0700000-0000-4000-8000-000000000606';
+  const syntheticIssuerName = 'MUESTRA SINTÉTICA 2J · NO VÁLIDA';
+  const proofBytes = Buffer.from('%PDF-1.4\n% Synthetic transfer proof; not a real payment\n%%EOF\n', 'utf8');
+  const proofHash = sha256(proofBytes);
+  const netCents = 4757;
+  const taxCents = 143;
+  const grossCents = 4900;
+  const lines = [{ description: 'Cuota sintética de demostración', quantity: 1, unitNetCents: netCents, netCents, taxTreatment: 'taxable', taxRateBasisPoints: 300, taxCents, taxDescription: null }];
+  const totals = { netCents, taxCents, grossCents, byRate: [{ taxTreatment: 'taxable', rateBasisPoints: 300, baseCents: netCents, taxCents }] };
+  const issuer = { name: syntheticIssuerName, taxId: 'DEMO-NO-VALIDO', address: 'Solo entorno de pruebas 2jfit.com', footerText: 'DOCUMENTO SINTÉTICO DE PRUEBA · NO VÁLIDO FISCALMENTE' };
+  const client = { name: 'María González · CLIENTE SINTÉTICA', taxId: null, address: null };
+  const requestHash = sha256('2j-staging-demo-invoice-v1');
+
+  const [existing] = await tx`SELECT d.id,d.document_number AS "documentNumber",d.issuer_snapshot AS issuer
+    FROM economic_fiscal_documents d WHERE d.id=${documentId}::uuid`;
+  if (existing) {
+    if (existing.issuer?.name !== syntheticIssuerName || !String(existing.documentNumber).startsWith('DEMO-')) {
+      throw new Error('The fixed synthetic sample invoice ID is occupied by a non-demo document; refusing to change it.');
+    }
+    return;
+  }
+  const [strayDraft] = await tx`SELECT id FROM economic_invoice_drafts WHERE id=${draftId}::uuid`;
+  if (strayDraft) throw new Error('The fixed synthetic sample invoice draft exists without its immutable document; refusing to allocate another number.');
+
+  await tx`INSERT INTO economic_invoice_series(id,name,prefix,next_number,active)
+    VALUES (${seriesId}::uuid,'Muestra sintética (no válida)','DEMO',1,true) ON CONFLICT(id) DO NOTHING`;
+  const [series] = await tx`SELECT name,prefix,next_number AS "nextNumber" FROM economic_invoice_series WHERE id=${seriesId}::uuid FOR UPDATE`;
+  if (series?.name !== 'Muestra sintética (no válida)' || series?.prefix !== 'DEMO' || Number(series.nextNumber) !== 1) {
+    throw new Error('The fixed synthetic invoice series is occupied by a different series; refusing to alter numbering.');
+  }
+
+  await tx`INSERT INTO economic_transfer_proofs(id,charge_id,amount_cents,content_type,file_name,file_bytes,sha256,status,submitted_by)
+    VALUES (${proofId}::uuid,${chargeId}::uuid,${grossCents},'application/pdf','DEMO-NO-VALIDO.pdf',${proofBytes},${proofHash},'pending_validation','2j-demo-seed')
+    ON CONFLICT(id) DO NOTHING`;
+  await tx`INSERT INTO economic_transactions(id,charge_id,client_id,kind,amount_cents,actor_id,idempotency_key,request_hash)
+    VALUES (${transactionId}::uuid,${chargeId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,'payment',${grossCents},'2j-demo-seed',
+      'd0700000-0000-4000-8000-000000000607'::uuid,${sha256('2j-staging-demo-transfer-payment')}) ON CONFLICT(id) DO NOTHING`;
+  await tx`INSERT INTO economic_payment_splits(transaction_id,method,amount_cents)
+    VALUES (${transactionId}::uuid,'transfer',${grossCents}) ON CONFLICT(transaction_id,method) DO NOTHING`;
+  const [proof] = await tx`SELECT status,transaction_id AS "transactionId",sha256 FROM economic_transfer_proofs WHERE id=${proofId}::uuid FOR UPDATE`;
+  if (proof?.sha256.trim() !== proofHash) throw new Error('The fixed synthetic transfer proof ID is occupied by different bytes; refusing to replace it.');
+  if (proof.status === 'pending_validation') {
+    await tx`UPDATE economic_transfer_proofs SET status='validated',reviewed_by='2j-demo-seed',reviewed_at=now(),transaction_id=${transactionId}::uuid WHERE id=${proofId}::uuid`;
+  } else if (proof.status !== 'validated' || proof.transactionId !== transactionId) {
+    throw new Error('The fixed synthetic transfer proof has an unexpected state; refusing to repair it.');
+  }
+  await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
+    SELECT '2j-demo-seed','payment.created','transaction',${transactionId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,'{"synthetic":true,"method":"transfer"}'::jsonb
+    WHERE NOT EXISTS (SELECT 1 FROM economic_audit_events WHERE actor_id='2j-demo-seed' AND action='payment.created' AND resource_type='transaction' AND resource_id=${transactionId}::uuid)`;
+  await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
+    SELECT '2j-demo-seed','transfer.validated','transfer_proof',${proofId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,'{"synthetic":true}'::jsonb
+    WHERE NOT EXISTS (SELECT 1 FROM economic_audit_events WHERE actor_id='2j-demo-seed' AND action='transfer.validated' AND resource_type='transfer_proof' AND resource_id=${proofId}::uuid)`;
+
+  await tx`INSERT INTO economic_invoice_drafts(id,client_id,series_id,series_name,invoice_number,concept,net_cents,tax_basis_points,tax_cents,gross_cents,tax_description,fiscal_snapshot,created_by,idempotency_key,request_hash,document_type,source_charge_id,line_items,tax_treatment,tax_rate_basis_points,payment_methods)
+    VALUES (${draftId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,${seriesId}::uuid,NULL,NULL,'Documento sintético de demostración',${netCents},300,${taxCents},${grossCents},NULL,'{}'::jsonb,'2j-demo-seed',
+      'd0700000-0000-4000-8000-000000000608'::uuid,${requestHash},'simplified_ticket',${chargeId}::uuid,${lines}::jsonb,'taxable',300,'[{"method":"transfer","amountCents":4900}]'::jsonb)
+    ON CONFLICT(id) DO NOTHING`;
+  const [number] = await tx`SELECT display_number AS "displayNumber" FROM economic_take_next_document_number(${seriesId}::uuid)`;
+  if (!number?.displayNumber) throw new Error('Synthetic invoice series is inactive; refusing to issue the sample.');
+  await tx`INSERT INTO economic_fiscal_documents(id,draft_id,document_type,status,series_id,series_name,document_number,source_charge_id,client_id,issuer_snapshot,client_snapshot,lines_snapshot,payment_methods,totals_snapshot,issued_by)
+    VALUES (${documentId}::uuid,${draftId}::uuid,'simplified_ticket','issued',${seriesId}::uuid,${series.name},${number.displayNumber},${chargeId}::uuid,
+      'd0700000-0000-4000-8000-000000000001'::uuid,${issuer}::jsonb,${client}::jsonb,${lines}::jsonb,
+      '[{"method":"transfer","amountCents":4900}]'::jsonb,${totals}::jsonb,'2j-demo-seed')`;
+  await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
+    VALUES ('2j-demo-seed','invoice.issued','fiscal_document',${documentId}::uuid,'d0700000-0000-4000-8000-000000000001'::uuid,
+      ${{ synthetic: true, documentNumber: number.displayNumber, grossCents, documentType: 'simplified_ticket' }}::jsonb)`;
+};
+
+export async function seedDemoData(client: ReturnType<typeof createDatabase>['client'], options: { includeSyntheticInvoice?: boolean } = {}) {
   await client.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(2079079)`;
     const demoProfessionalId = 'd0700000-0000-4000-8000-000000000101';
@@ -191,6 +265,8 @@ export async function seedDemoData(client: ReturnType<typeof createDatabase>['cl
       VALUES ('d0700000-0000-4000-8000-000000000907'::uuid,'d0700000-0000-4000-8000-000000000905'::uuid,'d0700000-0000-4000-8000-000000000008'::uuid,${checkInVersionId}::uuid,
         '{"energy":"Buena, he mantenido el ritmo","sessions":2}'::jsonb,'d0700000-0000-4000-8000-000000000908'::uuid,${sha256('2j-owner-review-checkin-response')})
       ON CONFLICT(id) DO NOTHING`;
+
+    if (options.includeSyntheticInvoice === true) await seedInvoice(tx);
   });
 }
 
@@ -317,7 +393,7 @@ async function runDemoSeed() {
 
   const { client } = createDatabase(databaseUrl);
   try {
-    await seedDemoData(client);
+    await seedDemoData(client, { includeSyntheticInvoice: mode === 'staging' });
     console.log(`Synthetic ${mode} 2J-070 demo data is ready. The fixed synthetic admin/professional and trainer links were repaired if needed; existing non-demo rows were not changed.`);
   } finally {
     await client.end();

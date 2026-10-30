@@ -66,6 +66,27 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
     ]);
     assert.equal((await sql`SELECT count(*)::int AS count FROM communication_conversations WHERE client_id='d0700000-0000-4000-8000-000000000001'::uuid`)[0].count, 1, 'the primary review profile has a synthetic message thread');
     assert.equal((await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id='d0700000-0000-4000-8000-000000000001'::uuid AND state='pending'`)[0].count, 1, 'the primary review profile has a pending synthetic charge');
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_fiscal_documents`)[0].count, 0, 'local seed does not create fiscal documents by default');
+    const [blankInvoiceSettings] = await sql`SELECT issuer_name AS "issuerName",issuer_tax_id AS "issuerTaxId",issuer_address AS "issuerAddress",default_series_id AS "defaultSeriesId" FROM economic_invoice_settings WHERE singleton=true`;
+    assert.deepEqual(blankInvoiceSettings, { issuerName: null, issuerTaxId: null, issuerAddress: null, defaultSeriesId: null }, 'owner-editable issuer settings stay empty');
+
+    await seedDemoData(sql, { includeSyntheticInvoice: true });
+    const [sampleInvoice] = await sql`SELECT d.document_number AS "documentNumber",d.status,d.document_type AS "documentType",d.payment_methods AS "paymentMethods",d.issuer_snapshot AS issuer,d.totals_snapshot AS totals
+      FROM economic_fiscal_documents d WHERE d.id='d0700000-0000-4000-8000-000000000606'::uuid`;
+    assert.ok(sampleInvoice, 'staging-specific seed creates one synthetic sample ticket');
+    assert.equal(sampleInvoice.documentNumber, 'DEMO-1');
+    assert.equal(sampleInvoice.status, 'issued');
+    assert.equal(sampleInvoice.documentType, 'simplified_ticket');
+    assert.equal(sampleInvoice.issuer.name, 'MUESTRA SINTÉTICA 2J · NO VÁLIDA');
+    assert.match(sampleInvoice.issuer.footerText, /NO VÁLIDO FISCALMENTE/);
+    assert.deepEqual(sampleInvoice.paymentMethods, [{ method: 'transfer', amountCents: 4900 }]);
+    assert.equal(sampleInvoice.totals.grossCents, 4900);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_fiscal_documents`)[0].count, 1);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE id='d0700000-0000-4000-8000-000000000602'::uuid`)[0].count, 1);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_transfer_proofs WHERE id='d0700000-0000-4000-8000-000000000603'::uuid AND status='validated'`)[0].count, 1);
+    await seedDemoData(sql, { includeSyntheticInvoice: true });
+    assert.equal((await sql`SELECT count(*)::int AS count FROM economic_fiscal_documents`)[0].count, 1, 're-running the staging seed preserves one sample ticket');
+    assert.equal(Number((await sql`SELECT next_number FROM economic_invoice_series WHERE id='d0700000-0000-4000-8000-000000000604'::uuid`)[0].next_number), 2);
 
     await sql`UPDATE staff_professionals SET auth_actor_id=NULL WHERE id=${demoId}::uuid`;
     await seedDemoData(sql);
@@ -83,6 +104,13 @@ test('synthetic trainer seed creates and repairs the fixed account link without 
     const adminClock = await adminStaff.inject({ method: 'GET', url: '/api/timeclock/self' });
     assert.equal(adminClock.statusCode, 200, adminClock.body);
     assert.equal(adminClock.json().professional.displayName, 'Sofía Demo', 'the admin actor resolves to the attached synthetic professional instead of a second identity override');
+    const invoiceList = await adminStaff.inject({ method: 'GET', url: '/api/economics/charges/d0700000-0000-4000-8000-000000000501/documents' });
+    assert.equal(invoiceList.statusCode, 200, invoiceList.body);
+    assert.equal(invoiceList.json().items[0]?.documentNumber, 'DEMO-1', 'the Admin invoice flow reads the synthetic seeded document');
+    const invoicePdf = await adminStaff.inject({ method: 'GET', url: '/api/economics/documents/d0700000-0000-4000-8000-000000000606/pdf?variant=ticket' });
+    assert.equal(invoicePdf.statusCode, 200, invoicePdf.body);
+    assert.match(invoicePdf.headers['content-type'], /application\/pdf/);
+    assert.ok(invoicePdf.rawPayload.subarray(0, 5).equals(Buffer.from('%PDF-')), 'the ticket PDF can be opened from the seeded invoice');
     assert.equal((await unlinked.inject({ method: 'GET', url: '/api/timeclock/self' })).statusCode, 404);
     assert.deepEqual((await unlinked.inject({ method: 'GET', url: '/api/timeclock/self' })).json(), { error: 'staff_account_unlinked' });
 
