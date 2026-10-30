@@ -1,6 +1,6 @@
 # Lista de preparación para producción — Platform (30 oct 2026)
 
-Solo documentación, escrita a partir del estado **real** de Git/GitHub (`main` = `176763ea`). Lo no comprobado figura como `NO VERIFICADO`. Nada se ha desplegado: **producción, migraciones sobre BD real, DNS, secretos, borrado de datos y visibilidad del repositorio son solo del propietario, con su frase literal.** Siguiendo A67 no se pide verificación intermedia: esta lista es para la **única** pasada de staging cuando todo esté construido.
+Solo documentación, escrita a partir del estado **real** de Git/GitHub (`main` posterior a #164). Lo no comprobado figura como `NO VERIFICADO`. Nada se ha desplegado: **producción, migraciones sobre BD real, DNS, secretos, borrado de datos y visibilidad del repositorio son solo del propietario, con su frase literal.** Siguiendo A67 no se pide verificación intermedia: esta lista es para la **única** pasada de staging cuando todo esté construido.
 
 ## 1. Veredicto
 
@@ -21,7 +21,6 @@ Numeración de migraciones en `main`: 0054, 0055, 0056, 0057, 0058, 0059, 0060, 
 
 | PR | Qué es | Nota |
 |---|---|---|
-| #158 | Conectar ajustes del centro (Centro) con Platform | Codex, borrador. Escritura de ajustes. |
 | #157, #126, #116 | Home: buzón de mensajes, estado de pago, lista de espera con elegibilidad | Bloque Home. |
 | #127 | Staging: refrescar el upstream web de Búnker | Codex; herramienta de staging (nivel 1). |
 | #130 | Diseño de invitaciones (H13 / fila 18) | Solo documento: **la pantalla de Invitaciones no está construida**. |
@@ -29,10 +28,10 @@ Numeración de migraciones en `main`: 0054, 0055, 0056, 0057, 0058, 0059, 0060, 
 
 ## 4. Qué NO está real todavía ("No conectado")
 
-- **Invitaciones** (pantalla y API) — solo diseño (#130).
-- **Evolución** (pantalla de solo lectura en el admin y endpoint) — depende del contrato Búnker→Home (#135, documento).
-- **Escritura de ajustes** de Apariencia, Reservas y Tienda — Centro y Facturación sí son editables (#132, #154, #158 pendiente); el resto no tiene efecto real definido y se muestra como «No conectado».
-- **Cuestionarios de salud y textos de consentimiento/privacidad** del propietario: la API de consentimientos existe (#132), pero los textos nacen vacíos (A65) y **no se puede pedir un consentimiento hasta que el propietario publique uno**. Salud (D33): fuera del producto.
+- **Invitaciones: alta de invitaciones y cuentas Búnker** — la bandeja de revisiones H13 ya abiertas está en `main` (#164, permiso explícito `platform_link_issue`); crear invitaciones, cuentas Búnker y activar acceso queda sin construir (puente bilateral con step-up en Búnker).
+- **Evolución** — pestaña de solo lectura en la ficha ya en `main` (#163, exige `training.read`); depende de que Búnker publique los datos (#135).
+- **Ajustes:** Centro (#158), Facturación (#154) y umbral de Tienda (#160) se guardan. **Apariencia** (tokens oficiales de 2J, globales) y **Reservas** (reglas por servicio) no tienen escritura propia, por diseño.
+- **Textos de consentimiento/privacidad y cuestionarios**: ya se pueden crear, versionar y publicar desde Mi gimnasio (#162), pero nacen vacíos (A65) y **no se puede pedir un consentimiento hasta que el propietario publique uno**. Salud (D33): fuera del producto.
 - **Multiárea** de «Entrenamiento personal», umbrales de atención/adherencia y motivos de atención: sin construir (faltan definiciones).
 
 ## 5. Decisiones tomadas por defecto (A67: sin preguntar)
@@ -43,7 +42,9 @@ Numeración de migraciones en `main`: 0054, 0055, 0056, 0057, 0058, 0059, 0060, 
 
 ## 6. Lista para el día de la salida (todo del propietario, con frase literal)
 
-- [ ] Login de personal real configurado en el servidor (passkeys); Basic Auth y `LOCAL_DEMO_ROLE` fuera. `PLATFORM_OWNER_ACTOR_ID` apuntando a la identidad real del propietario.
+- [ ] Login de personal real configurado en el servidor (passkeys); Basic Auth y `LOCAL_DEMO_ROLE` fuera.
+- [ ] **Identidad del propietario (obligatoria):** definir `PLATFORM_OWNER_PERSON_ID` (UUID de su persona en Platform, para sesión passkey) o `PLATFORM_OWNER_ACTOR_ID` (sujeto de identidad de confianza). Sin una de las dos nadie recibe `owner.panel.read` ni `platform_link_issue`: el Panel de gestión y la bandeja de Invitaciones saldrán «sin permiso».
+- [ ] `PLATFORM_LINK_ISSUERS` **solo si se usa**: lista separada por comas de `personId` UUID estables (nunca correos ni nombres) de quienes además del propietario pueden resolver revisiones H13. Un valor que no sea UUID **impide arrancar la API** (intencionado). Vacía = solo el propietario.
 - [ ] Copia de seguridad restaurable probada y retención definida.
 - [ ] Migraciones **0054 a 0061 en orden** sobre la base real.
 - [ ] `CLIENT_IMPORT_PREVIEW_ENABLED=true` y `CLIENT_IMPORT_COMMIT_ENABLED=true` solo durante la importación; después, apagar el segundo.
