@@ -1,3 +1,4 @@
+import { apiFetch } from './api-fetch.js';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { cadenceShortLabel, euroLabel, frequencyOptions, frequencyShortLabel, isSessionPackShaped, kindLabel, moduleLabel, periodLabel, rightLabel, statusLabel } from './product-copy.js';
 import { useProfessionalCapabilities } from './app-shell.js';
@@ -9,7 +10,7 @@ type Right = { id: string; rightType: string; serviceId: string | null; quotaSco
 type Module = {module:'reservations'|'training'|'nutrition'|'health';accessLevel:'limited'|'full';capabilities:string[]};
 type Plan = { id: string; name: string; currentVersion?:number; kind: 'recurring' | 'session_pack'; renewalCadence: string | null; periodDays: number | null; status: 'active' | 'draft' | 'archived'; basePriceCents?:number|null; modules?:Module[]; services: { id: string; name: string; area: string; status?: 'active' | 'draft' | 'archived'; areaStatus?: 'active' | 'archived' }[]; rights: Right[] };
 type RightDraft = { rightType: 'service_access' | 'sessions_quota' | 'period_quota'; serviceId: string; quotaScope: 'shared' | 'per_service'; quantity: string; period: 'week' | 'month' | 'plan_period'; periodMode: 'calendar' | 'rolling' | null; validDays: string; validDaysStartRule: 'purchase' | 'first_use' };
-const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
 const iconMap = { grid: icons.LayoutGrid, search: icons.Search, plus: icons.Plus, arrow: icons.ArrowRight, close: icons.X, layers: icons.Layers, shield: icons.ShieldCheck, chevron: icons.ChevronRight } as const;
 function Icon({ name, size = 18 }: { name: keyof typeof iconMap; size?: number }) { return <UiIcon icon={iconMap[name]} size={size >= 20 ? 20 : 16} />; }
@@ -122,14 +123,14 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
 
   async function refreshAreas() {
     setAreasLoading(true); setAreaError('');
-    try { const response = await fetch(`${apiUrl}/api/areas`); if (!response.ok) throw new Error(); const rows = await response.json() as Area[]; setAreas(rows); if (!serviceAreaId && rows[0]) setServiceAreaId(rows[0].id); }
+    try { const response = await apiFetch(`${apiUrl}/api/areas`); if (!response.ok) throw new Error(); const rows = await response.json() as Area[]; setAreas(rows); if (!serviceAreaId && rows[0]) setServiceAreaId(rows[0].id); }
     catch { setAreaError('No se pudieron cargar las áreas del centro.'); }
     finally { setAreasLoading(false); }
   }
   async function refreshServices() {
     setLoading(true); setError('');
     try {
-      const response = await fetch(`${apiUrl}/api/services`);
+      const response = await apiFetch(`${apiUrl}/api/services`);
       if (!response.ok) throw new Error();
       const rows = await response.json() as Service[];
       setServices(rows);
@@ -142,7 +143,7 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
     if (!canManageCatalog) { setPlans([]); setPlansState('idle'); return; }
     setPlansState('loading'); setPlansError('');
     try {
-      const response = await fetch(`${apiUrl}/api/services/${serviceId}/plans`);
+      const response = await apiFetch(`${apiUrl}/api/services/${serviceId}/plans`);
       if (!response.ok) throw new Error();
       const rows = await response.json() as Plan[]; setPlans(rows); setPlansState('ready');
     } catch { setPlans([]); setPlansError('No se pudieron cargar los planes de este servicio.'); setPlansState('error'); }
@@ -151,11 +152,11 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
     if (!canManageCatalog) { setPlans([]); setPlansState('idle'); return; }
     setPlansState('loading'); setPlansError('');
     try {
-      const servicesResponse = await fetch(`${apiUrl}/api/services?includeArchived=true`);
+      const servicesResponse = await apiFetch(`${apiUrl}/api/services?includeArchived=true`);
       if (!servicesResponse.ok) throw new Error();
       const allServices = await servicesResponse.json() as Service[];
       const lists = await Promise.all(allServices.map(async (item) => {
-        const response = await fetch(`${apiUrl}/api/services/${item.id}/plans?includeArchived=true`);
+        const response = await apiFetch(`${apiUrl}/api/services/${item.id}/plans?includeArchived=true`);
         if (!response.ok) throw new Error();
         return await response.json() as Plan[];
       }));
@@ -171,7 +172,7 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
     if (!window.confirm(reactivating ? '¿Reactivar este plan? Se volverá a ofrecer su versión congelada a nuevas contrataciones.' : 'Al activar el plan, esta versión quedará disponible para asignarla a clientes.')) return;
     setActivatingPlanId(plan.id); setPlanActionFeedback('');
     try {
-      const response = await fetch(`${apiUrl}/api/plans/${plan.id}/activate`, { method: 'POST' });
+      const response = await apiFetch(`${apiUrl}/api/plans/${plan.id}/activate`, { method: 'POST' });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message ?? ({ service_not_active: 'Activa todos los servicios incluidos antes de activar este plan.', plan_not_found: 'No se encontró el plan.' } as Record<string, string>)[body.error] ?? 'No se pudo activar el plan.');
       setPlanActionFeedback(reactivating ? 'Plan reactivado con su versión congelada y disponible para nuevas contrataciones.' : 'Plan activado y disponible para asignarlo a clientes.');
@@ -183,7 +184,7 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
     if (!canManageCatalog || plan.status === 'archived' || archivingPlanId || !window.confirm(`¿Archivar ${plan.name}? Se conservarán su versión y las asignaciones existentes.`)) return;
     setArchivingPlanId(plan.id); setPlanActionFeedback('');
     try {
-      const response = await fetch(`${apiUrl}/api/plans/${plan.id}/archive`, { method: 'POST' });
+      const response = await apiFetch(`${apiUrl}/api/plans/${plan.id}/archive`, { method: 'POST' });
       if (!response.ok) throw new Error('No se pudo archivar el plan.');
       setPlanActionFeedback('Plan archivado; se conservan su versión y las asignaciones existentes.');
       await (section === 'plans' ? loadAllPlans() : selectedId ? loadPlans(selectedId) : Promise.resolve());
@@ -207,7 +208,7 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
     event.preventDefault(); if (!canManageCatalog || !areaName.trim()) return;
     setSaving(true); setAreaActionError('');
     try {
-      const response = await fetch(`${apiUrl}/api/areas`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: areaName.trim() }) });
+      const response = await apiFetch(`${apiUrl}/api/areas`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: areaName.trim() }) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error === 'duplicate_area' ? 'Ya existe un área con ese nombre.' : 'No se pudo crear el área.');
       const created = body as Area; await refreshAreas(); setDialog(null); setAreaName(''); setAreaActionError('');
@@ -219,7 +220,7 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
     if (!canManageCatalog || !window.confirm(`¿Archivar ${area.name}? El historial se conserva. No se puede archivar mientras tenga sesiones o plantillas futuras activas.`)) return;
     setAreaActionError('');
     try {
-      const response = await fetch(`${apiUrl}/api/areas/${area.id}/archive`, { method: 'PATCH' });
+      const response = await apiFetch(`${apiUrl}/api/areas/${area.id}/archive`, { method: 'PATCH' });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error === 'future_calendar_items_exist' ? 'Resuelve primero las sesiones y plantillas futuras de esta área.' : 'No se pudo archivar el área.');
       await Promise.all([refreshAreas(), refreshServices()]); setAreaActionError(''); setCatalogNotice(`${area.name} se ha archivado. El historial se conserva.`);
@@ -235,7 +236,7 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
   async function createService(event: React.FormEvent) {
     event.preventDefault(); if (!name.trim() || !serviceAreaId || !serviceStatus) return; setSaving(true); setSaveError('');
     try {
-      const response = await fetch(`${apiUrl}/api/services`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name.trim(), areaId: serviceAreaId, status: serviceStatus }) });
+      const response = await apiFetch(`${apiUrl}/api/services`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name.trim(), areaId: serviceAreaId, status: serviceStatus }) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message ?? 'No se pudo guardar el servicio.');
       const rows = await refreshServices(); setName(''); setDialog(null);
@@ -266,7 +267,7 @@ export function ServicesPage({ section = 'services' }: { section?: 'services' | 
     if(amount!==null&&(!Number.isFinite(amount)||amount<0||amount>1_000_000_000)){setSaving(false);return;}
     const body = { name: planName.trim(), serviceIds, kind, basePriceCents:amount===null?null:Math.round(amount*100),modules:moduleAccesses, ...(kind === 'recurring' ? { renewalCadence: cadence, ...(cadence === 'custom_period' ? { periodDays: Number(periodDays) } : {}) } : {}), rights: buildRights() };
     try {
-      const response = await fetch(`${apiUrl}/api/plans${editingPlanId?`/${editingPlanId}/versions`:''}`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': planIdempotencyKey.current ?? crypto.randomUUID() }, body: JSON.stringify(body) });
+      const response = await apiFetch(`${apiUrl}/api/plans${editingPlanId?`/${editingPlanId}/versions`:''}`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': planIdempotencyKey.current ?? crypto.randomUUID() }, body: JSON.stringify(body) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message ?? (result.error === 'conflict' ? 'Ya existe un plan con ese nombre.' : 'No se pudo guardar el plan.'));
       const planServiceIds = (result.services as Plan['services'] | undefined)?.map((item) => item.id) ?? [];

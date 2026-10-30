@@ -53,6 +53,7 @@ export function registerDashboardRoutes(
       clients: can(context, 'clients.read'),
       communications: can(context, 'communication.read'),
       billing: can(context, 'billing.read-basic'),
+      invoices: can(context, 'billing.read-tax'),
       staff: can(context, 'staff.read'),
       ownerPanel: can(context, 'owner.panel.read'),
       notificationSettings: can(context, 'settings.manage'),
@@ -84,6 +85,7 @@ export function registerDashboardRoutes(
       sensitiveReview: can(context, 'health.read') && can(context, 'forms.responses.sensitive.read'),
       followup: can(context, 'followup.read'),
       billing: can(context, 'billing.read-basic'),
+      invoices: can(context, 'billing.read-tax'),
       cash: can(context, 'billing.cash.manage') || can(context, 'billing.payments.manage'),
       ownerPanel: can(context, 'owner.panel.read'),
       transfers: can(context, 'billing.validate_transfer'),
@@ -260,7 +262,7 @@ export function registerDashboardRoutes(
           WHERE a.status<>'cancelled' AND COALESCE(le.event_type,'') NOT IN ('cancelled','changed','paused')
             AND a.starts_on<=(SELECT d FROM today) AND a.ends_on IS NOT NULL AND a.ends_on>=(SELECT d FROM today) AND a.ends_on<=(SELECT d FROM today)+7
           ORDER BY a.ends_on,cl.last_name,cl.first_name,a.id LIMIT 6` : Promise.resolve(null),
-        permissions.billing && can(context, 'clients.read') ? db`SELECT t.id,t.kind,t.amount_cents::bigint AS "amountCents",c.concept,concat_ws(' ',cl.first_name,cl.last_name) AS "clientName",t.created_at AS "occurredAt"
+        permissions.billing && can(context, 'clients.read') ? db`SELECT t.id,t.kind,t.amount_cents::bigint AS "amountCents",c.id AS "chargeId",c.concept,concat_ws(' ',cl.first_name,cl.last_name) AS "clientName",t.created_at AS "occurredAt"
           FROM economic_transactions t JOIN economic_charges c ON c.id=t.charge_id JOIN clients cl ON cl.id=t.client_id
           ORDER BY t.created_at DESC,t.id DESC LIMIT 6` : Promise.resolve(null),
       ]);
@@ -273,7 +275,7 @@ export function registerDashboardRoutes(
         storeSales: salesRow ? { monthCount: Number(salesRow.count), monthTotalCents: Number(salesRow.totalCents) } : null,
         lowStock: stockRow ? { count: Number(stockRow.count) } : null,
         expiringPlans: Array.isArray(expiringRows) ? (expiringRows as any[]).map(row => ({ assignmentId: row.assignmentId, clientId: row.clientId, clientName: row.clientName, planName: row.planName, endsOn: row.endsOn })) : null,
-        recentMovements: Array.isArray(movementRows) ? (movementRows as any[]).map(row => ({ id: row.id, kind: row.kind, amountCents: Number(row.amountCents), concept: row.concept, clientName: row.clientName, occurredAt: row.occurredAt })) : null,
+        recentMovements: Array.isArray(movementRows) ? (movementRows as any[]).map(row => ({ id: row.id, chargeId: row.chargeId, kind: row.kind, amountCents: Number(row.amountCents), concept: row.concept, clientName: row.clientName, occurredAt: row.occurredAt })) : null,
       };
       const canManageReservations = can(context, 'reservations.manage');
       const canCreateClient = can(context, 'clients.manage');

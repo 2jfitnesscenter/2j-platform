@@ -30,7 +30,9 @@ type TrainingCapabilities = {
   trainingSubject: { linkStatus: 'active' | 'not_linked' | 'revoked' };
   capabilities: { autonomousTraining: boolean; routineCreation: boolean; personalRoutineCreation: boolean; personalRoutineManagement: boolean; workoutRecording: boolean; workoutHistory: boolean; guidedTraining: boolean; premiumPrograms: boolean; aiCoach: boolean; professionalFollowUp: boolean };
 };
-type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; eligible?: boolean; eligibilityReason?: string | null; availability?: string; availabilityReason?: string | null; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
+type ClientSessionAvailability = { status: 'available' | 'full' | 'booked' | 'not_allowed_by_plan' | 'waitlisted' | 'waitlist_suspended'; reason: string | null; canJoinWaitlist: boolean };
+type ClientSession = { id: string; startsAt: string; durationMinutes: number; capacity: number; status: string; isIndividual: boolean; serviceId: string; serviceName: string; areaName: string; professionalName: string | null; myReservationStatus: string | null; myWaitlistStatus: string | null; occupiedCount: number; waitlistCount: number; eligible?: boolean; eligibilityReason?: string | null; availability?: ClientSessionAvailability; canJoinWaitlist?: boolean; availableAlternatives?: Array<{ assignmentId: string; planName?: string }> };
+const sessionCanJoinWaitlist = (session: ClientSession) => session.availability?.canJoinWaitlist === true || session.canJoinWaitlist === true;
 type MemberBookingService = { id: string; name: string };
 type MemberCancellation = { kind: 'booking' | 'waitlist'; booking: Booking; summary?: string };
 type Booking = { id: string; status: string; sessionId: string; startsAt: string; durationMinutes: number; serviceName: string; areaName: string; sessionStatus: string; isIndividual: boolean };
@@ -663,7 +665,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   };
   const submitSessionAction = async (session: ClientSession, mode: 'reserve' | 'waitlist') => {
     if (previewMode) { setMessage('Vista previa: no se ha enviado ninguna solicitud.'); setSelectedSession(null); setWaitlistPending(null); return; }
-    if (!bookingEnabled || (mode === 'reserve' && !session.eligible) || (mode === 'waitlist' && !session.canJoinWaitlist)) return;
+    if (!bookingEnabled || (mode === 'reserve' && !session.eligible) || (mode === 'waitlist' && !sessionCanJoinWaitlist(session))) return;
     const assignmentId = mode === 'reserve' ? selectedAssignment || session.availableAlternatives?.[0]?.assignmentId : undefined;
     if (mode === 'reserve' && (session.availableAlternatives?.length ?? 0) > 1 && !assignmentId) { setMessage('Elige qué cuota o bono quieres utilizar.'); return; }
     const operationName = `${mode === 'waitlist' ? 'waitlist' : 'reserve'}:${session.id}:${assignmentId ?? 'automatic'}`;
@@ -686,7 +688,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const requestWaitlist = async (session: ClientSession) => {
     if (!bookingEnabled || previewMode) return;
     dialogOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (session.canJoinWaitlist) { setWaitlistPending(session); return; }
+    if (sessionCanJoinWaitlist(session)) { setWaitlistPending(session); return; }
     try {
       const result = await api<{ session: ClientSession }>(`/api/me/sessions/${session.id}`);
       if (result.session.canJoinWaitlist) setWaitlistPending(result.session);
@@ -942,9 +944,11 @@ function SessionCard({ session, onSelect, onWaitlist, disabled = false, eligibil
   const free = Math.max(0, session.capacity - session.occupiedCount);
   const ownStatus = session.myReservationStatus ? 'Reservada' : session.myWaitlistStatus === 'waiting' ? 'En espera' : session.myWaitlistStatus === 'promoted' ? 'Reservada' : null;
   const notEntitled = session.eligible === false && session.eligibilityReason === 'no_active_entitlement';
-  const contractAvailability = eligibilityEnabled ? sessionAvailabilityLabel(session.availability) : null;
+  const contractAvailability = eligibilityEnabled ? sessionAvailabilityLabel(session.availability?.status) : null;
   const availability = ownStatus ?? contractAvailability ?? (notEntitled ? 'No permitida por tu cuota' : free > 0 ? 'Disponible' : 'Completa');
-  const canRequestWaitlist = free === 0 && !ownStatus;
+  // Waitlist eligibility is an authoritative Platform decision. A full card
+  // may offer the action only when the API explicitly says this member can join.
+  const canRequestWaitlist = free === 0 && sessionCanJoinWaitlist(session) && !ownStatus;
   return <article className={`session-card${free===0?' is-full':''}`}><button type="button" className="session-card-detail" onClick={onSelect} aria-label={`${timeLabel(session.startsAt)} · ${availability}. Ver detalles`}><strong className="session-card-time">{timeLabel(session.startsAt)}</strong><span className={`session-meta${free===0?' full':''}`}>{availability}</span><span className="session-arrow" aria-hidden="true">→</span></button>{canRequestWaitlist&&<button type="button" className="session-waitlist-button" onClick={onWaitlist} disabled={disabled}>Lista de espera</button>}</article>;
 }
 function BookingCard({ booking, waiting = false, compact = false, busy = false, actionDisabled = false, onCancel }: { booking: Booking; waiting?: boolean; compact?: boolean; busy?: boolean; actionDisabled?: boolean; onCancel?: () => void }) {

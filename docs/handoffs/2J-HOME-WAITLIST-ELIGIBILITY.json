@@ -1,0 +1,39 @@
+{
+  "task": "2J-HOME-WAITLIST-ELIGIBILITY",
+  "branch": "agent/codex/2J-HOME-WAITLIST-ELIGIBILITY-110",
+  "base": "9eec82077d1adb215e6119e4910f22efd92e634a",
+  "scope": "Home client presentation only; no business logic or API changes",
+  "sourceContract": {
+    "detailEndpoint": "GET /api/me/sessions/:sessionId",
+    "listEndpoint": "GET /api/me/sessions",
+    "detailHasCanJoinWaitlist": true,
+    "listContract": "PR #110: availability.status, availability.reason, availability.canJoinWaitlist",
+    "listContractMergedToMain": false,
+    "ownerDecision": "Home shows waitlist action only when Platform explicitly returns canJoinWaitlist=true"
+  },
+  "implementation": {
+    "changedFiles": [
+      "apps/client-app/src/client-app.tsx",
+      "apps/client-app/test/client-app.test.mjs",
+      "docs/handoffs/2J-HOME-WAITLIST-ELIGIBILITY.md",
+      "docs/handoffs/2J-HOME-WAITLIST-ELIGIBILITY.json"
+    ],
+    "eligibilityReimplemented": false,
+    "failClosedWhenFieldAbsent": true,
+    "designChanged": false,
+    "apiChanged": false
+  },
+  "validation": {
+    "clientTests": "45/45",
+    "typecheck": "pass",
+    "build": "pass",
+    "diffCheck": "pass",
+    "platformRuntimeTest": "not run; tests mock Platform responses"
+  },
+  "blockers": [
+    "PR #110 must merge before the availability list contract is available on main",
+    "Payment-state UI must start only after PR #110 merges; Home will render assignment.payment without recalculation",
+    "Measurements remain on hold pending the Platform measurements contract"
+  ],
+  "publication": "local only; owner has now authorized publishing a Draft PR"
+}

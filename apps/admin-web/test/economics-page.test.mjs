@@ -30,6 +30,7 @@ function mockFetch({ onPayment = () => response({ id: 'txn' }, 201), onCharge = 
     if (path.endsWith('/api/economics/cash/settings/outflow-limit')) return response({ limitCents: null });
     if (path.endsWith('/api/economics/cash/open') || path.includes('/api/economics/cash/cash-1/close') || path.includes('/api/economics/cash/cash-1/handover')) return onCash(url, options);
     if (path.startsWith('http://127.0.0.1:3100/api/clients?')) return response({ items: [client] });
+    if (new URL(path).pathname === '/api/clients' && new URL(path).searchParams.has('q')) return response({ items: [client] });
     if (path.endsWith('/api/economics/payments')) return onPayment(url, options);
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
   };
