@@ -497,6 +497,12 @@ cmd_render() {
   say "Archivos de ejemplo escritos en $dir (con secretos falsos)."
 }
 
+restart_bunker_web() {
+  docker inspect 2jfitness-web-1 >/dev/null 2>&1 || die "No existe el contenedor Búnker 2jfitness-web-1; no se puede refrescar su upstream API."
+  docker restart 2jfitness-web-1 >/dev/null || die "No se pudo reiniciar el web de Búnker para refrescar el upstream API."
+  ok "Web de Búnker reiniciado para resolver de nuevo el upstream API."
+}
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 cmd_deploy() {
   need_root; log_start
@@ -563,6 +569,8 @@ cmd_deploy() {
   say "6/8 Arrancando Platform y Búnker"
   docker compose -f "$ROOT/compose/platform.compose.yml" up -d
   ( cd "$ROOT/src/bunker" && docker compose up -d --build )
+  # Búnker web may retain the previous API container IP after Compose recreates the API.
+  restart_bunker_web
 
   say "7/8 HTTPS (Caddy)"
   [ -f "$ROOT/secrets/basic-auth.txt" ] || printf 'usuario: staging\ncontraseña: %s\n' "$(cat "$ROOT/secrets/basic-auth.pass")" > "$ROOT/secrets/basic-auth.txt"
@@ -681,6 +689,7 @@ cmd_rollback() {
   switch_site home "$hrel"; switch_site admin "$arel"
   docker compose -f "$ROOT/compose/platform.compose.yml" up -d --force-recreate platform-admin-api platform-member-api
   ( cd "$ROOT/src/bunker" && git checkout --quiet --detach "$bc" && docker compose up -d --build )
+  restart_bunker_web
   printf '%s\n%s\n' "$pc" "$bc" > /dev/null
   printf '%s' "$pc" > "$ROOT/last-platform-commit"; printf '%s' "$bc" > "$ROOT/last-bunker-commit"
   printf '%s %s %s %s %s\n' "$(date -u +%FT%TZ)" "$pc" "$bc" "$hrel" "$arel" >> "$ROOT/releases.log"
@@ -708,7 +717,13 @@ cmd_selftest() {
   for h in "$HOSTS_HOME" "$HOSTS_APP"; do
     code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://$h/" 2>/dev/null || true)"; [ "$code" = 401 ] && ok "$h sin contraseña -> 401 (protegida)" || bad "$h sin contraseña -> ${code:-sin respuesta} (esperado 401)"
     code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -K <(printf 'user = "%s:%s"\n' "$user" "$pass") "https://$h/" 2>/dev/null || true)"; [ "$code" = 200 ] && ok "$h con contraseña -> 200" || bad "$h con contraseña -> ${code:-sin respuesta} (esperado 200)"
-    body="$(curl -sS --max-time 20 -K <(printf 'user = "%s:%s"\n' "$user" "$pass") "https://$h/healthz" 2>/dev/null || true)"; case "$body" in *'"ok"'*) ok "$h /healthz -> ok";; *) bad "$h /healthz -> ${body:0:80}";; esac
+    response="$(curl -sS --max-time 20 -w $'\n%{http_code}' -K <(printf 'user = "%s:%s"\n' "$user" "$pass") "https://$h/healthz" 2>/dev/null || true)"
+    health_code="${response##*$'\n'}"; body="${response%$'\n'*}"
+    if [ "$health_code" = 200 ]; then
+      case "$body" in *'"ok"'*) ok "$h /healthz -> HTTP 200, ok";; *) bad "$h /healthz -> HTTP 200 pero cuerpo inesperado: ${body:0:80}";; esac
+    else
+      bad "$h /healthz -> HTTP ${health_code:-sin respuesta} (esperado 200; ${body:0:80})"
+    fi
   done
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 --resolve "${HOSTS_ADMIN}:443:127.0.0.1" -K <(printf 'user = "%s:%s"\n' "$user" "$pass") "https://${HOSTS_ADMIN}/healthz" 2>/dev/null || true)"
   [ "$code" = 200 ] && ok "$HOSTS_ADMIN (desde el propio servidor) /healthz -> 200" || bad "$HOSTS_ADMIN /healthz -> ${code:-sin respuesta} (esperado 200)"
