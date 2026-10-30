@@ -20,9 +20,9 @@ const makeClient = async name => {
   const response = await admin.inject({ method: 'POST', url: '/api/clients', headers: { 'idempotency-key': randomUUID() }, payload: { firstName: name, lastName: `Client app ${randomUUID().slice(0,8)}` } });
   assert.equal(response.statusCode, 201, response.body); return response.json();
 };
-const a = await makeClient('Ada'); const b = await makeClient('Bea'); const c = await makeClient('Celia');
-const memberPersons = { [a.id]: randomUUID(), [b.id]: randomUUID(), [c.id]: randomUUID() };
-for (const client of [a, b, c]) {
+const a = await makeClient('Ada'); const b = await makeClient('Bea'); const c = await makeClient('Celia'); const d = await makeClient('Dalia');
+const memberPersons = { [a.id]: randomUUID(), [b.id]: randomUUID(), [c.id]: randomUUID(), [d.id]: randomUUID() };
+for (const client of [a, b, c, d]) {
   const personId = memberPersons[client.id];
   await sql`INSERT INTO platform_persons(id,status,created_by) VALUES (${personId}::uuid,'active','client-app-test')`;
   await sql`INSERT INTO platform_person_clients(person_id,client_id,linked_by) VALUES (${personId}::uuid,${client.id}::uuid,'client-app-test')`;
@@ -33,6 +33,8 @@ const trainingUserB = `training-revoked-${randomUUID()}`;
 await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${memberPersons[a.id]}::uuid,${trainingUserA},'explicit_admin','client-app-test','client-app-test')`;
 const [revokedTrainingLink] = await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${memberPersons[b.id]}::uuid,${trainingUserB},'explicit_admin','client-app-test','client-app-test') RETURNING link_id`;
 await sql`UPDATE training_account_links SET status='revoked',revoked_at=now(),updated_by='client-app-test' WHERE link_id=${revokedTrainingLink.link_id}`;
+const trainingUserD = `training-no-entitlement-${randomUUID()}`;
+await sql`INSERT INTO training_account_links(request_id,person_id,training_user_id,method,created_by,updated_by) VALUES (${randomUUID()},${memberPersons[d.id]}::uuid,${trainingUserD},'explicit_admin','client-app-test','client-app-test')`;
 const pendingAuth = { personId: memberPersons[c.id], provider: 'fixture-central-auth', providerVersion: 1, authSubject: `client-app-pending-${randomUUID()}` };
 await sql`INSERT INTO platform_person_auth_subjects(person_id,auth_subject,provider,provider_version,created_by) VALUES (${pendingAuth.personId}::uuid,${pendingAuth.authSubject},${pendingAuth.provider},${pendingAuth.providerVersion},'client-app-test')`;
 const linkProtocol = createTrainingLinkTransactions(sql, { enabled: true, serviceCallsEnabled: true });
@@ -58,14 +60,22 @@ const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary'
 const planResponse = await admin.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': randomUUID() }, payload: {
   name: `Client self-service ${randomUUID()}`, serviceIds: [service.id], kind: 'session_pack', renewalCadence: null, basePriceCents: 1000,
   modules: [{ module: 'reservations', accessLevel: 'full', capabilities: [] }],
-  rights: [{ rightType: 'service_access', serviceId: service.id }, { rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'per_service', quantity: 10 }],
+  rights: [{ rightType: 'service_access', serviceId: service.id }, { rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'per_service', quantity: 10 }, { rightType: 'training_access', trainingAccessLevel: 'full' }],
 } });
 assert.equal(planResponse.statusCode, 201, planResponse.body);
 assert.equal((await admin.inject({ method: 'POST', url: `/api/plans/${planResponse.json().id}/activate`, payload: {} })).statusCode, 200);
 for (const client of [a, b]) {
   const sale = await admin.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { planId: planResponse.json().id, startsOn: localDate, dueOn: localDate, amountCents: 1000 } });
   assert.equal(sale.statusCode, 201, sale.body);
+  const [charge] = await sql`INSERT INTO economic_charges(client_id,plan_id,concept,amount_cents,due_on,state,exempt_reason,created_by,idempotency_key,request_hash)
+    VALUES (${client.id}::uuid,${planResponse.json().id},'Synthetic evolution entitlement',1000,${localDate}::date,'exempt','Synthetic API fixture','client-app-test',${randomUUID()}::uuid,${'a'.repeat(64)}) RETURNING id`;
+  await sql`INSERT INTO client_plan_assignments(client_id,plan_id,plan_version,charge_id,starts_on,status,idempotency_key,request_hash,created_by,sale_price_cents,snapshot)
+    VALUES (${client.id}::uuid,${planResponse.json().id},1,${charge.id},${localDate}::date,'active',${randomUUID()}::uuid,${'b'.repeat(64)},'client-app-test',1000,'{}'::jsonb)`;
 }
+const evolutionConsent = await admin.inject({ method: 'POST', url: '/api/consents', payload: { name: 'Consentimiento sintético Mi evolución', consentType: 'home_evolution', required: true, title: 'Uso de Mi evolución', body: 'Texto sintético de aceptación para pruebas de integración.' } });
+assert.equal(evolutionConsent.statusCode, 201, evolutionConsent.body);
+assert.equal((await admin.inject({ method: 'POST', url: `/api/consents/${evolutionConsent.json().id}/activate`, payload: {} })).statusCode, 200);
+const [evolutionConsentVersion] = await sql`SELECT active_version_id AS id FROM client_consents WHERE id=${evolutionConsent.json().id}::uuid`;
 const startsAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
 const [session] = await sql`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,created_by) VALUES (${service.id},${area.id},${startsAt},45,1,'client-app-test') RETURNING id`;
 const byClient = clientId => buildServer(process.env.DATABASE_URL, {
@@ -77,12 +87,13 @@ const byClient = clientId => buildServer(process.env.DATABASE_URL, {
 });
 const appA = byClient(a.id); const appB = byClient(b.id);
 const appC = byClient(c.id);
+const appD = byClient(d.id);
 const cohortAdmin = buildServer(process.env.DATABASE_URL, { memberPilotCohortManagementEnabled: true, authorizationResolver: async () => ({ actorId: 'cohort-test-admin', role: 'admin' }) });
 const cohortTrainer = buildServer(process.env.DATABASE_URL, { memberPilotCohortManagementEnabled: true, authorizationResolver: async () => ({ actorId: 'cohort-test-trainer', role: 'trainer' }) });
 const readOnlyMember = buildServer(process.env.DATABASE_URL, { memberPilotAuthEnabled: true, memberAppOrigin: 'http://127.0.0.1:5173', clientAuthorizationResolver: async () => ({ clientId: b.id, personId: memberPersons[b.id] }) });
 const mismatchedPersonMember = buildServer(process.env.DATABASE_URL, { clientAuthorizationResolver: async () => ({ clientId: a.id, personId: memberPersons[b.id] }) });
 after(async () => {
-  await Promise.all([admin.close(), anonymous.close(), appA.close(), appB.close(), appC.close(), cohortAdmin.close(), cohortTrainer.close(), readOnlyMember.close(), mismatchedPersonMember.close()]);
+  await Promise.all([admin.close(), anonymous.close(), appA.close(), appB.close(), appC.close(), appD.close(), cohortAdmin.close(), cohortTrainer.close(), readOnlyMember.close(), mismatchedPersonMember.close()]);
   await sql.end();
 });
 
@@ -112,13 +123,45 @@ test('Member preferences are canonical-person scoped, persisted, strict and avai
 test('self-service facade derives the identity server-side and hides another client’s bookings', async () => {
   const me = await appA.inject({ method: 'GET', url: '/api/me' });
   assert.equal(me.statusCode, 200); assert.equal(me.json().profile.id, a.id);
+  const noConsent = await appA.inject({ method: 'GET', url: '/api/me/training-summary' });
+  assert.deepEqual(noConsent.json(), { status: 'linked', summaryStatus: 'blocked', reason: 'consent_required' });
+  assert.equal(noConsent.headers['cache-control'], 'no-store', 'member evolution state must not be cached');
+  assert.deepEqual(summaryRequests, [], 'missing consent is audited without calling the Training adapter');
+  const noEntitlement = await appD.inject({ method: 'GET', url: '/api/me/training-summary' });
+  assert.deepEqual(noEntitlement.json(), { status: 'linked', summaryStatus: 'blocked', reason: 'entitlement_required' });
+  const policy = await appA.inject({ method: 'GET', url: '/api/me/evolution/consent' });
+  assert.equal(policy.statusCode, 200); assert.equal(policy.json().status, 'required'); assert.equal(policy.json().currentVersion, 1);
+  assert.match(policy.json().body, /sintético/);
+  assert.equal(policy.json().effectiveAt, null, 'an unpublished effective date stays empty instead of being invented from row creation time');
+  const genericConsents = await appA.inject({ method: 'GET', url: '/api/client-portal/consents' });
+  assert.deepEqual(genericConsents.json(), [], 'home_evolution is governed only by its revocable append-only consent ledger');
+  const genericAccept = await appA.inject({ method: 'POST', url: `/api/client-portal/consents/${evolutionConsentVersion.id}/accept`, headers: { origin: 'http://127.0.0.1:5173', 'idempotency-key': randomUUID() }, payload: { typedName: 'Ada Prueba', accepted: true } });
+  assert.equal(genericAccept.statusCode, 409, 'the generic consent acceptance route cannot bypass the home_evolution ledger');
+  const staffConsentList = await admin.inject({ method: 'GET', url: `/api/clients/${a.id}/consents` });
+  assert.deepEqual(staffConsentList.json(), [], 'the generic client file consent list does not read the separate home_evolution ledger as unaccepted');
+  const assistedAccept = await admin.inject({ method: 'POST', url: `/api/clients/${a.id}/consents/${evolutionConsentVersion.id}/accept-assisted`, headers: { 'idempotency-key': randomUUID() }, payload: { typedName: 'Ada Prueba', accepted: true } });
+  assert.equal(assistedAccept.statusCode, 409, 'staff-assisted generic acceptance cannot bypass the home_evolution ledger');
+  const genericRequirement = await admin.inject({ method: 'POST', url: '/api/document-requirements', payload: { scopeType: 'center', requirementType: 'consent', consentId: evolutionConsent.json().id, required: true } });
+  assert.equal(genericRequirement.statusCode, 409, 'home_evolution cannot become a booking/document requirement backed by a different acceptance ledger');
+  const grant = await appA.inject({ method: 'POST', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173' }, payload: { v: 1, version: 1, typedName: 'Ada Prueba', idempotencyKey: randomUUID() } });
+  assert.equal(grant.statusCode, 201, grant.body);
   const linkedSummary = await appA.inject({ method: 'GET', url: `/api/me/training-summary?trainingUserId=${trainingUserB}` });
   assert.equal(linkedSummary.statusCode, 200);
+  assert.equal(linkedSummary.headers['cache-control'], 'no-store', 'member evolution data must not be cached');
   assert.equal(linkedSummary.json().status, 'linked'); assert.equal(linkedSummary.json().summaryStatus, 'available');
   assert.deepEqual(linkedSummary.json().summary, { trainingStatus: 'active', asOf: linkedSummary.json().summary.asOf, currentProgram: { name: 'Fuerza' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } });
   assert.deepEqual(summaryRequests, [trainingUserA], 'the server looks up only the canonical active-link Training ID');
   assert.equal(JSON.stringify(linkedSummary.json()).includes(trainingUserA), false, 'raw remote identity stays server-side');
   assert.equal(JSON.stringify(linkedSummary.json()).includes('program-private-id'), false, 'remote program IDs stay server-side');
+  const revoke = await appA.inject({ method: 'DELETE', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173', 'idempotency-key': randomUUID() } });
+  assert.equal(revoke.statusCode, 200, revoke.body);
+  assert.equal((await appA.inject({ method: 'GET', url: '/api/me/evolution/consent' })).json().status, 'revoked');
+  assert.deepEqual((await appA.inject({ method: 'GET', url: '/api/me/training-summary' })).json(), { status: 'linked', summaryStatus: 'blocked', reason: 'consent_revoked' });
+  const regrant = await appA.inject({ method: 'POST', url: '/api/me/evolution/consent', headers: { origin: 'http://127.0.0.1:5173' }, payload: { v: 1, version: 1, typedName: 'Ada Prueba', idempotencyKey: randomUUID() } });
+  assert.equal(regrant.statusCode, 201, regrant.body, 'an explicit re-acceptance appends a new event for the same immutable version');
+  const accessAudit = await sql`SELECT event_type AS type,decision,consent_version_id AS "consentVersionId",typed_name AS "typedName" FROM platform_member_evolution_events WHERE client_id IN (${a.id}::uuid,${d.id}::uuid) ORDER BY occurred_at,id`;
+  assert.deepEqual(accessAudit.filter(row => row.type === 'summary_requested').map(row => row.decision), ['consent_required','entitlement_required','allowed','consent_revoked']);
+  assert.equal(accessAudit.every(row => row.typedName == null || row.type === 'consent_granted'), true, 'access audit never contains consent text or Training response data');
   assert.deepEqual((await appB.inject({ method: 'GET', url: `/api/me/training-summary?trainingUserId=${trainingUserA}` })).json(), { status: 'not_linked' }, 'revoked links and browser-supplied alternate IDs are ignored');
   assert.deepEqual((await appC.inject({ method: 'GET', url: '/api/me/training-summary' })).json(), { status: 'not_linked' }, 'a verified-but-pending canonical link is not exposed');
   summaryUnavailable = true;

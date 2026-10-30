@@ -86,6 +86,7 @@ const createConsent = z
       "image_use",
       "physical_activity",
       "health_data",
+      "home_evolution",
       "other",
     ]),
     required: z.boolean(),
@@ -144,7 +145,7 @@ export function registerCommunicationRoutes(
     const actor = await staff(req, reply, "communication.read");
     if (!actor) return;
     try {
-      return await db`SELECT * FROM (SELECT c.id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",co.id AS "conversationId",co.last_message_at AS "lastMessageAt",COALESCE((SELECT count(*)::int FROM communication_messages m LEFT JOIN communication_message_reads r ON r.message_id=m.id AND r.reader_kind='center' WHERE m.conversation_id=co.id AND m.sender_kind='client' AND COALESCE(r.is_read,false)=false),0) AS "unreadCount",(SELECT count(*)::int FROM client_form_assignments a WHERE a.client_id=c.id AND a.required AND a.status IN ('assigned','review_required','rejected')) AS "pendingDocuments",(SELECT count(*)::int FROM client_consent_versions v JOIN client_consents d ON d.id=v.consent_id WHERE d.status='active' AND d.required AND NOT EXISTS(SELECT 1 FROM client_consent_acceptances ac WHERE ac.client_id=c.id AND ac.consent_version_id=v.id)) AS "pendingConsents",(SELECT min(a.due_at) FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id WHERE a.client_id=c.id AND f.category='check_in' AND a.status='assigned' AND a.due_at<=now()) AS "overdueCheckinDue" FROM clients c LEFT JOIN communication_conversations co ON co.client_id=c.id AND co.center_key='2j' AND co.status='active' WHERE c.status='active') inbox WHERE "conversationId" IS NOT NULL OR "pendingDocuments">0 OR "pendingConsents">0 OR "overdueCheckinDue" IS NOT NULL ORDER BY "unreadCount" DESC,"lastMessageAt" DESC NULLS LAST,"clientId" LIMIT 100`;
+      return await db`SELECT * FROM (SELECT c.id AS "clientId",c.first_name AS "firstName",c.last_name AS "lastName",co.id AS "conversationId",co.last_message_at AS "lastMessageAt",COALESCE((SELECT count(*)::int FROM communication_messages m LEFT JOIN communication_message_reads r ON r.message_id=m.id AND r.reader_kind='center' WHERE m.conversation_id=co.id AND m.sender_kind='client' AND COALESCE(r.is_read,false)=false),0) AS "unreadCount",(SELECT count(*)::int FROM client_form_assignments a WHERE a.client_id=c.id AND a.required AND a.status IN ('assigned','review_required','rejected')) AS "pendingDocuments",(SELECT count(*)::int FROM client_consent_versions v JOIN client_consents d ON d.id=v.consent_id WHERE d.status='active' AND d.consent_type<>'home_evolution' AND d.required AND NOT EXISTS(SELECT 1 FROM client_consent_acceptances ac WHERE ac.client_id=c.id AND ac.consent_version_id=v.id)) AS "pendingConsents",(SELECT min(a.due_at) FROM client_form_assignments a JOIN client_form_versions v ON v.id=a.form_version_id JOIN client_forms f ON f.id=v.form_id WHERE a.client_id=c.id AND f.category='check_in' AND a.status='assigned' AND a.due_at<=now()) AS "overdueCheckinDue" FROM clients c LEFT JOIN communication_conversations co ON co.client_id=c.id AND co.center_key='2j' AND co.status='active' WHERE c.status='active') inbox WHERE "conversationId" IS NOT NULL OR "pendingDocuments">0 OR "pendingConsents">0 OR "overdueCheckinDue" IS NOT NULL ORDER BY "unreadCount" DESC,"lastMessageAt" DESC NULLS LAST,"clientId" LIMIT 100`;
     } catch {
       req.log.error(
         { route: "GET /api/communications/inbox" },
@@ -933,7 +934,7 @@ export function registerCommunicationRoutes(
     const p = z.object({ clientId: uuid }).safeParse(req.params);
     if (!p.success) return reply.code(400).send({ error: "invalid_client_id" });
     try {
-      return await db`SELECT c.id AS "consentId",c.name,c.required,v.id AS "versionId",v.version,v.title,v.body,v.effective_at AS "effectiveAt",(a.id IS NOT NULL) AS accepted,a.accepted_at AS "acceptedAt",a.method,${can(actor,'consents.accept.assisted') && can(actor,'consents.read')} AS "canAcceptAssisted" FROM client_consents c JOIN client_consent_versions v ON v.id=c.active_version_id LEFT JOIN client_consent_acceptances a ON a.client_id=${p.data.clientId} AND a.consent_version_id=v.id WHERE c.status='active' ORDER BY c.required DESC,c.name`;
+      return await db`SELECT c.id AS "consentId",c.name,c.required,v.id AS "versionId",v.version,v.title,v.body,v.effective_at AS "effectiveAt",(a.id IS NOT NULL) AS accepted,a.accepted_at AS "acceptedAt",a.method,${can(actor,'consents.accept.assisted') && can(actor,'consents.read')} AS "canAcceptAssisted" FROM client_consents c JOIN client_consent_versions v ON v.id=c.active_version_id LEFT JOIN client_consent_acceptances a ON a.client_id=${p.data.clientId} AND a.consent_version_id=v.id WHERE c.status='active' AND c.consent_type<>'home_evolution' ORDER BY c.required DESC,c.name`;
     } catch {
       req.log.error({ route: "GET /api/clients/:clientId/consents" }, "client consents failed");
       return reply.code(500).send({ error: "internal_error" });
@@ -1174,7 +1175,7 @@ export function registerCommunicationRoutes(
     const actor = await client(req, reply);
     if (!actor) return;
     try {
-      return await db`SELECT c.id AS "consentId",v.id AS "versionId",v.title,v.body,v.version,v.content_sha256 AS "contentHash",v.effective_at AS "effectiveAt",c.required,(a.id IS NOT NULL) AS accepted FROM client_consents c JOIN client_consent_versions v ON v.id=c.active_version_id LEFT JOIN client_consent_acceptances a ON a.client_id=${actor.clientId} AND a.consent_version_id=v.id WHERE c.status='active' ORDER BY c.required DESC,c.name`;
+      return await db`SELECT c.id AS "consentId",v.id AS "versionId",v.title,v.body,v.version,v.content_sha256 AS "contentHash",v.effective_at AS "effectiveAt",c.required,(a.id IS NOT NULL) AS accepted FROM client_consents c JOIN client_consent_versions v ON v.id=c.active_version_id LEFT JOIN client_consent_acceptances a ON a.client_id=${actor.clientId} AND a.consent_version_id=v.id WHERE c.status='active' AND c.consent_type<>'home_evolution' ORDER BY c.required DESC,c.name`;
     } catch (error) {
       req.log.error(
         {
@@ -1210,7 +1211,7 @@ export function registerCommunicationRoutes(
       try {
         const result = await db.begin(async (tx) => {
           const [v]: any[] =
-            await tx`SELECT v.id,v.body,v.content_sha256 AS hash FROM client_consent_versions v JOIN client_consents c ON c.active_version_id=v.id AND c.status='active' WHERE v.id=${p.data.versionId} AND v.status='active' FOR SHARE`;
+          await tx`SELECT v.id,v.body,v.content_sha256 AS hash FROM client_consent_versions v JOIN client_consents c ON c.active_version_id=v.id AND c.status='active' WHERE v.id=${p.data.versionId} AND v.status='active' AND c.consent_type<>'home_evolution' FOR SHARE`;
           if (!v) return { error: "consent_version_unavailable" as const };
           const [a]: any[] =
             await tx`INSERT INTO client_consent_acceptances(client_id,consent_version_id,method,typed_name,accepted_by,accepted_content_sha256,accepted_content_snapshot,idempotency_key) VALUES(${actor.clientId},${v.id},'checkbox_typed_name',${b.data.typedName},${actor.clientId},${v.hash},${v.body},${key.data}) ON CONFLICT(client_id,consent_version_id) DO NOTHING RETURNING id,accepted_at AS "acceptedAt"`;
@@ -1265,7 +1266,7 @@ export function registerCommunicationRoutes(
         const result = await db.begin(async (tx) => {
           await tx`SELECT pg_advisory_xact_lock(hashtextextended(${key.data},0))`;
           const [v]: any[] =
-            await tx`SELECT v.id,v.body,v.content_sha256 AS hash FROM client_consent_versions v JOIN client_consents c ON c.active_version_id=v.id AND c.status='active' WHERE v.id=${p.data.versionId} AND v.status='active' FOR SHARE`;
+            await tx`SELECT v.id,v.body,v.content_sha256 AS hash FROM client_consent_versions v JOIN client_consents c ON c.active_version_id=v.id AND c.status='active' WHERE v.id=${p.data.versionId} AND v.status='active' AND c.consent_type<>'home_evolution' FOR SHARE`;
           if (!v) return { error: "consent_version_unavailable" as const };
           const [clientRow]: any[] =
             await tx`SELECT id FROM clients WHERE id=${p.data.clientId} AND status='active' FOR SHARE`;
@@ -1363,7 +1364,7 @@ export function registerCommunicationRoutes(
           targetExists = Boolean(r);
         } else {
           const [r]: any[] =
-            await tx`SELECT id FROM client_consents WHERE id=${b.data.consentId!} AND status='active' AND active_version_id IS NOT NULL`;
+          await tx`SELECT id FROM client_consents WHERE id=${b.data.consentId!} AND status='active' AND active_version_id IS NOT NULL AND consent_type<>'home_evolution'`;
           targetExists = Boolean(r);
         }
         if (!targetExists) return { error: "document_not_active" as const };

@@ -1,0 +1,38 @@
+{
+  "task": "A68-member-evolution-gate",
+  "repository": "2jfitnesscenter/2j-platform",
+  "branch": "agent/codex/2J-A68-HOME-EVOLUTION-GATE",
+  "baseSha": "80397367f7ce165fa0dc98d5ca8a7d90006a2592",
+  "status": "implemented-awaiting-independent-review",
+  "migration": "0063_member_evolution_consent_audit.sql",
+  "routes": [
+    "GET /api/me/training-summary",
+    "GET /api/me/evolution/consent",
+    "POST /api/me/evolution/consent",
+    "DELETE /api/me/evolution/consent"
+  ],
+  "gates": {
+    "activeTrainingEntitlement": true,
+    "activeOwnerPublishedVersionedConsent": true,
+    "consentMustNotBeRevoked": true,
+    "trainingAdapterCalledOnlyAfterGates": true,
+    "auditEverySummaryCallWithoutPayloadContent": true
+  },
+  "blockedReasons": ["entitlement_required", "consent_unpublished", "consent_required", "consent_revoked"],
+  "syntheticValidation": {
+    "focusedApi": "9/9",
+    "apiSuite": "432/432",
+    "adminWebSuite": "389/389",
+    "adminWebStorePhotoIsolated": "17/17",
+    "clientAppSuite": "49/49",
+    "typecheck": "11/11",
+    "build": "9/9",
+    "fullSequentialSuite": "not fully green: one transient Admin Web store-photo loading failure after API 432/432; isolated test and full Admin suite passed on rerun"
+  },
+  "integrationBoundary": "Existing 2J-089 summary adapter remains unchanged; A68 signed training-evolution transport with home_evolution purpose is separate work.",
+  "pr168": "2j-platform Home A67 PR at d60ed8cdd3e520b286214ddcc11fc8f2ab012175; not a Bunker PR.",
+  "merged": false,
+  "deployed": false,
+  "independentReview": "PASS WITH P2: existing 2J-089 adapter retained; A68 training-evolution transport/purpose remains separate and is not claimed complete",
+  "ci": "pending"
+}
