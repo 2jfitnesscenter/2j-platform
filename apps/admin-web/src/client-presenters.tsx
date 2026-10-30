@@ -2,11 +2,12 @@ import { StatusChip, type StatusTone } from '@2j/ui';
 
 /** Presentation helpers for Clientes / Cliente 360 (Design System V2). Pure mapping of values the API already returns. */
 
-export const SECTION_ORDER = ['summary', 'plans', 'reservations', 'payments', 'purchases', 'documents', 'messages', 'followup', 'history'] as const;
+export const SECTION_ORDER = ['summary', 'plans', 'reservations', 'payments', 'purchases', 'training', 'documents', 'messages', 'followup', 'history'] as const;
 
 /** Approved copy (PP-04 / "Plan y sesiones"): technical words such as rights or entitlements never reach the UI. */
 export const SECTION_LABEL: Record<string, string> = {
   summary: 'Resumen', reservations: 'Reservas', plans: 'Plan y sesiones', payments: 'Pagos', purchases: 'Compras',
+  training: 'Evolución',
   documents: 'Documentos', messages: 'Mensajes', followup: 'Seguimiento', history: 'Historial',
 };
 

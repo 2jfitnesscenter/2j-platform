@@ -17,6 +17,7 @@ after(() => dom.window.close());
 const client = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Marta', lastName: 'Santos', email: 'marta@example.test', phone: '+34 600 000 000', status: 'active', createdAt: '2026-10-01T10:00:00Z' };
 const sections = [
   ['summary', 'Resumen', 'Datos del perfil', 'available', 'ready'], ['reservations', 'Reservas', 'Calendario', 'available', 'ready'], ['plans','Cuotas','Planes asignados','available','ready'], ['payments', 'Pagos', 'Pagos', 'forbidden', 'ready'],
+  ['training', 'Evolución', 'Búnker', 'available', 'ready'],
   ['documents', 'Documentos/Formularios', 'Documentos y formularios', 'available', 'ready'], ['messages', 'Mensajes', 'Comunicación', 'available', 'not_connected'], ['followup','Seguimiento','Seguimiento','available','ready'], ['history', 'Historial', 'Historial del perfil', 'available', 'ready'],
 ].map(([id, label, sourceLabel, access, dataState]) => ({ id, label, sourceLabel, access, dataState }));
 const summary = Object.fromEntries(['profile', 'plans', 'reservations', 'payments', 'documents', 'messages', 'followup'].map((id) => [id, { access: id === 'payments' ? 'forbidden' : 'available', dataState: id === 'profile' ? 'ready' : 'not_connected', data: null }]));
@@ -38,7 +39,7 @@ test('shows minimized clients, searches the server, and opens only backed Client
   await waitFor(() => assert.ok(requests.some((url) => url.includes('q=marta'))), { timeout: 1500 });
   fireEvent.click(screen.getByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
-  for (const label of ['Resumen', 'Reservas', 'Plan y sesiones', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']) assert.ok(screen.getByRole('tab', { name: new RegExp(label) }));
+  for (const label of ['Resumen', 'Reservas', 'Plan y sesiones', 'Evolución', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']) assert.ok(screen.getByRole('tab', { name: new RegExp(label) }));
   assert.equal(screen.queryByRole('tab', { name: /Pagos|Salud|Nutrición|Progreso|Entrenamiento|Competición|Objetivos/ }), null);
   assert.equal(screen.queryByText('marta@example.test'), null);
   assert.equal(screen.queryByText('+34 600 000 000'), null);
@@ -70,7 +71,61 @@ test('Admin can open the existing finance section while unsupported Training and
   fireEvent.click(financeTab);
   assert.ok(screen.getByText('Saldo pendiente'));
   assert.ok(screen.getByText(/24,00/));
-  assert.equal(screen.queryByRole('tab', { name: /Entrenamiento|Progreso|Salud/ }), null);
+  assert.ok(screen.getByRole('tab', { name: 'Evolución' }));
+  assert.equal(screen.queryByRole('tab', { name: /Progreso|Salud/ }), null);
+});
+
+test('client Evolución loads a read-only Búnker summary without exposing internal identifiers', async () => {
+  const remoteTrainingId = 'training-private-test-id';
+  const privateProgramId = 'program-private-test-id';
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url); requests.push({ path, options });
+    if (path.includes('/api/clients?')) return response(listResponse());
+    if (path.endsWith(`/api/clients/${client.id}`)) return response(profile);
+    if (path.endsWith(`/api/clients/${client.id}/training-summary`)) return response({ status: 'linked', summary: { currentProgram: { name: 'Fuerza' }, recentActivity: { lastTrainingAt: '2026-10-29', sessionsLast30Days: 3 } } });
+    throw new Error(`Unexpected request ${path}`);
+  };
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+  await screen.findByRole('heading', { name: 'Marta Santos' });
+  fireEvent.click(screen.getByRole('tab', { name: 'Evolución' }));
+  assert.ok(await screen.findByText('Fuerza'));
+  assert.ok(screen.getByText('Mediciones de Platform: No conectado'));
+  assert.ok(screen.getByText('3'));
+  assert.equal(document.body.textContent.includes(remoteTrainingId), false);
+  assert.equal(document.body.textContent.includes(privateProgramId), false);
+  const request = requests.find(({ path }) => path.endsWith('/training-summary'));
+  assert.ok(request);
+  assert.equal(request.options.cache, 'no-store');
+  assert.equal(request.path.includes('personId'), false);
+  assert.equal(request.path.includes('trainingUserId'), false);
+});
+
+test('client Evolución explains not-linked, disabled and unavailable states without offering fake actions', async () => {
+  const cases = [
+    [{ status: 'not_linked' }, 'Este perfil no está vinculado a una cuenta de Búnker.'],
+    [{ status: 'disabled' }, 'La conexión con Búnker está desactivada.'],
+    [{ status: 'unavailable' }, 'Búnker no está disponible ahora.'],
+  ];
+  for (const [payload, expected] of cases) {
+    globalThis.fetch = async url => {
+      const path = String(url);
+      if (path.includes('/api/clients?')) return response(listResponse());
+      if (path.endsWith(`/api/clients/${client.id}`)) return response(profile);
+      if (path.endsWith(`/api/clients/${client.id}/training-summary`)) return response(payload);
+      throw new Error(`Unexpected request ${path}`);
+    };
+    render(React.createElement(ClientsPage));
+    fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
+    await screen.findByRole('heading', { name: 'Marta Santos' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Evolución' }));
+    assert.ok(await screen.findByText(new RegExp(expected)));
+    assert.ok(screen.getByText('Mediciones de Platform: No conectado'));
+    assert.equal(screen.queryByRole('button', { name: /conectar|medición|mediciones/i }), null);
+    cleanup();
+    window.location.hash = '#clients';
+  }
 });
 
 test('creates a client only when the server grants manage capability and refreshes its profile', async () => {
@@ -479,7 +534,7 @@ test('Client 360 tabs follow the Base44 order (Resumen, Plan, Reservas, Compras�
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
-  assert.deepEqual(screen.getAllByRole('tab').map((tab) => tab.textContent), ['Resumen', 'Plan y sesiones', 'Reservas', 'Compras', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']);
+  assert.deepEqual(screen.getAllByRole('tab').map((tab) => tab.textContent), ['Resumen', 'Plan y sesiones', 'Reservas', 'Compras', 'Evolución', 'Documentos', 'Mensajes', 'Seguimiento', 'Historial']);
   fireEvent.click(screen.getByRole('tab', { name: 'Compras' }));
   const list = await screen.findByRole('list', { name: 'Compras del cliente' });
   const rows = within(list).getAllByRole('listitem');
