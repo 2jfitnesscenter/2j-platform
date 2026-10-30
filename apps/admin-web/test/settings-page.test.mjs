@@ -30,7 +30,7 @@ const overview = {
 const serve = (handler) => {
   globalThis.fetch = async (url, init) => {
     const path = String(url);
-    if (path.includes('/api/settings/overview') || path.includes('/api/admin/center-profile') || path.includes('/api/settings/store') || path.includes('/api/center/') || path.includes('/api/staff')) return handler(path, init);
+    if (path.includes('/api/settings/overview') || path.includes('/api/settings/appearance') || path.includes('/api/settings/notifications') || path.includes('/api/settings/booking-reminders') || path.includes('/api/admin/center-profile') || path.includes('/api/settings/store') || path.includes('/api/center/') || path.includes('/api/staff')) return handler(path, init);
     if (path.includes('/api/economics/invoice-settings')) return response({ issuerName: null, issuerTaxId: null, issuerAddress: null, issuerPostalCode: null, issuerLocality: null, issuerProvince: null, defaultIgicBasisPoints: 300, defaultSeriesId: null, footerText: null, legalText: null, hasLogo: false, logoMime: null, series: [], missing: ['nombre o razón social'], canManage: false });
     if (path.includes('/api/dashboard/command-center')) return response(model);
     if (path.includes('/api/session/capabilities')) return response({ calendar: true, clients: true, communications: true, billing: true, staff: true, notificationSettings: true });
@@ -41,16 +41,21 @@ const mount = () => { window.location.hash = '#settings'; return render(React.cr
 const openTab = async (name) => { fireEvent.click(await screen.findByRole('tab', { name })); return screen.findByRole('tabpanel'); };
 
 test('Configuración offers its nine tabs and keeps rules owned by other modules authoritative', async () => {
-  serve((path) => path.includes('/api/settings/store') ? response({ lowStockThreshold: 3 }) : response(overview)); mount();
+  serve((path) => path.includes('/api/settings/store') ? response({ lowStockThreshold: 3 }) : path.includes('/api/settings/appearance') ? response({ theme: 'light' }) : path.includes('/api/settings/notifications') ? response({ bookingRemindersEnabled: true, bookingReminderMinutes: 120, entitlementExpiryEnabled: true, entitlementExpiryDays: 7, lowBalanceEnabled: true, lowBalanceThreshold: 2, documentRemindersEnabled: true }) : response(overview)); mount();
   assert.ok(await screen.findByRole('heading', { name: 'Configuración' }));
   const tabs = await screen.findAllByRole('tab');
   assert.deepEqual(tabs.map((tab) => tab.textContent), ['Centro', 'Horario y turnos', 'Apariencia', 'Reservas', 'Pagos', 'Facturación', 'Tienda', 'Permisos', 'Integraciones']);
   const appearance = await openTab('Apariencia');
   assert.match(appearance.textContent, /Grafito · Lima #A4D65E/);
-  assert.equal(appearance.querySelectorAll('input').length, 0, 'brand tokens are not editable per center');
+  const theme = within(appearance).getByLabelText('Tema de esta cuenta');
+  assert.equal(theme.value, 'light');
+  fireEvent.change(theme, { target: { value: 'dark' } });
+  fireEvent.click(within(appearance).getByRole('button', { name: 'Guardar apariencia' }));
+  await waitFor(() => assert.match(appearance.textContent, /Preferencia visual guardada/));
   const booking = await openTab('Reservas');
   assert.match(booking.textContent, /se configuran en cada servicio/);
   assert.equal(within(booking).getByRole('link', { name: /Abrir Servicios/ }).getAttribute('href'), '#services');
+  assert.ok(await within(booking).findByLabelText('Antelación en minutos'));
   const store = await openTab('Tienda');
   assert.match(store.textContent, /Productos, variantes, inventario y ventas se gestionan en Tienda/);
   assert.equal(within(store).getByRole('link', { name: /Abrir Tienda/ }).getAttribute('href'), '#store');
@@ -58,7 +63,8 @@ test('Configuración offers its nine tabs and keeps rules owned by other modules
   assert.equal(within(store).getByRole('button', { name: 'Guardar aviso de stock' }).disabled, false);
   const invoicing = await openTab('Facturación');
   assert.ok(within(invoicing).getByRole('heading', { name: 'Emisor' }));
-  for (const name of ['Apariencia', 'Reservas']) assert.equal((await openTab(name)).querySelector('form'), null, `${name} does not imply unsupported settings`);
+  assert.ok((await openTab('Apariencia')).querySelector('form'));
+  assert.ok((await openTab('Reservas')).querySelector('form'));
 });
 
 test('Tienda reads and saves the real stock warning threshold through the settings API', async () => {
@@ -81,6 +87,44 @@ test('Tienda reads and saves the real stock warning threshold through the settin
   assert.deepEqual(calls.map((call) => call.method), ['GET', 'PUT']);
   assert.deepEqual(calls[1].body, { lowStockThreshold: 5 });
   assert.equal(field.value, '5');
+});
+
+test('Apariencia writes only the signed-in account theme; Reservas writes reminders without changing per-service policy', async () => {
+  const calls = [];
+  let theme = 'light';
+  let notifications = { bookingRemindersEnabled: true, bookingReminderMinutes: 120, entitlementExpiryEnabled: true, entitlementExpiryDays: 7, lowBalanceEnabled: true, lowBalanceThreshold: 2, documentRemindersEnabled: true };
+  serve(async (path, init) => {
+    if (path.includes('/api/settings/appearance')) {
+      calls.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+      if (init?.method === 'PUT') theme = JSON.parse(init.body).theme;
+      return response({ theme });
+    }
+    if (path.includes('/api/settings/notifications')) {
+      calls.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+      return response(notifications);
+    }
+    if (path.includes('/api/settings/booking-reminders')) {
+      calls.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+      if (init?.method === 'PATCH') notifications = { ...notifications, ...JSON.parse(init.body) };
+      return response({ bookingRemindersEnabled: notifications.bookingRemindersEnabled, bookingReminderMinutes: notifications.bookingReminderMinutes });
+    }
+    return response(overview);
+  });
+  mount();
+  const appearance = await openTab('Apariencia');
+  fireEvent.change(await within(appearance).findByLabelText('Tema de esta cuenta'), { target: { value: 'dark' } });
+  fireEvent.click(within(appearance).getByRole('button', { name: 'Guardar apariencia' }));
+  await waitFor(() => assert.equal(theme, 'dark'));
+  assert.equal(document.documentElement.dataset.theme, 'dark');
+  const booking = await openTab('Reservas');
+  fireEvent.change(await within(booking).findByLabelText('Antelación en minutos'), { target: { value: '60' } });
+  fireEvent.click(within(booking).getByRole('button', { name: 'Guardar avisos' }));
+  await waitFor(() => assert.match(booking.textContent, /Avisos de reserva guardados/));
+  assert.equal(notifications.bookingReminderMinutes, 60);
+  assert.equal(notifications.entitlementExpiryDays, 7, 'unrelated notification settings are preserved');
+  assert.equal(calls.some(call => call.path.includes('/api/settings/appearance') && call.method === 'PUT' && call.body.theme === 'dark'), true);
+  assert.equal(calls.some(call => call.path.includes('/api/settings/booking-reminders') && call.method === 'PATCH' && call.body.bookingReminderMinutes === 60), true);
+  assert.match(booking.textContent, /plazo y la política de cancelación se configuran en cada servicio/);
 });
 
 test('Centro reads and saves the existing audited Platform profile API without fiscal fields', async () => {

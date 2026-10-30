@@ -13,7 +13,8 @@ await migrateDatabase(sql);
 let currentClientId='';
 const admin=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'notifications-admin',role:'admin'}),clientAuthorizationResolver:async()=>currentClientId?{clientId:currentClientId}:null});
 const trainer=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'notifications-trainer',role:'trainer'})});
-after(async()=>{await Promise.all([admin.close(),trainer.close(),sql.end()]);});
+const anonymous=buildServer(process.env.DATABASE_URL);
+after(async()=>{await Promise.all([admin.close(),trainer.close(),anonymous.close(),sql.end()]);});
 async function newClient(){const response=await admin.inject({method:'POST',url:'/api/clients',headers:{'idempotency-key':randomUUID()},payload:{firstName:'Aviso',lastName:`Prueba ${randomUUID()}`}});assert.equal(response.statusCode,201,response.body);return response.json();}
 async function drainUntil(eventId){for(let index=0;index<20;index++){await dispatchNotificationBatch(sql,200);const [row]=await sql`SELECT status FROM domain_events_outbox WHERE id=${eventId}`;if(row?.status==='delivered')return;}assert.fail('outbox event was not dispatched');}
 function canaryDate(date){const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date),get=(type)=>parts.find(item=>item.type===type).value;return `${get('year')}-${get('month')}-${get('day')}`;}
@@ -63,6 +64,18 @@ test('notification preferences are permission checked and constrained',async()=>
   const denied=await trainer.inject({method:'GET',url:'/api/settings/notifications'});assert.equal(denied.statusCode,403);
   const settings=await admin.inject({method:'GET',url:'/api/settings/notifications'});assert.equal(settings.statusCode,200);assert.equal(settings.json().bookingReminderMinutes,120);
   const invalid=await admin.inject({method:'PUT',url:'/api/settings/notifications',payload:{...settings.json(),bookingReminderMinutes:1}});assert.equal(invalid.statusCode,400);
+});
+
+test('booking reminder patch is permission checked, narrowly validated and preserves unrelated notification settings',async()=>{
+  assert.equal((await anonymous.inject({method:'PATCH',url:'/api/settings/booking-reminders',payload:{bookingRemindersEnabled:false,bookingReminderMinutes:60}})).statusCode,401);
+  assert.equal((await trainer.inject({method:'PATCH',url:'/api/settings/booking-reminders',payload:{bookingRemindersEnabled:false,bookingReminderMinutes:60}})).statusCode,403);
+  const before=(await admin.inject({method:'GET',url:'/api/settings/notifications'})).json();
+  const invalid=await admin.inject({method:'PATCH',url:'/api/settings/booking-reminders',payload:{bookingRemindersEnabled:false,bookingReminderMinutes:1}});assert.equal(invalid.statusCode,400);
+  const updated=await admin.inject({method:'PATCH',url:'/api/settings/booking-reminders',payload:{bookingRemindersEnabled:false,bookingReminderMinutes:60}});assert.equal(updated.statusCode,200,updated.body);assert.deepEqual(updated.json(),{bookingRemindersEnabled:false,bookingReminderMinutes:60});
+  const afterPatch=(await admin.inject({method:'GET',url:'/api/settings/notifications'})).json();
+  assert.equal(afterPatch.bookingRemindersEnabled,false);assert.equal(afterPatch.bookingReminderMinutes,60);
+  for(const field of ['entitlementExpiryEnabled','entitlementExpiryDays','lowBalanceEnabled','lowBalanceThreshold','documentRemindersEnabled'])assert.equal(afterPatch[field],before[field],`${field} is untouched by the booking-only patch`);
+  const restored=await admin.inject({method:'PATCH',url:'/api/settings/booking-reminders',payload:{bookingRemindersEnabled:before.bookingRemindersEnabled,bookingReminderMinutes:before.bookingReminderMinutes}});assert.equal(restored.statusCode,200);
 });
 
 test('scheduler is safe to overlap and runs reminder lookup against Canary-configured defaults',async()=>{

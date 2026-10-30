@@ -115,6 +115,26 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const [searchOpen,setSearchOpen] = React.useState(false);
   const [folded,setFolded] = React.useState(()=>{try{return localStorage.getItem('2j.nav.compact.v1')==='true';}catch{return false;}});
   const mode=useShellMode();
+  React.useEffect(()=>{
+    let active=true;
+    let media:MediaQueryList|null=null;
+    let update: (()=>void)|null=null;
+    const apply=(theme:'light'|'dark'|'system')=>{
+      const dark=theme==='dark'||(theme==='system'&&window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme=dark?'dark':'light';
+    };
+    void apiFetch(`${api}/api/settings/appearance`,{cache:'no-store'}).then(async response=>{
+      if(!response.ok)return;
+      const body=await response.json() as {theme?:'light'|'dark'|'system'};
+      if(!active||!body.theme)return;
+      apply(body.theme);
+      if(body.theme==='system'){
+        media=window.matchMedia('(prefers-color-scheme: dark)');
+        update=()=>apply('system');media.addEventListener?.('change',update);
+      }
+    }).catch(()=>{});
+    return()=>{active=false;if(media&&update)media.removeEventListener?.('change',update);};
+  },[]);
   const isDrawer=mode==='drawer';
   const isRail=mode==='rail'||(mode==='expanded'&&folded);
   const [drawerOpen,setDrawerOpen]=React.useState(false);

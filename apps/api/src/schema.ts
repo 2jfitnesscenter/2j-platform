@@ -149,6 +149,10 @@ export const dashboardPreferences = pgTable('dashboard_preferences', {
   actorId: text('actor_id').primaryKey(), layout: jsonb('layout').notNull(), updatedAt: timestamp('updated_at',{withTimezone:true}).notNull().defaultNow(),
 }, (table)=>[check('dashboard_preferences_actor',sql`char_length(${table.actorId}) BETWEEN 1 AND 120`),check('dashboard_preferences_layout',sql`jsonb_typeof(${table.layout})='object'`)]);
 
+export const staffAppearancePreferences = pgTable('staff_appearance_preferences', {
+  actorId: text('actor_id').primaryKey(), theme: text('theme').notNull().default('light'), updatedAt: timestamp('updated_at',{withTimezone:true}).notNull().defaultNow(),
+}, (table)=>[check('staff_appearance_preferences_actor',sql`char_length(${table.actorId}) BETWEEN 1 AND 120`),check('staff_appearance_preferences_theme',sql`${table.theme} IN ('light','dark','system')`)]);
+
 export const economicTransactions = pgTable('economic_transactions', {
   id: uuid('id').defaultRandom().primaryKey(), chargeId: uuid('charge_id').notNull().references(()=>economicCharges.id,{onDelete:'restrict'}), clientId: uuid('client_id').notNull().references(()=>clients.id,{onDelete:'restrict'}), cashSessionId: uuid('cash_session_id'), kind: text('kind').notNull(), amountCents: bigint('amount_cents',{mode:'number'}).notNull(), refundOf: uuid('refund_of'), note: text('note'), actorId: text('actor_id').notNull(), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(), idempotencyKey: uuid('idempotency_key').notNull(), requestHash: char('request_hash',{length:64}).notNull(),
 }, (table)=>[uniqueIndex('economic_transactions_idempotency_unique').on(table.idempotencyKey),uniqueIndex('economic_transactions_id_charge_unique').on(table.id,table.chargeId),foreignKey({name:'economic_transactions_refund_fk',columns:[table.refundOf],foreignColumns:[table.id]}).onDelete('restrict'),index('economic_transactions_charge_idx').on(table.chargeId,table.createdAt,table.id),check('economic_transactions_kind',sql`${table.kind} IN ('payment','refund')`),check('economic_transactions_amount_positive',sql`${table.amountCents}>0`)]);
