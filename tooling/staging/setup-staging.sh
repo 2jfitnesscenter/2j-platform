@@ -6,7 +6,7 @@
 #   THIS SERVER IS NOT PRODUCTION. It must never hold production data, secrets, databases or tokens. Everything it uses is generated here, on the server.
 #   Nobody but the person who runs this script ever sees the server or its secrets (no secret is passed in, printed, logged or committed).
 #
-# Usage (as root over SSH; read docs/runbooks/staging-2jfit-es.md first):
+# Usage (as root over SSH; read docs/runbooks/staging-2jfit-com.md first):
 #   setup-staging.sh init          create /etc/2j-staging.conf (the only file you edit)
 #   setup-staging.sh base          update system, user, firewall, fail2ban, auto-updates, Docker, Caddy  (SSH stays open on purpose)
 #   setup-staging.sh lock-ssh --confirm   after you tested the new login: key-only SSH, no root, no passwords
@@ -34,7 +34,7 @@ LOG=/var/log/2j-staging-setup.log
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # defaults (overridden by /etc/2j-staging.conf)
 SERVER_IP="169.58.20.25"
-DOMAIN="2jfit.es"
+DOMAIN="2jfit.com"
 OPS_USER="ops"
 SSH_PUBKEY=""                       # REQUIRED for `base`: your PUBLIC key (one line starting with ssh-ed25519 or ssh-rsa). Never a private key.
 ACME_EMAIL=""                       # optional: where Let's Encrypt can warn you about an expiring certificate

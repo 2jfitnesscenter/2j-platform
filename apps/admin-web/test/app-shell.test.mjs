@@ -40,9 +40,8 @@ test('unauthenticated Admin shows passkey login without rendering operational sc
 
 test('environment label identifies local, staging and production hosts',()=>{
   assert.equal(environmentLabelForHost('127.0.0.1'),'Entorno local');
-  assert.equal(environmentLabelForHost('admin.2jfit.es'),'Staging');
   assert.equal(environmentLabelForHost('admin.2jfit.com'),'Staging');
-  assert.equal(environmentLabelForHost('2jfit.es'),'Staging');
+  assert.equal(environmentLabelForHost('admin.example.test'),'Entorno');
   assert.equal(environmentLabelForHost('2jfit.com'),'Staging');
   assert.equal(environmentLabelForHost('admin.2jfitnesscenter.com'),'Producción');
 });

@@ -1,4 +1,4 @@
-# Runbook de STAGING — 2jfit.es (Contabo, Ubuntu 24.04)
+# Runbook de STAGING — 2jfit.com (Contabo, Ubuntu 24.04)
 
 **Esto NO es producción.** Solo datos de prueba, sin secretos reales, sin dinero real, sin push real, puerta fiscal cerrada, modo piloto. Nadie (ni yo, ni ningún agente) tiene acceso al servidor: lo ejecutas tú.
 
@@ -8,13 +8,13 @@
 
 Antes de `deploy`: los 3 registros DNS deben apuntar ya a `169.58.20.25` (el script lo comprueba y se detiene si no).
 
-Servidor: `169.58.20.25` · Dominios: `home.2jfit.es`, `app.2jfit.es`, `admin.2jfit.es` · Script: `tooling/staging/setup-staging.sh` (se puede ejecutar de nuevo sin romper nada).
+Servidor: `169.58.20.25` · Dominios: `home.2jfit.com`, `app.2jfit.com`, `admin.2jfit.com` · Script: `tooling/staging/setup-staging.sh` (se puede ejecutar de nuevo sin romper nada).
 
 ## 0. Antes de empezar (lo que necesito de ti)
 1. Tu **clave SSH pública** (una línea `ssh-ed25519 …`). Nunca la privada. Si no tienes: en tu PC, PowerShell: `ssh-keygen -t ed25519` y abre `C:\Users\juanj\.ssh\id_ed25519.pub`.
-2. Tu **IP pública** (para abrir `admin.2jfit.es` solo a ti): busca «mi ip» en Google. Si la dejas vacía, admin queda cerrado a todo el mundo.
+2. Tu **IP pública** (para abrir `admin.2jfit.com` solo a ti): busca «mi ip» en Google. Si la dejas vacía, admin queda cerrado a todo el mundo.
 3. Un **e-mail** para avisos de certificado (opcional).
-4. En el DNS de `2jfit.es`, **3 registros A** → `169.58.20.25`: `home`, `app`, `admin`.
+4. En el DNS de `2jfit.com`, **3 registros A** → `169.58.20.25`: `home`, `app`, `admin`.
 5. Confirmar las ramas a desplegar (por defecto, vista previa de integración para Platform+Home y el consumidor V2.1 para Búnker).
 6. Aceptar por escrito el riesgo de «Lo que debes saber» (ver abajo).
 
@@ -61,9 +61,9 @@ sudo 2j-staging selftest
 **Acceso a las webs:** usuario `staging`; la contraseña está en `/opt/2j/secrets/basic-auth.txt` (solo root). El script **no la imprime**. Para leerla cuando la necesites, abre el fichero con `sudo less /opt/2j/secrets/basic-auth.txt` (sal con `q`), cópiala al gestor de contraseñas y no la pegues en chats ni correos. Las contraseñas de las bases se generan en el servidor (`chmod 600`) y no se imprimen ni se guardan en Git.
 
 ## 5b. Cambiar la IP permitida de `admin.`
-Tu IP doméstica puede cambiar. Si `admin.2jfit.es` te da 403: mira tu IP nueva (busca «mi ip»), edita `sudo nano /etc/2j-staging.conf`, cambia `ADMIN_ALLOW_IPS="x.x.x.x"` (varias, separadas por espacio) y ejecuta `sudo 2j-staging deploy` (es repetible pero tarda unos minutos (reconstruye); regenera y valida el Caddyfile y solo lo instala y recarga si es válido). Si te quedas fuera por completo, entra por SSH y haz lo mismo. Vacío = admin cerrado a todos.
+Tu IP doméstica puede cambiar. Si `admin.2jfit.com` te da 403: mira tu IP nueva (busca «mi ip»), edita `sudo nano /etc/2j-staging.conf`, cambia `ADMIN_ALLOW_IPS="x.x.x.x"` (varias, separadas por espacio) y ejecuta `sudo 2j-staging deploy` (es repetible pero tarda unos minutos (reconstruye); regenera y valida el Caddyfile y solo lo instala y recarga si es válido). Si te quedas fuera por completo, entra por SSH y haz lo mismo. Vacío = admin cerrado a todos.
 
-## 5c. Qué muestra home.2jfit.es: modo `real` o `demo`
+## 5c. Qué muestra home.2jfit.com: modo `real` o `demo`
 En `/etc/2j-staging.conf` hay una línea `STAGING_HOME_MODE`:
 - `real` (por defecto): Home conectada a la API de staging (acceso de miembro de prueba con los datos del `seed`).
 - `demo`: una versión estática con **datos ficticios**, marcada «DEMO · DATOS FICTICIOS». **No hace ninguna llamada a la API**, no enseña enlaces de personal/admin y no abre la app Búnker de producción. Sirve para revisar el aspecto con calma.

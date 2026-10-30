@@ -188,7 +188,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
 export function environmentLabelForHost(hostname: string): string {
   const host = hostname.toLowerCase();
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]') return 'Entorno local';
-  if (host === '2jfit.es' || host.endsWith('.2jfit.es') || host === '2jfit.com' || host.endsWith('.2jfit.com')) return 'Staging';
+  if (host === '2jfit.com' || host.endsWith('.2jfit.com')) return 'Staging';
   if (host === 'admin.2jfitnesscenter.com') return 'Producción';
   return 'Entorno';
 }
