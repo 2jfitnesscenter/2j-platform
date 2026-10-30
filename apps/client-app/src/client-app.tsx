@@ -60,6 +60,7 @@ type ApiState = { profile: ClientProfile; membership: { assignments: Assignment[
 type MemberStoreVariant = { id:string; label:string; size:string|null; flavor:string|null; priceCents:number; availability:'disponible'|'pocas_unidades'|'agotado' };
 type MemberStoreProduct = { id:string; category:'nutrition'|'merchandising'; name:string; description:string; variants:MemberStoreVariant[] };
 type MemberPurchase = { id:string; status:'completed'|'voided'; paymentState:'paid'|'pending'; totalCents:number; createdAt:string; lines:Array<{productName:string;variantLabel:string;quantity:number;unitPriceCents:number;lineTotalCents:number}> };
+type MemberInvoice = { id: string; documentType: 'simplified_ticket' | 'full_invoice'; status: 'issued' | 'rectified'; documentNumber: string; documentDate: string; grossCents: number; isRectification: boolean; isRectified: boolean };
 type MemberPreferences = { appearance: 'system' | 'light' | 'dark'; language: 'es' };
 const defaultPreferences: MemberPreferences = { appearance: 'system', language: 'es' };
 const appearanceStorageKey = '2j.member.appearance.v1';
@@ -336,6 +337,12 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+function invoiceFilename(invoice: MemberInvoice) {
+  const kind = invoice.isRectification ? 'rectificativa' : invoice.documentType === 'full_invoice' ? 'factura' : 'ticket';
+  const number = invoice.documentNumber.replace(/[^A-Za-z0-9._-]/g, '_');
+  return `${kind}-${number || 'documento'}.pdf`;
+}
+
 function MemberMessagesView({ previewMode, onBack }: { previewMode: boolean; onBack: () => void }) {
   const [conversation, setConversation] = React.useState<MemberConversation|null>(null);
   const [items, setItems] = React.useState<MemberConversationMessage[]>([]);
@@ -437,6 +444,11 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const [sessions, setSessions] = React.useState<ClientSession[]>(() => preview?.sessions ?? []);
   const [storeProducts,setStoreProducts]=React.useState<MemberStoreProduct[]>(()=>preview?.store??[]);
   const [purchases,setPurchases]=React.useState<MemberPurchase[]>(()=>preview?.purchases??[]);
+  const [invoices,setInvoices]=React.useState<MemberInvoice[]>([]);
+  const [invoicesLoading,setInvoicesLoading]=React.useState(!previewMode);
+  const [invoicesFailed,setInvoicesFailed]=React.useState(false);
+  const [invoiceDownloadBusy,setInvoiceDownloadBusy]=React.useState<string|null>(null);
+  const [invoiceDownloadError,setInvoiceDownloadError]=React.useState('');
   const [storeCategory,setStoreCategory]=React.useState<'nutrition'|'merchandising'>('nutrition');
   const [storeFailed,setStoreFailed]=React.useState(false);
   const [bookingEnabled, setBookingEnabled] = React.useState(false);
@@ -487,7 +499,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const refresh = React.useCallback(async () => {
     if (previewMode && preview) {
       setPreferences(defaultPreferences);
-      setProfile(preview.profile); setMembership(preview.membership); setActiveMembership(preview.membership.filter(item => item.status === 'active')); setReservations(preview.reservations); setWaitlist(preview.waitlist); setBookingEnabled(false);setStoreProducts(preview.store);setPurchases(preview.purchases);setStoreFailed(false);
+      setProfile(preview.profile); setMembership(preview.membership); setActiveMembership(preview.membership.filter(item => item.status === 'active')); setReservations(preview.reservations); setWaitlist(preview.waitlist); setBookingEnabled(false);setStoreProducts(preview.store);setPurchases(preview.purchases);setStoreFailed(false);setInvoices([]);setInvoicesLoading(false);setInvoicesFailed(false);setInvoiceDownloadError('');
       setSessions(preview.sessions); setBookingServices(preview.services); setForms(preview.forms); setConsents(preview.consents); setNotifications(preview.notifications);
       setNewsItems(preview.news); setFeaturedNews(preview.news[0] ?? null); setNewsError(false); setSelectedNews(null);
       setUnreadNotifications(preview.notifications.filter(item => !item.readAt).length); setError(''); setLoading(false); return;
@@ -499,7 +511,8 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
         api<MembershipResponse>('/api/me/membership'),
       ]);
       const hasActivePlan = plans.active.length > 0;
-      const [mine, documents, consentItems, bookingAccess, preferencesResult, newsResult, storeResult, purchaseResult] = await Promise.all([
+      setInvoicesLoading(true);
+      const [mine, documents, consentItems, bookingAccess, preferencesResult, newsResult, storeResult, purchaseResult, invoiceResult] = await Promise.all([
         hasActivePlan ? api<{ reservations: Booking[]; waitlist: Booking[] }>('/api/me/bookings') : Promise.resolve({ reservations: [], waitlist: [] }),
         api<FormAssignment[]>('/api/client-portal/form-assignments'),
         api<Consent[]>('/api/client-portal/consents'),
@@ -508,6 +521,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
         api<{ items:CenterNews[]; featured:CenterNews|null }>('/api/me/news').then(value=>({value,failed:false})).catch(()=>({value:{items:[],featured:null},failed:true})),
         api<{items:MemberStoreProduct[]}>('/api/me/store/catalog').then(value=>({value,failed:false})).catch(()=>({value:{items:[]},failed:true})),
         api<{items:MemberPurchase[]}>('/api/me/store/purchases').then(value=>({value,failed:false})).catch(()=>({value:{items:[]},failed:true})),
+        api<{items:MemberInvoice[]}>('/api/me/invoices').then(value=>({value:{items:Array.isArray(value.items)?value.items:[]},failed:!Array.isArray(value.items)})).catch(()=>({value:{items:[]},failed:true})),
       ]);
       setProfile(me.profile); setMembership(plans.assignments); setActiveMembership(plans.active); setTrainingCapabilities(plans.trainingCapabilities ?? null); setReservations(mine.reservations); setWaitlist(mine.waitlist); setForms(documents); setConsents(consentItems); setBookingEnabled(bookingAccess.enabled);
       const loadedPreferences = preferencesResult.value.preferences ?? defaultPreferences;
@@ -515,9 +529,10 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
       if (!preferencesResult.failed) { try { window.localStorage.setItem(appearanceStorageKey, loadedPreferences.appearance); } catch { /* appearance remains available for this session */ } }
       setNewsItems(newsResult.value.items); setFeaturedNews(newsResult.value.featured); setNewsError(newsResult.failed); setSelectedNews(null);
       setStoreProducts(storeResult.value.items);setPurchases(purchaseResult.value.items);setStoreFailed(storeResult.failed||purchaseResult.failed);
+      setInvoices(invoiceResult.value.items);setInvoicesFailed(invoiceResult.failed);setInvoiceDownloadError('');
       try { const unread = await api<{count:number}>('/api/me/notifications/unread-count'); setUnreadNotifications(unread.count); } catch { setUnreadNotifications(0); }
     } catch (cause) { const message = cause instanceof Error ? cause.message : ''; setError(message === 'client_authentication_required' ? message : labels[message] ?? 'No se han podido cargar tus datos.'); }
-    finally { setLoading(false); }
+    finally { setInvoicesLoading(false); setLoading(false); }
   }, [preview, previewMode]);
   const login = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setLoginError(''); setBusy('login');
@@ -531,7 +546,38 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
     if (!pushDeviceRemoved) { setMessage('No se ha podido desconectar este dispositivo de las notificaciones. La sesión sigue abierta; inténtalo de nuevo.'); setBusy(null); return; }
     try { await api('/api/pilot/member/logout', { method: 'POST', body: '{}' }); }
     catch { setMessage('No se pudo cerrar la sesión; vuelve a intentarlo.'); return setBusy(null); }
-    setProfile(null); setMembership([]); setActiveMembership([]); setTrainingCapabilities(null); setReservations([]); setWaitlist([]); setSessions([]); setBookingServices([]); setForms([]); setConsents([]); setNotifications([]); setNewsItems([]); setFeaturedNews(null); setNewsError(false); setSelectedNews(null); setMessage(''); setError('client_authentication_required'); setLoading(false); setView('home'); setBusy(null);
+    setProfile(null); setMembership([]); setActiveMembership([]); setTrainingCapabilities(null); setReservations([]); setWaitlist([]); setSessions([]); setBookingServices([]); setForms([]); setConsents([]); setNotifications([]); setNewsItems([]); setFeaturedNews(null); setNewsError(false); setSelectedNews(null); setInvoices([]); setInvoicesFailed(false); setInvoicesLoading(false); setInvoiceDownloadBusy(null); setInvoiceDownloadError(''); setMessage(''); setError('client_authentication_required'); setLoading(false); setView('home'); setBusy(null);
+  };
+  const retryInvoices = async () => {
+    if (previewMode) return;
+    setInvoicesLoading(true); setInvoicesFailed(false);
+    try { const result = await api<{items:MemberInvoice[]}>('/api/me/invoices'); if (!Array.isArray(result.items)) throw new Error('invalid_invoice_list'); setInvoices(result.items); }
+    catch { setInvoicesFailed(true); }
+    finally { setInvoicesLoading(false); }
+  };
+  const downloadInvoice = async (invoice: MemberInvoice) => {
+    if (previewMode || invoiceDownloadBusy) return;
+    setInvoiceDownloadBusy(invoice.id); setInvoiceDownloadError('');
+    try {
+      const origin = import.meta.env?.VITE_API_BASE_URL?.replace(/\/+$/, '') ?? '';
+      const response = await fetch(`${origin}/api/me/invoices/${encodeURIComponent(invoice.id)}/pdf`, { headers: { accept: 'application/pdf' }, credentials: 'include', cache: 'no-store' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? 'invoice_download_failed');
+      }
+      if (response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/pdf') throw new Error('invalid_invoice_pdf');
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const serverFilename = response.headers.get('content-disposition')?.match(/filename="([^"]+)"/i)?.[1];
+      const filename = serverFilename && /^[A-Za-z0-9._-]+\.pdf$/i.test(serverFilename) ? serverFilename : invoiceFilename(invoice);
+      const link = document.createElement('a');
+      link.href = objectUrl; link.download = filename; link.hidden = true;
+      document.body.append(link); link.click(); link.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (cause) {
+      const errorCode = cause instanceof Error ? cause.message : '';
+      setInvoiceDownloadError(errorCode === 'client_authentication_required' ? 'Tu sesión ha caducado. Vuelve a iniciar sesión.' : errorCode === 'document_not_found' ? 'Esta factura ya no está disponible.' : 'No se ha podido descargar el PDF. Inténtalo de nuevo.');
+    } finally { setInvoiceDownloadBusy(null); }
   };
   const savePreferences = async (patch: Partial<MemberPreferences>) => {
     const next = { ...preferences, ...patch };
@@ -956,7 +1002,14 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
 
           <section className="profile-section" aria-labelledby="profile-purchases-title"><div className="section-heading"><div><p className="eyebrow">TICKETS Y COMPRAS</p><h2 id="profile-purchases-title">Tus compras</h2></div></div>{(purchases?.length??0)>0? <div className="member-purchase-list">{purchases.map(sale=><article className="member-purchase-card" key={sale.id}><div className="member-purchase-heading"><div><strong>{new Intl.DateTimeFormat('es-ES',{dateStyle:'medium',timeZone:'Atlantic/Canary'}).format(new Date(sale.createdAt))}</strong><span>{sale.status==='voided'?'Anulada':sale.paymentState==='paid'?'Pagada en el centro':'Pendiente de pago'}</span></div><strong>{new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(sale.totalCents/100)}</strong></div>{sale.lines.map((line,index)=><p key={`${sale.id}-${index}`}>{line.productName} · {line.variantLabel} × {line.quantity}<span>{new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(line.lineTotalCents/100)}</span></p>)}</article>)}</div>:<section className="empty-card profile-empty"><h3>Aún no hay compras para mostrar.</h3><p>Tus compras y tickets del centro aparecerán aquí.</p></section>}</section>
 
-          <section className="profile-section" aria-labelledby="profile-invoices-title"><div className="section-heading"><div><p className="eyebrow">DOCUMENTACIÓN ECONÓMICA</p><h2 id="profile-invoices-title">Mis facturas</h2></div></div><div className="settings-note" role="status"><strong>No conectado</strong><p>La consulta y descarga de tus facturas estarán disponibles cuando Platform publique el endpoint autenticado para socios. Tus facturas no se consultan ni se descargan desde esta pantalla todavía.</p></div></section>
+          <section className="profile-section" aria-labelledby="profile-invoices-title"><div className="section-heading"><div><p className="eyebrow">DOCUMENTACIÓN ECONÓMICA</p><h2 id="profile-invoices-title">Mis facturas</h2></div></div>
+            {previewMode ? <div className="settings-note" role="status"><strong>DEMO · DATOS FICTICIOS</strong><p>La vista de demostración no consulta facturas reales ni permite descargar documentos.</p></div>
+              : invoicesLoading ? <p role="status">Cargando tus facturas…</p>
+              : invoicesFailed ? <div className="inline-message" role="alert"><p>No se han podido cargar tus facturas.</p><button className="text-button" type="button" onClick={() => void retryInvoices()}>Reintentar</button></div>
+              : invoices.length ? <div className="member-purchase-list">{invoices.map(invoice => { const date = formatMemberPaymentDate(invoice.documentDate, true); const label = invoice.documentType === 'full_invoice' ? 'Factura completa' : 'Ticket simplificado'; const statusLabel = invoice.isRectification ? 'Rectificativa' : invoice.isRectified || invoice.status === 'rectified' ? 'Rectificada' : 'Emitida'; return <article className="member-purchase-card" key={invoice.id}><div className="member-purchase-heading"><div><strong>{invoice.documentNumber}</strong><span>{date ? `${date} · ` : ''}{label} · {statusLabel}</span></div><strong>{formatMemberMoney(invoice.grossCents)}</strong></div><button className="button secondary" type="button" aria-label={`Descargar PDF ${invoice.documentNumber}`} disabled={invoiceDownloadBusy !== null} onClick={() => void downloadInvoice(invoice)}>{invoiceDownloadBusy === invoice.id ? 'Preparando PDF…' : 'Descargar PDF'}</button></article>; })}</div>
+              : <section className="empty-card profile-empty"><h3>Aún no tienes facturas.</h3><p>Las facturas y tickets emitidos para tu cuenta aparecerán aquí.</p></section>}
+            {invoiceDownloadError && <p className="inline-message" role="alert">{invoiceDownloadError}</p>}
+          </section>
 
           <section className="profile-section" aria-labelledby="profile-inbox-title"><div className="section-heading"><div><p className="eyebrow">BUZÓN</p><h2 id="profile-inbox-title">Mensajes y avisos</h2></div></div><button className="profile-link-card" type="button" onClick={openMemberMessages}><span><strong>Mensajes con el centro</strong><small>Consulta la conversación o escribe al equipo</small></span><span aria-hidden="true">→</span></button><button className="profile-link-card" type="button" onClick={() => void openNotifications()}><span><strong>Notificaciones</strong><small>{unreadNotifications > 0 ? `${unreadNotifications} ${unreadNotifications === 1 ? 'aviso sin leer' : 'avisos sin leer'}` : 'No tienes avisos sin leer'}</small></span><span aria-hidden="true">→</span></button><p className="profile-caption">Las noticias del centro se muestran por separado en Inicio.</p></section>
 
