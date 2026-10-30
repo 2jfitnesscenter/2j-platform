@@ -53,6 +53,11 @@ test('pilot member login uses an opaque server session and logout returns to sig
     sessionStorage: { configurable: true, value: dom.window.sessionStorage }, crypto: { configurable: true, value: { randomUUID: () => '00000000-0000-4000-8000-000000000001' } },
   });
   let loggedIn = false; const requests = []; let memberPreferences = { appearance: 'dark', language: 'es' };
+  const invoices = [{ id: 'd0700000-0000-4000-8000-000000000044', documentType: 'full_invoice', status: 'issued', documentNumber: 'F-2026-0001', documentDate: '2026-10-20', grossCents: 1234, isRectification: false, isRectified: false }];
+  const downloadedFiles = [];
+  Object.defineProperty(dom.window.URL, 'createObjectURL', { configurable: true, value: blob => { assert.equal(blob.type, 'application/pdf'); return 'blob:member-invoice'; } });
+  Object.defineProperty(dom.window.URL, 'revokeObjectURL', { configurable: true, value: () => {} });
+  dom.window.HTMLAnchorElement.prototype.click = function () { downloadedFiles.push(this.download); };
   let trainingSummaryResponse = { status: 'linked', summaryStatus: 'available', summary: { trainingStatus: 'active', asOf: '2026-10-13T12:00:00.000Z', currentProgram: { name: 'Fuerza base' }, recentActivity: { lastTrainingAt: '2026-10-12', sessionsLast30Days: 4 } } };
   globalThis.fetch = async (url, init = {}) => {
     requests.push({ url: String(url), init });
@@ -70,6 +75,8 @@ test('pilot member login uses an opaque server session and logout returns to sig
     if (url === '/api/me/notifications/unread-count') return new Response(JSON.stringify({ count: 0 }));
     if (url === '/api/me/notifications') return new Response(JSON.stringify({ items: [] }));
     if (url === '/api/me/training-summary') return new Response(JSON.stringify(trainingSummaryResponse));
+    if (url === '/api/me/invoices') return new Response(JSON.stringify({ items: invoices }), { headers: { 'content-type': 'application/json' } });
+    if (String(url).startsWith('/api/me/invoices/') && String(url).endsWith('/pdf')) return new Response('%PDF-1.7 synthetic member invoice', { headers: { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="factura-F-2026-0001.pdf"' } });
     return new Response('{}');
   };
   const { render, cleanup, fireEvent, within, ClientApp } = await uiHarness();
@@ -86,9 +93,16 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(ui.getByText(/Tus datos personales son de consulta en Home/));
   assert.equal(ui.queryByRole('button', { name: /Editar perfil|Editar datos personales/ }), null, 'D238 keeps member personal details read-only in Home');
   assert.ok(ui.getByRole('heading', { name: 'Mis facturas' }));
-  assert.ok(ui.getByRole('status').textContent.includes('No conectado'));
-  assert.ok(ui.getByText(/endpoint autenticado para socios/));
-  assert.equal(ui.queryByRole('button', { name: /descargar factura/i }), null, 'Home does not simulate invoice downloads before a member endpoint exists');
+  assert.ok(ui.getByText('F-2026-0001'));
+  assert.ok(ui.getByText(text => text.replace(/\s/g, '') === '12,34€'));
+  assert.equal(ui.queryByText('No conectado'), null, 'member invoices are connected to Platform');
+  const invoiceDownload = await ui.findByRole('button', { name: 'Descargar PDF F-2026-0001' });
+  fireEvent.click(invoiceDownload);
+  await ui.findByRole('button', { name: 'Descargar PDF F-2026-0001' });
+  assert.deepEqual(downloadedFiles, ['factura-F-2026-0001.pdf']);
+  const invoicePdfRequest = requests.find(item => item.url === '/api/me/invoices/d0700000-0000-4000-8000-000000000044/pdf');
+  assert.equal(invoicePdfRequest.init.credentials, 'include');
+  assert.equal(invoicePdfRequest.init.cache, 'no-store');
   assert.equal(requests.some(item => String(item.url).startsWith('/api/economics/')), false, 'Home never calls staff-scoped economic invoice routes');
   assert.ok(ui.getByText('No tienes ninguna cuota activa.'));
   assert.ok(ui.getByText('Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.'));
@@ -650,6 +664,8 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   assert.ok(ui.getByText('Fuerza funcional'));
   assert.ok(ui.getAllByText(/8 disponibles/).length >= 2);
   assert.ok(ui.getByText('maria.gonzalez@example.test'));
+  assert.ok(ui.getByText(/La vista de demostración no consulta facturas reales/));
+  assert.equal(ui.queryByRole('button', { name: /Descargar PDF/ }), null, 'synthetic preview never exposes a real invoice download');
   assert.ok(ui.getByRole('button', { name: /Mensajes con el centro/ }));
   fireEvent.click(ui.getByRole('button', { name: /Mensajes con el centro/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Mensajes con el centro' }));
