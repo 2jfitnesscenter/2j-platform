@@ -1,3 +1,4 @@
+import { apiFetch } from './api-fetch.js';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, IconButton, PageHeader, SegmentedControl, icons } from '@2j/ui';
 import { clearDeepLink, readDeepLink } from './deep-link.js';
@@ -6,7 +7,7 @@ import { ScheduleEditor, type ScheduleSubmitItem, type ScheduleSubmitResult } fr
 import { serviceColorIndex, type ExistingGroup } from './schedule-logic';
 export { serviceColorIndex };
 
-const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 type Session = { id: string; serviceId: string; serviceName: string; areaId: string; areaName: string; professionalId?:string|null;professionalName?:string|null;templateId: string | null; source: 'manual' | 'template'; startsAt: string; durationMinutes: number; capacity: number; status: 'scheduled' | 'cancelled'; occupiedCount: number; overbookCount: number; waitlistCount: number; isIndividual: boolean; occurrenceOverridden?:boolean };
 type ClientOption = { id: string; firstName: string; lastName: string };
 type BookingAlternative={assignmentId:string;planId:string;planName:string;availableBalance:number|null;periodUsage:{period:string;used:number;limit:number}[]};
@@ -129,7 +130,7 @@ export function CalendarPage() {
   async function loadWeek(keepVisible = false) {
     if (!keepVisible || !data) setState('loading'); setError('');
     try {
-      const response = await fetch(`${apiUrl}/api/calendar/week?weekStart=${dateKey(week)}`);
+      const response = await apiFetch(`${apiUrl}/api/calendar/week?weekStart=${dateKey(week)}`);
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(humanError(body.error ?? 'No se pudo cargar la semana.'));
       setData(body as CalendarData); setState('ready');
@@ -161,7 +162,7 @@ export function CalendarPage() {
     document.querySelectorAll<HTMLDetailsElement>('.calendar-overflow[open]').forEach((details) => { details.open = false; });
     if (opener) openerRef.current = opener;
     setDialog(null); setSelectedSession(session); setAttendees(null); setAttendeeError(''); setClientId(''); setClientQuery(''); setActionError(''); setNotice(''); setMissingDocuments([]); setOverrideDocuments(false); setDocumentOverrideReason('');setBookingPreview(null);setOverrideDebt(false);setOverrideDebtReason('');
-    void fetch(`${apiUrl}/api/calendar/sessions/${session.id}/attendees`).then(async (response) => {
+    void apiFetch(`${apiUrl}/api/calendar/sessions/${session.id}/attendees`).then(async (response) => {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(humanError(body.error ?? 'No se pudo cargar la sesión.'));
       setAttendees(body);
@@ -173,7 +174,7 @@ export function CalendarPage() {
     let current = true;
     const timer = window.setTimeout(() => {
       setClientBusy(true); setClientSearchError('');
-      void fetch(`${apiUrl}/api/clients?q=${encodeURIComponent(clientQuery.trim())}&status=active&limit=20`)
+      void apiFetch(`${apiUrl}/api/clients?q=${encodeURIComponent(clientQuery.trim())}&status=active&limit=20`)
         .then(async (response) => { const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(humanError(body.error ?? 'No se pudo buscar el cliente.')); return body; })
         .then((body) => { if (current) { setClientOptions(body.items ?? []); setClientActiveIndex(0); } })
         .catch((caught: unknown) => { if (current) setClientSearchError(errorMessage(caught)); })
@@ -185,7 +186,7 @@ export function CalendarPage() {
   useEffect(()=>{
     if(!selectedSession||!clientId){setBookingPreview(null);setBookingPreviewError('');setBookingPreviewBusy(false);setEntitlementAssignmentId('');return;}
     let current=true;setBookingPreview(null);setBookingPreviewBusy(true);setBookingPreviewError('');setEntitlementAssignmentId('');
-    void fetch(`${apiUrl}/api/calendar/sessions/${selectedSession.id}/booking-eligibility?clientId=${encodeURIComponent(clientId)}`)
+    void apiFetch(`${apiUrl}/api/calendar/sessions/${selectedSession.id}/booking-eligibility?clientId=${encodeURIComponent(clientId)}`)
       .then(async response=>{const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(humanError(body.error??'No se pudo comprobar la elegibilidad.'));return body as BookingPreview;})
       .then(body=>{if(current){setBookingPreview(body);setMissingDocuments((body.requiredDocuments??[]).map(item=>({label:item.label,requirementType:item.requirementType})));if(body.availableAlternatives.length===1)setEntitlementAssignmentId(body.availableAlternatives[0]!.assignmentId);}})
       .catch(caught=>{if(current)setBookingPreviewError(errorMessage(caught));})
@@ -208,7 +209,7 @@ export function CalendarPage() {
     let idempotencyKey=idempotencyKeysRef.current.get(signature);
     if(!idempotencyKey){idempotencyKey=globalThis.crypto.randomUUID();idempotencyKeysRef.current.set(signature,idempotencyKey);}
     try {
-      const response = await fetch(`${apiUrl}${url}`, { method, headers:{...(payload?{'content-type':'application/json'}:{}),'idempotency-key':idempotencyKey}, ...(payload ? { body: JSON.stringify(payload) } : {}) });
+      const response = await apiFetch(`${apiUrl}${url}`, { method, headers:{...(payload?{'content-type':'application/json'}:{}),'idempotency-key':idempotencyKey}, ...(payload ? { body: JSON.stringify(payload) } : {}) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) { if (method === 'POST' && url === '/api/calendar/sessions' && body.error === 'professional_availability_confirmation_required') { setCreateAvailabilityWarnings(Array.isArray(body.warnings) ? body.warnings : []); setActionError(''); return null; } if (body.error === 'validation_error') throw new Error(validationMessage(body.details)); if (body.error === 'required_documents_pending') setMissingDocuments(body.missing ?? []); if (method === 'PATCH' && url.startsWith('/api/calendar/sessions/') && body.error === 'professional_availability_confirmation_required') { setOccurrenceAvailabilityWarning(true); setSessionFeedback('Este cambio queda fuera del horario habitual del profesional.'); } throw new Error(humanError(body.error ?? 'No se pudo completar la operación.', body.warnings ?? [])); }
       idempotencyKeysRef.current.delete(signature);
@@ -216,7 +217,7 @@ export function CalendarPage() {
       if (selectedSession) setSessionFeedback('Cambios guardados.'); else setNotice('Cambios guardados.');
       await loadWeek(true);
       if (selectedSession) {
-        const refreshed = await fetch(`${apiUrl}/api/calendar/sessions/${selectedSession.id}/attendees`);
+        const refreshed = await apiFetch(`${apiUrl}/api/calendar/sessions/${selectedSession.id}/attendees`);
         if (refreshed.ok) setAttendees(await refreshed.json());
       }
       return body;

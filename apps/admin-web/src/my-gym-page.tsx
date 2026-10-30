@@ -1,8 +1,9 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, PageHeader, SegmentedControl, StatusChip, icons, type StatusTone } from '@2j/ui';
 import { NewsPage } from './news-page.js';
 
-const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
 type ShortSession = { id: string; startsAt: string; serviceName: string; capacity: number; occupied: number; waiting: number };
 type Panel = {
@@ -66,7 +67,7 @@ function OwnerPanel() {
   const load = React.useCallback(async () => {
     setState({ status: 'loading' });
     try {
-      const response = await fetch(`${apiUrl}/api/admin/owner-panel`, { cache: 'no-store' });
+      const response = await apiFetch(`${apiUrl}/api/admin/owner-panel`, { cache: 'no-store' });
       if (response.status === 403 || response.status === 401) { setState({ status: 'denied' }); return; }
       if (!response.ok) throw new Error(String(response.status));
       setState({ status: 'ready', data: await response.json() as Panel });
@@ -127,7 +128,7 @@ type Settings = { dueDay: number; timezone: string; debtBlocksNewReservations: b
 function BusinessTab() {
   const [settings, setSettings] = React.useState<Settings | 'denied' | 'error' | null>(null);
   React.useEffect(() => { void (async () => {
-    try { const response = await fetch(`${apiUrl}/api/economics/settings`, { cache: 'no-store' }); if (response.status === 403 || response.status === 401) { setSettings('denied'); return; } if (!response.ok) throw new Error(); setSettings(await response.json() as Settings); } catch { setSettings('error'); }
+    try { const response = await apiFetch(`${apiUrl}/api/economics/settings`, { cache: 'no-store' }); if (response.status === 403 || response.status === 401) { setSettings('denied'); return; } if (!response.ok) throw new Error(); setSettings(await response.json() as Settings); } catch { setSettings('error'); }
   })(); }, []);
   const rows: Array<[string, string]> | null = settings && typeof settings === 'object' ? [
     ['Zona horaria', 'Atlantic/Canary (hora de Canarias)'],

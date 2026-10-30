@@ -1,4 +1,4 @@
-export type ApprovedRole = 'admin' | 'trainer' | 'reception-management' | 'accountant';
+export type ApprovedRole = 'admin' | 'trainer' | 'reception-management' | 'accountant' | 'owner';
 
 export interface AuthorizationContext {
   readonly actorId: string;
@@ -13,6 +13,8 @@ export const rolePermissions: Readonly<Record<ApprovedRole, readonly string[]>> 
   trainer: ['clients.read', 'health.read', 'training.read', 'calendar.read', 'communication.read', 'communication.send', 'communication.internal_notes.read', 'communication.internal_notes.write', 'forms.read', 'forms.assign', 'forms.review', 'consents.read', 'documents.read', 'followup.read', 'followup.manage', 'timeclock.read', 'timeclock.self', 'billing.cash.manage', 'reservations.manage', 'reservations.attendance', 'scheduling.override_capacity', 'billing.validate_transfer', 'billing.debt.override', 'staff.read', 'staff.schedule.read', 'staff.absence.read', 'entitlements.read', 'entitlements.recurrence.manage'],
   'reception-management': ['clients.read', 'calendar.read', 'communication.read', 'communication.send', 'forms.read', 'forms.assign', 'consents.read', 'documents.read', 'followup.read', 'reservations.manage', 'billing.read-basic', 'timeclock.read', 'staff.read', 'staff.profile.sensitive.read', 'staff.schedule.read', 'staff.schedule.manage', 'staff.absence.read', 'staff.absence.manage', 'staff.substitution.manage', 'timeclock.self', 'entitlements.read', 'entitlements.manage', 'entitlements.renew', 'entitlements.pause', 'entitlements.cancel'],
   accountant: ['billing.read-basic', 'billing.read-tax', 'billing.export'],
+  // The configured owner has no inherited staff permissions; grants are explicit.
+  owner: [],
 };
 
 /** Registry of operation identifiers known to the server. New operations must be reviewed here before use. */

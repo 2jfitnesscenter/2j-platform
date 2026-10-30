@@ -1,9 +1,10 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { Button, Card, CardHeader, Icon, PageHeader, SegmentedControl, StatusChip, icons } from '@2j/ui';
 import { useCommandCenter } from './app-shell.js';
 import { AttentionCard, attentionOf } from './command-center.js';
 
-const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
 type AuditItem = { id: string; area: 'economy' | 'staff' | 'calendar' | 'communication' | 'store'; occurredAt: string; actorId: string; action: string; resourceType: string };
 type Cursor = { beforeAt: string; beforeId: string };
@@ -24,7 +25,7 @@ export function ActivityPage() {
     try {
       const params = new URLSearchParams({ limit: '40' });
       if (cursor) { params.set('beforeAt', cursor.beforeAt); params.set('beforeId', cursor.beforeId); }
-      const response = await fetch(`${apiUrl}/api/activity/audit?${params}`);
+      const response = await apiFetch(`${apiUrl}/api/activity/audit?${params}`);
       if (response.status === 403) { setAudit({ status: 'denied', items: [], cursor: null, loadingMore: false }); return; }
       if (!response.ok) throw new Error(String(response.status));
       const body = await response.json() as { items: AuditItem[]; nextCursor: Cursor | null };
