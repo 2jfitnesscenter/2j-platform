@@ -60,4 +60,4 @@ Los adaptadores de vinculación de Búnker y elegibilidad de sesiones están apa
 
 Las banderas de cliente no conceden permisos ni sustituyen las banderas/validaciones del servidor. El build `build:demo` elimina el entorno Vite, fuerza el modo sintético y desactiva todas estas integraciones.
 
-`Mi evolución` es una preparación de interfaz. No solicita ni presenta mediciones ficticias: se conectará cuando Platform publique su contrato.
+`Mi evolución` presenta el resumen de actividad de solo lectura del contrato Búnker 2J-089 cuando Platform confirma una vinculación activa. Ese resumen no contiene historial de sesiones, mediciones, evaluaciones ni salud; dichas pantallas se identifican como `No conectado` hasta que existan contratos específicos. El modo sintético no consulta el resumen ni muestra métricas ficticias.

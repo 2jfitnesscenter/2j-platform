@@ -1,0 +1,39 @@
+{
+  "task": "2J-HOME-A67-MEMBER-CONTINUATION",
+  "branch": "agent/codex/2J-HOME-A67-MEMBER-CONTINUATION",
+  "base": "main fe899e900e66598779136fea351d488e8937db39",
+  "status": "A68-blocked-state-fixed-awaiting-confirmation-and-remote-ci",
+  "deployment": "not-performed",
+  "sourceChanges": [
+    { "work": "#116, #126, #157", "integration": "already merged in current main; excluded from this PR delta" },
+    { "work": "#169 A68 evolution consent and entitlement gate", "integration": "already merged in current main; Home consumes its blocked response" }
+  ],
+  "implemented": [
+    "Mi evolución muestra únicamente el resumen de solo lectura del contrato 2J-089 cuando Platform lo devuelve como disponible.",
+    "El modo demo etiqueta la vista No conectado y no consulta API ni fabrica valores.",
+    "Platform #169 is the authority for the A68 entitlement and consent gate; Home shows blocked states as Sin datos disponibles, with regression coverage.",
+    "Mediciones, gráficos, evaluaciones y salud permanecen No conectado.",
+    "Perfil permanece de consulta conforme a D238/D239.",
+    "Compras usa el endpoint de socio existente GET /api/me/store/purchases.",
+    "A64/A66 permite facturas en Home; Mis facturas queda No conectado hasta que Platform publique listado y PDF autenticados y auto-acotados al socio."
+  ],
+  "notImplemented": [
+    "Descarga de facturas: Platform main solo expone rutas económicas con billing.read-tax; falta el contrato de listado/PDF para socio. Home no llama esas rutas internas.",
+    "Edición de perfil: D238/D239 mantienen el perfil de solo lectura.",
+    "Historial de mediciones/evolución: no forma parte del contrato 2J-089."
+  ],
+  "independentReview": {
+    "status": "P2-fixed-confirmation-pending-on-updated-head",
+    "reviewedHead": "5e4a80a895b5330d8623cf4a04cf5e0352c48c74",
+    "limitations": ["updated head awaits reviewer confirmation", "remote CI", "secret scan", "staging", "real authenticated session"]
+  },
+  "remoteCi": "rerun on corrected PR head after push",
+  "tests": {
+    "clientApp": "49/49",
+    "typecheck": "passed",
+    "build": "passed",
+    "demoBuild": "passed",
+    "diffCheck": "passed",
+    "remoteCiAndSecretScan": "not-queried"
+  }
+}
