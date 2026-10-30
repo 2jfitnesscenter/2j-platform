@@ -1,0 +1,34 @@
+{
+  "task": "2J-HOME-A67-MEMBER-CONTINUATION",
+  "branch": "agent/codex/2J-HOME-A67-MEMBER-CONTINUATION",
+  "base": "dfcb1256b233c94ec41e0d177ecd699636258fa4",
+  "status": "local-review-candidate",
+  "deployment": "not-performed",
+  "sourceChanges": [
+    { "work": "#116 waitlist eligibility", "commit": "a0aadc9", "integration": "local cherry-pick" },
+    { "work": "#126 payment state", "commits": ["0f12ddf", "181fad0", "a44b809"], "integration": "local cherry-picks" },
+    { "work": "#157 member messages", "commits": ["a227be5", "4347e38"], "integration": "local cherry-picks" }
+  ],
+  "implemented": [
+    "Mi evolución muestra únicamente el resumen de solo lectura del contrato 2J-089 cuando Platform lo devuelve como disponible.",
+    "El modo demo etiqueta la vista No conectado y no consulta API ni fabrica valores.",
+    "Mediciones, gráficos, evaluaciones y salud permanecen No conectado.",
+    "Perfil permanece de consulta conforme a D238/D239.",
+    "Compras usa el endpoint de socio existente GET /api/me/store/purchases."
+  ],
+  "notImplemented": [
+    "Edición de perfil: contradice D238/D239.",
+    "Descarga de facturas: D106/A63 mantienen cerrado el gate fiscal y no existe endpoint de descarga para el socio.",
+    "Historial de mediciones/evolución: no forma parte del contrato 2J-089."
+  ],
+  "independentReview": "required-for-member-and-economic-data",
+  "remoteCi": "not-queried",
+  "tests": {
+    "clientApp": "48/48",
+    "typecheck": "passed",
+    "build": "passed",
+    "demoBuild": "passed",
+    "diffCheck": "passed",
+    "remoteCiAndSecretScan": "not-queried"
+  }
+}

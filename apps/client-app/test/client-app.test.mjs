@@ -82,6 +82,8 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.equal(JSON.stringify(loginRequest.init.body).includes('clientId'), false);
   fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
   assert.ok(await ui.findByRole('heading', { name: 'Perfil' }));
+  assert.ok(ui.getByText(/Tus datos personales son de consulta en Home/));
+  assert.equal(ui.queryByRole('button', { name: /Editar perfil|Editar datos personales/ }), null, 'D238 keeps member personal details read-only in Home');
   assert.ok(ui.getByText('No tienes ninguna cuota activa.'));
   assert.ok(ui.getByText('Tu perfil y tu acceso al centro siguen disponibles aunque no tengas una cuota activa.'));
   assert.ok(ui.getByRole('heading', { name: 'Contratos y certificados' }));
@@ -98,6 +100,13 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(ui.getByText('Programa actual: Fuerza base'));
   assert.ok(ui.getByText(/4 entrenos en los últimos 30 días/));
   fireEvent.click(ui.getByRole('button', { name: 'Perfil', exact: true }));
+  fireEvent.click(await ui.findByRole('button', { name: /Abrir Mi evolución/ }));
+  assert.ok(await ui.findByRole('heading', { name: 'Resumen de actividad' }));
+  assert.ok(await ui.findByText('Fuerza base'));
+  assert.ok(ui.getByText(/4 entrenos en los últimos 30 días/));
+  assert.ok(ui.getByText(/contrato 2J-089/));
+  assert.ok(ui.getByText(/Medidas y pliegues registrados\. · No conectado/));
+  fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
   fireEvent.click(ui.getByRole('button', { name: /Notificaciones.*avisos sin leer/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));
   assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
@@ -634,6 +643,11 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   fireEvent.click(ui.getByRole('button', { name: /Mensajes con el centro/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Mensajes con el centro' }));
   assert.ok(ui.getByText(/La demo no consulta ni envía mensajes/));
+  fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
+  fireEvent.click(ui.getByRole('button', { name: /Abrir Mi evolución/ }));
+  assert.ok(await ui.findByRole('heading', { name: 'Resumen de actividad' }));
+  assert.ok([...ui.container.querySelectorAll('[role="status"]')].some(item => /No conectado.*DEMO.*Datos ficticios/.test(item.textContent ?? '')));
+  assert.ok(ui.getByText(/Medidas y pliegues registrados\. · No conectado/));
   assert.equal(requests.length, 0);
   fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
   assert.equal(within(navigation).getByRole('button', { name: 'Perfil' }).getAttribute('aria-current'), 'page');
@@ -705,7 +719,7 @@ test('2J Hub preview is build-gated, presents five destinations and never calls 
   assert.ok(await ui.findByRole('heading', { name: 'Mi evolución' }));
   for (const label of ['Mediciones','Gráficos','Evaluaciones','Mi salud']) assert.ok(ui.getByRole('button', { name: new RegExp(label) }));
   fireEvent.click(ui.getByRole('button', { name: /Mediciones/ }));
-  assert.ok(await ui.findByText(/Platform aún no ha publicado el contrato/));
+  assert.ok([...ui.container.querySelectorAll('[role="status"]')].some(item => /No conectado.*contrato de Búnker 2J-089/.test(item.textContent ?? '')));
   fireEvent.click(ui.getByRole('button', { name: '← Mi evolución' }));
   fireEvent.click(within(navigation).getByRole('button', { name: 'Búnker' }));
   fireEvent.click(await ui.findByRole('button', { name: /Gestionar vinculación/ }));
