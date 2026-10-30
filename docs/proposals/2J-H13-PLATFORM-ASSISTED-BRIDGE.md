@@ -25,7 +25,7 @@ La integración debe tener tests de autorización, revisión no aprobada, person
 
 ## Migración y orden
 
-La secuencia ya integrada en `main` llega a `0062_store_settings.sql`: #153 ocupa `0060_client_import_commit.sql`, #154 ocupa `0061_invoice_settings.sql` y #158 ocupa `0062_store_settings.sql`. Esta propuesta no crea ni reserva migración. Cuando empiece la implementación, se debe volver a inspeccionar `main` y todas las ramas/PR abiertas antes de elegir el siguiente prefijo; no se debe reutilizar `0060`.
+En `main` consultado al actualizar esta propuesta (`d6367168c52aee8bb3c927c7093439383443a17b`), la secuencia llega a `0063_member_evolution_consent_audit.sql`: #153 ocupa `0060_client_import_commit.sql`, #154 ocupa `0061_invoice_settings.sql`, #158 ocupa `0062_store_settings.sql` y #135 ocupa `0063_member_evolution_consent_audit.sql`. Esta propuesta no crea ni reserva migración. Antes de implementar el puente se debe volver a inspeccionar `main` y todas las ramas/PR abiertas para escoger el siguiente prefijo.
 
 ## Límites y revisión
 
