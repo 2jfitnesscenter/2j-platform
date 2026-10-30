@@ -15,7 +15,7 @@
     "owner:review:stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tooling/start-local-pilot.ps1 -OwnerReview -Stop",
     "admin:release:prepare": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tooling/deploy/prepare-admin-pilot-release.ps1 -PrepareOnly",
     "test": "pnpm --filter @2j/design-tokens test && pnpm --filter @2j/domain test && pnpm --filter @2j/permissions test && pnpm --filter @2j/ui test && pnpm --filter @2j/auth test && pnpm --filter @2j/audit test && pnpm --filter @2j/api test && pnpm --filter @2j/admin-web test && pnpm --filter @2j/client-app test && pnpm --filter @2j/staff-app test && pnpm run test:deploy-kit",
-    "test:deploy-kit": "node --test tooling/deploy/*.test.mjs"
+    "test:deploy-kit": "node --test tooling/deploy/*.test.mjs tooling/staging/*.test.mjs"
   },
   "devDependencies": {
     "turbo": "^2.5.0",
