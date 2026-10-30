@@ -300,8 +300,14 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     throw new Error('PLATFORM_LINK_ISSUERS must contain stable Platform personId UUIDs, not names, emails, or other identifiers.');
   }
   const grantLinkIssue = (context: AuthorizationContext | null): AuthorizationContext | null => {
-    if (!context || !context.personId || !platformLinkIssuers.has(context.personId.toLowerCase()) || context.explicitPermissions?.includes('platform_link_issue')) return context;
-    return { ...context, explicitPermissions: [...new Set([...(context.explicitPermissions ?? []), 'platform_link_issue'])] };
+    if (!context) return null;
+    const isOwnerActor = ownerActorId != null && context.actorId === ownerActorId;
+    const isOwnerPerson = ownerPersonId != null && context.personId?.toLowerCase() === ownerPersonId;
+    const isConfiguredIssuer = context.personId != null && platformLinkIssuers.has(context.personId.toLowerCase());
+    const canIssue = isOwnerActor || isOwnerPerson || isConfiguredIssuer;
+    const explicitPermissions = (context.explicitPermissions ?? []).filter(permission => permission !== 'platform_link_issue');
+    if (canIssue) explicitPermissions.push('platform_link_issue');
+    return { ...context, explicitPermissions: [...new Set(explicitPermissions)] };
   };
   const trustedAuthorizationResolver = async (request: import('fastify').FastifyRequest) => {
     const context = await baseAuthorizationResolver(request);
