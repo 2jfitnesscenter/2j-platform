@@ -5,7 +5,7 @@ import type { createDatabase } from './db.js';
 import type { ClientAuthorizationContext } from './communications.js';
 import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { materializeCalendarTemplates } from './calendar-materializer.js';
-import type { TrainingAdapter } from './training-integration.js';
+import type { TrainingAdapter, TrainingEvolutionAdapter } from './training-integration.js';
 import { memberTrainingCapabilities } from './training-capabilities-api.js';
 import { canaryBusinessDate, canaryLocalMidnightUtc } from '@2j/domain';
 import { evaluateTermPaymentAccess } from './term-payment-access.js';
@@ -26,6 +26,7 @@ export function registerClientAppRoutes(
   memberBookingEnabled = false,
   trainingAdapter?: TrainingAdapter,
   memberNow: () => Date = () => new Date(),
+  trainingEvolutionAdapter?: TrainingEvolutionAdapter,
 ) {
   async function client(request: FastifyRequest, reply: any) {
     reply.header('Cache-Control', 'no-store');
@@ -236,6 +237,49 @@ export function registerClientAppRoutes(
         ...(recentActivity ? { recentActivity } : {}),
       },
     };
+  });
+
+  app.get('/api/me/evolution', async (request, reply) => {
+    const actor = await client(request, reply); if (!actor) return;
+    const personId = await canonicalPersonId(actor);
+    const audit = (decision: string) => appendEvolutionEvent({ clientId: actor.clientId, personId, eventType: 'summary_requested', decision });
+    if (!personId) { await audit('not_linked'); return { v: 1, state: 'not_linked' as const }; }
+    const [link] = await db`SELECT l.training_user_id AS "trainingUserId"
+      FROM training_account_links l JOIN platform_persons p ON p.id=l.person_id
+      WHERE l.person_id=${personId}::uuid AND l.status='active' AND p.status='active'`;
+    if (!link) { await audit('not_linked'); return { v: 1, state: 'not_linked' as const }; }
+    const entitlements = await resolveEffectiveClientAssignments(db, actor.clientId, memberNow());
+    const entitled = entitlements.effective.assignments.some(assignment => assignment.operationalAccess === 'active' && assignment.rights.some(right => right.rightType === 'training_access'));
+    if (!entitled) { await audit('entitlement_required'); return { v: 1, state: 'not_available' as const }; }
+    const consent = await activeEvolutionConsent();
+    if (!consent) { await audit('consent_unpublished'); return { v: 1, state: 'consent_required' as const }; }
+    const [consentEvent] = await db`SELECT event_type AS type FROM platform_member_evolution_events
+      WHERE client_id=${actor.clientId}::uuid AND consent_version_id=${consent.versionId} AND event_type IN ('consent_granted','consent_revoked')
+      ORDER BY occurred_at DESC,id DESC LIMIT 1`;
+    if (consentEvent?.type !== 'consent_granted') {
+      const decision = consentEvent?.type === 'consent_revoked' ? 'consent_revoked' : 'consent_required';
+      await audit(decision); return { v: 1, state: 'consent_required' as const };
+    }
+    let cursor: { snapshotId: string; offset: number } | null = null;
+    const rawCursor = (request.query as { cursor?: unknown } | undefined)?.cursor;
+    if (rawCursor !== undefined) {
+      if (typeof rawCursor !== 'string' || rawCursor.length > 512 || !/^[A-Za-z0-9_-]+$/.test(rawCursor)) return reply.code(400).send({ error: 'validation_error' });
+      try {
+        const decoded = Buffer.from(rawCursor, 'base64url').toString('utf8');
+        if (Buffer.from(decoded, 'utf8').toString('base64url') !== rawCursor) throw new Error('non-canonical cursor');
+        const parsed = z.object({ snapshotId: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().min(0).max(10_000_000) }).strict().safeParse(JSON.parse(decoded));
+        if (!parsed.success) throw new Error('invalid cursor'); cursor = parsed.data;
+      } catch { return reply.code(400).send({ error: 'validation_error' }); }
+    }
+    await audit('allowed');
+    let result: Awaited<ReturnType<NonNullable<typeof trainingEvolutionAdapter>['getEvolution']>> | { status: 'disabled' };
+    try { result = await trainingEvolutionAdapter?.getEvolution({ personId, trainingUserId: String(link.trainingUserId), consentVersion: Number(consent.version), cursor, limit: 100 }) ?? { status: 'disabled' as const }; }
+    catch { result = { status: 'unavailable' as const }; }
+    if (result.status !== 'available' || !result.evolution) return { v: 1, state: 'unavailable' as const };
+    const remote = result.evolution;
+    const nextCursor = remote.nextCursor;
+    return { v: 1, state: 'available' as const, consentVersion: Number(consent.version), asOf: remote.exportedAt,
+      workouts: remote.workouts, nextCursor };
   });
 
   app.get('/api/me/membership', async (request, reply) => {

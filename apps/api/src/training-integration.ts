@@ -37,9 +37,31 @@ export type TrainingAdapter = {
   getSummary(personId: string, signal?: AbortSignal): Promise<{ status: 'disabled' | 'unavailable' | 'available'; summary?: TrainingSummary }>;
 };
 
+const evolutionCursorSchema = z.object({ snapshotId: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().min(0).max(10_000_000) }).strict();
+const evolutionSetSchema = z.object({
+  reps: z.number().min(0).optional(), rpe: z.number().min(0).optional(), minutes: z.number().min(0).optional(),
+  speed: z.number().min(0).optional(), resistance: z.number().min(0).optional(), distance: z.number().min(0).optional(),
+  incline: z.number().min(0).optional(), seconds: z.number().min(0).optional(),
+  weight: z.object({ value: z.number().min(0), unit: z.enum(['kg','lb']) }).strict().optional(), completed: z.boolean().optional(),
+}).strict();
+const evolutionWorkoutSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), durationSeconds: z.number().int().min(0).max(86_400).optional(),
+  exercises: z.array(z.object({ exerciseId: z.string().regex(/^[A-Za-z0-9._:-]{1,120}$/), sets: z.array(evolutionSetSchema).max(100) }).strict()).max(300),
+}).strict();
+export const trainingEvolutionResponseSchema = z.object({
+  schema: z.literal('2j-home-evolution-export/v1'), source: z.literal('bunker'), personId: z.string().uuid(), trainingUserId: trainingUserIdSchema,
+  exportedAt: z.string().datetime(), snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
+  nextCursor: evolutionCursorSchema.nullable(), workouts: z.array(evolutionWorkoutSchema).max(100),
+}).strict();
+export type TrainingEvolution = z.infer<typeof trainingEvolutionResponseSchema>;
+export type TrainingEvolutionAdapter = {
+  getEvolution(input: { personId: string; trainingUserId: string; consentVersion: number; cursor: { snapshotId: string; offset: number } | null; limit: number }, signal?: AbortSignal): Promise<{ status: 'disabled' | 'unavailable' | 'available'; evolution?: TrainingEvolution }>;
+};
+
 const TRAINING_PROOF_PATH = '/api/platform/v1/link-proofs/exchange';
 const TRAINING_RECEIPT_RECONCILE_PATH = '/api/platform/v1/link-proofs/reconcile';
 export const TRAINING_SUMMARY_PATH = '/api/platform/v1/training-summary';
+export const TRAINING_EVOLUTION_PATH = '/api/platform/v1/training-evolution';
 const TRAINING_LINK_AUDIENCE = '2j-training-account-link';
 const TRAINING_LINK_PURPOSE = 'training-account-link';
 const proofAssertionSchema = z.object({ v: z.literal(1), code: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict();
@@ -251,7 +273,7 @@ function boundedUrl(baseUrl: string, allowedOrigins: string[], allowInsecureLoca
   if (base.username || base.password || base.pathname !== '/' || base.search || base.hash) throw new Error('base URL must be an origin');
   if (base.protocol !== 'https:' && !(allowInsecureLocalForTests && base.protocol === 'http:' && isLoopback(base.hostname))) throw new Error('HTTPS is required');
   if (!allowedOrigins.includes(base.origin)) throw new Error('origin is not allowed');
-  return { url: new URL(TRAINING_SUMMARY_PATH, base.origin), path: TRAINING_SUMMARY_PATH };
+  return { url: new URL(TRAINING_SUMMARY_PATH, base.origin), path: TRAINING_SUMMARY_PATH, origin: base.origin };
 }
 
 async function readBoundedBody(response: Response, maxBytes: number, signal: AbortSignal) {
@@ -315,6 +337,54 @@ export function createTrainingAdapter(options: {
         clearTimeout(timeout);
         externalSignal?.removeEventListener('abort', abortFromExternal);
       }
+    },
+  };
+}
+
+/** Signed A68 Home evolution transport. The old 2J-089 summary adapter remains independent. */
+export function createTrainingEvolutionAdapter(options: {
+  enabled?: boolean; baseUrl?: string; allowedOrigins?: string[]; fetcher?: typeof fetch;
+  signRequest?: (canonicalRequest: string, signal: AbortSignal) => Promise<string>; keyId?: string;
+  timeoutMs?: number; maxResponseBytes?: number; allowInsecureLocalForTests?: boolean;
+} = {}): TrainingEvolutionAdapter {
+  return {
+    async getEvolution(input, externalSignal) {
+      if (!options.enabled || !options.baseUrl || !options.fetcher || !options.signRequest || !options.keyId || !options.allowedOrigins?.length) return { status: 'disabled' };
+      const personId = personUuid.safeParse(input.personId), trainingUserId = trainingUserIdSchema.safeParse(input.trainingUserId);
+      const consentVersion = z.number().int().positive().safeParse(input.consentVersion), cursor = input.cursor === null ? { success: true as const, data: null } : evolutionCursorSchema.safeParse(input.cursor);
+      const limit = z.number().int().min(1).max(100).safeParse(input.limit);
+      if (!personId.success || !trainingUserId.success || !consentVersion.success || !cursor.success || !limit.success) return { status: 'unavailable' };
+      const controller = new AbortController();
+      const abortFromExternal = () => controller.abort(externalSignal?.reason);
+      if (externalSignal?.aborted) abortFromExternal(); else externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
+      const timeout = setTimeout(() => controller.abort(new Error('deadline exceeded')), Math.max(1, Math.min(options.timeoutMs ?? 2_000, 5_000)));
+      const abortPromise = new Promise<never>((_resolve, reject) => {
+        if (controller.signal.aborted) reject(controller.signal.reason ?? new Error('request aborted'));
+        else controller.signal.addEventListener('abort', () => reject(controller.signal.reason ?? new Error('request aborted')), { once: true });
+      });
+      try {
+        const { origin } = boundedUrl(options.baseUrl, options.allowedOrigins, options.allowInsecureLocalForTests === true);
+        const path = TRAINING_EVOLUTION_PATH, timestamp = new Date().toISOString(), requestId = randomUUID();
+        const checkedAt = timestamp;
+        const body = Buffer.from(JSON.stringify({
+          v: 1, personId: personId.data, trainingUserId: trainingUserId.data,
+          authorization: { permission: 'training.read', permissionGranted: true, capability: 'workoutHistory', capabilityGranted: true, accessState: 'entitled', checkedAt,
+            consent: { purpose: 'home_evolution', status: 'granted', version: consentVersion.data, checkedAt } },
+          cursor: cursor.data, limit: limit.data,
+        }), 'utf8');
+        const signing: ServiceSigningInput = { keyId: options.keyId, timestamp, requestId, method: 'POST', path, body };
+        const headers = await Promise.race([buildTrainingServiceAuthHeaders(signing, options.signRequest, controller.signal), abortPromise]);
+        if (controller.signal.aborted) return { status: 'unavailable' };
+        const response = await Promise.race([options.fetcher(new URL(path, origin), { method: 'POST', redirect: 'error', signal: controller.signal,
+          headers: { accept: 'application/json', 'content-type': 'application/json', 'cache-control': 'no-store', ...headers }, body }), abortPromise]);
+        if (response.status !== 200 || !response.ok) return { status: 'unavailable' };
+        const raw = await Promise.race([readBoundedBody(response, Math.max(1, Math.min(options.maxResponseBytes ?? 65_536, 65_536)), controller.signal), abortPromise]);
+        let decoded: unknown; try { decoded = JSON.parse(raw); } catch { return { status: 'unavailable' }; }
+        const parsed = trainingEvolutionResponseSchema.safeParse(decoded);
+        if (!parsed.success || parsed.data.personId.toLowerCase() !== personId.data || parsed.data.trainingUserId !== trainingUserId.data) return { status: 'unavailable' };
+        return { status: 'available', evolution: parsed.data };
+      } catch { return { status: 'unavailable' }; }
+      finally { clearTimeout(timeout); externalSignal?.removeEventListener('abort', abortFromExternal); }
     },
   };
 }
