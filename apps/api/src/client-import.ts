@@ -20,7 +20,7 @@ export type ClientImportRow = {
 };
 export type ClientImportPreview = {
   rows: ClientImportRow[]; rowCount: number; validCount: number; invalidCount: number; sourceFormat: 'csv' | 'xlsx' | 'xls';
-  timpSummary?: { total: number; active: number; inactive: number; incomplete: number; incompleteByField: Record<'email' | 'phone' | 'gender' | 'birthDate', number>; duplicateEmailRows: number; duplicatePhoneRows: number; minorsReview: number };
+  timpSummary?: { total: number; asOfDate: string; active: number; inactive: number; incomplete: number; incompleteByField: Record<'email' | 'phone' | 'gender' | 'birthDate', number>; duplicateEmailRows: number; duplicatePhoneRows: number; minorsReview: number };
 };
 
 function decodeCsv(data: Buffer): string {
@@ -304,7 +304,7 @@ export function previewTimpRows(rawRows: string[][], sourceFormat: ClientImportP
   return {
     rows, rowCount: rows.length, validCount, invalidCount: rows.length - validCount, sourceFormat,
     timpSummary: {
-      total: rows.length, active: rows.filter((row) => row.activityStatus === 'active').length,
+      total: rows.length, asOfDate: today, active: rows.filter((row) => row.activityStatus === 'active').length,
       inactive: rows.filter((row) => row.activityStatus === 'inactive').length,
       incomplete: rows.filter((row) => row.completenessStatus === 'imported_incomplete').length,
       incompleteByField, duplicateEmailRows, duplicatePhoneRows,
@@ -379,11 +379,11 @@ async function readUpload(request: FastifyRequest, reply: any): Promise<Upload |
 }
 
 /** Parses the file and marks what already exists; the preview and the real import share this so they can never disagree. */
-async function buildImportPreview(db: DB, { fileData, sourceFormat }: Upload): Promise<ClientImportPreview> {
+async function buildImportPreview(db: DB, { fileData, sourceFormat }: Upload, now: Date = new Date()): Promise<ClientImportPreview> {
   const rawRows = sourceFormat === 'csv' ? parseCsvRows(fileData) : sourceFormat === 'xlsx' ? await parseXlsxRows(fileData) : parseXlsRows(fileData);
   const timp = isTimpHeader(rawRows[0] ?? []);
   if (sourceFormat === 'xls' && !timp) throw new Error('timp_columns_missing');
-  const preliminary = timp ? previewTimpRows(rawRows, sourceFormat) : previewClientRows(rawRows, sourceFormat as 'csv' | 'xlsx');
+  const preliminary = timp ? previewTimpRows(rawRows, sourceFormat, { now }) : previewClientRows(rawRows, sourceFormat as 'csv' | 'xlsx');
   const emails = new Set(preliminary.rows.flatMap((row) => row.email ? [row.email] : []));
   const phones = new Set(preliminary.rows.flatMap((row) => row.phone ? [normalizePhone(row.phone)] : []));
   const existing: Array<{ email: string | null; phone: string | null }> = emails.size || phones.size ? await db`
@@ -393,7 +393,7 @@ async function buildImportPreview(db: DB, { fileData, sourceFormat }: Upload): P
     )` as Array<{ email: string | null; phone: string | null }> : [];
   const existingEmails = new Set(existing.flatMap((row) => row.email ? [row.email] : []));
   const existingPhones = new Set(existing.flatMap((row) => row.phone ? [normalizePhone(row.phone)] : []));
-  return timp ? previewTimpRows(rawRows, sourceFormat, { existingEmails, existingPhones })
+  return timp ? previewTimpRows(rawRows, sourceFormat, { existingEmails, existingPhones, now })
     : sourceFormat === 'csv' ? previewClientRows(rawRows, 'csv', existingEmails) : previewClientRows(rawRows, 'xlsx', existingEmails);
 }
 
@@ -458,7 +458,7 @@ async function commitImport(db: DB, actor: AuthorizationContext, upload: Upload,
   }) as Promise<{ replayed: boolean; result: ClientImportResult }>;
 }
 
-export function registerClientImportRoutes(app: FastifyInstance, db: DB, resolveStaff: (request: FastifyRequest) => Promise<AuthorizationContext | null>, enabled = false, commitEnabled = false) {
+export function registerClientImportRoutes(app: FastifyInstance, db: DB, resolveStaff: (request: FastifyRequest) => Promise<AuthorizationContext | null>, enabled = false, commitEnabled = false, now: () => Date = () => new Date()) {
   app.post('/api/clients/import/preview', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const actor = await resolveStaff(request);
@@ -468,17 +468,20 @@ export function registerClientImportRoutes(app: FastifyInstance, db: DB, resolve
     const upload = await readUpload(request, reply);
     if (!upload) return;
     let parsed: ClientImportPreview;
-    try { parsed = await buildImportPreview(db, upload); } catch (error) { return failure(reply, error); }
+    const previewId = randomUUID();
+    const previewedAt = now();
+    try { parsed = await buildImportPreview(db, upload, previewedAt); } catch (error) { return failure(reply, error); }
     try {
       await db.begin(async (tx) => {
-        await tx`INSERT INTO client_import_preview_audit(id,actor_id,source_format,row_count,valid_count,invalid_count) VALUES (${randomUUID()},${actor.actorId},${parsed.sourceFormat},${parsed.rowCount},${parsed.validCount},${parsed.invalidCount})`;
+        await tx`INSERT INTO client_import_preview_audit(id,actor_id,source_format,row_count,valid_count,invalid_count,file_digest,as_of_date)
+          VALUES (${previewId}::uuid,${actor.actorId},${parsed.sourceFormat},${parsed.rowCount},${parsed.validCount},${parsed.invalidCount},${digestOf(upload.fileData)},${parsed.timpSummary?.asOfDate ?? null})`;
       });
     } catch (error) {
       const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'unknown';
       request.log.error({ databaseCode: code, route: 'POST /api/clients/import/preview' }, 'client import preview audit failed');
       return reply.code(500).send({ error: 'internal_error' });
     }
-    return reply.send({ mode: 'dry_run', commitAvailable: commitEnabled && can(actor, 'settings.manage'), approvalRequiredForRealImport: true, fileDigest: digestOf(upload.fileData), ...parsed });
+    return reply.send({ mode: 'dry_run', previewId, commitAvailable: commitEnabled && can(actor, 'settings.manage'), approvalRequiredForRealImport: true, fileDigest: digestOf(upload.fileData), ...parsed });
   });
 
   // The confirmation travels in headers so it is checked before the file is even parsed: the digest proves this is the file that was previewed.
@@ -489,13 +492,19 @@ export function registerClientImportRoutes(app: FastifyInstance, db: DB, resolve
     if (!can(actor, 'clients.manage') || !can(actor, 'settings.manage')) return reply.code(403).send({ error: 'permission_denied' });
     if (!enabled || !commitEnabled) return reply.code(404).send({ error: 'client_import_commit_disabled' });
     const header = (name: string) => { const value = request.headers[name]; return typeof value === 'string' ? value.trim() : ''; };
+    const previewId = uuid.safeParse(header('x-import-preview-id'));
     const digest = header('x-import-digest'); const expectedRows = Number(header('x-import-expected-rows'));
-    if (header('x-import-confirm') !== 'IMPORTAR' || !/^[0-9a-f]{64}$/.test(digest) || !Number.isInteger(expectedRows) || expectedRows < 0 || expectedRows > MAX_ROWS) return reply.code(400).send({ error: 'confirmation_required' });
+    if (header('x-import-confirm') !== 'IMPORTAR' || !previewId.success || !/^[0-9a-f]{64}$/.test(digest) || !Number.isInteger(expectedRows) || expectedRows < 0 || expectedRows > MAX_ROWS) return reply.code(400).send({ error: 'confirmation_required' });
     const upload = await readUpload(request, reply);
     if (!upload) return;
     if (digestOf(upload.fileData) !== digest) return reply.code(409).send({ error: 'file_changed_since_preview' });
+    const [storedPreview] = await db`SELECT actor_id AS "actorId",source_format AS "sourceFormat",row_count AS "rowCount",file_digest AS "fileDigest",as_of_date::text AS "asOfDate"
+      FROM client_import_preview_audit WHERE id=${previewId.data}::uuid`;
+    if (!storedPreview || storedPreview.actorId !== actor.actorId || storedPreview.fileDigest !== digest || storedPreview.sourceFormat !== upload.sourceFormat || storedPreview.rowCount !== expectedRows) return reply.code(409).send({ error: 'preview_not_found' });
+    const committedAt = now();
+    if (storedPreview.asOfDate && canaryDateOnly(committedAt) !== storedPreview.asOfDate) return reply.code(409).send({ error: 'preview_date_changed' });
     let preview: ClientImportPreview;
-    try { preview = await buildImportPreview(db, upload); } catch (error) { return failure(reply, error); }
+    try { preview = await buildImportPreview(db, upload, committedAt); } catch (error) { return failure(reply, error); }
     if (preview.rowCount !== expectedRows) return reply.code(409).send({ error: 'row_count_changed' });
     try {
       const { replayed, result } = await commitImport(db, actor, upload, preview, digest);

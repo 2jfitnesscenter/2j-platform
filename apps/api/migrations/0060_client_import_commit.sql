@@ -19,6 +19,13 @@ CREATE TABLE client_import_runs (
   CONSTRAINT client_import_runs_counts CHECK (created_count + skipped_count = row_count AND active_count + inactive_count = created_count)
 );
 
+-- Bind a confirmation to the exact previewed file and Canary-local activity cutoff.
+-- These values contain no client data and are append-only with the existing audit row.
+ALTER TABLE client_import_preview_audit
+  ADD COLUMN file_digest char(64),
+  ADD COLUMN as_of_date date,
+  ADD CONSTRAINT client_import_preview_file_digest_format CHECK (file_digest IS NULL OR file_digest ~ '^[0-9a-f]{64}$');
+
 CREATE FUNCTION client_import_runs_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'client import runs are append-only' USING ERRCODE='55000'; END;
 $$;

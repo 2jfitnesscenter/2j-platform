@@ -184,6 +184,14 @@ export function parseTrustedProxies(value: unknown): string[] {
   });
 }
 
+export function clientImportRuntimeFlags(env: NodeJS.ProcessEnv = process.env) {
+  const previewEnabled = env.CLIENT_IMPORT_PREVIEW_ENABLED === 'true';
+  return {
+    clientImportPreviewEnabled: previewEnabled,
+    clientImportCommitEnabled: previewEnabled && env.CLIENT_IMPORT_COMMIT_ENABLED === 'true',
+  };
+}
+
 export type ServerOptions = {
   authorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<AuthorizationContext | null>;
   /** Exact trusted identity subject granted the owner-only panel capability. Never derived from request input or role. */
@@ -194,6 +202,8 @@ export type ServerOptions = {
   clientAuthorizationResolver?: (request: import('fastify').FastifyRequest) => Promise<ClientAuthorizationContext | null>;
   /** Injectable clock for deterministic Member read-contract tests; defaults to the system clock. */
   memberNowProvider?: () => Date;
+  /** Injectable clock for deterministic TIMP import preview/confirmation boundaries. */
+  clientImportNowProvider?: () => Date;
   memberPilotAuthEnabled?: boolean;
   memberPilotBookingEnabled?: boolean;
   memberPilotCohortManagementEnabled?: boolean;
@@ -415,7 +425,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   const objectStorage = options.objectStorage ?? defaultObjectStorage();
   registerStoreMediaRoutes(app, client, authorizationResolver, objectStorage);
   registerClientDocumentRoutes(app, client, authorizationResolver, clientAuthorizationResolver, objectStorage);
-  registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true, options.clientImportCommitEnabled === true);
+  registerClientImportRoutes(app, client, authorizationResolver, options.clientImportPreviewEnabled === true, options.clientImportCommitEnabled === true, options.clientImportNowProvider);
   registerDashboardRoutes(app, client, authorizationResolver);
   registerPersonIdentityRoutes(app, client, authorizationResolver, options.trainingLinkingEnabled === true);
   registerTrainingLinkTransactionRoutes(app, client, {
@@ -805,8 +815,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const app = buildServer(undefined, {
     authorizationResolver: async () => localContext,
     ownerActorId: process.env.PLATFORM_OWNER_ACTOR_ID ?? null,
-    clientImportPreviewEnabled: process.env.CLIENT_IMPORT_PREVIEW_ENABLED === 'true',
-    clientImportCommitEnabled: process.env.CLIENT_IMPORT_COMMIT_ENABLED === 'true',
+    ...clientImportRuntimeFlags(),
     ownerPersonId: process.env.PLATFORM_OWNER_PERSON_ID ?? null,
     staffAuthEnabled: process.env.PLATFORM_STAFF_AUTH_ENABLED === 'true',
     staffAppOrigin: process.env.STAFF_APP_ORIGIN ?? null,

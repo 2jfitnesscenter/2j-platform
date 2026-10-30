@@ -14,9 +14,9 @@ after(() => dom.window.close());
 const DIGEST = 'a'.repeat(64);
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const preview = (extra = {}) => ({
-  commitAvailable: true, fileDigest: DIGEST, rowCount: 5, validCount: 4, invalidCount: 1, sourceFormat: 'xls',
+  commitAvailable: true, previewId: '11111111-1111-4111-8111-111111111111', fileDigest: DIGEST, rowCount: 5, validCount: 4, invalidCount: 1, sourceFormat: 'xls',
   rows: [{ rowNumber: 2, errors: [] }, { rowNumber: 6, errors: ['first_name_invalid'] }],
-  timpSummary: { total: 5, active: 3, inactive: 1, incomplete: 2, incompleteByField: { email: 1, phone: 1, gender: 1, birthDate: 1 }, duplicateEmailRows: 2, duplicatePhoneRows: 0, minorsReview: 1 },
+  timpSummary: { total: 5, asOfDate: '2026-10-30', active: 3, inactive: 1, incomplete: 2, incompleteByField: { email: 1, phone: 1, gender: 1, birthDate: 1 }, duplicateEmailRows: 2, duplicatePhoneRows: 0, minorsReview: 1 },
   ...extra,
 });
 const choose = (name = 'socios.xls') => fireEvent.change(screen.getByLabelText('Archivo de TIMP'), { target: { files: [new File(['x'], name)] } });
@@ -31,6 +31,7 @@ test('the owner previews the file, sees counts and problem rows, and nothing is 
   fireEvent.click(screen.getByRole('button', { name: 'Ver vista previa' }));
   const facts = await screen.findByRole('list', { name: 'Vista previa de la importación' });
   assert.match(facts.textContent, /5 registros en el archivo/); assert.match(facts.textContent, /Activos 3 con reserva en los últimos 365 días/); assert.match(facts.textContent, /Inactivos 1 sin reserva reciente/);
+  assert.match(facts.textContent, /Actividad calculada a 2026-10-30 \(Atlantic\/Canary\)/);
   assert.match(facts.textContent, /2 con la ficha incompleta \(1 sin correo, 1 sin teléfono, 1 sin género, 1 sin fecha de nacimiento\)/);
   assert.match(facts.textContent, /2 filas con correo repetido/); assert.match(facts.textContent, /1 sin fecha de nacimiento: se marcan por si son menores/);
   fireEvent.click(screen.getByText('Ver filas con error'));
@@ -55,7 +56,7 @@ test('confirming sends the previewed digest and row count with the typed confirm
   fireEvent.click(screen.getByRole('button', { name: 'Importar 4 clientes' }));
   const result = await screen.findByRole('list', { name: 'Resultado de la importación' });
   const commit = calls.find((call) => call.url.endsWith('/commit'));
-  assert.deepEqual({ ...commit.options.headers }, { 'x-import-confirm': 'IMPORTAR', 'x-import-digest': DIGEST, 'x-import-expected-rows': '5' });
+  assert.deepEqual({ ...commit.options.headers }, { 'x-import-confirm': 'IMPORTAR', 'x-import-preview-id': '11111111-1111-4111-8111-111111111111', 'x-import-digest': DIGEST, 'x-import-expected-rows': '5' });
   assert.match(result.textContent, /4 clientes creados de 5/); assert.match(result.textContent, /3 activos · 1 inactivos/); assert.match(result.textContent, /2 con la ficha incompleta/); assert.match(result.textContent, /1 sin correo guardado por estar repetido/); assert.match(result.textContent, /1 filas no importadas/);
   assert.ok(screen.getByRole('link', { name: 'Ver clientes' }));
 });
@@ -88,6 +89,16 @@ test('a changed file after the preview is refused by the server and the owner is
   fireEvent.click(screen.getByRole('button', { name: 'Importar 4 clientes' }));
   await waitFor(() => assert.match(screen.getByRole('alert').textContent, /no es el mismo que se revisó/));
   assert.ok(screen.getByRole('button', { name: 'Importar 4 clientes' }), 'still on the preview, nothing was imported');
+});
+
+test('a preview from the previous Canary date asks the owner to regenerate and review it', async () => {
+  globalThis.fetch = async (url) => String(url).endsWith('/preview') ? response(preview()) : response({ error: 'preview_date_changed' }, 409);
+  render(React.createElement(ImportPage));
+  choose(); fireEvent.click(screen.getByRole('button', { name: 'Ver vista previa' }));
+  fireEvent.click(await screen.findByLabelText(/Entiendo que se crearán 4 clientes/));
+  fireEvent.click(screen.getByRole('button', { name: 'Importar 4 clientes' }));
+  await waitFor(() => assert.match(screen.getByRole('alert').textContent, /Ha cambiado el día en Canarias/));
+  assert.ok(screen.getByRole('button', { name: 'Importar 4 clientes' }), 'no success state is shown');
 });
 
 test('Importar clientes is offered only to profiles that manage settings', () => {
