@@ -144,7 +144,7 @@ function BusinessTab() {
     {settings === 'denied' && <p className="my-gym-empty" role="status">Tu perfil no puede ver los ajustes económicos del centro.</p>}
     {settings === 'error' && <p className="my-gym-empty" role="alert">No se pudieron cargar los datos del negocio.</p>}
     {rows && <dl className="my-gym-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
-    <div className="my-gym-notconnected" role="note"><Icon icon={icons.CircleAlert} size={20} /><span><strong>No conectado.</strong> Razón social, contacto, dirección, logotipo y colores del centro todavía no se guardan en Platform; no se muestran campos editables que no guardarían nada.</span></div>
+    <div className="my-gym-notconnected" role="note"><Icon icon={icons.CircleAlert} size={20} /><span><strong>Dónde se editan.</strong> Razón social, contacto y dirección del centro se guardan en Configuración → Centro; el logotipo de las facturas, en Configuración → Facturación. Los colores son los oficiales de 2J y no se editan por centro. Aquí solo se consultan.</span></div>
   </Card>;
 }
 
