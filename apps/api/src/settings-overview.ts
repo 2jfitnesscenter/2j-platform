@@ -25,7 +25,7 @@ export function registerSettingsOverviewRoutes(app: FastifyInstance<any, any, an
     if (!context) return reply.code(401).send({ error: 'authentication_required' });
     if (!can(context, 'settings.manage')) return reply.code(403).send({ error: 'permission_denied' });
     const [settings] = await db`SELECT due_day AS "dueDay",grace_days AS "graceDays",timezone,debt_blocks_new_reservations AS "debtBlocksNewReservations",fiscal_legal_gate_open AS "fiscalLegalGateOpen",document_retention_months AS "documentRetentionMonths" FROM economic_settings WHERE singleton=true`;
-    const profiles = Object.entries(rolePermissions).map(([id, grants]) => {
+    const profiles = Object.entries(rolePermissions).filter(([id]) => id !== 'owner').map(([id, grants]) => {
       const wildcard = grants.includes('*');
       const groups = new Map<string, string[]>();
       if (!wildcard) for (const permission of grants) { const group = permission.split('.')[0] ?? permission; groups.set(group, [...(groups.get(group) ?? []), permission]); }

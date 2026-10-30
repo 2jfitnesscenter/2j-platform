@@ -1,11 +1,13 @@
+import { apiFetch } from './api-fetch.js';
 import React from 'react';
 import { GlobalSearchDialog } from './global-search.js';
 import { Icon, IconButton, icons, type LucideIcon } from '@2j/ui';
+import { StaffLogin } from './staff-login.js';
 
-const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
+const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 export type CommandCenterModel = {
   timezone: string;
-  permissions: { calendar:boolean; clients:boolean; communications:boolean; documents:boolean; sensitiveReview:boolean; followup:boolean; billing:boolean; cash:boolean; transfers:boolean; staff:boolean; absences:boolean; timeclock:boolean };
+  permissions: { calendar:boolean; clients:boolean; communications:boolean; documents:boolean; sensitiveReview:boolean; followup:boolean; billing:boolean; invoices?:boolean; cash:boolean; transfers:boolean; staff:boolean; absences:boolean; timeclock:boolean };
   today: { sessionCount:number; upcomingCount:number; capacity:number; occupied:number; waitlistCount:number; unassignedCount:number; sessions:Array<{id:string;serviceName:string;professionalName:string|null;startsAt:string;occupied:number;capacity:number;free:number;waitlistCount:number;isNow:boolean;state:'upcoming'|'in_progress'|'finished'}>; nextSession:{id:string;serviceName:string;startsAt:string;professionalName:string|null}|null };
   clients: { active:number; recentSignups:number }|null;
   attention: Array<{id:string;kind:string;title:string;summary:string;href:string;ageAt:string|null}>;
@@ -13,7 +15,7 @@ export type CommandCenterModel = {
   team: {active:number;workingNow:number;activeAbsences:number;substitutions:number}|null;
   unread: number;
   quickActions: Array<{id:string;label:string;href:string}>;
-  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null; expiringPlans?:Array<{assignmentId:string;clientId:string;clientName:string;planName:string;endsOn:string}>|null; recentMovements?:Array<{id:string;kind:'payment'|'refund';amountCents:number;concept:string;clientName:string;occurredAt:string}>|null };
+  commercial?: { plans:{activeCount:number;expiringSoonCount:number}|null; transfers:{pendingCount:number}|null; storeSales:{monthCount:number;monthTotalCents:number}|null; lowStock:{count:number}|null; expiringPlans?:Array<{assignmentId:string;clientId:string;clientName:string;planName:string;endsOn:string}>|null; recentMovements?:Array<{id:string;chargeId?:string;kind:'payment'|'refund';amountCents:number;concept:string;clientName:string;occurredAt:string}>|null };
 };
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
@@ -45,13 +47,14 @@ const routes={
   management:{id:'management',label:'Panel de gestión',href:'#management',permission:'ownerPanel',icon:icons.ShieldCheck},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
+  import:{id:'import',label:'Importar clientes',href:'#import',permission:'notificationSettings',icon:icons.Users},
   settings:{id:'settings',label:'Configuración',href:'#settings',permission:'notificationSettings',icon:icons.Settings},
   'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
   {id:'operation',label:'Operación',icon:icons.LayoutDashboard,children:[routes.home,routes.activity,routes.timeclock,routes.calendar,routes.clients]},
   {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.contracts,routes.plans,routes.economics,routes.caja,routes.store,routes.promotions]},
-  {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.settings,routes['notification-settings']]},
+  {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.import,routes.settings,routes['notification-settings']]},
   {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.management,routes.monitoring]},
 ];
 /** Groups that start open on a wide sidebar. */
@@ -105,6 +108,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const [route,setRoute] = React.useState(routeId);
   const [data,setData] = React.useState<CommandCenterModel|null>(null);
   const [capabilities,setCapabilities] = React.useState<NavigationCapabilities|null>(null);
+  const [authRequired,setAuthRequired] = React.useState(false);
   const [state,setState] = React.useState<'loading'|'ready'|'error'>('loading');
   const [error,setError] = React.useState('');
   const [searchOpen,setSearchOpen] = React.useState(false);
@@ -122,11 +126,11 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const menuButtonRef = React.useRef<HTMLButtonElement>(null);
   const reload = React.useCallback(async()=>{
     setState('loading');setError('');
-    try { const response=await fetch(`${api}/api/dashboard/command-center`); if(!response.ok)throw new Error(response.status===401?'Inicia la vista local con un perfil demo.':'No se pudo cargar el Command Center.'); setData(await response.json() as CommandCenterModel);setState('ready'); }
+    try { const response=await apiFetch(`${api}/api/dashboard/command-center`,{credentials:'include',cache:'no-store'}); if(response.status===401){setAuthRequired(true);throw new Error('authentication_required');} if(!response.ok)throw new Error('No se pudo cargar el Command Center.'); setData(await response.json() as CommandCenterModel);setState('ready'); }
     catch(cause){setData(null);setError(cause instanceof Error?cause.message:'No se pudo cargar el inicio.');setState('error');}
   },[]);
   React.useEffect(()=>{ void reload();const change=()=>setRoute(routeId());window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change);},[reload]);
-  React.useEffect(()=>{let current=true;void fetch(`${api}/api/session/capabilities`).then(async response=>{if(!response.ok)throw new Error();const body=await response.json() as NavigationCapabilities;if(current)setCapabilities(body);}).catch(()=>{if(current)setCapabilities(null);});return()=>{current=false;};},[]);
+  React.useEffect(()=>{let current=true;void apiFetch(`${api}/api/session/capabilities`,{credentials:'include',cache:'no-store'}).then(async response=>{if(response.status===401){if(current)setAuthRequired(true);throw new Error();}if(!response.ok)throw new Error();const body=await response.json() as NavigationCapabilities;if(current)setCapabilities(body);}).catch(()=>{if(current)setCapabilities(null);});return()=>{current=false;};},[]);
   React.useEffect(()=>{const key=(event:KeyboardEvent)=>{const target=event.target as HTMLElement|null;const typing=!!target&&(target.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(target.tagName));if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();setSearchOpen(true);}else if(event.key==='/'&&!typing&&!event.ctrlKey&&!event.metaKey&&!event.altKey){event.preventDefault();setSearchOpen(true);}if(event.key==='Escape'){setSearchOpen(false);setDrawerOpen(false);}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
   // Drawer a11y: focus moves inside when it opens, returns to the menu button when it closes, and Tab stays inside while open.
   const drawerWasOpen=React.useRef(false);
@@ -148,8 +152,10 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const navigation=getProfessionalNavigation(permissions,route);
   const pageContext=getProfessionalPageContext(route);
   const toggleGroup=(groupId:string)=>setExpandedGroups(current=>{const next=new Set(current);if(next.has(groupId))next.delete(groupId);else next.add(groupId);return next;});
+  const logout=async()=>{try{const response=await apiFetch(`${api}/api/staff/auth/logout`,{method:'POST',credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();setAuthRequired(true);setCapabilities(null);setData(null);}catch{setError('No se pudo cerrar la sesión. Inténtalo de nuevo.');}};
   const sidebarHidden=isDrawer&&!drawerOpen;
   const sidebarProps=isDrawer?{role:'dialog' as const,'aria-modal':drawerOpen||undefined,'aria-label':'Navegación principal'}:{'aria-label':'Navegación principal'};
+  if(authRequired)return <StaffLogin/>;
   return <CommandContext.Provider value={{data,state,error,reload,capabilities}}><div className={`app-frame ${isRail?'is-rail':''} ${isDrawer?'is-drawer':''} ${drawerOpen?'drawer-open':''}`}>
     <a className="skip-link" href="#main-content" onClick={skipToContent}>Saltar al contenido</a>
     {isDrawer&&drawerOpen&&<div className="app-scrim" data-2j-design="v2" role="presentation" onClick={()=>setDrawerOpen(false)}/>}
@@ -172,7 +178,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
       {isDrawer&&<IconButton ref={menuButtonRef} className="app-menu-button" icon={icons.Menu} label="Abrir navegación" aria-expanded={drawerOpen} aria-controls="app-sidebar" onClick={()=>setDrawerOpen(true)}/>}
       <div className="app-location" aria-label="Ubicación actual">{pageContext.section!==pageContext.page&&<><span>{pageContext.section}</span><span className="app-location-divider" aria-hidden="true">/</span></>}<strong>{pageContext.page}</strong></div>
       <button className="global-search-trigger" type="button" onClick={()=>setSearchOpen(true)} aria-label="Buscar en 2J"><Icon icon={icons.Search} size={20}/><span>Buscar clientes, equipo, servicios o pantallas</span><kbd>Ctrl K</kbd></button>
-      <span className="local-pill"><span className="status-dot"/> {environmentLabelForHost(window.location.hostname)}</span></header>
+      <div className="app-topbar-actions"><span className="local-pill"><span className="status-dot"/> {environmentLabelForHost(window.location.hostname)}</span><button type="button" className="staff-logout" onClick={()=>void logout()}>Salir</button></div></header>
       <div className="app-page" id="main-content" tabIndex={-1}>{children}</div>
     </div>
     <GlobalSearchDialog open={searchOpen} onClose={()=>setSearchOpen(false)} api={api} screens={navigation.flatMap(section=>(section.children??(section.route?[section.route]:[])).map(route=>({id:route.id,label:route.label,href:route.href,section:section.label})))}/>

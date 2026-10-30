@@ -117,6 +117,9 @@
 @media (max-width: 1023.98px) { .global-search-trigger kbd { display: none; } }
 .app-topbar .local-pill { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--2j-space-2); padding: 0 var(--2j-space-3); height: 1.75rem; border: 1px solid var(--2j-color-border); border-radius: var(--2j-radius-pill); background: var(--2j-color-surface); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); white-space: nowrap; }
 .app-topbar .local-pill .status-dot { margin: 0; }
+.app-topbar-actions { display:flex; align-items:center; gap:var(--2j-space-2); }
+.app-topbar .staff-logout { min-height:40px; padding:0 12px; border:1px solid var(--2j-color-border); border-radius:var(--2j-radius-md); background:var(--2j-color-surface); color:var(--2j-color-text-primary); cursor:pointer; }
+.app-topbar .staff-logout:hover { background:var(--2j-color-surface-subtle); }
 .app-menu-button { flex: 0 0 auto; margin-left: calc(-1 * var(--2j-space-2)); }
 
 @media (max-width: 1279.98px) { .app-topbar { padding-inline: var(--2j-space-6); } }
@@ -126,6 +129,7 @@
   .global-search-trigger > span, .global-search-trigger kbd { display: none; }
   .app-location > span:first-child, .app-location-divider { display: none; }
   .app-topbar .local-pill { padding: 0; width: 1.75rem; justify-content: center; font-size: 0; }
+  .app-topbar .staff-logout { min-height:38px; padding:0 9px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
