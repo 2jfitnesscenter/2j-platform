@@ -208,10 +208,16 @@ export function registerPlatformPasskeyRoutes(app: FastifyInstance<any, any, any
     const body = z.object({ reason: z.string().trim().min(3).max(80) }).strict().safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     const revoked = await db.begin(async tx => {
+      // Lock/consume enrollments first: registration claims its enrollment before inserting a key.
+      // This order ensures a registration already in flight commits before we revoke its new key.
+      const staffEnrollments = await tx`UPDATE platform_staff_passkey_enrollments SET consumed_at=now() WHERE person_id=${params.data.personId}::uuid AND consumed_at IS NULL RETURNING id,auth_subject_link_id`;
+      await tx`UPDATE platform_passkey_enrollments SET consumed_at=now() WHERE person_id=${params.data.personId}::uuid AND consumed_at IS NULL`;
       const keys = await tx`UPDATE platform_passkeys SET status='revoked',revoked_at=now() WHERE person_id=${params.data.personId}::uuid AND status='active' RETURNING id,auth_subject_link_id`;
       const sessions = await tx`UPDATE platform_member_sessions s SET revoked_at=now() FROM platform_person_auth_subjects a WHERE a.id=s.auth_subject_link_id AND a.person_id=${params.data.personId}::uuid AND a.provider=${PROVIDER} AND s.revoked_at IS NULL RETURNING s.person_id,s.auth_subject_link_id`;
       for (const row of sessions) await tx`INSERT INTO platform_member_session_audit_events(person_id,auth_subject_link_id,action) VALUES (${row.person_id},${row.auth_subject_link_id},'session.revoked')`;
-      await tx`UPDATE platform_passkey_enrollments SET consumed_at=now() WHERE person_id=${params.data.personId}::uuid AND consumed_at IS NULL`;
+      const staffSessions = await tx`UPDATE platform_staff_sessions s SET revoked_at=now() FROM platform_person_auth_subjects a WHERE a.id=s.auth_subject_link_id AND a.person_id=${params.data.personId}::uuid AND a.provider=${PROVIDER} AND s.revoked_at IS NULL RETURNING s.person_id,s.auth_subject_link_id`;
+      for (const row of staffSessions) await tx`INSERT INTO platform_staff_session_audit_events(person_id,auth_subject_link_id,action) VALUES (${row.person_id},${row.auth_subject_link_id},'session.revoked')`;
+      for (const enrollment of staffEnrollments) await tx`INSERT INTO platform_staff_session_audit_events(person_id,auth_subject_link_id,action,resource_id) VALUES (${params.data.personId}::uuid,${enrollment.auth_subject_link_id},'passkey.enrollment_revoked',${enrollment.id})`;
       for (const key of keys) await audit(tx as unknown as DB, params.data.personId, actor.actorId, 'passkey.revoked', key.id as string, { reason: body.data.reason });
       return keys.length;
     });
