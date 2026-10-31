@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
@@ -8,7 +8,7 @@ import { cancelUncoveredPeriodBookings } from '../src/membership-period-enforcem
 import { enqueueMembershipPaymentDueNotices, dispatchNotificationBatch } from '../src/notifications.ts';
 import { materializeAutomaticRenewals } from '../src/auto-renewal.ts';
 import { evaluateBookingEligibility } from '../src/booking-eligibility.ts';
-import { canaryLocalMidnightUtc } from '@2j/domain';
+import { canaryLocalMidnightUtc, sessionsForPeriod, weekdaysInRange } from '@2j/domain';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: A71 integration tests need disposable PostgreSQL.');
 const sourceUrl = new URL(process.env.DATABASE_URL);
@@ -22,6 +22,7 @@ await migrateDatabase(sql);
 const app = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'a71-admin', role: 'admin' }) });
 const trainerWithRenewal = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'a71-renewer', role: 'trainer', explicitPermissions: ['entitlements.renew'] }) });
 const trainerWithoutRenewal = buildServer(databaseUrl.toString(), { authorizationResolver: async () => ({ actorId: 'a71-trainer', role: 'trainer' }) });
+const extraApps=[];
 const [area] = await sql`SELECT id FROM areas WHERE normalized_name='la sala'`;
 if (!area) throw new Error('Synthetic fixture area La Sala is missing.');
 const localDate = (date = new Date()) => {
@@ -43,22 +44,28 @@ const monthWindow = () => {
 const window = monthWindow();
 
 after(async () => {
-  await Promise.all([app.close(), trainerWithRenewal.close(), trainerWithoutRenewal.close()]);
+  await Promise.all([app.close(), trainerWithRenewal.close(), trainerWithoutRenewal.close(),...extraApps.map(instance=>instance.close())]);
   await sql.end();
   await root.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
   await root.end();
 });
 
-async function makeMonthlyAssignment({ termKind = 'natural_month' } = {}) {
+async function makeMonthlyAssignment({ termKind = 'natural_month', unlimited = false, legacyFrequency = false } = {}) {
   const serviceResponse = await app.inject({ method: 'POST', url: '/api/services', payload: { name: `A71 ${randomUUID()}`, areaId: area.id, status: 'active' } });
   assert.equal(serviceResponse.statusCode, 201, serviceResponse.body);
   const service = serviceResponse.json();
   const planPayload = {
     name: `A71 mensual ${randomUUID()}`, serviceIds: [service.id], kind: 'recurring', renewalCadence: 'monthly', basePriceCents: 4500,
     ...(termKind == null ? {} : { termKind, paymentBlock:'enforce' }), ...(termKind === 'rolling_months' ? { termMonths: 3, paymentRule: 'grace_from_assignment_v1' } : termKind ? { paymentRule: 'monthly_day10_v1' } : {}),
-    rights: termKind==null ? [
+    rights: unlimited ? [
+      { rightType:'service_access',serviceId:service.id },
+      { rightType:'sessions_quota',serviceId:service.id,quotaScope:'per_service',quantityRule:'unlimited' },
+    ] : termKind==null&&!legacyFrequency ? [
       { rightType:'service_access',serviceId:service.id },
       { rightType:'sessions_quota',serviceId:service.id,quotaScope:'per_service',quantity:12 },
+    ] : termKind==null&&legacyFrequency ? [
+      { rightType:'service_access',serviceId:service.id },
+      { rightType:'sessions_quota',serviceId:service.id,quotaScope:'per_service',quantity:12,weeklyFrequency:2 },
     ] : [
       { rightType: 'service_access', serviceId: service.id },
       { rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'per_service', weeklyFrequency: 2, quantityRule: 'weekday_ratio_v1' },
@@ -81,6 +88,14 @@ async function makeMonthlyAssignment({ termKind = 'natural_month' } = {}) {
   const [period] = termKind == null ? [null] : await sql`SELECT id FROM assignment_entitlement_periods WHERE assignment_id=${assignment.id} AND right_id=${right.id} AND period_start=${window.startsOn}::date`;
   if(termKind!=null)assert.ok(period, 'contract assignment materializes its synthetic entitlement period');
   return { service, plan, client, assignment, rightId: right.id, period };
+}
+
+async function seedLegacyPeriod(fixture){
+  const id=randomUUID();const frequency=2;const sessions=sessionsForPeriod(weekdaysInRange(window.startsOn,window.endsOn),frequency);
+  const requestHash=createHash('sha256').update(`a71-legacy-period:${id}`).digest('hex');
+  await sql`INSERT INTO assignment_entitlement_periods(id,assignment_id,client_id,right_id,period_start,period_end,weekly_frequency,sessions_snapshot,snapshot,idempotency_key,request_hash)
+    VALUES (${id},${fixture.assignment.id},${fixture.client.id},${fixture.rightId},${window.startsOn}::date,${window.endsOn}::date,${frequency},${sessions},${sql.json({quantityRule:'weekday_ratio_v1',weeklyFrequency:frequency,sessionsSnapshot:sessions})},${randomUUID()},${requestHash})`;
+  return{id,sessions};
 }
 
 test('Programada permits reservations while unpaid through day 10, then day-11 worker cancels and restores the ledger once', async () => {
@@ -133,8 +148,16 @@ test('payment before the day-10 deadline keeps the period reservation and preven
   assert.equal(payment.statusCode,200,payment.body);
   const result=await cancelUncoveredPeriodBookings(sql,new Date(`${window.startsOn.slice(0,7)}-11T12:00:00.000Z`));
   assert.equal(result.cancelled,0,'a validated payment before the deadline prevents expiration');
+  assert.equal(result.checked,0,'fully paid charges do not occupy the worker candidate limit');
   const [reservation]=await sql`SELECT status FROM calendar_reservations WHERE id=${booking.json().id}`;
   assert.equal(reservation.status,'reserved');
+});
+
+test('overdue periods without active reservations do not occupy the cancellation worker limit',async()=>{
+  const fixture=await makeMonthlyAssignment();
+  const result=await cancelUncoveredPeriodBookings(sql,new Date(`${addDays(window.dueOn,1)}T12:00:00.000Z`));
+  assert.equal(result.checked,0);
+  assert.equal(result.cancelled,0);
 });
 
 test('day-8 reminder also covers legacy monthly assignments without a contract-terms row', async () => {
@@ -207,6 +230,44 @@ test('monthly auto-renewal permission is audited and materializes one pending ne
   const blocked=await sql.begin(tx=>evaluateBookingEligibility({tx,clientId:fixture.client.id,serviceId:fixture.service.id,startsAt:session.startsAt,sessionId:session.id,now:afterDeadline}));
   assert.equal(blocked.eligible,false);
   assert.equal(blocked.reason,'debt_restriction');
+});
+
+test('unlimited monthly bags cannot enable A71 renewal and cannot leave an orphan charge',async()=>{
+  const fixture=await makeMonthlyAssignment({unlimited:true});
+  const before=Number((await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${fixture.client.id}`)[0].count);
+  const response=await trainerWithRenewal.inject({method:'PATCH',url:`/api/clients/${fixture.client.id}/plans/${fixture.assignment.id}/auto-renewal`,headers:{'idempotency-key':randomUUID()},payload:{enabled:true,reason:'Renovación sintética'}});
+  assert.equal(response.statusCode,409);assert.equal(response.json().error,'automatic_renewal_requires_monthly_session_bags');
+  const result=await materializeAutomaticRenewals(sql,new Date(`${addDays(window.endsOn,-6)}T12:00:00.000Z`));
+  assert.equal(result.created,0);
+  assert.equal(Number((await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${fixture.client.id}`)[0].count),before);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM assignment_auto_renewal_events WHERE assignment_id=${fixture.assignment.id}`)[0].count,0);
+});
+
+test('automatic renewal skips a client archived after opt-in',async()=>{
+  const fixture=await makeMonthlyAssignment();const path=`/api/clients/${fixture.client.id}/plans/${fixture.assignment.id}/auto-renewal`;
+  const enabled=await trainerWithRenewal.inject({method:'PATCH',url:path,headers:{'idempotency-key':randomUUID()},payload:{enabled:true,reason:'Renovación sintética'}});assert.equal(enabled.statusCode,201,enabled.body);
+  const archived=await app.inject({method:'PATCH',url:`/api/clients/${fixture.client.id}/archive`});assert.equal(archived.statusCode,200,archived.body);
+  const before=Number((await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${fixture.client.id}`)[0].count);
+  const result=await materializeAutomaticRenewals(sql,new Date(`${addDays(window.endsOn,-6)}T12:00:00.000Z`));
+  assert.equal(result.created,0);
+  assert.equal(Number((await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${fixture.client.id}`)[0].count),before);
+});
+
+test('a paid legacy monthly renewal remains bookable after day 10',async()=>{
+  const fixture=await makeMonthlyAssignment({termKind:null,legacyFrequency:true});await seedLegacyPeriod(fixture);
+  const path=`/api/clients/${fixture.client.id}/plans/${fixture.assignment.id}/auto-renewal`;
+  const enabled=await trainerWithRenewal.inject({method:'PATCH',url:path,headers:{'idempotency-key':randomUUID()},payload:{enabled:true,reason:'Renovación sintética'}});assert.equal(enabled.statusCode,201,enabled.body);
+  const renewalDate=addDays(window.endsOn,-6);assert.equal((await materializeAutomaticRenewals(sql,new Date(`${renewalDate}T12:00:00.000Z`))).created,1);
+  const nextStart=addDays(window.endsOn,1),nextDue=`${nextStart.slice(0,7)}-10`;
+  const [charge]=await sql`SELECT c.id FROM economic_charges c JOIN assignment_entitlement_period_events e ON e.charge_id=c.id AND e.event_type='charge_linked' JOIN assignment_entitlement_periods p ON p.id=e.period_id WHERE p.assignment_id=${fixture.assignment.id} AND p.period_start=${nextStart}::date`;
+  assert.ok(charge);
+  const proof=await app.inject({method:'POST',url:'/api/economics/transfer-proofs',payload:{chargeId:charge.id,amountCents:4500,contentType:'application/pdf',fileName:'a71-legacy-paid.pdf',base64:Buffer.from('%PDF-1.7\nA71 synthetic').toString('base64')}});assert.equal(proof.statusCode,201,proof.body);
+  const paid=await trainerWithRenewal.inject({method:'POST',url:`/api/economics/transfer-proofs/${proof.json().id}/review`,payload:{decision:'validated',note:'Pago sintético de renovación'}});assert.equal(paid.statusCode,200,paid.body);
+  const afterDeadline=new Date(`${nextDue}T12:00:00.000Z`);afterDeadline.setUTCDate(afterDeadline.getUTCDate()+1);
+  const session=await app.inject({method:'POST',url:'/api/calendar/sessions',payload:{serviceId:fixture.service.id,areaId:area.id,startsAt:`${nextStart.slice(0,7)}-15T12:00:00.000Z`,durationMinutes:60,capacity:4}});assert.equal(session.statusCode,201,session.body);
+  const lateBookingApp=buildServer(databaseUrl.toString(),{authorizationResolver:async()=>({actorId:'a71-admin',role:'admin'}),bookingEligibilityResolver:request=>evaluateBookingEligibility({...request,now:afterDeadline})});extraApps.push(lateBookingApp);
+  const booked=await lateBookingApp.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:fixture.client.id}});
+  assert.equal(booked.statusCode,201,booked.body,`paid renewal remains usable after ${nextDue}`);
 });
 
 test('term-enabled multi-month assignments cannot enable monthly auto-renewal', async () => {

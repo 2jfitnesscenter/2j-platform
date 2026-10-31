@@ -19,7 +19,13 @@ export async function cancelUncoveredPeriodBookings(db: Db, now = new Date()) {
     JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
     LEFT JOIN LATERAL(SELECT e.charge_id FROM assignment_entitlement_period_events e WHERE e.period_id=p.id AND e.event_type='charge_linked' ORDER BY e.created_at DESC,e.id DESC LIMIT 1) linked ON true
     JOIN economic_charges c ON c.id=COALESCE(linked.charge_id,a.charge_id)
+    LEFT JOIN LATERAL(SELECT COALESCE(sum(amount_cents) FILTER(WHERE kind='payment'),0)::bigint AS paid,
+      COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0)::bigint AS net
+      FROM economic_transactions WHERE charge_id=c.id) balance ON true
     WHERE c.state='pending' AND c.due_on<${today}::date
+      AND balance.net<c.amount_cents AND NOT (balance.paid>0 AND balance.net=0)
+      AND EXISTS(SELECT 1 FROM calendar_reservation_rights cr JOIN calendar_reservations r ON r.id=cr.reservation_id
+        WHERE cr.assignment_id=p.assignment_id AND cr.entitlement_period_id=p.id AND r.status='reserved')
       AND v.kind='recurring' AND v.renewal_cadence='monthly' AND (v.term_kind IS NULL OR v.term_kind='natural_month')
     ORDER BY p.id LIMIT 500`;
   let cancelled = 0;
@@ -28,11 +34,12 @@ export async function cancelUncoveredPeriodBookings(db: Db, now = new Date()) {
       let periodCancelled = 0;
       await tx`SELECT id FROM client_plan_assignments WHERE id=${candidate.assignmentId} FOR UPDATE`;
       await tx`SELECT id FROM economic_charges WHERE id=${candidate.chargeId} FOR UPDATE`;
-      const [charge] = await tx`SELECT c.state,c.amount_cents AS amount,"balance".net::bigint AS net,c.due_on::text AS "dueOn"
-        FROM economic_charges c LEFT JOIN LATERAL(SELECT COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0) AS net
+      const [charge] = await tx`SELECT c.state,c.amount_cents AS amount,"balance".net::bigint AS net,"balance".paid::bigint AS paid,c.due_on::text AS "dueOn"
+        FROM economic_charges c LEFT JOIN LATERAL(SELECT COALESCE(sum(amount_cents) FILTER(WHERE kind='payment'),0)::bigint AS paid,
+          COALESCE(sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END),0)::bigint AS net
           FROM economic_transactions WHERE charge_id=c.id) balance ON true
         WHERE c.id=${candidate.chargeId}`;
-      if (!charge || charge.state!=='pending' || String(charge.dueOn)>=today || Number(charge.net)>=Number(charge.amount)) return 0;
+      if (!charge || charge.state!=='pending' || String(charge.dueOn)>=today || Number(charge.net)>=Number(charge.amount) || (Number(charge.paid)>0&&Number(charge.net)===0)) return 0;
       const [assignment] = await tx`SELECT a.charge_id AS "chargeId",v.kind,v.renewal_cadence AS cadence,v.term_kind AS "termKind"
         FROM client_plan_assignments a JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
         WHERE a.id=${candidate.assignmentId}`;
