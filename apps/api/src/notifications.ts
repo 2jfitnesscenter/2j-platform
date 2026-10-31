@@ -7,7 +7,7 @@ import type { ClientAuthorizationContext } from './communications.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
 type Tx = TransactionSql<Record<string, unknown>>;
-export const notificationEventTypes = ['booking.confirmed','booking.cancelled','waitlist.joined','waitlist.promoted','message.created','reminder.booking','entitlement.expiring','entitlement.low_balance','document.pending','staff.substitution','staff.transfer_pending','staff.timeclock_update','staff.cash_legacy_resolved'] as const;
+export const notificationEventTypes = ['booking.confirmed','booking.cancelled','booking.cancelled_by_membership','waitlist.joined','waitlist.promoted','message.created','reminder.booking','entitlement.expiring','entitlement.low_balance','entitlement.payment_due','document.pending','staff.substitution','staff.transfer_pending','staff.timeclock_update','staff.cash_legacy_resolved'] as const;
 export type NotificationEventType = typeof notificationEventTypes[number];
 
 /** Call from the domain transaction. A rollback therefore removes the event as well. */
@@ -24,12 +24,14 @@ export async function appendNotificationEvent(tx: Tx, event: {
 const labels: Record<NotificationEventType, { type: string; title: string; body: string; deeplink: string | null }> = {
   'booking.confirmed': { type:'booking_confirmed', title:'Reserva confirmada', body:'Tu plaza está confirmada.', deeplink:'/bookings' },
   'booking.cancelled': { type:'booking_cancelled', title:'Reserva cancelada', body:'Tu reserva ha sido cancelada.', deeplink:'/bookings' },
+  'booking.cancelled_by_membership': { type:'booking_cancelled_by_membership', title:'Reserva cancelada', body:'La reserva se ha cancelado porque la cuota del periodo sigue pendiente.', deeplink:'/bookings' },
   'waitlist.joined': { type:'waitlist_joined', title:'Lista de espera', body:'Te hemos añadido a la lista de espera.', deeplink:'/bookings' },
   'waitlist.promoted': { type:'waitlist_promoted', title:'¡Tienes plaza!', body:'Se ha confirmado tu plaza en la sesión.', deeplink:'/bookings' },
   'message.created': { type:'message_received', title:'Nuevo mensaje del centro', body:'El centro te ha enviado un mensaje.', deeplink:null },
   'reminder.booking': { type:'booking_reminder', title:'Tu próxima sesión', body:'Recuerda que tienes una sesión próximamente.', deeplink:'/bookings' },
   'entitlement.expiring': { type:'entitlement_expiring', title:'Tu plan está por terminar', body:'Revisa la vigencia de uno de tus planes.', deeplink:'/profile' },
   'entitlement.low_balance': { type:'entitlement_low_balance', title:'Te quedan pocas sesiones', body:'Consulta el saldo disponible de tu bono.', deeplink:'/profile' },
+  'entitlement.payment_due': { type:'entitlement_payment_due', title:'Cuota pendiente', body:'Recuerda completar el pago de tu cuota antes del día 10 para mantener tus reservas del periodo.', deeplink:'/profile' },
   'document.pending': { type:'document_pending', title:'Documento pendiente', body:'Tienes un documento del centro pendiente de completar.', deeplink:'/profile' },
   'staff.substitution': { type:'staff_substitution', title:'Cambio de cobertura', body:'Hay una actualización sobre una cobertura de equipo.', deeplink:'/agenda' },
   'staff.transfer_pending': { type:'staff_transfer_pending', title:'Validación pendiente', body:'Hay una operación pendiente de revisión en Gestión.', deeplink:'/economics' },
@@ -103,6 +105,26 @@ export async function enqueueDueBookingReminders(db: SqlClient, now = new Date()
       for (const row of docs) { await appendNotificationEvent(tx,{type:'document.pending',aggregateType:'client_form_assignment',aggregateId:row.id,clientId:row.clientId,dedupeKey:`document-pending:${row.id}`}); count++; }
     }
     return count;
+  });
+}
+
+/** In-app reminder two local calendar days before an assigned period's payment deadline. */
+export async function enqueueMembershipPaymentDueNotices(db: SqlClient, now = new Date()) {
+  const nowIso=now.toISOString();
+  return db.begin(async tx=>{
+    const rows=await tx`SELECT DISTINCT c.id AS "chargeId",c.client_id AS "clientId",c.due_on::text AS "dueOn"
+      FROM economic_charges c
+      JOIN client_plan_assignments a ON a.client_id=c.client_id AND (a.charge_id=c.id OR EXISTS(
+        SELECT 1 FROM assignment_entitlement_period_events linked WHERE linked.assignment_id=a.id AND linked.charge_id=c.id AND linked.event_type='charge_linked'))
+      JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
+      LEFT JOIN LATERAL(SELECT COALESCE(sum(CASE WHEN t.kind='payment' THEN t.amount_cents ELSE -t.amount_cents END),0) AS net FROM economic_transactions t WHERE t.charge_id=c.id) paid ON true
+      WHERE c.state='pending' AND c.due_on=(${nowIso}::timestamptz AT TIME ZONE 'Atlantic/Canary')::date+2
+        AND c.amount_cents>COALESCE(paid.net,0)
+        AND a.status='active'
+        AND v.kind='recurring' AND v.renewal_cadence='monthly' AND (v.term_kind IS NULL OR v.term_kind='natural_month')
+      ORDER BY "dueOn","chargeId" LIMIT 1000`;
+    for(const row of rows) await appendNotificationEvent(tx,{type:'entitlement.payment_due',aggregateType:'economic_charge',aggregateId:String(row.chargeId),clientId:String(row.clientId),dedupeKey:`membership-payment-due:${row.chargeId}:${row.dueOn}`});
+    return rows.length;
   });
 }
 

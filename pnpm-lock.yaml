@@ -27,6 +27,9 @@ importers:
       '@2j/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@2j/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@2j/ui':
         specifier: workspace:*
         version: link:../../packages/ui

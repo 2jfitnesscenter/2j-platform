@@ -91,13 +91,14 @@ export function deriveTermPaymentAccess(input: {
  */
 export async function evaluateTermPaymentAccess(
   tx: Tx,
-  assignments: readonly { assignmentId: string; termKind: string | null }[],
+  assignments: readonly { assignmentId: string; termKind: string | null; periodId?: string | null }[],
   businessNow: Date,
 ): Promise<Map<string, TermPaymentAccess>> {
   const termAssignments = assignments.filter(item => item.termKind !== null);
   const result = new Map<string, TermPaymentAccess>();
   if (!termAssignments.length) return result;
   const ids = termAssignments.map(item => item.assignmentId);
+  const periodIds = termAssignments.map(item => item.periodId).filter((value): value is string => Boolean(value));
 
   // Lock in a stable order to avoid conflicting multi-assignment booking attempts.
   await tx`SELECT c.id FROM economic_charges c
@@ -107,22 +108,31 @@ export async function evaluateTermPaymentAccess(
   // A second statement observes any payment/refund transaction committed while
   // this transaction waited for the charge lock (READ COMMITTED).
   const rows = await tx`SELECT a.id AS "assignmentId",a.client_id AS "clientId",a.plan_id AS "planId",a.sale_price_cents AS "salePriceCents",
-      a.charge_id AS "chargeId",v.term_kind AS "termKind",t.term_kind AS "contractTermKind",t.assigned_local_date::text AS "assignedLocalDate",
-      t.payment_rule AS "paymentRule",t.payment_block AS "paymentBlock",t.deadline_computation AS deadline,
+      a.charge_id AS "primaryChargeId",period_link.charge_id AS "periodChargeId",period_link.assignment_id AS "periodLinkAssignmentId",
+      COALESCE(period_link.charge_id,a.charge_id) AS "chargeId",v.term_kind AS "termKind",t.term_kind AS "contractTermKind",
+      COALESCE(period_link.snapshot->>'assignedLocalDate',t.assigned_local_date::text) AS "assignedLocalDate",
+      COALESCE(period_link.snapshot->>'paymentRule',t.payment_rule) AS "paymentRule",
+      COALESCE(period_link.snapshot->>'paymentBlock',t.payment_block) AS "paymentBlock",
+      COALESCE(period_link.snapshot->'deadlineComputation',t.deadline_computation) AS deadline,
       c.client_id AS "chargeClientId",c.plan_id AS "chargePlanId",c.due_on::text AS "dueOn",c.state AS "chargeState",c.amount_cents AS "requiredAmountCents",
       COALESCE(x.net,0)::bigint AS "netValidatedAmountCents"
     FROM client_plan_assignments a
     JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
     LEFT JOIN assignment_contract_terms t ON t.assignment_id=a.id
-    LEFT JOIN economic_charges c ON c.id=a.charge_id
+    LEFT JOIN LATERAL(SELECT e.charge_id,e.assignment_id,p.snapshot FROM assignment_entitlement_period_events e
+      JOIN assignment_entitlement_periods p ON p.id=e.period_id
+      WHERE e.period_id=ANY(${periodIds}::uuid[]) AND e.assignment_id=a.id AND e.event_type='charge_linked'
+      ORDER BY e.created_at DESC,e.id DESC LIMIT 1) period_link ON true
+    LEFT JOIN economic_charges c ON c.id=COALESCE(period_link.charge_id,a.charge_id)
     LEFT JOIN LATERAL (SELECT sum(CASE WHEN kind='payment' THEN amount_cents ELSE -amount_cents END) AS net
       FROM economic_transactions WHERE charge_id=c.id)x ON true
     WHERE a.id=ANY(${ids}::uuid[]) ORDER BY a.id`;
   const byId = new Map(rows.map(row => [String(row.assignmentId), row]));
   for (const assignment of termAssignments) {
     const row = byId.get(assignment.assignmentId);
+    const linkedPeriodCharge = row?.periodChargeId != null && row.periodLinkAssignmentId === assignment.assignmentId;
     const referencesCoherent = row && row.chargeId != null && row.chargeClientId === row.clientId
-      && row.chargePlanId === row.planId && Number(row.salePriceCents) === Number(row.requiredAmountCents);
+      && row.chargePlanId === row.planId && (linkedPeriodCharge || Number(row.salePriceCents) === Number(row.requiredAmountCents));
     const access = deriveTermPaymentAccess({
       assignmentId: assignment.assignmentId, chargeId: row?.chargeId == null ? null : String(row.chargeId),
       termKind: String(row?.termKind ?? assignment.termKind), paymentRule: row?.paymentRule == null ? null : String(row.paymentRule),

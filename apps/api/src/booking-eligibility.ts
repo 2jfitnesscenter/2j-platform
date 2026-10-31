@@ -68,7 +68,7 @@ type EntitlementRow = {
   quotaRightId: string | null; quotaRightType: 'sessions_quota'|'period_quota'|null;
   quantity: number | null; period: string | null; periodMode: string | null; timezone: string | null;
   validDays: number | null; validDaysStartRule: string | null; balance: number | null;
-  entitlementPeriodId: string | null; periodStatus: string | null; entitlementMode: string | null; periodBalance: number | null; periodSessions: number | null;
+  entitlementPeriodId: string | null; periodStatus: string | null; entitlementMode: string | null; periodBalance: number | null; periodSessions: number | null; periodStart:string|null; periodEnd:string|null;
 };
 
 /**
@@ -82,6 +82,7 @@ export async function evaluateBookingEligibility(
 ): Promise<BookingEligibilityResult> {
   const { tx, clientId, serviceId, startsAt } = request;
   const now = request.now ?? new Date();
+  const nowIso = now.toISOString();
   let capacity: { occupied: number; limit: number; available: number } | undefined;
   let sessionFull = false;
   const [client] = await tx`SELECT id,status FROM clients WHERE id=${clientId}`;
@@ -127,7 +128,7 @@ export async function evaluateBookingEligibility(
         WHEN ep.id IS NOT NULL THEN ep.balance
         ELSE (SELECT COALESCE(sum(l.quantity),0)::int FROM client_entitlement_ledger l WHERE l.assignment_id=a.id AND l.right_key=quota.id::text AND l.entitlement_period_id IS NULL) END AS balance,
       v.term_kind AS "termKind",
-      ep.id AS "entitlementPeriodId",ep.period_status AS "periodStatus",ep.entitlement_mode AS "entitlementMode",ep.balance AS "periodBalance",ep.sessions_snapshot AS "periodSessions"
+      ep.id AS "entitlementPeriodId",ep.period_status AS "periodStatus",ep.entitlement_mode AS "entitlementMode",ep.balance AS "periodBalance",ep.sessions_snapshot AS "periodSessions",ep.period_start::text AS "periodStart",ep.period_end::text AS "periodEnd"
     FROM client_plan_assignments a
     JOIN plans p ON p.id=a.plan_id
     JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
@@ -139,10 +140,17 @@ export async function evaluateBookingEligibility(
       AND quota.right_type IN ('sessions_quota','period_quota')
       AND (quota.service_id=${serviceId} OR (quota.service_id IS NULL AND quota.quota_scope='shared'))
     LEFT JOIN LATERAL (
-      SELECT p.id,p.sessions_snapshot,p.entitlement_mode,
+      SELECT p.id,p.sessions_snapshot,p.entitlement_mode,p.period_start,p.period_end,
         COALESCE((SELECT sum(l.quantity)::int FROM client_entitlement_ledger l WHERE l.entitlement_period_id=p.id AND l.right_key=p.right_id::text),0)::int AS balance,
         CASE WHEN EXISTS(SELECT 1 FROM assignment_entitlement_period_events e WHERE e.period_id=p.id AND e.event_type='payment_validated') THEN 'active'
-          WHEN (now() AT TIME ZONE 'Atlantic/Canary')::date BETWEEN p.period_start AND LEAST(p.period_end,date_trunc('month',p.period_start)::date+9)
+          WHEN EXISTS(SELECT 1 FROM assignment_entitlement_period_events linked JOIN economic_charges c ON c.id=linked.charge_id
+            LEFT JOIN LATERAL(SELECT sum(CASE WHEN t.kind='payment' THEN t.amount_cents ELSE -t.amount_cents END) AS net FROM economic_transactions t WHERE t.charge_id=c.id) paid ON true
+            WHERE linked.period_id=p.id AND linked.event_type='charge_linked' AND (c.state='exempt' OR COALESCE(paid.net,0)>=c.amount_cents)) THEN 'active'
+          WHEN EXISTS(SELECT 1 FROM assignment_entitlement_period_events linked JOIN economic_charges c ON c.id=linked.charge_id
+            WHERE linked.period_id=p.id AND linked.event_type='charge_linked'
+              AND (${nowIso}::timestamptz AT TIME ZONE 'Atlantic/Canary')::date<=c.due_on) THEN 'provisional'
+          WHEN NOT EXISTS(SELECT 1 FROM assignment_entitlement_period_events linked WHERE linked.period_id=p.id AND linked.event_type='charge_linked')
+            AND (${nowIso}::timestamptz AT TIME ZONE 'Atlantic/Canary')::date BETWEEN p.period_start AND LEAST(p.period_end,date_trunc('month',p.period_start)::date+9)
             AND (SELECT e.enabled FROM assignment_recurrence_events e WHERE e.assignment_id=p.assignment_id ORDER BY e.effective_on DESC,e.created_at DESC,e.id DESC LIMIT 1) IS TRUE THEN 'provisional'
           ELSE 'blocked_unpaid' END AS period_status
       FROM assignment_entitlement_periods p
@@ -159,7 +167,7 @@ export async function evaluateBookingEligibility(
     return denied(included?.included ? 'no_entitlement' : 'service_not_allowed');
   }
 
-  const [dates] = await tx`SELECT (now() AT TIME ZONE 'Atlantic/Canary')::date::text AS today,
+  const [dates] = await tx`SELECT (${nowIso}::timestamptz AT TIME ZONE 'Atlantic/Canary')::date::text AS today,
     (${startsAt}::timestamptz AT TIME ZONE 'Atlantic/Canary')::date::text AS "sessionDate"`;
   const groups = new Map<string, { rows: EntitlementRow[]; unavailable: BookingBlockingReason[] }>();
   for (const row of rows) {
@@ -168,8 +176,8 @@ export async function evaluateBookingEligibility(
     group.rows.push(row);
     if (row.assignmentStatus !== 'active' || row.lastEvent === 'cancelled' || row.lastEvent === 'changed') group.unavailable.push('entitlement_cancelled');
     else if (row.lastEvent === 'paused') group.unavailable.push('entitlement_paused');
-    else if (row.startsOn > String(dates!.today) || row.startsOn > String(dates!.sessionDate)) group.unavailable.push('entitlement_not_started');
-    else if ((row.endsOn && row.endsOn < String(dates!.today)) || (row.endsOn && row.endsOn < String(dates!.sessionDate))) group.unavailable.push('entitlement_expired');
+    else if (row.startsOn > String(dates!.sessionDate)) group.unavailable.push('entitlement_not_started');
+    else if (row.endsOn && (row.endsOn < String(dates!.today) || row.endsOn < String(dates!.sessionDate)) && !row.entitlementPeriodId) group.unavailable.push('entitlement_expired');
   }
 
   const alternatives: BookingEntitlementOption[] = [];
@@ -177,6 +185,7 @@ export async function evaluateBookingEligibility(
   const paymentAccess = await evaluateTermPaymentAccess(tx, [...groups].filter(([, group]) => group.unavailable.length === 0).map(([assignmentId, group]) => ({
     assignmentId,
     termKind: group.rows[0]?.termKind ?? null,
+    periodId: group.rows.find(row => row.entitlementPeriodId)?.entitlementPeriodId ?? null,
   })), now);
   for (const [assignmentId, group] of groups) {
     if (group.unavailable.length) { group.unavailable.forEach((reason) => reasons.add(reason)); continue; }
@@ -216,8 +225,17 @@ export async function evaluateBookingEligibility(
     for (const quota of quotaRows) {
       if (quota.quotaRightType === 'sessions_quota') {
         if (first.termKind !== null) {
-          if (!quota.entitlementPeriodId || !quota.entitlementMode) {
+          if (!quota.entitlementPeriodId) {
             exhausted = true; reasons.add('entitlement_unavailable');
+          } else if (quota.entitlementMode === null) {
+            // Scheduled renewal periods use the immutable legacy snapshot until
+            // their linked charge is settled and the prorated grant is materialized.
+            if (!['active','provisional'].includes(String(quota.periodStatus))) {
+              exhausted = true; reasons.add('entitlement_unavailable');
+            } else if (quota.periodStatus === 'provisional'
+              && Number(quota.periodSessions ?? 0) + Number(quota.periodBalance ?? 0) <= 0) {
+              exhausted = true;
+            }
           } else if (quota.entitlementMode === 'quota' && Number(quota.periodBalance ?? 0) <= 0) {
             exhausted = true;
           } else if (quota.entitlementMode !== 'quota' && quota.entitlementMode !== 'unlimited') {
