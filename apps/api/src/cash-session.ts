@@ -34,5 +34,12 @@ export async function lockOpenCashSession(tx: any, actorId: string) {
   return { ok: true as const, id: String(session.id), registerId: String(session.registerId) };
 }
 
+/** Motivo claro de los 409 por falta de turno (A70): el código identifica la regla y el texto dice qué hacer. */
+export const shiftRequiredMessages = {
+  clock_in_required: 'Para abrir la caja primero tienes que fichar la entrada',
+  cash_custodian_not_clocked_in: 'Para cerrar la caja primero tienes que fichar la entrada',
+} as const;
+export const shiftRequiredMessage = (error: string): { message: string } | Record<string, never> => error in shiftRequiredMessages ? { message: shiftRequiredMessages[error as keyof typeof shiftRequiredMessages] } : {};
+
 export const previousDayCashSessionMessage = 'Hay una caja abierta de un día anterior. El propietario debe resolverla antes de registrar cobros o anulaciones.';
 export const legacyCashSessionMessage = 'Hay una caja anterior sin registro asignado. El propietario debe resolverla antes de abrir o usar otra caja.';

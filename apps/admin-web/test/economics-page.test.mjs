@@ -12,10 +12,12 @@ const client = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Ada', l
 const charge = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', clientId: client.id, firstName: client.firstName, lastName: client.lastName, concept: 'Cuota mensual', amountCents: 10000, paidCents: 2500, balanceCents: 7500, dueOn: '2099-12-10', status: 'pending' };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const overview = { overdueCount: 0, overdueCents: 0, chargeCount: 1, cashSession: null, capabilities: { payments: true, cash: true, invoices: true } };
-function mockFetch({ onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201), onCash = () => response({ id: 'cash' }, 201), cashSession = null, ownerPanelRead = false } = {}) {
+function mockFetch({ shift = undefined, onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201), onCash = () => response({ id: 'cash' }, 201), cashSession = null, ownerPanelRead = false } = {}) {
   const pageOverview = { ...overview, capabilities: { ...overview.capabilities, ownerPanelRead } };
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
+    if (path.endsWith('/api/timeclock/self')) return shift ? response({ openShift: shift.open ? { id: 'shift-1' } : null }) : response({}, 404);
+    if (path.endsWith('/api/timeclock/clock-in') && options.method === 'POST') { shift.open = true; shift.punches = (shift.punches ?? 0) + 1; return response({ id: 'event-1' }, 201); }
     if (path.endsWith('/api/economics/overview')) return response(pageOverview);
     if (path.endsWith('/api/economics/charges') && options.method === 'POST') return onCharge(url, options);
     if (path.includes('/api/economics/charges')) return response({ items: [charge], total: 1 });
@@ -72,10 +74,9 @@ test('cash open and close submit denomination counts and keep the expected amoun
   const dialog=await screen.findByRole('dialog',{name:'Cerrar caja'});
   assert.ok(within(dialog).getByText(/recuento es ciego/i));
   assert.equal(within(dialog).queryByText(/esperado\s+\d+(?:[,.]\d{2})?\s*€/i),null);
-  const denominationInputs=[...dialog.querySelectorAll('input[type="number"]')];assert.equal(denominationInputs.length,15);
+  const denominationInputs=[...dialog.querySelectorAll('input[inputmode="numeric"]')];assert.equal(denominationInputs.length,15);
   for(const input of denominationInputs)fireEvent.change(input,{target:{value:'0'}});
-  fireEvent.change(denominationInputs[9],{target:{value:'1'}});
-  fireEvent.change(within(dialog).getByRole('spinbutton',{name:'Billetes de 10 €'}),{target:{value:'1'}});
+  fireEvent.change(within(dialog).getByRole('textbox',{name:'Billetes de 10 €'}),{target:{value:'1'}});
   fireEvent.click(within(dialog).getByRole('checkbox',{name:/Confirmo el recuento físico por denominación/i}));
   fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar cierre'}));
   await waitFor(()=>assert.deepEqual(payload,{countedDenominations:{coin_0_01:0,coin_0_02:0,coin_0_05:0,coin_0_10:0,coin_0_20:0,coin_0_50:0,coin_1:0,coin_2:0,bill_5:0,bill_10:1,bill_20:0,bill_50:0,bill_100:0,bill_200:0,bill_500:0}}));
@@ -91,7 +92,7 @@ test('cash handover is confirmed by an independent blind count', async () => {
   assert.ok(within(dialog).getByText(/hará su propio recuento/i));
   assert.equal(within(dialog).queryByText(/recuento esperado/i),null);
   fireEvent.change(within(dialog).getByRole('combobox',{name:'Recibe la caja'}),{target:{value:'professional-b'}});
-  for(const label of ['Monedas de 1 céntimo','Monedas de 2 céntimos','Monedas de 5 céntimos','Monedas de 10 céntimos','Monedas de 20 céntimos','Monedas de 50 céntimos','Monedas de 1 €','Monedas de 2 €','Billetes de 5 €','Billetes de 10 €','Billetes de 20 €','Billetes de 50 €','Billetes de 100 €','Billetes de 200 €','Billetes de 500 €'])fireEvent.change(within(dialog).getByRole('spinbutton',{name:label}),{target:{value:'0'}});
+  for(const label of ['Monedas de 1 céntimo','Monedas de 2 céntimos','Monedas de 5 céntimos','Monedas de 10 céntimos','Monedas de 20 céntimos','Monedas de 50 céntimos','Monedas de 1 €','Monedas de 2 €','Billetes de 5 €','Billetes de 10 €','Billetes de 20 €','Billetes de 50 €','Billetes de 100 €','Billetes de 200 €','Billetes de 500 €'])fireEvent.change(within(dialog).getByRole('textbox',{name:label}),{target:{value:'0'}});
   fireEvent.click(within(dialog).getByRole('checkbox',{name:/recuento físico de salida/i}));
   fireEvent.click(within(dialog).getByRole('button',{name:'Entregar para recuento'}));
   await waitFor(()=>assert.equal(request?.url.endsWith('/api/economics/cash/cash-1/handover'),true));
@@ -134,4 +135,83 @@ test('creates a charge with integer cents and records a partial payment idempote
   assert.deepEqual(paymentRequest?.body.splits, [{ method:'cash',amountCents:2000 },{ method:'card',amountCents:2235 }]);
   assert.match(paymentRequest?.key ?? '', /^[0-9a-f-]{36}$/i);
   assert.ok(await screen.findByRole('status'));
+});
+
+const openCashDialog = async () => { fireEvent.click(await screen.findByRole('button', { name: 'Abrir caja' })); return screen.findByRole('dialog', { name: 'Abrir caja' }); };
+
+test('with no active shift the notice is visible from the start, before anyone hits an error', async () => {
+  mockFetch({ shift: { open: false } }); render(React.createElement(EconomicsPage));
+  await screen.findByRole('heading', { name: 'Pagos y caja' });
+  assert.ok(await screen.findByText('Para abrir la caja primero tienes que fichar la entrada'));
+  assert.ok(screen.getByRole('button', { name: 'Fichar entrada ahora' }));
+  cleanup();
+  mockFetch({ shift: { open: true } }); render(React.createElement(EconomicsPage));
+  await screen.findByRole('heading', { name: 'Pagos y caja' });
+  await screen.findByRole('button', { name: 'Abrir caja' });
+  assert.equal(screen.queryByText(/primero tienes que fichar la entrada/), null, 'a clocked-in professional sees no notice');
+  cleanup();
+  mockFetch(); render(React.createElement(EconomicsPage));
+  await screen.findByRole('button', { name: 'Abrir caja' });
+  assert.equal(screen.queryByText(/primero tienes que fichar la entrada/), null, 'an account that cannot clock in gets no notice');
+});
+
+test('opening a register without a shift keeps the dialog and the typed counts, clocks in from the notice, and the same action then succeeds', async () => {
+  const shift = { open: true }; // the page believes the shift is open; the server disagrees (409 clock_in_required)
+  let attempts = 0; const bodies = [];
+  mockFetch({ shift, onCash: (url, options) => { attempts += 1; bodies.push(JSON.parse(options.body)); return attempts === 1 ? response({ error: 'clock_in_required', message: 'Para abrir la caja primero tienes que fichar la entrada' }, 409) : response({ id: 'cash-1' }, 201); } });
+  render(React.createElement(EconomicsPage));
+  const dialog = await openCashDialog();
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Billetes de 5 €' }), { target: { value: '4' } });
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /Confirmo el recuento real del fondo inicial/ }));
+  shift.open = false; // from here on the shift is really closed
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Abrir caja' }));
+  assert.ok(await within(dialog).findByText('Para abrir la caja primero tienes que fichar la entrada'));
+  assert.equal(within(dialog).queryByText(/No se pudo actualizar la caja/), null, 'the generic message is gone');
+  assert.equal(within(dialog).getByRole('textbox', { name: 'Billetes de 5 €' }).value, '4', 'what was typed is kept');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Fichar entrada ahora' }));
+  await waitFor(() => assert.ok(!within(dialog).queryByText('Para abrir la caja primero tienes que fichar la entrada')));
+  assert.equal(shift.punches, 1, 'one clock-in was sent');
+  assert.equal(within(dialog).getByRole('textbox', { name: 'Billetes de 5 €' }).value, '4');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Abrir caja' }));
+  await waitFor(() => assert.equal(attempts, 2));
+  assert.equal(bodies[1].openingDenominations.bill_5, 4, 'the original action is repeated with the same counts');
+  await screen.findByText('Caja abierta.');
+});
+
+test('closing a register and collecting a payment explain the missing shift in their own words', async () => {
+  const cashSession = { id: 'cash-1', localDate: '2026-10-25', status: 'open', countedCents: null, openedAt: '2026-10-25T10:00:00Z', closedAt: null };
+  mockFetch({ shift: { open: false }, cashSession });
+  render(React.createElement(EconomicsPage));
+  fireEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }));
+  const closing = await screen.findByRole('dialog', { name: 'Cerrar caja' });
+  assert.ok(within(closing).getByText('Para cerrar la caja primero tienes que fichar la entrada'));
+  assert.ok(within(closing).getByRole('button', { name: 'Fichar entrada ahora' }));
+  cleanup();
+  mockFetch({ shift: { open: false } }); render(React.createElement(EconomicsPage));
+  fireEvent.click((await screen.findAllByRole('button', { name: 'Registrar pago' }))[0]);
+  const paying = await screen.findByRole('dialog', { name: 'Registrar pago' });
+  assert.ok(within(paying).getByText('Para cobrar primero tienes que fichar la entrada'));
+});
+
+test('the count form is compact: bills and coins grouped, 0 by default, numeric keypad, live total only when opening (the close stays blind)', async () => {
+  mockFetch({ shift: { open: true } }); render(React.createElement(EconomicsPage));
+  const dialog = await openCashDialog();
+  assert.deepEqual([...dialog.querySelectorAll('.cash-count-group legend')].map((legend) => legend.textContent), ['Billetes', 'Monedas']);
+  const inputs = [...dialog.querySelectorAll('.cash-count-grid input')];
+  assert.equal(inputs.length, 15);
+  assert.ok(inputs.every((input) => input.value === '0' && input.getAttribute('inputmode') === 'numeric'), 'every field starts at 0 with the numeric keypad');
+  assert.equal(dialog.querySelectorAll('input[type="number"]').length, 0);
+  assert.ok(within(dialog).getByText(/Total contado:/));
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Billetes de 50 €' }), { target: { value: '2' } });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Monedas de 50 céntimos' }), { target: { value: '3' } });
+  await waitFor(() => assert.match(within(dialog).getByText(/Total contado:/).textContent, /101,50\s*€/));
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Billetes de 5 €' }), { target: { value: 'x' } });
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /Confirmo el recuento real del fondo inicial/ }));
+  assert.ok(within(dialog).getByRole('button', { name: 'Abrir caja' }).disabled, 'an invalid count blocks the submit');
+  cleanup();
+  const cashSession = { id: 'cash-1', localDate: '2026-10-25', status: 'open', countedCents: null, openedAt: '2026-10-25T10:00:00Z', closedAt: null };
+  mockFetch({ shift: { open: true }, cashSession }); render(React.createElement(EconomicsPage));
+  fireEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }));
+  const closing = await screen.findByRole('dialog', { name: 'Cerrar caja' });
+  assert.equal(within(closing).queryByText(/Total contado/), null, 'blind close (D111): no running total');
 });
