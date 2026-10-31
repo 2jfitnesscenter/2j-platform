@@ -140,10 +140,13 @@ export function registerCalendarRoutes(
   async function storeReservationRights(tx: SqlTransaction, reservationId: string, clientId: string, entitlement: BookingEntitlementOption, actorId: string) {
     await tx`SELECT id FROM client_plan_assignments WHERE id=${entitlement.assignmentId} AND client_id=${clientId} FOR UPDATE`;
     const rightIds = [entitlement.accessRightId, ...entitlement.quotaRightIds];
-    const rights = await tx`SELECT id,right_type AS "rightType" FROM plan_rights WHERE id=ANY(${rightIds}::uuid[]) ORDER BY id`;
+    const rights = await tx`SELECT id,right_type AS "rightType",quantity_rule AS "quantityRule" FROM plan_rights WHERE id=ANY(${rightIds}::uuid[]) ORDER BY id`;
     for (const right of rights) {
+      // Unlimited quotas are authorization rules, not finite bags: they have no period balance to consume.
+      // Keep the service_access reservation link, but do not create a quota link without its required ledger row.
+      if (right.rightType === 'sessions_quota' && right.quantityRule === 'unlimited') continue;
       let ledgerEntryId: string | null = null;
-      if (right.rightType === 'sessions_quota') {
+      if (right.rightType === 'sessions_quota' && right.quantityRule !== 'unlimited') {
         const periodId = entitlement.entitlementPeriodIdsByRightId[right.id] ?? null;
         const [ledger] = await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entitlement_period_id,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash)
           VALUES (${clientId},${entitlement.assignmentId},${right.id}::text,${periodId},'consume',-1,'Reserva confirmada',${`calendar_reservation:${reservationId}`},${actorId},${randomUUID()},${createHash('sha256').update(`consume:${reservationId}:${right.id}`).digest('hex')}) RETURNING id`;

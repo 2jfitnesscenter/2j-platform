@@ -327,8 +327,10 @@ test('0037 upgrades the checksummed current-main schema once and preserves legac
     }
     const legacyPlanId=randomUUID(),legacyClientId=randomUUID(),legacyChargeId=randomUUID(),legacyPendingChargeId=randomUUID(),legacyAssignmentId=randomUUID(),legacyRightId=randomUUID(),legacyPeriodId=randomUUID(),legacyPendingPeriodId=randomUUID();
     const today=canaryBusinessDate(new Date());
-    const currentPeriodStart=`${today.slice(0,7)}-01`;
-    const currentPeriodEnd=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10);
+    // Use the next full natural month so the legacy payment fixture always has
+    // a positive, still-future bag (including when this suite runs on month-end).
+    const currentPeriodStart=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),1)).toISOString().slice(0,10);
+    const currentPeriodEnd=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7))+1,0)).toISOString().slice(0,10);
     const priorMonthEnd=new Date(`${currentPeriodStart}T00:00:00.000Z`);priorMonthEnd.setUTCDate(priorMonthEnd.getUTCDate()-1);
     const priorPeriodEnd=priorMonthEnd.toISOString().slice(0,10);
     const priorPeriodStart=`${priorPeriodEnd.slice(0,7)}-01`;
@@ -445,7 +447,7 @@ test('0037 upgrades the checksummed current-main schema once and preserves legac
       assert.equal(paymentResponse.statusCode,201,paymentResponse.body);
       const [newActivation]=await upgradeDb`SELECT event_type,effective_activation_on::text AS effective_on,sessions_granted FROM assignment_entitlement_period_events WHERE period_id=${legacyPendingPeriodId} AND event_type='payment_validated'`;
       assert.ok(newActivation,'real payment flow must validate the legacy period');
-      assert.equal(newActivation.effective_on,today);
+      assert.equal(newActivation.effective_on,currentPeriodStart);
       const [activatedPeriod]=await upgradeDb`SELECT sessions_snapshot FROM assignment_entitlement_periods WHERE id=${legacyPendingPeriodId}`;
       const [newGrant]=await upgradeDb`SELECT quantity,right_key,entitlement_period_id FROM client_entitlement_ledger WHERE entitlement_period_id=${legacyPendingPeriodId} AND entry_type='grant'`;
       assert.equal(newGrant.quantity,newActivation.sessions_granted,'legacy grant quantity matches real payment activation');
@@ -2968,9 +2970,10 @@ test('2J-098E creates a paid period once, prorates its bag, restores reservation
   assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
   const client=(await createClientRequest(clientsAdminApp,{firstName:'Periodo',lastName:`Cliente ${randomUUID()}`})).json();
   const today=canaryBusinessDate(new Date());
-  const startsOn=`${today.slice(0,7)}-01`;
-  const periodEnd=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10);
-  const sale=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId,startsOn,endsOn:null,dueOn:today,amountCents:5000}});
+  const assignmentStart=today;
+  const startsOn=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),1)).toISOString().slice(0,10);
+  const periodEnd=new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7))+1,0)).toISOString().slice(0,10);
+  const sale=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId,startsOn:assignmentStart,endsOn:null,dueOn:today,amountCents:5000}});
   assert.equal(sale.statusCode,201,sale.body);
   const rights=await sql`SELECT id,service_id AS "serviceId",weekly_frequency AS "weeklyFrequency" FROM plan_rights WHERE plan_id=${planId} AND right_type='sessions_quota' ORDER BY service_id`;
   const right=rights.find(item=>item.serviceId===service.id);const otherRight=rights.find(item=>item.serviceId===otherService.id);
@@ -2991,13 +2994,13 @@ test('2J-098E creates a paid period once, prorates its bag, restores reservation
   const charge=await clientsAdminApp.inject({method:'GET',url:`/api/economics/charges?clientId=${client.id}`});
   const payment=await clientsAdminApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().items[0].id,splits:[{method:'card',amountCents:5000}]}});
   assert.equal(payment.statusCode,201,payment.body);
-  const expected=proratedSessionsForPayment(today,periodEnd,3);
+  const expected=proratedSessionsForPayment(startsOn,periodEnd,3);
   const [activation]=await sql`SELECT effective_activation_on::text AS "effectiveOn",sessions_granted AS granted FROM assignment_entitlement_period_events WHERE period_id=${period.json().id} AND event_type='payment_validated'`;
-  assert.equal(String(activation.effectiveOn),today);assert.equal(activation.granted,expected);
+  assert.equal(String(activation.effectiveOn),startsOn);assert.equal(activation.granted,expected);
   const [otherActivation]=await sql`SELECT sessions_granted AS granted FROM assignment_entitlement_period_events WHERE period_id=${otherPeriod.json().id} AND event_type='payment_validated'`;
-  assert.equal(otherActivation.granted,proratedSessionsForPayment(today,periodEnd,2));
+  assert.equal(otherActivation.granted,proratedSessionsForPayment(startsOn,periodEnd,2));
   const [chargeCountBefore]=await sql`SELECT count(*)::int AS count FROM economic_charges WHERE client_id=${client.id}`;
-  const sessionDate=new Date(`${today}T12:00:00Z`);sessionDate.setUTCDate(sessionDate.getUTCDate()+1);
+  const sessionDate=new Date(`${startsOn}T12:00:00Z`);sessionDate.setUTCDate(sessionDate.getUTCDate()+1);
   const session=await app.inject({method:'POST',url:'/api/calendar/sessions',payload:{serviceId:service.id,areaId:service.areaId,startsAt:sessionDate.toISOString(),durationMinutes:45,capacity:3}});
   assert.equal(session.statusCode,201,session.body);
   const booking=await app.inject({method:'POST',url:`/api/calendar/sessions/${session.json().id}/reservations`,payload:{clientId:client.id}});

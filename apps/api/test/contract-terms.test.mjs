@@ -24,6 +24,9 @@ await migrateDatabase(sql);
 const app = buildServer(dbUrl, { authorizationResolver: async () => ({ actorId: 'f1a-test-admin', role: 'admin' }) });
 const hash = 'a'.repeat(64);
 let defaultArea;
+function canaryToday(){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const part=type=>parts.find(entry=>entry.type===type)?.value;return `${part('year')}-${part('month')}-${part('day')}`;}
+function nextMonthStart(value){const date=new Date(`${value.slice(0,7)}-01T00:00:00.000Z`);date.setUTCMonth(date.getUTCMonth()+1);return date.toISOString().slice(0,10);}
+function addDays(value,days){const date=new Date(`${value}T00:00:00.000Z`);date.setUTCDate(date.getUTCDate()+days);return date.toISOString().slice(0,10);}
 
 async function createService() {
   const response = await app.inject({ method: 'POST', url: '/api/services', payload: { name: `F1-A ${randomUUID()}`, areaId: defaultArea.id, status: 'active' } });
@@ -227,7 +230,7 @@ test('plan contract metadata is additive and assignment terms are immutable, ver
   const [legacyVersion] = await sql`SELECT term_kind AS "termKind",term_months AS "termMonths",max_span_days AS "maxSpanDays",payment_rule AS "paymentRule",payment_block AS "paymentBlock" FROM plan_versions WHERE plan_id=${legacy.json().id} AND version=1`;
   assert.deepEqual(legacyVersion, { termKind:null, termMonths:null, maxSpanDays:null, paymentRule:null, paymentBlock:null });
 
-  const contract = await createPlan(service.id, { termKind:'rolling_months', termMonths:3 });
+  const contract = await createPlan(service.id, { termKind:'rolling_months', termMonths:3, basePriceCents:1000 });
   assert.equal(contract.statusCode, 201, contract.body);
   const planId = contract.json().id;
   const [version] = await sql`SELECT term_kind AS "termKind",term_months AS "termMonths",max_span_days AS "maxSpanDays",payment_rule AS "paymentRule",payment_block AS "paymentBlock" FROM plan_versions WHERE plan_id=${planId} AND version=1`;
@@ -236,28 +239,16 @@ test('plan contract metadata is additive and assignment terms are immutable, ver
   assert.equal(invalid.statusCode, 400);
   assert.equal((await app.inject({ method:'POST', url:`/api/plans/${planId}/activate` })).statusCode, 200);
   const assignable = (await app.inject({ method:'GET', url:'/api/plans/assignable' })).json();
-  assert.equal(assignable.some(plan => plan.id === planId), false, 'F1-A contract plans remain unavailable to assignment until a later phase');
+  assert.equal(assignable.some(plan => plan.id === planId), true, 'A72 term plans are assignable from the Client 360 flow');
 
   const clientId = randomUUID();
   await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1A','Synthetic fixture')`;
-  const blockedSale = await app.inject({ method:'POST', url:`/api/clients/${clientId}/plans`, headers:{'idempotency-key':randomUUID()}, payload:{planId,startsOn:'2026-10-15',endsOn:'2027-01-14',dueOn:'2026-10-20',amountCents:1000} });
-  assert.equal(blockedSale.statusCode, 409);
-  assert.equal(blockedSale.json().error, 'contract_terms_not_available');
-  const [blockedCounts]=await sql`SELECT (SELECT count(*)::int FROM economic_charges WHERE client_id=${clientId}) charges,
-    (SELECT count(*)::int FROM client_plan_assignments WHERE client_id=${clientId}) assignments,
-    (SELECT count(*)::int FROM assignment_contract_terms t JOIN client_plan_assignments a ON a.id=t.assignment_id WHERE a.client_id=${clientId}) terms,
-    (SELECT count(*)::int FROM assignment_entitlement_periods WHERE client_id=${clientId}) periods,
-    (SELECT count(*)::int FROM client_entitlement_ledger WHERE client_id=${clientId} AND entry_type='grant') grants`;
-  assert.deepEqual(blockedCounts,{charges:0,assignments:0,terms:0,periods:0,grants:0});
-
-  const chargeId = randomUUID(), assignmentId = randomUUID();
-  await sql.begin(async tx => {
-    await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash) VALUES (${chargeId},${clientId},${planId},'Contract test',1000,'2026-10-20','f1a-test',${randomUUID()},${hash})`;
-    await tx`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by) VALUES (${assignmentId},${clientId},${planId},1,${chargeId},'2026-10-15','2027-01-14',${randomUUID()},${hash},'f1a-test')`;
-  });
-  const deadline = { rule:'grace_from_assignment_v1', assignedLocalDate:'2026-10-15', inputs:{graceDays:5}, dueOn:'2026-10-20' };
-  await sql`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
-    VALUES (${assignmentId},'rolling_months','2026-10-15','2027-01-14',3,'grace_from_assignment_v1','enforce',${sql.json(deadline)},'2026-10-15')`;
+  const startsOn=nextMonthStart(canaryToday());
+  const sale=await app.inject({method:'POST',url:`/api/clients/${clientId}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId,startsOn,dueOn:startsOn,amountCents:1000}});
+  assert.equal(sale.statusCode,201,sale.body);
+  const assignmentId=sale.json().id;
+  const [deadline]=await sql`SELECT t.deadline_computation AS snapshot,c.due_on::text AS "dueOn" FROM assignment_contract_terms t JOIN client_plan_assignments a ON a.id=t.assignment_id JOIN economic_charges c ON c.id=a.charge_id WHERE t.assignment_id=${assignmentId}`;
+  assert.equal(deadline.snapshot.dueOn,deadline.dueOn);
   assert.equal((await sql`SELECT count(*)::int AS count FROM assignment_contract_terms WHERE assignment_id=${assignmentId}`)[0].count, 1);
   await assert.rejects(sql`UPDATE assignment_contract_terms SET contract_end='2027-02-27' WHERE assignment_id=${assignmentId}`, { code:'55000' });
   await assert.rejects(sql`DELETE FROM assignment_contract_terms WHERE assignment_id=${assignmentId}`, { code:'55000' });
@@ -268,20 +259,22 @@ test('plan contract metadata is additive and assignment terms are immutable, ver
   const customPlanId = custom.json().id;
   assert.equal((await app.inject({ method:'POST', url:`/api/plans/${customPlanId}/activate` })).statusCode, 200);
   const customChargeId = randomUUID(), customAssignmentId = randomUUID();
+  const customStart=canaryToday(),customEnd=addDays(customStart,30);
   await sql.begin(async tx => {
-    await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash) VALUES (${customChargeId},${clientId},${customPlanId},'Custom range test',1000,'2026-10-20','f1a-test',${randomUUID()},${hash})`;
-    await tx`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by) VALUES (${customAssignmentId},${clientId},${customPlanId},1,${customChargeId},'2026-10-15','2026-11-14',${randomUUID()},${hash},'f1a-test')`;
+    await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash) VALUES (${customChargeId},${clientId},${customPlanId},'Custom range test',1000,${deadline.dueOn},'f1a-test',${randomUUID()},${hash})`;
+    await tx`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by) VALUES (${customAssignmentId},${clientId},${customPlanId},1,${customChargeId},${customStart},${customEnd},${randomUUID()},${hash},'f1a-test')`;
   });
   await assert.rejects(sql`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
-    VALUES (${customAssignmentId},'custom_range','2026-10-15','2026-11-14',NULL,'grace_from_assignment_v1','enforce',${sql.json(deadline)},'2026-10-15')`, { code:'23514' }, '31 inclusive days exceeds max_span_days=30');
+    VALUES (${customAssignmentId},'custom_range',${customStart},${customEnd},NULL,'grace_from_assignment_v1','enforce',${sql.json(deadline.snapshot)},${deadline.snapshot.assignedLocalDate})`, { code:'23514' }, '31 inclusive days exceeds max_span_days=30');
 
   const badChargeId = randomUUID(), badAssignmentId = randomUUID();
+  const rollingStart=canaryToday(),rollingEnd=calculateContractEnd(rollingStart,3),rollingEndWrong=addDays(rollingEnd,1);
   await sql.begin(async tx => {
-    await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash) VALUES (${badChargeId},${clientId},${planId},'Invalid contract test',1000,'2026-10-20','f1a-test',${randomUUID()},${hash})`;
-    await tx`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by) VALUES (${badAssignmentId},${clientId},${planId},1,${badChargeId},'2026-10-15','2027-01-14',${randomUUID()},${hash},'f1a-test')`;
+    await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,created_by,idempotency_key,request_hash) VALUES (${badChargeId},${clientId},${planId},'Invalid contract test',1000,${deadline.dueOn},'f1a-test',${randomUUID()},${hash})`;
+    await tx`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by) VALUES (${badAssignmentId},${clientId},${planId},1,${badChargeId},${rollingStart},${rollingEnd},${randomUUID()},${hash},'f1a-test')`;
   });
   await assert.rejects(sql`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
-    VALUES (${badAssignmentId},'rolling_months','2026-10-15','2027-01-15',3,'grace_from_assignment_v1','enforce',${sql.json(deadline)},'2026-10-15')`, { code:'23514' });
+    VALUES (${badAssignmentId},'rolling_months',${rollingStart},${rollingEndWrong},3,'grace_from_assignment_v1','enforce',${sql.json(deadline.snapshot)},${deadline.snapshot.assignedLocalDate})`, { code:'23514' });
 });
 
 test('term-plan API requires an explicit compatible session quantity modality while legacy payload stays accepted',async()=>{

@@ -73,7 +73,7 @@ test('plans are business-language cards: Cuota actual, Vigencia, Servicios and p
   fireEvent.click(within(first).getByRole('button', { name: 'Detalles' }));
   assert.doesNotMatch(document.body.textContent, /derecho|entitlement|ledger|grant|snapshot/i);
   assert.ok(screen.getByTestId('plan-legacy-note'), 'legacy plans never read as the final model');
-  assert.match(screen.getByTestId('plan-legacy-note').textContent, /modelo anterior de cuotas/);
+  assert.match(screen.getByTestId('plan-legacy-note').textContent, /configuración histórica/);
 });
 
 test('legacy weekly access is shown as stored, with no derived monthly session count', async () => {

@@ -23,7 +23,7 @@ const isCalendarMonth = (start: string, end: string) => start.endsWith('-01') &&
  * Call inside the assignment-creation transaction. Payment activation for pack/one_off stays in F1-C.
  */
 export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId: string, actorId: string) {
-  const [assignment] = await tx`SELECT a.id,a.client_id AS "clientId",a.plan_id AS "planId",a.plan_version AS "planVersion",
+  const [assignment] = await tx`SELECT a.id,a.client_id AS "clientId",a.plan_id AS "planId",a.plan_version AS "planVersion",a.charge_id AS "chargeId",a.starts_on::text AS "assignmentStart",
       v.term_kind AS "termKind",v.kind AS "planKind",v.base_price_cents AS "basePriceCents"
     FROM client_plan_assignments a JOIN plan_versions v ON v.plan_id=a.plan_id AND v.version=a.plan_version
     WHERE a.id=${assignmentId} FOR UPDATE OF a`;
@@ -32,8 +32,8 @@ export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId
       term_months AS "termMonths",payment_rule AS "paymentRule",payment_block AS "paymentBlock"
     FROM assignment_contract_terms WHERE assignment_id=${assignment.id}`;
   if (!terms || terms.termKind !== assignment.termKind) throw new EntitlementMaterializationError('contract_terms_missing');
-  if (terms.termKind === 'pack' || terms.termKind === 'one_off') throw new EntitlementMaterializationError('payment_activation_required');
-  if (!['natural_month','custom_range','rolling_months'].includes(String(terms.termKind)) || !terms.contractStart || !terms.contractEnd) {
+  const fixedQuantityTerm = terms.termKind === 'pack' || terms.termKind === 'one_off';
+  if (!fixedQuantityTerm && (!['natural_month','custom_range','rolling_months'].includes(String(terms.termKind)) || !terms.contractStart || !terms.contractEnd)) {
     throw new EntitlementMaterializationError('contract_terms_missing');
   }
   const rights = await tx`SELECT id,right_type AS "rightType",service_id AS "serviceId",quota_scope AS "quotaScope",quantity,
@@ -46,7 +46,18 @@ export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId
   const contractSnapshot={termKind:terms.termKind,termMonths:terms.termMonths,contractStart:terms.contractStart,contractEnd:terms.contractEnd,paymentRule:terms.paymentRule,paymentBlock:terms.paymentBlock};
   for (const right of rights) {
     const rule = validateContractQuantityRule({termKind:terms.termKind,rightType:String(right.rightType),quantityRule:right.quantityRule,quantity:right.quantity,weeklyFrequency:right.weeklyFrequency});
-    if (!rule.valid || (right.quantityRule !== 'weekday_ratio_v1' && right.quantityRule !== 'unlimited')) throw new EntitlementMaterializationError('quantity_rule_invalid');
+    if (!rule.valid || (right.quantityRule !== 'weekday_ratio_v1' && right.quantityRule !== 'unlimited' && !(fixedQuantityTerm && right.quantityRule === 'fixed_v1'))) throw new EntitlementMaterializationError('quantity_rule_invalid');
+    if (right.quantityRule === 'fixed_v1') {
+      if (!fixedQuantityTerm || !right.quantity) throw new EntitlementMaterializationError('quantity_rule_invalid');
+      const startsOn=String(assignment.assignmentStart);
+      const endsOn=right.validDays && right.validDaysStartRule==='purchase'
+        ?new Date(Date.parse(`${startsOn}T00:00:00.000Z`)+(Number(right.validDays)-1)*86400000).toISOString().slice(0,10)
+        :null;
+      const granted=Number(right.quantity);
+      candidates.push({right,periodIndex:0,start:startsOn,end:endsOn,mode:'quota',formula:'fixed_v1',weekdays:null,frequency:null,granted,
+        snapshot:{version:1,planId:assignment.planId,planVersion:assignment.planVersion,contract:contractSnapshot,right:{id:right.id,rightType:right.rightType,quantityRule:'fixed_v1',quantity:granted,quotaScope:right.quotaScope,serviceId:right.serviceId,validDays:right.validDays,validDaysStartRule:right.validDaysStartRule},formulaId:'fixed_v1',entitlementMode:'quota',periodIndex:0,periodStart:startsOn,periodEnd:endsOn,sessionsGranted:granted}});
+      continue;
+    }
     if (right.quantityRule === 'unlimited') {
       candidates.push({right,periodIndex:0,start:String(terms.contractStart),end:String(terms.contractEnd),mode:'unlimited',formula:null,weekdays:null,frequency:null,granted:null,
         snapshot:{version:1,planId:assignment.planId,planVersion:assignment.planVersion,contract:contractSnapshot,right:{id:right.id,rightType:right.rightType,quantityRule:'unlimited',quantity:right.quantity,weeklyFrequency:right.weeklyFrequency,quotaScope:right.quotaScope,serviceId:right.serviceId,validDays:right.validDays,validDaysStartRule:right.validDaysStartRule},entitlementMode:'unlimited',periodIndex:0,periodStart:terms.contractStart,periodEnd:terms.contractEnd}});
@@ -74,7 +85,7 @@ export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId
     let inserted;
     try {
       inserted = await tx`INSERT INTO assignment_entitlement_periods(assignment_id,client_id,right_id,period_index,entitlement_mode,formula_id,period_start,period_end,weekdays_in_period,weekly_frequency,sessions_granted,sessions_snapshot,snapshot,idempotency_key,request_hash)
-        VALUES (${assignment.id},${assignment.clientId},${candidate.right.id},${candidate.periodIndex},${candidate.mode},${candidate.formula},${candidate.start},${candidate.end},${candidate.weekdays},${candidate.frequency},${candidate.granted},NULL,${tx.json(JSON.parse(JSON.stringify(candidate.snapshot)))},${periodKey},${periodHash})
+        VALUES (${assignment.id},${assignment.clientId},${candidate.right.id},${candidate.periodIndex},${candidate.mode},${candidate.formula},${candidate.start},${candidate.end},${candidate.weekdays},${candidate.frequency},${candidate.granted},NULL,${JSON.stringify(candidate.snapshot)}::text::jsonb,${periodKey},${periodHash})
         ON CONFLICT DO NOTHING RETURNING id`;
     } catch (error) {
       if ((error as {code?:string}).code === '23505') throw new EntitlementMaterializationError('idempotency_conflict');
@@ -108,7 +119,7 @@ export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId
         throw new EntitlementMaterializationError('idempotency_conflict');
       }
     }
-    if (candidate.mode === 'quota') {
+    if (candidate.mode === 'quota' && candidate.formula !== 'fixed_v1') {
       const grantKey = deterministicUuid(`term-grant:${assignment.id}:${periodId}:${candidate.right.id}`);
       const grantHash = hash({assignmentId:assignment.id,clientId:assignment.clientId,rightId:candidate.right.id,periodId,quantity:candidate.granted});
       const grant = await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,actor_id,idempotency_key,request_hash,entitlement_period_id)
@@ -125,8 +136,17 @@ export async function materializeContractEntitlementPeriods(tx: Tx, assignmentId
         }
       }
     }
+    if (candidate.formula === 'fixed_v1') {
+      const chargeEventKey=deterministicUuid(`term-fixed-charge:${assignment.id}:${periodId}:${assignment.chargeId}`);
+      const chargeEventHash=hash({assignmentId:assignment.id,periodId,chargeId:assignment.chargeId,termKind:terms.termKind});
+      await tx`INSERT INTO assignment_entitlement_period_events(period_id,assignment_id,client_id,right_id,event_type,charge_id,actor_id,reason,idempotency_key,request_hash)
+        VALUES (${periodId},${assignment.id},${assignment.clientId},${candidate.right.id},'charge_linked',${assignment.chargeId},${actorId},'Cargo inicial de bono o sesión puntual',${chargeEventKey},${chargeEventHash}) ON CONFLICT DO NOTHING`;
+      const [linked]=await tx`SELECT assignment_id AS "assignmentId",client_id AS "clientId",right_id AS "rightId",charge_id AS "chargeId",request_hash AS "requestHash"
+        FROM assignment_entitlement_period_events WHERE period_id=${periodId} AND event_type='charge_linked'`;
+      if(!linked||String(linked.assignmentId)!==String(assignment.id)||String(linked.clientId)!==String(assignment.clientId)||String(linked.rightId)!==String(candidate.right.id)||String(linked.chargeId)!==String(assignment.chargeId)||String(linked.requestHash).trim()!==chargeEventHash)throw new EntitlementMaterializationError('idempotency_conflict');
+    }
     if (!replay) await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
-      VALUES (${actorId},'entitlement_period.materialized','client_plan_assignment',${assignment.id},${assignment.clientId},${tx.json({periodId,rightId:candidate.right.id,periodIndex:candidate.periodIndex,entitlementMode:candidate.mode,sessionsGranted:candidate.granted})})`;
+      VALUES (${actorId},'entitlement_period.materialized','client_plan_assignment',${assignment.id},${assignment.clientId},${JSON.stringify({periodId,rightId:candidate.right.id,periodIndex:candidate.periodIndex,entitlementMode:candidate.mode,sessionsGranted:candidate.granted})}::text::jsonb)`;
     materialized.push({id:periodId,rightId:String(candidate.right.id),periodIndex:candidate.periodIndex,mode:candidate.mode,sessionsGranted:candidate.granted,replay});
   }
   return {assignmentId:String(assignment.id),periods:materialized,replay:materialized.every(period=>period.replay)};
@@ -140,7 +160,8 @@ export async function activateSettledEntitlementPeriods(tx: Tx, chargeId: string
     FROM economic_transactions WHERE charge_id=${chargeId}`;
   if (Number(balance?.net ?? 0) < Number(charge.amountCents)) return 0;
   const linked = await tx`SELECT e.period_id AS "periodId",e.assignment_id AS "assignmentId",e.client_id AS "clientId",e.right_id AS "rightId",
-      p.period_start::text AS "periodStart",p.period_end::text AS "periodEnd",p.weekly_frequency AS "weeklyFrequency",p.sessions_snapshot AS "sessionsSnapshot"
+      p.period_start::text AS "periodStart",p.period_end::text AS "periodEnd",p.weekly_frequency AS "weeklyFrequency",p.sessions_snapshot AS "sessionsSnapshot",
+      p.formula_id AS "formulaId",p.sessions_granted AS "sessionsGranted"
     FROM assignment_entitlement_period_events e JOIN assignment_entitlement_periods p ON p.id=e.period_id
     WHERE e.event_type='charge_linked' AND e.charge_id=${chargeId}
       AND NOT EXISTS(SELECT 1 FROM assignment_entitlement_period_events activated WHERE activated.period_id=e.period_id AND activated.event_type='payment_validated')
@@ -150,9 +171,11 @@ export async function activateSettledEntitlementPeriods(tx: Tx, chargeId: string
   for (const period of linked) {
     const start = String(period.periodStart); const end = String(period.periodEnd);
     const effectiveOn = today < start ? start : today;
-    const quantity = effectiveOn > end ? 0 : effectiveOn === start
-      ? Number(period.sessionsSnapshot)
-      : proratedSessionsForPayment(effectiveOn, end, Number(period.weeklyFrequency));
+    const quantity = period.formulaId==='fixed_v1'
+      ?Number(period.sessionsGranted)
+      :effectiveOn > end ? 0 : effectiveOn === start
+        ? Number(period.sessionsSnapshot)
+        : proratedSessionsForPayment(effectiveOn, end, Number(period.weeklyFrequency));
     const key = deterministicUuid(`period-payment:${period.periodId}:${chargeId}`);
     const requestHash = hash({ periodId: period.periodId, chargeId, effectiveOn, quantity });
     const [activation] = await tx`INSERT INTO assignment_entitlement_period_events(period_id,assignment_id,client_id,right_id,event_type,charge_id,effective_activation_on,sessions_granted,actor_id,reason,idempotency_key,request_hash)

@@ -287,7 +287,29 @@ test('service access is derived from the selected services: one access per servi
   assert.equal(create.disabled, false);
   fireEvent.click(create);
   await waitFor(() => assert.ok(submitted));
-  assert.deepEqual(submitted.rights, [{ rightType: 'service_access', serviceId: service.id }, { rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantity: 10 }]);
+  assert.equal(submitted.termKind, 'pack');
+  assert.equal(submitted.paymentBlock, 'off');
+  assert.deepEqual(submitted.rights, [{ rightType: 'service_access', serviceId: service.id }, { rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantityRule: 'fixed_v1', quantity: 10 }]);
+});
+
+test('creates a configurable monthly contract with shared frequency-based sessions and no legacy blocker', async () => {
+  let submitted;
+  initialFetch({ onPlanCreate: (_url, options) => { submitted = JSON.parse(options.body); return response(plan, 201); } });
+  renderServices();
+  await screen.findByRole('heading', { name: service.name });
+  const dialog = await openPlanDialog();
+  fireEvent.change(within(dialog).getByLabelText('Nombre'), { target: { value: 'Mensual tres días' } });
+  fireEvent.change(within(dialog).getByLabelText('Tipo de plan'), { target: { value: 'recurring' } });
+  fireEvent.change(within(dialog).getByLabelText(/Frecuencia de sesiones por semana/), { target: { value: '3' } });
+  const create = within(dialog).getByRole('button', { name: 'Crear borrador' });
+  assert.equal(create.disabled, false);
+  fireEvent.click(create);
+  await waitFor(() => assert.ok(submitted));
+  assert.equal(submitted.termKind, 'natural_month');
+  assert.equal(submitted.renewalCadence, 'monthly');
+  assert.equal(submitted.paymentBlock, 'enforce');
+  assert.ok(submitted.rights.some(right => right.rightType === 'sessions_quota' && right.quantityRule === 'weekday_ratio_v1' && right.weeklyFrequency === 3 && right.quotaScope === 'shared'));
+  assert.equal(screen.queryByText(/se habilitará con 2J-098E/i), null);
 });
 
 test('creating a plan without the currently selected service selects a service that contains the new plan', async () => {

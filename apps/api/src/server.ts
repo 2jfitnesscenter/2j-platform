@@ -141,6 +141,7 @@ export const planInput = z.object({
         } else context.addIssue({code:'custom',path:['rights',index],message:'El contrato requiere una modalidad explícita para la bolsa de sesiones.'});
       } else if (['pack','one_off'].includes(termKind)) {
         if (right.quantityRule !== 'fixed_v1' || !Number.isInteger(right.quantity) || right.weeklyFrequency != null) context.addIssue({code:'custom',path:['rights',index],message:'pack y one_off requieren cantidad fija sin frecuencia semanal.'});
+        if (termKind === 'one_off' && right.quantity !== 1) context.addIssue({code:'custom',path:['rights',index,'quantity'],message:'Una sesión puntual concede exactamente una sesión.'});
       }
     }
     if (right.serviceId && !plan.serviceIds.includes(right.serviceId)) context.addIssue({ code: 'custom', path: ['rights', index, 'serviceId'], message: 'El derecho debe apuntar a un servicio incluido en el plan.' });

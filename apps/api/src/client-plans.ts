@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
+import { ContractAssignmentError, coordinateContractAssignment } from './contract-assignment-coordinator.js';
 import type { createDatabase } from './db.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
@@ -36,11 +37,11 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
   app.get('/api/plans/assignable', async (request, reply) => {
     reply.header('Cache-Control','no-store');
     if (!await auth(request, reply, 'entitlements.read')) return;
-    return db`SELECT p.id,p.name,p.current_version AS "currentVersion",v.kind,v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",
+    return db`SELECT p.id,p.name,p.current_version AS "currentVersion",v.kind,v.term_kind AS "termKind",v.term_months AS "termMonths",v.max_span_days AS "maxSpanDays",v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.base_price_cents AS "basePriceCents",
       (SELECT COALESCE(jsonb_agg(jsonb_build_object('id',s.id,'name',s.name,'area',a.name) ORDER BY lower(s.name),s.id),'[]'::jsonb) FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version) AS services,
       (SELECT COALESCE(jsonb_agg(jsonb_build_object('rightType',r.right_type,'trainingAccessLevel',r.training_access_level,'serviceId',r.service_id,'serviceName',s.name,'quantity',r.quantity,'quantityRule',r.quantity_rule,'weeklyFrequency',r.weekly_frequency,'period',r.period,'quotaScope',r.quota_scope) ORDER BY r.right_type,r.service_id NULLS FIRST,r.id),'[]'::jsonb) FROM plan_rights r LEFT JOIN services s ON s.id=r.service_id WHERE r.plan_id=p.id AND r.plan_version=p.current_version) AS rights
       ,(SELECT COALESCE(jsonb_agg(jsonb_build_object('module',m.module,'accessLevel',m.access_level,'capabilities',COALESCE((SELECT jsonb_agg(c.capability ORDER BY c.capability) FROM plan_module_capabilities c WHERE c.plan_id=m.plan_id AND c.plan_version=m.plan_version AND c.module=m.module),'[]'::jsonb)) ORDER BY m.module),'[]'::jsonb) FROM plan_module_accesses m WHERE m.plan_id=p.id AND m.plan_version=p.current_version) AS modules
-      FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.status='active' AND v.frozen_at IS NOT NULL AND v.term_kind IS NULL
+      FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.status='active' AND v.frozen_at IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM plan_rights r WHERE r.plan_id=p.id AND r.plan_version=p.current_version AND r.right_type='service_access' AND r.service_id IS NULL)
         AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version AND (s.status<>'active' OR a.status<>'active'))
       ORDER BY lower(p.name),p.id`;
@@ -78,6 +79,26 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
     if(body.data.operationKind==='renewal'&&!can(context,'entitlements.renew'))return reply.code(403).send({error:'permission_denied'});
     if(body.data.operationKind==='change'&&!can(context,'entitlements.manage'))return reply.code(403).send({error:'permission_denied'});
     const data = body.data;
+    const [termPlan] = await db`SELECT v.term_kind AS "termKind" FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version WHERE p.id=${data.planId} AND p.status='active'`;
+    if (termPlan?.termKind) {
+      if (data.paymentAmountCents != null) return reply.code(409).send({error:'contract_payment_use_payment_flow'});
+      try {
+        const assignment = await coordinateContractAssignment(db, {
+          clientId: params.data.clientId, planId: data.planId, idempotencyKey: key.data,
+          ...(['pack','one_off'].includes(String(termPlan.termKind))?{dueOn:data.dueOn}:{}),
+          contractStart: data.startsOn, ...(termPlan.termKind === 'custom_range' ? {customRangeEnd:data.endsOn} : {}),
+          amountCents: data.amountCents, ...(data.adjustmentReason ? {adjustmentReason:data.adjustmentReason} : {}),
+        }, context);
+        return reply.code(assignment.replay ? 200 : 201).send({id:assignment.assignmentId,chargeId:assignment.chargeId,dueOn:assignment.dueOn,replay:assignment.replay,periods:assignment.periods});
+      } catch (error) {
+        if (error instanceof ContractAssignmentError) {
+          const status = error.code === 'permission_denied' ? 403 : ['client_unavailable','term_plan_unavailable'].includes(error.code) ? 409 : error.code === 'validation_error' ? 400 : 409;
+          return reply.code(status).send({error:error.code});
+        }
+        app.log.error({databaseCode:code(error),route:'POST /api/clients/:clientId/plans'},'contract assignment failed');
+        return reply.code(500).send({error:'internal_error'});
+      }
+    }
     const requestHash = hash({ clientId: params.data.clientId, ...data });
     const assignmentId = randomUUID();
     const chargeId = randomUUID();
@@ -104,7 +125,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
           AND NOT EXISTS (SELECT 1 FROM plan_rights r WHERE r.plan_id=p.id AND r.plan_version=p.current_version AND r.right_type='service_access' AND r.service_id IS NULL)
           AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id WHERE ps.plan_id=p.id AND ps.plan_version=p.current_version AND (s.status<>'active' OR a.status<>'active')) FOR SHARE OF p,v`;
         if (!plan) return { error: 'plan_unavailable' as const };
-        if (plan.termKind != null) return { error: 'contract_terms_not_available' as const };
+        if (plan.termKind != null && !['pack','one_off'].includes(String(plan.termKind))) return { error: 'contract_terms_not_available' as const };
         const cash = data.paymentAmountCents != null ? await lockOpenCashSession(tx, context.actorId) : null;
         if (cash && !cash.ok) return { error: cash.error };
         const concept = `${plan.name} · Cuota`;
