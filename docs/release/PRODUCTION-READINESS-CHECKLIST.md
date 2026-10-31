@@ -17,7 +17,7 @@ La construcción de Platform admin está **integrada en `main`** y no queda ning
 - **Clientes:** documentos privados (#138, migración 0057) y su pestaña, **importación de TIMP**: vista previa (#141, 0058) y paso real con confirmación en pantalla (#153, 0060).
 - **Staging:** script e instrucciones (#89), seed sintético Admin+Trainer (#142), arreglos (#152, #127).
 
-Numeración de migraciones en `main`: 0054 a 0063, sin huecos ni duplicados; no se reescribe.
+Numeración de migraciones en `main`: 0054 a 0066 más la 0067 de este PR (Bizum como método propio), sin huecos ni duplicados; no se reescribe.
 
 ## 3. Abierto (no está en `main`)
 
@@ -49,7 +49,7 @@ Numeración de migraciones en `main`: 0054 a 0063, sin huecos ni duplicados; no 
 - [ ] **Identidad del propietario (obligatoria):** definir `PLATFORM_OWNER_PERSON_ID` (UUID de su persona en Platform, para sesión passkey) o `PLATFORM_OWNER_ACTOR_ID` (sujeto de identidad de confianza). Sin una de las dos nadie recibe `owner.panel.read` ni `platform_link_issue`: el Panel de gestión y la bandeja de Invitaciones saldrán «sin permiso».
 - [ ] `PLATFORM_LINK_ISSUERS` **solo si se usa**: lista separada por comas de `personId` UUID estables (nunca correos ni nombres) de quienes además del propietario pueden resolver revisiones H13. Un valor que no sea UUID **impide arrancar la API** (intencionado). Vacía = solo el propietario.
 - [ ] Copia de seguridad restaurable probada y retención definida.
-- [ ] Migraciones **0054 a 0063 en orden** sobre la base real.
+- [ ] Migraciones **0054 a 0067 en orden** sobre la base real (la 0067 solo amplía los valores admitidos de método de pago: Bizum; no cambia filas).
 - [ ] `CLIENT_IMPORT_PREVIEW_ENABLED=true` y `CLIENT_IMPORT_COMMIT_ENABLED=true` solo durante la importación; después, apagar el segundo.
 - [ ] Configuración → Facturación rellenada (emisor, NIF, dirección, serie, IGIC, pie, logo); factura de prueba emitida y rectificada **en staging**.
 - [ ] Texto de privacidad y consentimientos publicado antes de pedirlos a ningún socio.

@@ -181,3 +181,19 @@ test('Member history is self-scoped, includes own sale snapshots, and does not r
   const other=await memberB.inject({method:'GET',url:'/api/me/store/purchases'});assert.equal(other.statusCode,200);assert.equal(other.json().items.some(row=>row.id===created.json().id),false);
   assert.equal((await admin.inject({method:'GET',url:`/api/clients/${memberIds.a}`})).statusCode,200);
 });
+
+test('Bizum is its own payment method: a store sale and a charge payment keep it, the annulment carries it, and unknown methods are still refused',async()=>{
+  const p=await product();const v=await variant(p.id,{priceCents:2000});await stock(v.id,5);
+  const created=await sale(memberIds.a,v.id,1,randomUUID(),{paymentMethod:'bizum'});assert.equal(created.statusCode,201,created.body);
+  assert.equal(created.json().paymentMethod,'bizum');
+  const [stored]=await sql`SELECT payment_method AS method FROM store_sales WHERE id=${created.json().id}`;assert.equal(stored.method,'bizum');
+  const bad=await sale(memberIds.a,v.id,1,randomUUID(),{paymentMethod:'bitcoin'});assert.equal(bad.statusCode,400);
+  const voided=await admin.inject({method:'POST',url:`/api/admin/store/sales/${created.json().id}/void`,payload:{reason:'Anulación de prueba Bizum'}});assert.equal(voided.statusCode,200,voided.body);
+  const [movement]=await sql`SELECT payment_method AS method FROM store_sale_cash_movements WHERE sale_id=${created.json().id}`;assert.equal(movement.method,'bizum');
+
+  await ensureOpenCash();
+  const charge=await post('/api/economics/charges',{clientId:memberIds.a,concept:'Cuota Bizum',amountCents:4900,dueOn:'2099-12-10'},{'idempotency-key':randomUUID()});assert.equal(charge.statusCode,201,charge.body);
+  const paid=await post('/api/economics/payments',{chargeId:charge.json().id,splits:[{method:'bizum',amountCents:4900}]},{'idempotency-key':randomUUID()});assert.equal(paid.statusCode,201,paid.body);
+  const splits=await sql`SELECT method FROM economic_payment_splits WHERE transaction_id=${paid.json().id}`;assert.deepEqual(splits.map(row=>row.method),['bizum']);
+  const refused=await post('/api/economics/payments',{chargeId:charge.json().id,splits:[{method:'paypal',amountCents:100}]},{'idempotency-key':randomUUID()});assert.equal(refused.statusCode,400);
+});

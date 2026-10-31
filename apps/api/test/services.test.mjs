@@ -2334,7 +2334,7 @@ test('D113 gates payment collection and D102 transfer validation remains indepen
   const client = (await createClientRequest(clientsAdminApp, { firstName: 'D113', lastName: `Gate ${randomUUID()}`, email: null, phone: null })).json();
   const charge = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/charges', headers: { 'idempotency-key': randomUUID() }, payload: { clientId: client.id, concept: 'D113 QA', amountCents: 10000, dueOn: '2099-12-10' } });
   assert.equal(charge.statusCode, 201, charge.body);
-  for (const method of ['cash', 'card', 'transfer', 'direct_debit', 'other']) {
+  for (const method of ['cash', 'card', 'transfer', 'bizum', 'direct_debit', 'other']) {
     const response = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/payments', headers: { 'idempotency-key': randomUUID() }, payload: { chargeId: charge.json().id, splits: [{ method, amountCents: 1000 }] } });
     assert.equal(response.statusCode, 409, `${method}: ${response.body}`);
     assert.equal(response.json().error, 'cash_session_required');
@@ -2380,7 +2380,7 @@ test('D113 requires an open shift for every refund method and links the refund t
   const close = await clientsAdminApp.inject({ method: 'POST', url: `/api/economics/cash/${current.json().session.id}/close`, payload: { countedDenominations: cashCount(await expectedCashCents(sql, current.json().session.id)) } });
   assert.equal(close.statusCode, 200, close.body);
 
-  for (const method of ['cash', 'card', 'transfer', 'direct_debit', 'other']) {
+  for (const method of ['cash', 'card', 'transfer', 'bizum', 'direct_debit', 'other']) {
     const response = await clientsAdminApp.inject({ method: 'POST', url: '/api/economics/refunds', headers: { 'idempotency-key': randomUUID() }, payload: { transactionId: payment.json().id, amountCents: 500, method, note: `D113 ${method}` } });
     assert.equal(response.statusCode, 409, `${method}: ${response.body}`);
     assert.equal(response.json().error, 'cash_session_required');

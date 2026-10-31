@@ -21,7 +21,7 @@ const canaryDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary'
 const monthName = new Intl.DateTimeFormat('es-ES', { timeZone: 'UTC', month: 'short', year: '2-digit' });
 const euros = (cents: number) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(cents / 100);
 const percent = (rate: number | null) => (rate === null ? 'Sin datos' : `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(rate * 100)} %`);
-const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', other: 'Otro' };
+const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', bizum: 'Bizum', other: 'Otro' };
 const monthLabel = (month: string) => monthName.format(new Date(`${month}-01T00:00:00Z`));
 
 function defaultRange() {

@@ -37,7 +37,7 @@ test('the panel returns the HOY / SEMANA / MES blocks with only counters, amount
   assert.deepEqual(Object.keys(body.today).sort(), ['cash', 'classes', 'clients', 'clockedIn', 'collections', 'reviews', 'teamAlerts', 'waitlist']);
   assert.deepEqual(Object.keys(body.week).sort(), ['dueSoon', 'lowStock', 'sessions', 'storeSales']);
   assert.deepEqual(Object.keys(body.month).sort(), ['bunkerLinkedClients', 'newClients', 'occupancyBySlot', 'revenue']);
-  assert.deepEqual(Object.keys(body.month.revenue.byMethod).sort(), ['card', 'cash', 'direct_debit', 'other', 'transfer']);
+  assert.deepEqual(Object.keys(body.month.revenue.byMethod).sort(), ['bizum', 'card', 'cash', 'direct_debit', 'other', 'transfer']);
   for (const value of [body.today.collections.pendingCents, body.today.clients.overdue, body.today.clients.blocked, body.today.waitlist.entries, body.today.reviews.transfers, body.today.reviews.bunkerLinks, body.week.dueSoon.assignments, body.month.bunkerLinkedClients]) assert.ok(Number.isInteger(value) && value >= 0, `non-negative integer: ${value}`);
   assert.ok(['none', 'open', 'closed', 'late_close'].includes(body.today.cash.state));
   const text = JSON.stringify(body).toLowerCase();

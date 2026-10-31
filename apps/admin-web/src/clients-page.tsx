@@ -7,6 +7,7 @@ import { ClientFilesPanel } from './client-files-panel.js';
 import { InvoiceDialog } from './invoice-ui.js';
 import { ActionsMenu, RegisterPaymentDialog, firstPendingCharge, type ActionItem } from './client-actions.js';
 import { NewSaleDialog } from './new-sale-dialog.js';
+import { BalanceCards, MonthCalendar } from './client-overview.js';
 import { ClientAvatar, SECTION_LABEL, SECTION_ORDER, chargeChip, clientPlanChip, euros, planStatusChip, reservationChip, reservationRightsLabel, rightLine } from './client-presenters.js';
 
 type Client = { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; birthDate?:string|null; status: 'active' | 'archived'; createdAt: string; updatedAt?: string };
@@ -65,7 +66,7 @@ function euroToCents(value:string) { const normalized=value.trim().replace(',','
 
 type PurchaseRow = { id: string; createdAt: string; status: string; paymentState: string; paymentMethod: string | null; totalCents: number | string; lines: Array<{ productName: string; variantLabel: string; quantity: number }> };
 const purchaseDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short', year: 'numeric' });
-const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', other: 'Otro' };
+const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', bizum: 'Bizum', other: 'Otro' };
 
 /** Compras de tienda del cliente (paridad visual 5; D49: compras consultables sin cuota). */
 function PurchasesPanel({ sales }: { sales: PurchaseRow[] }) {
@@ -141,7 +142,7 @@ export function ClientsPage() {
   const [planActionBusy,setPlanActionBusy]=useState(false);
   const [planMovements,setPlanMovements]=useState<PlanMovementData|null>(null);
   const [collectNow, setCollectNow] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'cash'|'card'|'transfer'|'direct_debit'|'other'>('card');
+  const [paymentMethod, setPaymentMethod] = useState<'cash'|'card'|'transfer'|'bizum'|'direct_debit'|'other'>('card');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -555,6 +556,8 @@ export function ClientsPage() {
           {activeSection === 'summary' && activeSectionData?.access === 'available' && <div className="client-summary">
             <h2 className="sr-only">Contexto del cliente</h2>
             <div className="client-summary-grid">
+              {profile.capabilities.readEntitlements !== false && clientPlans.length > 0 && <BalanceCards assignments={clientPlans} />}
+              {sectionOf('reservations')?.access === 'available' && <MonthCalendar reservations={profile.reservations ?? []} />}
               <Card as="section" aria-labelledby="client-next-title"><CardHeader title="Próximas reservas" titleId="client-next-title" level={3} actions={<Button variant="ghost" size="sm" onClick={() => selectSection('reservations')}>Ver reservas</Button>} />
                 {upcomingReservations.length > 0 ? <ul className="client-mini-list">{upcomingReservations.map((reservation) => <li key={reservation.id}><strong>{reservation.serviceName}</strong><span>{dateTimeLabel(reservation.startsAt)} · {reservation.areaName}</span></li>)}</ul> : <p className="client-muted">No hay reservas próximas.</p>}
               </Card>
@@ -719,7 +722,7 @@ export function ClientsPage() {
         <div className="ui-modal-grid"><label>Precio de venta (€)<input inputMode="decimal" placeholder="0,00" value={planPrice} onChange={(event) => setPlanPrice(event.target.value)} readOnly={!profile?.capabilities.manageCatalogPrice} required /></label>{selectedPlan?.basePriceCents == null && !profile?.capabilities.manageCatalogPrice && <p className="ui-modal-note">Este plan necesita un precio base configurado por Administración antes de poder venderse.</p>}<label>Vencimiento del cargo<input type="date" value={planDueOn} onChange={(event) => setPlanDueOn(event.target.value)} required /></label></div>
         {selectedPlan?.basePriceCents != null && planPriceCents !== null && planPriceCents !== selectedPlan.basePriceCents ? <label>Motivo del ajuste de precio<input required minLength={3} maxLength={240} value={planAdjustmentReason} onChange={(event) => setPlanAdjustmentReason(event.target.value)} /></label> : null}
         {profile?.capabilities.collectPayments && <label><input type="checkbox" checked={collectNow} onChange={(event) => setCollectNow(event.target.checked)} /> Cobrar ahora el importe completo</label>}
-        {collectNow && profile?.capabilities.collectPayments && <label>Método de pago<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as typeof paymentMethod)}><option value="card">Tarjeta</option><option value="cash">Efectivo · requiere caja abierta</option><option value="transfer">Transferencia</option><option value="direct_debit">Domiciliación</option><option value="other">Otro</option></select></label>}
+        {collectNow && profile?.capabilities.collectPayments && <label>Método de pago<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as typeof paymentMethod)}><option value="card">Tarjeta</option><option value="cash">Efectivo · requiere caja abierta</option><option value="transfer">Transferencia</option><option value="direct_debit">Domiciliación</option><option value="bizum">Bizum</option><option value="other">Otro</option></select></label>}
         <p className="ui-modal-note">El precio se registra en el cargo económico existente; lo que incluye el plan queda fijado en el momento de la venta. No se configura renovación automática ni consumo adicional aquí.</p>
         {planSaveError && <div className="ui-form-error" role="alert">{planSaveError}</div>}
         <div className="ui-modal-actions"><Button disabled={planSaveBusy} onClick={cancelPlanSale}>Cancelar</Button><Button type="submit" variant="primary" disabled={planSaveBusy || !selectedPlanId}>{planSaveBusy ? 'Guardando…' : planOperation?.kind === 'renewal' ? 'Renovar y cobrar' : planOperation?.kind === 'change' ? 'Guardar cambio de plan' : collectNow ? 'Asignar y cobrar' : 'Asignar y dejar pendiente'}</Button></div>

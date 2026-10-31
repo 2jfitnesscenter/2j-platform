@@ -8,7 +8,7 @@ import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-sessi
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
-const methods = ['cash','card','transfer','direct_debit','other'] as const;
+const methods = ['cash','card','transfer','bizum','direct_debit','other'] as const;
 const money = z.number().int().min(1).max(100_000_000_000);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => new Date(`${value}T00:00:00Z`).toISOString().slice(0,10) === value);
 const chargeInput = z.object({ clientId:uuid, planId:uuid.nullable().optional(), concept:z.string().trim().min(1).max(160), amountCents:money, dueOn:date, exemptReason:z.string().trim().min(3).max(240).optional() }).strict();

@@ -111,11 +111,11 @@ test('products come with variants and stock: sold-out variants cannot be added, 
   fireEvent.click(within(dialog).getByRole('button', { name: /Chocolate/ }));
   assert.match(within(dialog).getByText(/^Total/).textContent, /68,90\s*€/, '2 × 18,00 + 32,90');
   fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
-  fireEvent.change(within(dialog).getByLabelText('Método'), { target: { value: 'other' } });
+  fireEvent.change(within(dialog).getByLabelText('Método'), { target: { value: 'bizum' } });
   fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
   await within(dialog).findByText('Venta registrada');
   const sale = writes(calls).find((call) => call.path === '/api/admin/store/sales');
-  assert.deepEqual(sale.body, { clientId: CLIENT, lines: [{ variantId: TEE.id, quantity: 2 }, { variantId: PROTEIN.id, quantity: 1 }], paymentState: 'paid', paymentMethod: 'other', note: '' });
+  assert.deepEqual(sale.body, { clientId: CLIENT, lines: [{ variantId: TEE.id, quantity: 2 }, { variantId: PROTEIN.id, quantity: 1 }], paymentState: 'paid', paymentMethod: 'bizum', note: '' });
   assert.equal(writes(calls).filter((call) => call.path.includes('/invoice')).length, 0, 'product sales have no charge to invoice');
 });
 
@@ -235,7 +235,7 @@ test('Registrar pago pre-fills the pending balance, sends one split with the cho
   const dialog = await screen.findByRole('dialog', { name: 'Registrar pago' });
   assert.equal(within(dialog).getByLabelText('Importe (€)').value, '49.00');
   assert.ok(await within(dialog).findByText('Para cobrar primero tienes que fichar la entrada'));
-  fireEvent.change(within(dialog).getByLabelText('Método'), { target: { value: 'other' } });
+  fireEvent.change(within(dialog).getByLabelText('Método'), { target: { value: 'bizum' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirmar pago' }));
   await waitFor(() => assert.equal(attempts, 1));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Fichar entrada ahora' }));
@@ -243,7 +243,7 @@ test('Registrar pago pre-fills the pending balance, sends one split with the cho
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirmar pago' }));
   await waitFor(() => assert.equal(done, 1));
   const payments = writes(calls).filter((call) => call.path === '/api/economics/payments');
-  assert.deepEqual(payments[1].body, { chargeId: 'c-late', splits: [{ method: 'other', amountCents: 4900 }] });
+  assert.deepEqual(payments[1].body, { chargeId: 'c-late', splits: [{ method: 'bizum', amountCents: 4900 }] });
   assert.equal(payments[0].key, payments[1].key);
   fireEvent.change(within(dialog).getByLabelText('Importe (€)'), { target: { value: '60' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirmar pago' }));

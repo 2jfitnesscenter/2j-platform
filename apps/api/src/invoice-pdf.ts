@@ -29,7 +29,7 @@ const GRAPHITE = '#23272b';
 const MUTED = '#6b7178';
 const RULE = '#d9dde1';
 const LIME = '#a4d65e';
-const METHOD_LABEL: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', other: 'Otro' };
+const METHOD_LABEL: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', bizum: 'Bizum', direct_debit: 'Domiciliación', other: 'Otro' };
 
 export const eurosText = (cents: number) => `${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(cents / 100)}`;
 const percentText = (basisPoints: number | null) => basisPoints == null ? '—' : `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(basisPoints / 100)} %`;

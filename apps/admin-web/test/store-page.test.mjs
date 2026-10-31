@@ -260,7 +260,7 @@ test('H: a successful sale posts exact lines, method and state, clears the order
   let dialog=await screen.findByRole('dialog',{name:'Nueva venta en el centro'});await pickClient(dialog);
   chooseProduct(dialog);fireEvent.change(within(dialog).getByLabelText('Variante'),{target:{value:'v1'}});fireEvent.click(within(dialog).getByRole('button',{name:'Añadir al pedido'}));
   fireEvent.change(within(dialog).getByLabelText('Estado de pago'),{target:{value:'pending'}});fireEvent.change(within(dialog).getByLabelText('Método'),{target:{value:'transfer'}});
-  assert.deepEqual([...within(dialog).getByLabelText('Método').options].map(option=>option.textContent),['Efectivo','Tarjeta (registro interno)','Transferencia','Otro'],'only supported methods, card is an internal note');
+  assert.deepEqual([...within(dialog).getByLabelText('Método').options].map(option=>option.textContent),['Efectivo','Tarjeta (registro interno)','Transferencia','Bizum','Otro'],'only supported methods, card is an internal note');
   assert.deepEqual([...within(dialog).getByLabelText('Estado de pago').options].map(option=>option.textContent),['Pagado en el centro','Pendiente'],'no Planificado, no online payment');
   fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar venta'}));
   await screen.findByText('Venta registrada y stock actualizado.');

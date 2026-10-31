@@ -15,7 +15,7 @@ const canaryDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary'
 const shortDate = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', day: 'numeric', month: 'short', year: 'numeric' });
 const euros = (cents: number) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(cents / 100);
 const kindLabel: Record<string, string> = { plan: 'Cuota', charge: 'Cargo', store: 'Tienda' };
-const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', other: 'Otro' };
+const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', bizum: 'Bizum', other: 'Otro' };
 const statusPresentation: Record<string, { label: string; tone: StatusTone }> = {
   paid: { label: 'Cobrada', tone: 'success' }, partial: { label: 'Cobro parcial', tone: 'warning' }, pending: { label: 'Pendiente', tone: 'info' },
   unpaid: { label: 'Vencida', tone: 'danger' }, refunded: { label: 'Devuelta', tone: 'neutral' }, void: { label: 'Anulada', tone: 'neutral' }, exempt: { label: 'Exenta', tone: 'neutral' },

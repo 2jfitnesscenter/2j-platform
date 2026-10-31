@@ -3,6 +3,7 @@ import { Button, Card, CardHeader, Icon, PageHeader, StatusChip, icons, type Luc
 import { hasProfessionalRoute, useCommandCenter, type CommandCenterModel } from './app-shell.js';
 import { PLATFORM_CHANGELOG } from './platform-changelog.js';
 import { InvoiceDialog } from './invoice-ui.js';
+import { NewSaleLauncher } from './new-sale-launcher.js';
 
 const pendingKinds = new Set(['sensitive_review', 'document_pending', 'consent_pending', 'overdue_checkin', 'pending_transfers']);
 
@@ -289,13 +290,15 @@ export function CommandCenter() {
   const expiringPlans = data.commercial?.expiringPlans ?? null;
   const recentMovements = data.commercial?.recentMovements ?? null;
   const refreshing = state === 'loading';
+  // «Nueva venta» la ofrece quien el servidor deja vender o cobrar; el diálogo vuelve a comprobar los permisos del cliente elegido.
+  const canSell = data.quickActions.some(action => ['assign-plan', 'collect-payment'].includes(action.id));
 
   return <main className="summary" id="home" data-2j-design="v2">
     <PageHeader
       title="Resumen"
       description={description}
       meta={updatedAt ? `Actualizado a las ${dateTime(updatedAt)} · hora de Canarias` : undefined}
-      actions={<>{hasProfessionalRoute('reports') && <Button href="#reports" icon={icons.ArrowUpRight}>Ver informes</Button>}<Button icon={icons.RefreshCw} loading={refreshing} onClick={() => void reload()}>Actualizar</Button></>}
+      actions={<>{canSell && <NewSaleLauncher onDone={() => void reload()} />}{hasProfessionalRoute('reports') && <Button href="#reports" icon={icons.ArrowUpRight}>Ver informes</Button>}<Button icon={icons.RefreshCw} loading={refreshing} onClick={() => void reload()}>Actualizar</Button></>}
     />
 
     <QuickActions actions={data.quickActions} />

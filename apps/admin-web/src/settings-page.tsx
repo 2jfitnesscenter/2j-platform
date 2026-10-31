@@ -18,7 +18,7 @@ const TABS = [
   { id: 'center', label: 'Centro' }, { id: 'operations', label: 'Horario y turnos' }, { id: 'appearance', label: 'Apariencia' }, { id: 'booking', label: 'Reservas' }, { id: 'payments', label: 'Pagos' },
   { id: 'invoicing', label: 'Facturación' }, { id: 'store', label: 'Tienda' }, { id: 'permissions', label: 'Permisos' }, { id: 'integrations', label: 'Integraciones' },
 ];
-const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', other: 'Otro' };
+const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', bizum: 'Bizum', other: 'Otro' };
 const integrationLabel: Record<string, string> = {
   trainingSso: 'Acceso único con Búnker (SSO)', trainingServiceCalls: 'Llamadas de servicio a Búnker', trainingLinking: 'Vinculación de clientes con Búnker', trainingSignals: 'Señales de entrenamiento',
   trainingProvisioning: 'Alta automática en Búnker', push: 'Notificaciones push', passkeys: 'Acceso con llaves de acceso (passkeys)', memberAuthPilot: 'Acceso de clientes (piloto)', memberBookingPilot: 'Reservas de clientes (piloto)',
