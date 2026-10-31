@@ -14,13 +14,15 @@ export function useShift() {
   const [state, setState] = React.useState<ShiftState>('loading');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
-  const refresh = React.useCallback(async () => {
+  /** Lee el turno y devuelve el estado recién leído (el estado de React tarda un render en reflejarlo). */
+  const refresh = React.useCallback(async (): Promise<ShiftState> => {
     try {
       const response = await apiFetch(`${api}/api/timeclock/self`);
-      if (!response.ok) { setState('unavailable'); return; }
+      if (!response.ok) { setState('unavailable'); return 'unavailable'; }
       const data = await response.json() as { openShift?: unknown };
-      setState(data.openShift ? 'open' : 'closed');
-    } catch { setState('unavailable'); }
+      const next: ShiftState = data.openShift ? 'open' : 'closed';
+      setState(next); return next;
+    } catch { setState('unavailable'); return 'unavailable'; }
   }, []);
   React.useEffect(() => { void refresh(); }, [refresh]);
   const clockIn = React.useCallback(async () => {

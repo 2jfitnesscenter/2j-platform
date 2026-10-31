@@ -26,6 +26,8 @@ const profileOf = ({ capabilities = adminCapabilities, plans = [], payments, sec
   summary: { profile: slot(), plans: slot(plans), reservations: slot(), payments: payments ? slot(payments) : slot(null, 'forbidden'), documents: slot(), messages: slot(messages ?? { unreadCount: 0, lastMessageAt: null }), followup: slot() },
 });
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+const menuItem = async (name) => { fireEvent.click(await screen.findByRole('button', { name: 'Acciones' })); fireEvent.click(await screen.findByRole('menuitem', { name })); };
+
 const listResponse = (items = [client], overrides = {}) => ({ items, capabilities: { manage: true, assignPlans: true }, hasMore: false, nextCursor: null, ...overrides });
 const serve = (profile, list = listResponse(), requests = []) => {
   globalThis.fetch = async (url) => {
@@ -42,13 +44,20 @@ const open = async () => {
   await screen.findByRole('heading', { level: 1, name: 'Marta Santos' });
 };
 
-test('Admin actions are weighted: one primary, secondary edit, danger archive, and all stay inside the tab order', async () => {
+test('Admin header is weighted: one primary «Nueva venta», secondary «Acciones» menu with the rest, danger archive', async () => {
   serve(profileOf());
   await open();
-  assert.match(screen.getByRole('button', { name: 'Añadir cuota' }).className, /ui-button--primary/);
-  assert.match(screen.getByRole('button', { name: 'Editar datos' }).className, /ui-button--secondary/);
-  assert.match(screen.getByRole('button', { name: 'Archivar' }).className, /ui-button--danger\b/);
+  assert.match(screen.getByRole('button', { name: 'Nueva venta' }).className, /ui-button--primary/);
+  const menu = screen.getByRole('button', { name: 'Acciones' });
+  assert.equal(menu.getAttribute('aria-expanded'), 'false');
+  fireEvent.click(menu);
+  assert.equal(menu.getAttribute('aria-expanded'), 'true');
+  const items = within(screen.getByRole('menu', { name: 'Acciones del cliente' }));
+  for (const name of ['Añadir cuota', 'Editar datos', 'Archivar']) assert.ok(items.getByRole('menuitem', { name }), name);
+  assert.match(items.getByRole('menuitem', { name: 'Archivar' }).className, /is-danger/);
   assert.equal(document.querySelectorAll('.client-header .ui-button--primary').length, 1, 'exactly one primary action in the header');
+  fireEvent.keyDown(document, { key: 'Escape' });
+  assert.equal(screen.queryByRole('menu'), null, 'Escape closes the menu');
 });
 
 test('Trainer (read-only capabilities) sees no write actions, no Pagos and no economic data', async () => {
@@ -58,7 +67,9 @@ test('Trainer (read-only capabilities) sees no write actions, no Pagos and no ec
   assert.ok(screen.queryByRole('button', { name: 'Nuevo cliente' }) === null);
   fireEvent.click(screen.getByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { level: 1, name: 'Marta Santos' });
-  for (const name of ['Añadir cuota', 'Editar datos', 'Archivar']) assert.ok(screen.queryByRole('button', { name }) === null, `${name} is absent`);
+  for (const name of ['Nueva venta', 'Registrar pago']) assert.ok(screen.queryByRole('button', { name }) === null, `${name} is absent`);
+  const readOnlyMenu = screen.queryByRole('button', { name: 'Acciones' }); if (readOnlyMenu) fireEvent.click(readOnlyMenu);
+  for (const name of ['Añadir cuota', 'Editar datos', 'Archivar']) assert.ok(screen.queryByRole('menuitem', { name }) === null, `${name} is absent`);
   assert.ok(screen.queryByRole('tab', { name: 'Pagos' }) === null);
   assert.ok(screen.queryByText(/Pago$/) === null, 'no payment fact without the finance section');
   fireEvent.click(screen.getByRole('tab', { name: 'Plan y sesiones' }));
@@ -95,9 +106,11 @@ test('PP-04: plan state is separate from the account; archived is the only accou
   await open();
   assert.ok(screen.getByText('Plan vencido'));
   assert.ok(screen.getByText('Archivado'));
-  assert.ok(screen.queryByRole('button', { name: 'Archivar' }) === null);
-  assert.ok(screen.queryByRole('button', { name: 'Añadir cuota' }) === null);
-  assert.ok(screen.getByRole('button', { name: 'Editar datos' }), 'the profile can still be corrected');
+  assert.ok(screen.queryByRole('button', { name: 'Nueva venta' }) === null, 'no sales on an archived profile');
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
+  assert.ok(screen.queryByRole('menuitem', { name: 'Archivar' }) === null);
+  assert.ok(screen.queryByRole('menuitem', { name: 'Añadir cuota' }) === null);
+  assert.ok(screen.getByRole('menuitem', { name: 'Editar datos' }), 'the profile can still be corrected');
 });
 
 test('approved copy: Plan y sesiones, Pagos with real states, and no internal vocabulary or Planificado', async () => {
@@ -184,4 +197,45 @@ test('Cliente 360 keeps keyboard access: tabs are a tablist and the panel is lab
   assert.equal(selected.textContent, 'Resumen');
   const panel = screen.getByRole('tabpanel');
   assert.equal(panel.getAttribute('aria-labelledby'), selected.id);
+});
+
+const payments = (charges) => ({ balanceCents: charges.reduce((sum, item) => sum + item.balanceCents, 0), overdueCount: 0, charges, movements: [] });
+const charge = (overrides = {}) => ({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', concept: 'Cuota mensual', amountCents: 4900, balanceCents: 4900, dueOn: '2026-10-27', status: 'unpaid', ...overrides });
+/** Entre dos perfiles del mismo test: limpia la pantalla y vuelve a la lista (el hash de la ficha anterior seguiría abriendo su ficha). */
+const reopen = async (profile) => { cleanup(); window.location.hash = '#clients'; serve(profile); await open(); };
+
+test('Registrar pago appears in the header only when a charge is pending and the profile can collect; Emitir factura only works on a paid charge', async () => {
+  serve(profileOf({ payments: payments([charge()]) }));
+  await open();
+  assert.ok(screen.getByRole('button', { name: 'Registrar pago' }), 'pending charge: the button is visible');
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
+  const invoice = screen.getByRole('menuitem', { name: /Emitir factura/ });
+  assert.equal(invoice.disabled, true); assert.match(invoice.textContent, /Sin cobros pagados/);
+
+  await reopen(profileOf({ payments: payments([charge({ balanceCents: 0, status: 'paid' })]) }));
+  assert.equal(screen.queryByRole('button', { name: 'Registrar pago' }), null, 'nothing pending: no button');
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
+  assert.equal(screen.getByRole('menuitem', { name: /Emitir factura/ }).disabled, false);
+
+  await reopen(profileOf({ capabilities: { ...adminCapabilities, collectPayments: false }, payments: payments([charge()]) }));
+  assert.equal(screen.queryByRole('button', { name: 'Registrar pago' }), null, 'a profile that cannot collect never sees it');
+
+  await reopen(profileOf({ sections: sectionList('forbidden') }));
+  assert.equal(screen.queryByRole('button', { name: 'Registrar pago' }), null, 'no finance access: no payment data, no button');
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
+  assert.equal(screen.queryByRole('menuitem', { name: /Emitir factura/ }), null);
+});
+
+test('Acciones links go to the right screen with the client: Reservar clase, Enviar mensaje, Subir documento', async () => {
+  serve(profileOf({ sections: sectionList().map((section) => section.id === 'documents' ? { ...section, canManage: true } : section) }));
+  await open();
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
+  assert.equal(screen.getByRole('menuitem', { name: 'Reservar clase' }).getAttribute('href'), '#calendar?book=1');
+  assert.equal(screen.getByRole('menuitem', { name: 'Enviar mensaje' }).getAttribute('href'), '#communications?clientId=' + client.id);
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Subir documento' }));
+  assert.ok(await screen.findByRole('tab', { name: /Documentos/, selected: true }));
+
+  await reopen(profileOf({ sections: sectionList().map((section) => ['messages', 'documents', 'reservations'].includes(section.id) ? { ...section, access: 'forbidden' } : section) }));
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
+  for (const name of ['Reservar clase', 'Enviar mensaje', 'Subir documento']) assert.equal(screen.queryByRole('menuitem', { name }), null, name + ' hidden without access');
 });
