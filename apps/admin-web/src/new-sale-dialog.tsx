@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Button, icons } from '@2j/ui';
 import { apiFetch } from './api-fetch.js';
 import { Modal } from './modal.js';
-import { ShiftNotice, useShift } from './shift-notice.js';
+import { ShiftNotice, SHIFT_REQUIRED_CODES, useShift } from './shift-notice.js';
 
 const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 
@@ -21,7 +21,7 @@ const euro = (cents: number) => new Intl.NumberFormat('es-ES', { style: 'currenc
 const toCents = (value: string) => { const match = /^\d{1,7}(?:[.,]\d{1,2})?$/.exec(value.trim()); return match ? Math.round(Number(value.trim().replace(',', '.')) * 100) : null; };
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Atlantic/Canary' });
 const uuid = () => globalThis.crypto?.randomUUID?.() ?? 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
-function readRecents(): string[] { try { return JSON.parse(window.localStorage.getItem(RECENTS_KEY) ?? '[]') as string[]; } catch { return []; } }
+function readRecents(): string[] { try { const value: unknown = JSON.parse(window.localStorage.getItem(RECENTS_KEY) ?? '[]'); return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []; } catch { return []; } }
 function writeRecents(ids: string[]) { try { window.localStorage.setItem(RECENTS_KEY, JSON.stringify([...new Set([...ids, ...readRecents()])].slice(0, 12))); } catch { /* sin almacenamiento: no pasa nada */ } }
 
 export type NewSaleCapabilities = { assignPlans?: boolean; collectPayments?: boolean; manageCatalogPrice?: boolean };
@@ -53,6 +53,11 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
   const [documentNotice, setDocumentNotice] = React.useState('');
   const keys = React.useRef(new Map<string, { fingerprint: string; key: string }>());
   const registered = React.useRef(false);
+  const shiftBlocked = React.useRef(false);
+  // Tras el primer intento de cobro el carrito y las condiciones quedan fijos: así una petición cuyo resultado se desconoce
+  // (red caída) se reintenta con la misma clave y el mismo contenido, y jamás se registra dos veces.
+  const [attempted, setAttempted] = React.useState(false);
+  const locked = attempted;
   /** La ficha se recarga al cerrar (no antes): recargar con el diálogo abierto borraría la pantalla de resultado. */
   const finish = () => { if (registered.current) onDone(); onClose(); };
   const recents = React.useMemo(() => readRecents(), []);
@@ -91,10 +96,12 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
   const paying = !pending && total > 0;
 
   const addPlan = (plan: Plan) => {
+    if (locked) return;
     if (plan.basePriceCents == null && !capabilities.manageCatalogPrice) { setError('Este plan necesita un precio base configurado por Administración antes de poder venderse.'); return; }
     setError(''); setLines((current) => [...current, { key: uuid(), kind: 'plan', planId: plan.id, name: plan.name, basePriceCents: plan.basePriceCents, price: plan.basePriceCents == null ? '' : (plan.basePriceCents / 100).toFixed(2), reason: '', startsOn: today() }]);
   };
   const addVariant = (product: Product, variant: Variant) => {
+    if (locked) return;
     setError('');
     setLines((current) => {
       const existing = current.find((line): line is ProductLine => line.kind === 'product' && line.variantId === variant.id);
@@ -103,7 +110,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
     });
   };
   const patch = (key: string, change: Partial<PlanLine> | Partial<ProductLine>) => setLines((current) => current.map((line) => line.key === key ? { ...line, ...change } as Line : line));
-  const remove = (key: string) => setLines((current) => current.filter((line) => line.key !== key));
+  const remove = (key: string) => { if (!locked) setLines((current) => current.filter((line) => line.key !== key)); };
 
   function cartProblem(): string {
     for (const line of planLines) {
@@ -121,8 +128,11 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
     const key = uuid(); keys.current.set(id, { fingerprint, key }); return key;
   }
   /** Texto claro del rechazo del API. Cadena vacía = el motivo ya se enseña con el aviso de fichar. */
-  function failure(code: string | undefined, status: number): string {
-    if (code === 'cash_session_required') { if (shift.state !== 'open') { shift.markClosed(); return ''; } return 'Abre la caja antes de cobrar (menú Caja).'; }
+  async function failure(code: string | undefined, status: number): Promise<string> {
+    // Sin caja abierta el motivo depende del turno recién leído: cerrado → aviso de fichar; abierto o sin fichaje → abrir la caja.
+    if (code === 'cash_session_required') { if (await shift.refresh() === 'closed') { shiftBlocked.current = true; return ''; } return 'Abre la caja antes de cobrar (menú Caja).'; }
+    if ((SHIFT_REQUIRED_CODES as readonly string[]).includes(code ?? '')) { shift.markClosed(); shiftBlocked.current = true; return ''; }
+    if (code === 'catalog_price_required') return 'Este plan necesita un precio base configurado por Administración.';
     if (code === 'price_override_forbidden') return 'Tu perfil no puede cambiar el precio del plan.';
     if (code === 'adjustment_reason_required') return 'Explica el ajuste del precio.';
     if (code === 'insufficient_stock') return 'No hay stock suficiente de alguno de los productos.';
@@ -134,7 +144,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
 
   async function confirm() {
     if (paying && !capabilities.collectPayments) { setError('Tu perfil no puede registrar cobros. Marca «Dejar pendiente de pago».'); return; }
-    setBusy(true); setError(''); setDocumentNotice(''); setLineErrors({});
+    setBusy(true); setAttempted(true); setError(''); setDocumentNotice(''); setLineErrors({}); shiftBlocked.current = false;
     const finished: Record<string, Done> = { ...done };
     let failed = false;
     try {
@@ -144,32 +154,33 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
         const payload = { planId: line.planId, startsOn: line.startsOn, endsOn: null, dueOn: line.startsOn, amountCents, adjustmentReason: line.basePriceCents != null && amountCents !== line.basePriceCents ? line.reason.trim() : null, paymentAmountCents: paying ? amountCents : null, paymentMethod: paying ? method : null };
         const response = await apiFetch(`${api}/api/clients/${clientId}/plans`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey(line.key, { clientId, payload }) }, body: JSON.stringify(payload) });
         const body = await response.json().catch(() => ({})) as { chargeId?: string; error?: string };
-        if (!response.ok) { setLineErrors((current) => ({ ...current, [line.key]: failure(body.error, response.status) })); failed = true; break; }
+        if (!response.ok) { const message = await failure(body.error, response.status); setLineErrors((current) => ({ ...current, [line.key]: message })); failed = true; break; }
         finished[line.key] = { chargeId: body.chargeId }; writeRecents([line.planId]);
       }
       if (!failed && productLines.length > 0 && !productLines.every((line) => finished[line.key])) {
         const payload = { clientId, lines: productLines.map((line) => ({ variantId: line.variantId, quantity: line.quantity })), paymentState: paying ? 'paid' : 'pending', paymentMethod: paying ? method : null, note: note.trim() };
         const response = await apiFetch(`${api}/api/admin/store/sales`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey('products', payload) }, body: JSON.stringify(payload) });
         const body = await response.json().catch(() => ({})) as { error?: string };
-        if (!response.ok) { const message = failure(body.error, response.status); for (const line of productLines) setLineErrors((current) => ({ ...current, [line.key]: message })); failed = true; }
+        if (!response.ok) { const message = await failure(body.error, response.status); for (const line of productLines) setLineErrors((current) => ({ ...current, [line.key]: message })); failed = true; }
         else { for (const line of productLines) finished[line.key] = {}; writeRecents(productLines.map((line) => line.variantId)); }
       }
-      setDone(finished);
-      if (Object.keys(finished).length > 0) registered.current = true;
-      if (failed) { setError(shift.state === 'closed' ? '' : 'Algo no se pudo registrar. Lo ya registrado queda guardado; corrige y vuelve a confirmar.'); return; }
+      if (failed) { setError(shiftBlocked.current ? '' : 'Algo no se pudo registrar. Lo ya registrado queda guardado; vuelve a confirmar.'); return; }
       if (paying) {
         let issued = 0; let refused = '';
         for (const line of planLines) {
           const chargeId = finished[line.key]?.chargeId; if (!chargeId || finished[line.key]?.invoiced) continue;
           const response = await apiFetch(`${api}/api/economics/charges/${chargeId}/invoice`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ documentType: asInvoice ? 'full_invoice' : 'simplified_ticket' }) });
           if (response.ok) { finished[line.key] = { ...finished[line.key], invoiced: true }; issued += 1; }
-          else { const body = await response.json().catch(() => ({})) as { error?: string; missing?: string[] }; refused = body.error === 'issuer_incomplete' ? `Falta configurar los datos de facturación${body.missing?.length ? ` (${body.missing.join(', ')})` : ''}.` : body.error === 'client_data_incomplete' ? 'Faltan datos fiscales del cliente.' : response.status === 403 ? 'Tu perfil no puede emitir facturas.' : 'No se pudo emitir el documento; puedes hacerlo desde Pagos.'; }
+          else { const body = await response.json().catch(() => ({})) as { error?: string; missing?: string[] }; refused = body.error === 'issuer_incomplete' ? `Falta configurar los datos de facturación${body.missing?.length ? ` (${body.missing.join(', ')})` : ''}.` : body.error === 'client_fiscal_data_missing' ? 'Faltan datos fiscales del cliente.' : response.status === 403 ? 'Tu perfil no puede emitir facturas.' : 'No se pudo emitir el documento; puedes hacerlo desde Pagos.'; }
         }
         setDone({ ...finished });
         setDocumentNotice(refused ? `La venta está registrada. ${refused}` : issued > 0 ? `${issued === 1 ? 'Documento emitido' : 'Documentos emitidos'} (${asInvoice ? 'factura' : 'ticket'}).` : '');
       }
       setStep('done');
-    } catch { setError('No se pudo conectar con el servidor. Lo ya registrado queda guardado; vuelve a confirmar.'); } finally { setBusy(false); }
+    } catch { setError('No se pudo conectar con el servidor. Puede que algo ya esté registrado: vuelve a confirmar, no se duplicará.'); } finally {
+      // Siempre, también si una petición lanza: lo ya registrado se marca como tal y la ficha se recargará al cerrar.
+      setDone({ ...finished }); if (Object.keys(finished).length > 0) registered.current = true; setBusy(false);
+    }
   }
 
   const igicText = igic == null ? null : `${(igic / 100).toLocaleString('es-ES', { maximumFractionDigits: 2 })} % de IGIC incluido`;
@@ -189,20 +200,20 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
             </div>
             <label className="new-sale-search">Buscar<input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === 'plans' ? 'Nombre de la cuota…' : 'Producto o variante…'} data-modal-initial-focus /></label>
             {tab === 'plans' ? <ul className="new-sale-list" aria-label="Cuotas disponibles">{visiblePlans.length === 0 ? <li className="new-sale-empty">{(plans ?? []).length === 0 ? 'Tu perfil no puede vender cuotas o no hay cuotas activas.' : 'Sin resultados.'}</li> : visiblePlans.map((plan) => <li key={plan.id}>
-              <button type="button" onClick={() => addPlan(plan)}><span>{plan.name}</span><strong>{plan.basePriceCents == null ? 'Sin precio' : euro(plan.basePriceCents)}</strong></button></li>)}</ul>
+              <button type="button" disabled={locked} onClick={() => addPlan(plan)}><span>{plan.name}</span><strong>{plan.basePriceCents == null ? 'Sin precio' : euro(plan.basePriceCents)}</strong></button></li>)}</ul>
               : <ul className="new-sale-list" aria-label="Productos disponibles">{visibleProducts.length === 0 ? <li className="new-sale-empty">{(products ?? []).length === 0 ? 'Tu perfil no puede vender productos o el catálogo está vacío.' : 'Sin resultados.'}</li> : visibleProducts.map((product) => <li key={product.id}><span className="new-sale-product">{product.name}</span>
-                <ul>{product.variants.map((variant) => { const out = variant.stockTracked && (variant.stock ?? 0) < 1; return <li key={variant.id}><button type="button" disabled={out} onClick={() => addVariant(product, variant)}><span>{variant.label}{variant.stockTracked && variant.stock != null ? ` · ${variant.stock} en stock` : ''}</span><strong>{out ? 'Agotado' : euro(variant.priceCents)}</strong></button></li>; })}</ul></li>)}</ul>}
+                <ul>{product.variants.map((variant) => { const out = variant.stockTracked && (variant.stock ?? 0) < 1; return <li key={variant.id}><button type="button" disabled={out || locked} onClick={() => addVariant(product, variant)}><span>{variant.label}{variant.stockTracked && variant.stock != null ? ` · ${variant.stock} en stock` : ''}</span><strong>{out ? 'Agotado' : euro(variant.priceCents)}</strong></button></li>; })}</ul></li>)}</ul>}
           </section>
           <section aria-label="Carrito" className="new-sale-cart">
             <h3>Carrito</h3>
             {lines.length === 0 ? <p className="new-sale-empty">Elige una cuota o un producto.</p> : <ul>{lines.map((line) => <li key={line.key} className="new-sale-line">
-              <div className="new-sale-line-head"><strong>{line.name}</strong><button type="button" className="text-button" aria-label={`Quitar ${line.name}`} disabled={busy || !!done[line.key]} onClick={() => remove(line.key)}>Quitar</button></div>
+              <div className="new-sale-line-head"><strong>{line.name}</strong><button type="button" className="text-button" aria-label={`Quitar ${line.name}`} disabled={busy || locked} onClick={() => remove(line.key)}>Quitar</button></div>
               {line.kind === 'plan' ? <div className="new-sale-fields">
-                <label>Precio (€)<input inputMode="decimal" value={line.price} disabled={!capabilities.manageCatalogPrice || busy || !!done[line.key]} onChange={(event) => patch(line.key, { price: event.target.value })} aria-label={`Precio de ${line.name}`} /></label>
+                <label>Precio (€)<input inputMode="decimal" value={line.price} disabled={!capabilities.manageCatalogPrice || busy || locked} onChange={(event) => patch(line.key, { price: event.target.value })} aria-label={`Precio de ${line.name}`} /></label>
                 {capabilities.manageCatalogPrice && line.basePriceCents != null && planCents(line) !== line.basePriceCents ? <label>Motivo del descuento<input value={line.reason} maxLength={240} onChange={(event) => patch(line.key, { reason: event.target.value })} aria-label={`Motivo del descuento de ${line.name}`} /></label> : null}
-                <label>Inicio<input type="date" value={line.startsOn} disabled={busy || !!done[line.key]} onChange={(event) => patch(line.key, { startsOn: event.target.value || today() })} aria-label={`Inicio de ${line.name}`} /></label>
+                <label>Inicio<input type="date" value={line.startsOn} disabled={busy || locked} onChange={(event) => patch(line.key, { startsOn: event.target.value || today() })} aria-label={`Inicio de ${line.name}`} /></label>
               </div> : <div className="new-sale-fields">
-                <label>Cantidad<input inputMode="numeric" value={line.quantity} disabled={busy || !!done[line.key]} aria-label={`Cantidad de ${line.name}`} onChange={(event) => { const next = Number(event.target.value.replace(/\D/g, '')) || 1; patch(line.key, { quantity: Math.max(1, Math.min(next, line.stock ?? 1000)) }); }} /></label>
+                <label>Cantidad<input inputMode="numeric" value={line.quantity} disabled={busy || locked} aria-label={`Cantidad de ${line.name}`} onChange={(event) => { const next = Number(event.target.value.replace(/\D/g, '')) || 1; patch(line.key, { quantity: Math.max(1, Math.min(next, line.stock ?? 1000)) }); }} /></label>
                 <span>{euro(line.priceCents)} × {line.quantity}</span>
               </div>}
               <p className="new-sale-line-total">{euro(lineCents(line))}{done[line.key] ? ' · registrado' : ''}</p>
@@ -214,17 +225,17 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
         {step === 'confirm' ? <section className="new-sale-confirm" aria-label="Confirmar el cobro">
           <h3>Confirmar</h3>
           {paying ? <ShiftNotice action="cobrar" shift={shift} /> : null}
-          <label className="new-sale-check"><input type="checkbox" checked={pending} onChange={(event) => setPending(event.target.checked)} disabled={busy} /> Dejar pendiente de pago</label>
+          <label className="new-sale-check"><input type="checkbox" checked={pending} onChange={(event) => setPending(event.target.checked)} disabled={busy || locked} /> Dejar pendiente de pago</label>
           {!pending ? <>
-            <label>Método<select value={method} onChange={(event) => setMethod(event.target.value as typeof method)} disabled={busy}>{METHODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label>Método<select value={method} onChange={(event) => setMethod(event.target.value as typeof method)} disabled={busy || locked}>{METHODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             {planLines.length > 0 ? <label className="new-sale-check"><input type="checkbox" checked={asInvoice} onChange={(event) => setAsInvoice(event.target.checked)} disabled={busy} /> Emitir factura <small>(sin marcar se emite un ticket)</small></label> : null}
           </> : null}
-          {productLines.length > 0 ? <label>Nota interna de la venta de productos<input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} disabled={busy} /></label> : null}
+          {productLines.length > 0 ? <label>Nota interna de la venta de productos<input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} disabled={busy || locked} /></label> : null}
           <p className="new-sale-muted">Descuentos de productos, notas en factura y renovación automática de la cuota aún no están conectados.</p>
         </section> : null}
         {error ? <p className="new-sale-error" role="alert">{error}</p> : null}
         <div className="new-sale-actions">
-          <Button type="button" variant="ghost" onClick={step === 'confirm' ? () => setStep('cart') : finish} disabled={busy}>{step === 'confirm' ? 'Volver' : 'Cancelar'}</Button>
+          <Button type="button" variant="ghost" onClick={step === 'confirm' && !locked ? () => setStep('cart') : finish} disabled={busy}>{step === 'confirm' && !locked ? 'Volver' : locked ? 'Cerrar' : 'Cancelar'}</Button>
           {step === 'cart' ? <Button type="button" variant="primary" icon={icons.Check} disabled={lines.length === 0 || total < 1} onClick={toConfirm}>Cobrar {total > 0 ? euro(total) : ''}</Button>
             : <Button type="button" variant="primary" loading={busy} onClick={() => void confirm()}>{pending ? 'Registrar venta pendiente' : `Confirmar cobro de ${euro(total)}`}</Button>}
         </div>

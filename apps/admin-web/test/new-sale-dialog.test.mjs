@@ -224,8 +224,11 @@ test('an invoice that cannot be issued never undoes the sale: it is explained an
 });
 
 test('Registrar pago pre-fills the pending balance, sends one split with the chosen method, and guides the missing shift', async () => {
-  const charges = [{ id: 'c-late', concept: 'Cuota mensual', balanceCents: 4900, dueOn: '2026-10-27' }, { id: 'c-paid', concept: 'Pagada', balanceCents: 0, dueOn: '2026-10-01' }, { id: 'c-next', concept: 'Siguiente', balanceCents: 4900, dueOn: '2026-11-10' }];
+  const charges = [{ id: 'c-late', concept: 'Cuota mensual', balanceCents: 4900, dueOn: '2026-10-27', status: 'unpaid' }, { id: 'c-paid', concept: 'Pagada', balanceCents: 0, dueOn: '2026-10-01', status: 'paid' }, { id: 'c-next', concept: 'Siguiente', balanceCents: 4900, dueOn: '2026-11-10', status: 'pending' }];
   assert.equal(firstPendingCharge(charges).id, 'c-late', 'the oldest pending charge'); assert.equal(firstPendingCharge([charges[1]]), null);
+  const voided = { id: 'c-void', concept: 'Anulada', balanceCents: 3000, dueOn: '2026-01-05', status: 'void' };
+  assert.equal(firstPendingCharge([voided, { ...voided, id: 'c-exempt', status: 'exempt' }, { ...voided, id: 'c-refunded', status: 'refunded' }]), null, 'void, exempt and refunded charges carry a balance but cannot be paid');
+  assert.equal(firstPendingCharge([voided, ...charges]).id, 'c-late', 'an old void charge never hides the real pending one');
   const shift = { open: false }; let attempts = 0; let done = 0;
   const calls = serve({ shift, onPayment: () => { attempts += 1; return attempts === 1 ? response({ error: 'cash_session_required' }, 409) : response({ id: 'txn' }, 201); } });
   render(React.createElement(RegisterPaymentDialog, { charge: charges[0], onClose: () => {}, onDone: () => { done += 1; } }));
@@ -245,4 +248,68 @@ test('Registrar pago pre-fills the pending balance, sends one split with the cho
   fireEvent.change(within(dialog).getByLabelText('Importe (€)'), { target: { value: '60' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirmar pago' }));
   assert.match((await within(dialog).findByRole('alert')).textContent, /supera el saldo pendiente/);
+});
+
+test('a lost response never lets a changed cart register twice: after the first attempt the cart and terms are locked, the retry reuses the same keys, and closing reloads the profile', async () => {
+  const PLAN_B = { id: '66666666-6666-4666-8666-666666666666', name: 'Cuota trimestral', basePriceCents: 14900 };
+  let failSecond = true; let refreshed = 0;
+  const calls = serve({ plans: [PLAN, PLAN_B], onPlan: (body) => { if (body.planId === PLAN_B.id && failSecond) { failSecond = false; throw new Error('network down'); } return response({ id: 'asg-' + body.planId.slice(0, 2), chargeId: 'charge-' + body.planId.slice(0, 2) }, 201); } });
+  const dialog = await open(adminCapabilities, { onDone: () => { refreshed += 1; } });
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Mensual ilimitada/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /Cuota trimestral/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  assert.match((await within(dialog).findByRole('alert')).textContent, /no se duplicará/);
+  // The terms that feed the idempotency fingerprint can no longer change.
+  assert.equal(within(dialog).getByLabelText('Método').disabled, true);
+  assert.equal(within(dialog).getByRole('checkbox', { name: /Dejar pendiente de pago/ }).disabled, true);
+  assert.equal(within(dialog).getByLabelText('Precio de Mensual ilimitada').disabled, true);
+  assert.equal(within(dialog).getByLabelText('Inicio de Mensual ilimitada').disabled, true);
+  assert.equal(within(dialog).getByRole('button', { name: 'Quitar Mensual ilimitada' }).disabled, true);
+  assert.equal(within(dialog).queryByRole('button', { name: 'Volver' }), null, 'no way back into the cart');
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  await within(dialog).findByText('Venta registrada');
+  const plans = writes(calls).filter((call) => call.path.endsWith('/plans'));
+  assert.equal(plans.length, 3, 'line 1 once, line 2 twice (its first response was lost)');
+  assert.equal(plans.filter((call) => call.body.planId === PLAN.id).length, 1, 'the registered line is never sent again');
+  const second = plans.filter((call) => call.body.planId === PLAN_B.id);
+  assert.equal(second[0].key, second[1].key, 'the unknown-outcome request is retried with the same key');
+  assert.equal(refreshed, 0);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }));
+  assert.equal(refreshed, 1, 'the profile reloads even though one request threw');
+});
+
+test('closing after a failed first attempt still reloads the profile when something was registered', async () => {
+  let refreshed = 0;
+  serve({ onSale: () => { throw new Error('network down'); } });
+  const dialog = await open(adminCapabilities, { onDone: () => { refreshed += 1; } });
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Mensual ilimitada/ }));
+  fireEvent.click(within(dialog).getByRole('tab', { name: 'Productos' }));
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Talla M/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  await within(dialog).findByRole('alert');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }));
+  assert.equal(refreshed, 1, 'the plan line was registered before the product sale threw');
+});
+
+test('D113: an account that does not clock in is told to open the register (not offered a clock-in that cannot work), and the fiscal-data refusal has its own message', async () => {
+  serve({ shift: undefined, onPlan: () => response({ error: 'cash_session_required' }, 409) });
+  let dialog = await open();
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Mensual ilimitada/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
+  assert.equal(within(dialog).queryByRole('button', { name: 'Fichar entrada ahora' }), null);
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  assert.ok((await within(dialog).findAllByText('Abre la caja antes de cobrar (menú Caja).')).length >= 1);
+  assert.equal(within(dialog).queryByRole('button', { name: 'Fichar entrada ahora' }), null, 'no clock-in offer for an account that cannot clock in');
+  cleanup();
+
+  serve({ onInvoice: () => response({ error: 'client_fiscal_data_missing' }, 409) });
+  dialog = await open();
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Mensual ilimitada/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /Emitir factura/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  await within(dialog).findByText('Venta registrada');
+  assert.match(dialog.textContent, /Faltan datos fiscales del cliente/);
 });

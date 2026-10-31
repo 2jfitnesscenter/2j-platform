@@ -32,10 +32,13 @@ export function ActionsMenu({ items }: { items: ActionItem[] }) {
   </div>;
 }
 
-type Charge = { id: string; concept: string; balanceCents: number; dueOn: string };
-/** Cargo pendiente más antiguo (el primero que vence): es el que cobra el botón «Registrar pago» de la cabecera. */
+type Charge = { id: string; concept: string; balanceCents: number; dueOn: string; status: string };
+/**
+ * Cargo pendiente más antiguo (el primero que vence): es el que cobra el botón «Registrar pago» de la cabecera.
+ * Solo cuentan los cargos cobrables (pendiente o vencido): el API también devuelve saldo en cargos anulados o exentos.
+ */
 export function firstPendingCharge(charges: Charge[] | undefined): Charge | null {
-  return [...(charges ?? [])].filter((charge) => Number(charge.balanceCents) > 0).sort((a, b) => a.dueOn.localeCompare(b.dueOn))[0] ?? null;
+  return [...(charges ?? [])].filter((charge) => Number(charge.balanceCents) > 0 && (charge.status === 'pending' || charge.status === 'unpaid')).sort((a, b) => a.dueOn.localeCompare(b.dueOn))[0] ?? null;
 }
 
 const METHODS = [['cash', 'Efectivo'], ['other', 'Bizum'], ['transfer', 'Transferencia']] as const;
@@ -60,8 +63,10 @@ export function RegisterPaymentDialog({ charge, onClose, onDone }: { charge: Cha
       const response = await apiFetch(`${api}/api/economics/payments`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': key.current.key }, body: JSON.stringify(payload) });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) {
-        if (body.error === 'cash_session_required' && shift.state !== 'open') { shift.markClosed(); return; }
-        setError(body.error === 'cash_session_required' ? 'Abre la caja antes de registrar cobros.' : body.error === 'amount_exceeds_balance' ? 'El importe supera el saldo pendiente.' : response.status === 403 ? 'Tu perfil no puede registrar cobros.' : 'No se pudo registrar el pago.');
+        // Con turno cerrado se enseña el aviso de fichar; con turno abierto (o una cuenta que no ficha) lo que falta es abrir la caja.
+        if (body.error === 'cash_session_required') { if (await shift.refresh() === 'closed') return; setError('Abre la caja antes de registrar cobros.'); return; }
+        if (body.error === 'clock_in_required' || body.error === 'cash_custodian_not_clocked_in') { shift.markClosed(); return; }
+        setError(body.error === 'amount_exceeds_balance' ? 'El importe supera el saldo pendiente.' : response.status === 403 ? 'Tu perfil no puede registrar cobros.' : 'No se pudo registrar el pago.');
         return;
       }
       onDone();
