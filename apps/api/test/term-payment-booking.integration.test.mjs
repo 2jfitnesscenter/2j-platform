@@ -255,6 +255,13 @@ test('unlimited term assignments require no grant but remain behind enforced pay
   const paid=await recordPayment(assignment.chargeId,5000);assert.equal(paid.statusCode,201,paid.body);
   const allowed=await evaluate(client.id,service.id);assert.equal(allowed.eligible,true);
   assert.equal(allowed.selectedEntitlement.availableBalance,null);
+  const session=await createSession(service);
+  const reservation=await app.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,entitlementAssignmentId:assignment.assignmentId}});
+  assert.equal(reservation.statusCode,201,reservation.body);
+  const links=await sql`SELECT right_type AS type,ledger_entry_id AS "ledgerEntryId" FROM calendar_reservation_rights WHERE reservation_id=${reservation.json().id}`;
+  assert.deepEqual(links.map(item=>item.type),['service_access'],'unlimited reservation retains its access link without a finite-quota link');
+  assert.equal(links[0].ledgerEntryId,null);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE assignment_id=${assignment.assignmentId} AND entry_type='consume'`)[0].count,0,'unlimited booking does not consume a finite session bag');
 });
 
 test('reservation evaluation share-lock serializes with payment writer without a global lock',async()=>{

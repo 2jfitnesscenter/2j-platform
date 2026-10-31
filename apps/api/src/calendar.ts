@@ -142,6 +142,9 @@ export function registerCalendarRoutes(
     const rightIds = [entitlement.accessRightId, ...entitlement.quotaRightIds];
     const rights = await tx`SELECT id,right_type AS "rightType",quantity_rule AS "quantityRule" FROM plan_rights WHERE id=ANY(${rightIds}::uuid[]) ORDER BY id`;
     for (const right of rights) {
+      // Unlimited quotas are authorization rules, not finite bags: they have no period balance to consume.
+      // Keep the service_access reservation link, but do not create a quota link without its required ledger row.
+      if (right.rightType === 'sessions_quota' && right.quantityRule === 'unlimited') continue;
       let ledgerEntryId: string | null = null;
       if (right.rightType === 'sessions_quota' && right.quantityRule !== 'unlimited') {
         const periodId = entitlement.entitlementPeriodIdsByRightId[right.id] ?? null;
