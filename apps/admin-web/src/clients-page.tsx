@@ -5,6 +5,8 @@ import { Button, Card, CardHeader, EmptyState, Icon, IconButton, PageHeader, Sea
 import { clearDeepLink, readDeepLink } from './deep-link.js';
 import { ClientFilesPanel } from './client-files-panel.js';
 import { InvoiceDialog } from './invoice-ui.js';
+import { ActionsMenu, RegisterPaymentDialog, firstPendingCharge, type ActionItem } from './client-actions.js';
+import { NewSaleDialog } from './new-sale-dialog.js';
 import { ClientAvatar, SECTION_LABEL, SECTION_ORDER, chargeChip, clientPlanChip, euros, planStatusChip, reservationChip, reservationRightsLabel, rightLine } from './client-presenters.js';
 
 type Client = { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; birthDate?:string|null; status: 'active' | 'archived'; createdAt: string; updatedAt?: string };
@@ -77,6 +79,9 @@ export function ClientsPage() {
   const [profileError, setProfileError] = useState('');
   const [profileRetry, setProfileRetry] = useState(0);
   const [invoiceCharge, setInvoiceCharge] = useState<{ id: string; concept: string } | null>(null);
+  const [showSale, setShowSale] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
+  const [headerInvoice, setHeaderInvoice] = useState<{ id: string; concept: string } | null>(null);
   const [documentsData, setDocumentsData] = useState<{forms:ClientFormItem[];consents:ClientConsentItem[]}|null>(null);
   const [followupData, setFollowupData] = useState<FollowupItem[]|null>(null);
   const [trainingData, setTrainingData] = useState<TrainingSummaryView|null>(null);
@@ -445,6 +450,18 @@ export function ClientsPage() {
   const overdueCharges = Number(paymentData?.overdueCount ?? 0);
   const archived = profile?.client.status === 'archived';
   const isActiveProfile = profile?.client.status === 'active';
+  const pendingCharge = canReadClientFinance ? firstPendingCharge(paymentData?.charges) : null;
+  const paidCharge = canReadClientFinance ? (paymentData?.charges ?? []).find((charge) => charge.status === 'paid') ?? null : null;
+  const sectionOf = (id: string) => profile?.sections.find((section) => section.id === id);
+  const headerActions: ActionItem[] = !profile ? [] : [
+    ...(isActiveProfile && profile.capabilities.assignPlans ? [{ id: 'plan', label: 'Añadir cuota', onSelect: () => startPlanSale() }] : []),
+    ...(isActiveProfile && sectionOf('reservations')?.access === 'available' ? [{ id: 'book', label: 'Reservar clase', href: '#calendar?book=1' }] : []),
+    ...(isActiveProfile && sectionOf('messages')?.access === 'available' ? [{ id: 'message', label: 'Enviar mensaje', href: `#communications?clientId=${profile.client.id}` }] : []),
+    ...(isActiveProfile && sectionOf('documents')?.access === 'available' && sectionOf('documents')?.canManage ? [{ id: 'document', label: 'Subir documento', onSelect: () => selectSection('documents') }] : []),
+    ...(canReadClientFinance ? [{ id: 'invoice', label: 'Emitir factura', disabled: !paidCharge, hint: paidCharge ? undefined : 'Sin cobros pagados', onSelect: () => { if (paidCharge) setHeaderInvoice({ id: paidCharge.id, concept: paidCharge.concept }); } }] : []),
+    ...(profile.capabilities.manage ? [{ id: 'edit', label: 'Editar datos', onSelect: () => { setEditError(''); setShowEdit(true); } }] : []),
+    ...(profile.capabilities.manage && isActiveProfile ? [{ id: 'archive', label: 'Archivar', tone: 'danger' as const, onSelect: () => { archiveOpener.current = document.activeElement as HTMLElement | null; setArchiveError(''); setShowArchiveConfirm(true); } }] : []),
+  ];
   const money = (cents: number) => euros(cents);
   const facts: Array<{ id: string; label: string; value: string; detail: string }> = [
     ...(nextClientReservation ? [{ id: 'next', label: 'Próxima reserva', value: nextReservationLabel, detail: nextClientReservation.serviceName }] : []),
@@ -498,11 +515,14 @@ export function ClientsPage() {
             <div className="client-header-chips">{planChip}{archived && <StatusChip tone="neutral">Archivado</StatusChip>}</div>
           </div>
           <div className="client-header-actions">
-            {profile.capabilities.assignPlans && isActiveProfile && <Button variant="primary" icon={icons.Plus} onClick={() => startPlanSale()}>Añadir cuota</Button>}
-            {profile.capabilities.manage && <Button icon={icons.Pencil} onClick={() => { setEditError(''); setShowEdit(true); }}>Editar datos</Button>}
-            {profile.capabilities.manage && isActiveProfile && <Button variant="danger" icon={icons.Archive} onClick={(event) => { archiveOpener.current = event.currentTarget; setArchiveError(''); setShowArchiveConfirm(true); }}>Archivar</Button>}
+            {isActiveProfile && (profile.capabilities.assignPlans || profile.capabilities.collectPayments) && <Button variant="primary" icon={icons.ShoppingBag} onClick={() => setShowSale(true)}>Nueva venta</Button>}
+            {isActiveProfile && profile.capabilities.collectPayments && pendingCharge && <Button icon={icons.Check} onClick={() => setShowPayment(true)}>Registrar pago</Button>}
+            <ActionsMenu items={headerActions} />
           </div>
         </Card>
+        {showSale && profile && <NewSaleDialog clientId={profile.client.id} clientName={displayName(profile.client)} capabilities={profile.capabilities} onClose={() => setShowSale(false)} onDone={() => setProfileRetry((value) => value + 1)} />}
+        {showPayment && pendingCharge && <RegisterPaymentDialog charge={pendingCharge} onClose={() => setShowPayment(false)} onDone={() => { setShowPayment(false); setProfileRetry((value) => value + 1); }} />}
+        {headerInvoice && <InvoiceDialog chargeId={headerInvoice.id} title={headerInvoice.concept} onClose={() => setHeaderInvoice(null)} />}
         {facts.length > 0 && <ul className="client-facts" aria-label="Resumen del cliente">{facts.map((fact) => <li key={fact.id}><Card padding="none" className="client-fact"><span className="client-fact-label">{fact.label}</span><strong className="client-fact-value">{fact.value}</strong><span className="client-fact-detail">{fact.detail}</span></Card></li>)}</ul>}
         {archiveFeedback && <div className="client-feedback" role="status"><Icon icon={icons.CircleCheck} size={20} />{archiveFeedback}</div>}
         <Tabs label="Secciones del cliente" items={visibleSections.map((section) => ({ id: section.id, label: SECTION_LABEL[section.id] ?? section.label }))} value={activeSection} onChange={selectSection} panelId="client-section-panel" idPrefix="client-tab" />

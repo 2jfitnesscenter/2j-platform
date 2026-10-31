@@ -23,6 +23,8 @@ const sections = [
 const summary = Object.fromEntries(['profile', 'plans', 'reservations', 'payments', 'documents', 'messages', 'followup'].map((id) => [id, { access: id === 'payments' ? 'forbidden' : 'available', dataState: id === 'profile' ? 'ready' : 'not_connected', data: null }]));
 const profile = { client, capabilities: { manage: true }, summary, sections, history: [{ id: 'event-1', eventType: 'client.created', actorLabel: 'Administración', occurredAt: client.createdAt }] };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+const menuItem = async (name) => { fireEvent.click(await screen.findByRole('button', { name: 'Acciones' })); fireEvent.click(await screen.findByRole('menuitem', { name })); };
+
 const listResponse = (items = [client], overrides = {}) => ({ items, capabilities: { manage: true }, hasMore: false, nextCursor: null, ...overrides });
 
 test('shows minimized clients, searches the server, and opens only backed Client 360 sections', async () => {
@@ -172,7 +174,7 @@ test('Admin client edit saves optional birth date through the protected profile 
   let saved;
   const profileWithDob={...profile,client:{...client,birthDate:'1990-04-06'}};
   globalThis.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/api/clients?'))return response(listResponse());if(path.endsWith(`/api/clients/${client.id}`)&&options.method==='PATCH'){saved=JSON.parse(options.body);return response({...profileWithDob.client,...saved});}if(path.endsWith(`/api/clients/${client.id}`))return response(profileWithDob);throw new Error(`Unexpected ${options.method??'GET'} ${path}`);};
-  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});fireEvent.click(screen.getByRole('button',{name:'Editar datos'}));const dialog=await screen.findByRole('dialog',{name:'Editar datos del cliente'});assert.equal(within(dialog).getAllByLabelText('Fecha de nacimiento (opcional)').length,1);assert.equal(within(dialog).getByLabelText('Fecha de nacimiento (opcional)').value,'1990-04-06');fireEvent.change(within(dialog).getByLabelText('Nombre'),{target:{value:'Marta'}});fireEvent.click(within(dialog).getByRole('button',{name:'Guardar cambios'}));await waitFor(()=>assert.ok(saved));assert.equal(saved.birthDate,'1990-04-06');
+  render(React.createElement(ClientsPage));fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));await screen.findByRole('heading',{name:'Marta Santos'});await menuItem('Editar datos');const dialog=await screen.findByRole('dialog',{name:'Editar datos del cliente'});assert.equal(within(dialog).getAllByLabelText('Fecha de nacimiento (opcional)').length,1);assert.equal(within(dialog).getByLabelText('Fecha de nacimiento (opcional)').value,'1990-04-06');fireEvent.change(within(dialog).getByLabelText('Nombre'),{target:{value:'Marta'}});fireEvent.click(within(dialog).getByRole('button',{name:'Guardar cambios'}));await waitFor(()=>assert.ok(saved));assert.equal(saved.birthDate,'1990-04-06');
 });
 
 test('Admin client creation submits the selected birth date exactly', async () => {
@@ -222,7 +224,7 @@ test('Reception can open a base-price sale while Trainer remains read-only', asy
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
-  fireEvent.click(screen.getAllByRole('button',{name:'Añadir cuota'})[0]);
+  await menuItem('Añadir cuota');
   const dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   await screen.findByRole('option',{name:/Plan Sala/});
   const price=within(dialog).getByLabelText('Precio de venta (€)');
@@ -241,7 +243,7 @@ test('Reception can open a base-price sale while Trainer remains read-only', asy
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
-  assert.equal(screen.queryByRole('button',{name:'Añadir cuota'}),null);
+  {const menu=screen.queryByRole('button',{name:'Acciones'});if(menu)fireEvent.click(menu);assert.equal(screen.queryByRole('menuitem',{name:'Añadir cuota'}),null);}
 });
 
 test('client list exposes distinct loading, error and empty states with retry', async () => {
@@ -336,7 +338,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
-  fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
+  await menuItem('Añadir cuota');
   let dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
   fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:plan.id}});
@@ -350,7 +352,7 @@ test('plan sale retries reuse one key after a lost response, while success and c
   assert.equal(saleRequests[0].payload,saleRequests[1].payload);
 
   await screen.findByRole('tab',{name:'Plan y sesiones'});
-  fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
+  await menuItem('Añadir cuota');
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
   fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:plan.id}});
@@ -360,10 +362,10 @@ test('plan sale retries reuse one key after a lost response, while success and c
   assert.notEqual(saleRequests[2].key,saleRequests[1].key,'the next sale after success must have a fresh key');
 
   await screen.findByRole('tab',{name:'Plan y sesiones'});
-  fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
+  await menuItem('Añadir cuota');
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   fireEvent.click(within(dialog).getByRole('button',{name:'Cancelar'}));
-  fireEvent.click((await screen.findAllByRole('button',{name:'Añadir cuota'}))[0]);
+  await menuItem('Añadir cuota');
   dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
   fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:plan.id}});
@@ -392,7 +394,7 @@ test('changing a failed sale payload rotates its idempotency key',async()=>{
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
   await screen.findByRole('heading',{name:'Marta Santos'});
-  fireEvent.click(screen.getAllByRole('button',{name:'Añadir cuota'})[0]);
+  await menuItem('Añadir cuota');
   const dialog=await screen.findByRole('dialog',{name:'Añadir cuota'});
   await waitFor(()=>assert.ok(within(dialog).getByLabelText('Producto o plan')));
   fireEvent.change(within(dialog).getByLabelText('Producto o plan'),{target:{value:plan.id}});
@@ -512,7 +514,7 @@ test('archive requires confirmation, prevents duplicate submits, reports success
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('link', { name: /Marta Santos/ }));
   await screen.findByRole('heading', { name: 'Marta Santos' });
-  fireEvent.click(screen.getByRole('button', { name: 'Archivar' }));
+  await menuItem('Archivar');
   const dialog = await screen.findByRole('alertdialog', { name: '¿Archivar este cliente?' });
   assert.ok(within(dialog).getByText(/perfil y su historial se conservarán/i));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Archivar cliente' }));

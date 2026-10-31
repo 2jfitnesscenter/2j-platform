@@ -21,6 +21,8 @@ const profileOf = (plans = [], capabilities = { manage: true, assignPlans: true,
   summary: { profile: slot(), plans: slot(plans), reservations: slot(), payments: slot({ balanceCents: 0, overdueCount: 0, charges: [], movements: [] }), documents: slot(), messages: slot({ unreadCount: 0 }), followup: slot() },
 });
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+const menuItem = async (name) => { fireEvent.click(await screen.findByRole('button', { name: 'Acciones' })); fireEvent.click(await screen.findByRole('menuitem', { name })); };
+
 /** The real API serialises the PostgreSQL bigint basePriceCents as a STRING ("5000"). Tests use that shape on purpose. */
 const plan3Days = (basePriceCents) => ({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: '3 días', kind: 'recurring', renewalCadence: 'monthly', periodDays: null, basePriceCents, services: [{ id: 's1', name: 'Fuerza funcional', area: 'Sala' }], rights: [{ rightType: 'service_access', serviceName: 'Fuerza funcional', quantity: null, period: null, quotaScope: null }] });
 
@@ -36,7 +38,7 @@ const openSale = async ({ basePriceCents, capabilities, onPost }) => {
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('link', { name: /Lucía Díaz/ }));
   await screen.findByRole('heading', { level: 1, name: 'Lucía Díaz' });
-  fireEvent.click(screen.getByRole('button', { name: 'Añadir cuota' }));
+  await menuItem('Añadir cuota');
   const dialog = await screen.findByRole('dialog', { name: 'Añadir cuota' });
   await waitFor(() => assert.ok(dialog.querySelector('select')));
   fireEvent.change(within(dialog).getByLabelText('Producto o plan'), { target: { value: plan3Days().id } });
