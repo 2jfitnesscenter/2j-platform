@@ -5,7 +5,7 @@ import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
 import { activateSettledEntitlementPeriods } from './assignment-periods.js';
 import { appendNotificationEvent } from './notifications.js';
-import { cashDenominationsSchema, cashDenominationsToCents, legacyCashSessionMessage, lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
+import { cashDenominationsSchema, cashDenominationsToCents, legacyCashSessionMessage, lockOpenCashSession, shiftRequiredMessage, previousDayCashSessionMessage } from './cash-session.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -74,7 +74,8 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         await audit(tx, context, 'cash.closed', 'cash_session', session.id, null, { registerId: session.registerId, localDate: String(session.local_date), lateClose: closed.status === 'late_close', openingCents: snapshot.openingCents, openingDenominations: snapshot.openingDenominations, cashPaymentsCents: snapshot.cashPaymentsCents, cashRefundsCents: snapshot.cashRefundsCents, adjustmentsCents: snapshot.adjustmentsCents, outflowsCents: snapshot.outflowsCents, expectedCents: snapshot.expectedCents, countedCents, countedDenominations, differenceCents: difference });
         return { closed, snapshot };
       });
-      if ('error' in result) return reply.code(result.error === 'cash_session_not_found' ? 404 : 409).send({ error: result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
+      if ('error' in result) { request.log.warn({ route: 'POST /api/economics/cash/close', reason: result.error }, 'cash close refused'); }
+      if ('error' in result) return reply.code(result.error === 'cash_session_not_found' ? 404 : 409).send({ error: result.error, ...shiftRequiredMessage(result.error), ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
       const response = { ...result.closed, registerId: result.snapshot.registerId, registerCode: result.snapshot.registerCode, registerName: result.snapshot.registerName, openingDenominations: result.snapshot.openingDenominations, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, cashStoreSalesCents: result.snapshot.cashStoreSalesCents, cashStoreRefundsCents: result.snapshot.cashStoreRefundsCents, storeSaleAnnulmentsCents: result.snapshot.storeSaleAnnulmentsCents, adjustmentsCents: result.snapshot.adjustmentsCents, outflowsCents: result.snapshot.outflowsCents };
       return can(context, 'owner.panel.read') ? response : blindCashSnapshot(response);
     } catch (error) {
@@ -215,7 +216,8 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         await audit(tx, context, 'cash.opened', 'cash_session', row.id, null, { registerId: register.id, registerCode: register.code, openingCents, openingDenominations: parsed.data.openingDenominations, localDate: String(row.localDate) });
         return { row: { ...row, registerCode: register.code, registerName: register.name } };
       });
-      if ('error' in result) return reply.code(result.error==='staff_account_unlinked'?404:409).send({ error: result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:result.error==='cash_legacy_session_requires_owner_resolution'?{message:legacyCashSessionMessage}:{}) });
+      if ('error' in result) { request.log.warn({ route: 'POST /api/economics/cash/open', reason: result.error }, 'cash open refused'); }
+      if ('error' in result) return reply.code(result.error==='staff_account_unlinked'?404:409).send({ error: result.error, ...shiftRequiredMessage(result.error), ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:result.error==='cash_legacy_session_requires_owner_resolution'?{message:legacyCashSessionMessage}:{}) });
       return reply.code(201).send({ ...result.row, openingCents, openingDenominations: parsed.data.openingDenominations });
     } catch (error) {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';

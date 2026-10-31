@@ -88,9 +88,14 @@ test('abrir caja exige las 15 denominaciones y envía el recuento a la API', asy
   const form = await screen.findByRole('form', { name: 'Abrir Sala' });
   const inputs = within(form).getAllByRole('textbox');
   assert.equal(inputs.length, 15);
+  assert.ok(inputs.every((input) => input.value === '0'), 'every denomination starts at 0');
   const submit = within(form).getByRole('button', { name: 'Abrir caja' });
-  assert.equal(submit.disabled, true);
-  inputs.forEach((input, index) => fireEvent.change(input, { target: { value: index === 8 ? '4' : '0' } }));
+  assert.equal(submit.disabled, false);
+  fireEvent.change(inputs[0], { target: { value: '' } });
+  assert.equal(submit.disabled, true, 'an empty or invalid field blocks the submit');
+  fireEvent.change(inputs[0], { target: { value: '0' } });
+  fireEvent.change(within(form).getByRole('textbox', { name: 'Billetes de 5 €' }), { target: { value: '4' } });
+  assert.match(within(form).getByText(/Total contado:/).textContent, /20,00\s*€/);
   assert.equal(submit.disabled, false);
   fireEvent.submit(form);
   await waitFor(() => assert.ok(calls.some(call => call.path.endsWith('/api/economics/cash/open'))));
@@ -98,6 +103,7 @@ test('abrir caja exige las 15 denominaciones y envía el recuento a la API', asy
   const body = JSON.parse(post.options.body);
   assert.equal(body.registerCode, 'sala');
   assert.equal(Object.keys(body.openingDenominations).length, 15);
+  assert.equal(body.openingDenominations.bill_5, 4);
   assert.equal(body.openingDenominations.bill_5, 4);
 });
 

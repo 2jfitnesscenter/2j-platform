@@ -523,9 +523,6 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .cash-breakdown dt { color: var(--2j-color-text-secondary); }
 .cash-breakdown dd { margin: 0; font-weight: var(--2j-type-weight-semibold); font-variant-numeric: tabular-nums; }
 .cash-breakdown .cash-total { color: var(--2j-color-text-primary); border-bottom: 0; font-size: 16px; }
-.cash-denomination-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 14px; max-height:45vh; overflow:auto; padding:2px; }
-.cash-denomination-grid label { display:grid; gap:6px; color:var(--2j-color-text-primary); font-size:13px; font-weight:var(--2j-type-weight-medium); }
-.cash-denomination-grid input { min-height:42px; }
 .cash-difference { display: flex; justify-content: space-between; padding: 10px 12px; background: var(--2j-color-surface-subtle); border-radius: var(--2j-radius-sm); }
 .cash-actions { display:flex; flex-wrap:wrap; gap:10px 16px; margin-top:4px; }
 .pending-cash-handovers > ul { display:grid; gap:10px; padding:0; list-style:none; }
@@ -558,7 +555,6 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
   .split-row { grid-template-columns: minmax(0, 1fr) minmax(90px, .75fr); }
   .split-remove { grid-column: 1 / -1; width: 100%; }
   .cash-breakdown > div { font-size: 13px; }
-  .cash-denomination-grid { grid-template-columns:1fr; max-height:42vh; }
 }
 .staff-profile-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--2j-space-2); }
 .staff-profile-heading h2:focus { outline:3px solid var(--2j-color-focus); outline-offset:4px; }
@@ -676,3 +672,15 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .plan-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--2j-color-border); }
 @media (max-width: 640px) { .plan-cards .plan-card { padding: 14px; } .plan-facts > div { grid-template-columns: 1fr; gap: 3px; } }
 .cash-owner-decisions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Recuento de caja compacto (A70): billetes y monedas agrupados, campos pequeños, sin desplazamiento interior en tablet. */
+.cash-count { display:grid; gap:10px; }
+.cash-count-group { margin:0; padding:0; border:0; min-width:0; }
+.cash-count-group legend { padding:0; margin-bottom:4px; font-size:12px; font-weight:var(--2j-type-weight-medium); letter-spacing:.04em; text-transform:uppercase; color:var(--2j-color-text-secondary); }
+.cash-count-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(76px,1fr)); gap:6px 8px; }
+.cash-count-field { display:grid; gap:2px; font-size:12px; font-weight:var(--2j-type-weight-medium); color:var(--2j-color-text-primary); }
+.cash-count-field input { width:100%; min-height:36px; padding:0 8px; text-align:right; font-variant-numeric:tabular-nums; }
+.cash-count-total { margin:0; font-size:14px; }
+.shift-notice { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; margin:0 0 12px; padding:10px 14px; border:1px solid var(--2j-color-border-strong); border-left-width:4px; border-radius:8px; background:var(--2j-color-surface-subtle, transparent); }
+.shift-notice p { margin:0; }
+.shift-notice-error { flex-basis:100%; color:var(--2j-color-text-danger, #b3261e); font-size:13px; }

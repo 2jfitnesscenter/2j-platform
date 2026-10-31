@@ -1,5 +1,7 @@
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, PageHeader, StatusChip, icons } from '@2j/ui';
+import { CashCountGrid, cashCountsValid, emptyCashCounts } from './cash-count-grid.js';
+import { ShiftNotice, SHIFT_REQUIRED_CODES, useShift } from './shift-notice.js';
 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 
@@ -33,7 +35,7 @@ const formatDay = (isoDate: string) => dayFmt.format(new Date(`${isoDate}T00:00:
 const formatTime = (iso: string | null) => (iso ? timeFmt.format(new Date(iso)) : '—');
 const statusText: Record<SessionStatus, string> = { open: 'Abierta', closed: 'Cerrada', late_close: 'Cerrada tarde' };
 const errorText: Record<string, string> = {
-  clock_in_required: 'Ficha tu entrada antes de abrir la caja.',
+  clock_in_required: 'Para abrir la caja primero tienes que fichar la entrada.',
   already_holds_register: 'Ya tienes otra caja a tu cargo.',
   cash_already_open: 'Esa caja ya está abierta.',
   cash_register_already_used_today: 'Esa caja ya tuvo su sesión de hoy (una sesión por caja y día).',
@@ -42,12 +44,11 @@ const errorText: Record<string, string> = {
   staff_account_unlinked: 'Tu cuenta no está vinculada a una ficha de equipo.',
   cash_outflow_approval_pending: 'Hay un gasto o retirada pendiente de aprobación del propietario.',
   cash_custodian_required: 'Solo quien tiene la caja a su cargo puede cerrarla.',
-  cash_custodian_not_clocked_in: 'Ficha tu entrada antes de cerrar la caja.',
+  cash_custodian_not_clocked_in: 'Para cerrar la caja primero tienes que fichar la entrada.',
   cash_already_closed: 'Esa caja ya está cerrada.',
 };
 async function readJson(response: Response) { try { return await response.json(); } catch { return {}; } }
 const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Atlantic/Canary' });
-const validCount = (value: string | undefined) => /^(0|[1-9]\d{0,6})$/.test(value ?? '');
 
 function DifferenceChip({ cents }: { cents: number | null | undefined }) {
   if (cents == null) return <span className="caja-muted">Pendiente</span>;
@@ -75,17 +76,15 @@ function CashMovementList({ movements }: { movements: CashMovement[] }) {
   </li>)}</ol>;
 }
 
-function CountForm({ mode, registerName, busy, error, onSubmit, onCancel }: { mode: 'open' | 'close'; registerName: string; busy: boolean; error: string; onSubmit: (counts: Record<DenominationKey, number>) => void; onCancel: () => void }) {
-  const [values, setValues] = React.useState<Record<string, string>>({});
-  const valid = denominations.every(([key]) => validCount(values[key]));
-  const total = valid ? denominations.reduce((sum, [key, , cents]) => sum + Number(values[key]) * cents, 0) : 0;
+function CountForm({ mode, registerName, busy, error, shift, onSubmit, onCancel }: { mode: 'open' | 'close'; registerName: string; busy: boolean; error: string; shift: ReturnType<typeof useShift>; onSubmit: (counts: Record<DenominationKey, number>) => void; onCancel: () => void }) {
+  const [values, setValues] = React.useState<Record<string, string>>(() => emptyCashCounts());
+  const valid = cashCountsValid(values);
   const titleId = `caja-count-${mode}`;
   return <form className="caja-count" aria-labelledby={titleId} onSubmit={event => { event.preventDefault(); if (!valid) return; onSubmit(Object.fromEntries(denominations.map(([key]) => [key, Number(values[key])])) as Record<DenominationKey, number>); }}>
     <h3 id={titleId}>{mode === 'open' ? `Abrir ${registerName}` : `Cerrar ${registerName}`}</h3>
     <p className="caja-muted">{mode === 'open' ? 'Cuenta el fondo inicial por denominación.' : 'Recuento a ciegas: cuenta lo que hay por denominación. No verás el importe esperado.'} Usa 0 si no tienes ninguna.</p>
-    <div className="caja-denominations">{denominations.map(([key, label], index) => <label key={key}>{label}
-      <input inputMode="numeric" autoFocus={index === 0} value={values[key] ?? ''} onChange={event => setValues(current => ({ ...current, [key]: event.target.value.trim() }))} aria-invalid={values[key] !== undefined && !validCount(values[key])} /></label>)}</div>
-    {mode === 'open' && valid && <p className="caja-total">Fondo contado: <strong>{euro(total)}</strong></p>}
+    <ShiftNotice action={mode === 'close' ? 'cerrar la caja' : 'abrir la caja'} shift={shift} />
+    <CashCountGrid counts={values} onChange={(key, value) => setValues(current => ({ ...current, [key]: value }))} showTotal={mode === 'open'} />
     {error && <p className="caja-error" role="alert">{error}</p>}
     <div className="caja-actions"><Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>Cancelar</Button><Button type="submit" variant="primary" loading={busy} disabled={!valid}>{mode === 'open' ? 'Abrir caja' : 'Cerrar caja'}</Button></div>
   </form>;
@@ -100,6 +99,7 @@ export function CajaPage() {
   const [busy, setBusy] = React.useState(false);
   const [dialogError, setDialogError] = React.useState('');
   const [feedback, setFeedback] = React.useState('');
+  const shift = useShift();
 
   const load = React.useCallback(async () => {
     try {
@@ -134,6 +134,7 @@ export function CajaPage() {
         ? await fetch(`${apiUrl}/api/economics/cash/open`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ registerCode: dialog.register.code, openingDenominations: counts }) })
         : await fetch(`${apiUrl}/api/economics/cash/${dialog.register.sessionId}/close`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ countedDenominations: counts }) });
       const body = await readJson(response);
+      if (!response.ok && (SHIFT_REQUIRED_CODES as readonly string[]).includes(body.error as string)) { shift.markClosed(); return; }
       if (!response.ok) { setDialogError(errorText[body.error as string] ?? body.message ?? 'No se pudo completar la operación. Inténtalo de nuevo.'); return; }
       setFeedback(dialog.mode === 'open' ? `${dialog.register.name} abierta.` : `${dialog.register.name} cerrada. El recuento queda registrado.`);
       setDialog(null);
@@ -152,6 +153,7 @@ export function CajaPage() {
   const panels: Array<{ code: RegisterCode; name: string }> = [{ code: 'bunker', name: 'Búnker' }, { code: 'sala', name: 'Sala' }];
   return shell(<>
     {feedback && <div className="form-feedback" role="status">{feedback}</div>}
+    {!hasOwnCustody && !dialog && <ShiftNotice action="abrir la caja" shift={shift} />}
     <section className="caja-registers" aria-label="Sesión de cada caja">
       {panels.map(({ code, name }) => {
         const register = registers.find(row => row.code === code);
@@ -171,7 +173,7 @@ export function CajaPage() {
         </Card>;
       })}
     </section>
-    {dialog && <Card as="section" className="caja-count-card"><CountForm mode={dialog.mode} registerName={dialog.register.name} busy={busy} error={dialogError} onSubmit={counts => void submitCount(counts)} onCancel={() => setDialog(null)} /></Card>}
+    {dialog && <Card as="section" className="caja-count-card"><CountForm mode={dialog.mode} registerName={dialog.register.name} busy={busy} error={dialogError} shift={shift} onSubmit={counts => void submitCount(counts)} onCancel={() => setDialog(null)} /></Card>}
 
     <Card as="section" aria-labelledby="caja-daily-title" padding="none" className="summary-card">
       <div className="summary-card-head"><CardHeader title="Informe diario" titleId="caja-daily-title" description={ownerView ? 'Totales por día de las dos cajas. La diferencia solo aparece con el día cerrado.' : 'Sesiones por día. Los importes y la diferencia son solo del propietario.'} /></div>
