@@ -8,6 +8,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, H
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 const { CalendarPage, filterCalendarSessions, groupSessionsByOverlap, serviceColorIndex } = await import('../src/calendar-page.tsx');
+const { readDeepLink } = await import('../src/deep-link.js');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; delete window.matchMedia; });
 after(() => dom.window.close());
 
@@ -183,6 +184,21 @@ test('creates a real staff session using the selected 2J service and capacity', 
   assert.equal(posted.overrideAvailability, false);
   assert.equal(Object.hasOwn(posted, 'availabilityReason'), false);
   assert.equal(session.source, 'manual');
+});
+
+test('A72 booking deep link preselects the client from the server-backed profile',async()=>{
+  const clientId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const session={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',serviceId:service.id,serviceName:service.name,areaId:area.id,areaName:area.name,templateId:null,source:'manual',startsAt:`${baseData.weekStart}T19:00:00Z`,durationMinutes:60,capacity:8,status:'scheduled',isIndividual:false,occupiedCount:0,waitlistCount:0,overbookCount:0,professionalId:null,professionalName:null};
+  const requests=[];window.location.hash=`#calendar?book=1&clientId=${clientId}`;
+  assert.equal(readDeepLink(['book','clientId']).book,'1');assert.equal(readDeepLink(['book','clientId']).clientId,clientId);
+  globalThis.fetch=async(url)=>{const path=String(url);requests.push(path);if(path.includes('/api/calendar/week'))return response({...baseData,sessions:[session]});if(path.endsWith(`/api/clients/${clientId}`))return response({client:{id:clientId,firstName:'Marta',lastName:'Santos',status:'active'}});if(path.endsWith(`/api/calendar/sessions/${session.id}/attendees`))return response({reservations:[],waitlist:[]});if(path.includes('/booking-eligibility'))return response({allowed:true,blockingReasons:[],availableAlternatives:[{assignmentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',planId:'plan',planName:'Cuota',availableBalance:3,periodUsage:[]}],capacity:{occupied:0,limit:8,available:8},waitlistAllowed:false,overridePossible:{debt:false,documents:false,capacity:false},requiredDocuments:[]});throw new Error(`Unexpected request ${path}`);};
+  render(React.createElement(CalendarPage));
+  fireEvent.click(await screen.findByRole('button',{name:/Fuerza 2J/}));
+  const detail=await screen.findByRole('dialog',{name:service.name});
+  await waitFor(()=>assert.ok(requests.some(path=>path.endsWith(`/api/clients/${clientId}`)),`requests were ${requests.join(', ')}`));
+  await waitFor(()=>assert.equal(within(detail).getByRole('combobox',{name:'Buscar cliente'}).value,'Marta Santos'));
+  await waitFor(()=>assert.ok(requests.some(path=>path.includes(`/booking-eligibility?clientId=${clientId}`))));
+  assert.match(window.location.hash,/^#calendar$/,'the one-shot action is removed from browser history');
 });
 
 test('recurring template automatically appears as a concrete session and no manual generation control is offered', async () => {

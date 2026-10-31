@@ -73,12 +73,16 @@ export function chargeChip(status: string) {
   return <StatusChip tone={chip.tone}>{chip.label}</StatusChip>;
 }
 
-export type PlanRightLike = { rightType: string; serviceName: string | null; quantity: number | null; period: string | null; balance?: number | null };
+export type PlanPeriodLike = { id:string; periodIndex:number|null; startsOn:string; endsOn:string|null; sessionsGranted:number|null; balance:number };
+export type PlanRightLike = { rightType: string; serviceName: string | null; quantity: number | null; quantityRule?:string|null; period: string | null; balance?: number | null; periods?:PlanPeriodLike[] };
 /** User-facing line for what a plan grants. */
 export function rightLine(right: PlanRightLike) {
   const service = right.serviceName ? ` · ${right.serviceName}` : '';
   if (right.rightType === 'service_access') return `Acceso${service}`;
-  if (right.rightType === 'sessions_quota') return `${right.quantity} sesiones${service}${right.balance != null ? ` · ${right.balance} restantes` : ''}`;
+  if (right.rightType === 'sessions_quota') {
+    const quantity=right.quantityRule==='unlimited'?'Sesiones sin límite':right.quantity!=null?`${right.quantity} sesiones`:right.periods?.length?'Bolsa de sesiones por periodo':'Cuota de sesiones';
+    return `${quantity}${service}${right.balance != null ? ` · ${right.balance} disponibles` : ''}`;
+  }
   return `${right.quantity} ${right.period === 'week' ? 'por semana' : right.period === 'month' ? 'por mes' : 'por periodo'}${service}`;
 }
 

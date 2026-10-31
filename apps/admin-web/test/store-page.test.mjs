@@ -41,6 +41,16 @@ test('POS retries keep the same idempotency key and a completed sale starts with
   dialog=await start();fireEvent.click(within(dialog).getByRole('button',{name:'Confirmar venta'}));await waitFor(()=>assert.equal(saleCalls,3));assert.notEqual(keys[1],keys[2],'a completed sale starts with a fresh key');
 });
 
+test('client profile deep link opens a sale with the active client already selected',async()=>{
+  const clientId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';let clientLookup=0;
+  window.location.hash=`#store?sale=1&clientId=${clientId}`;
+  serve({onRequest:(target)=>{if(target.endsWith(`/api/clients/${clientId}`)){clientLookup++;return json({client:{id:clientId,firstName:'Eva',lastName:'Demo',status:'active'}});}return null;}});
+  render(React.createElement(StorePage));
+  const dialog=await screen.findByRole('dialog',{name:'Nueva venta en el centro'});
+  await within(dialog).findByText('Cliente seleccionado: Eva Demo');
+  assert.equal(clientLookup,1);
+});
+
 test('product card is visual with a fallback instead of an image, no invented stock thresholds, and Agotado only when every active variant is at zero',async()=>{
   await open({products:[protein,{id:'p2',category:'merchandising',name:'Camiseta 2J',description:'',active:true,variants:[{id:'v2',sku:null,label:'M',size:'M',flavor:null,priceCents:'1800',active:true,stockTracked:true,stock:0},{id:'v3',sku:null,label:'L',size:'L',flavor:null,priceCents:'2000',active:true,stockTracked:true,stock:0}]},{id:'p3',category:'merchandising',name:'Gorra',description:'',active:false,variants:[]}],movements:[],sales:[]});
   const grid=screen.getByRole('list',{name:'Productos'});

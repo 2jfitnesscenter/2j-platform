@@ -38,7 +38,7 @@ async function createContract({termKind='rolling_months',termMonths=3,start='202
   const quota = unlimited
     ? {rightType:'sessions_quota',quotaScope:'shared',quantityRule:'unlimited'}
     : pack || oneOff
-      ? {rightType:'sessions_quota',quotaScope:'shared',quantity:8,quantityRule:'fixed_v1'}
+      ? {rightType:'sessions_quota',quotaScope:'shared',quantity:oneOff?1:8,quantityRule:'fixed_v1'}
       : {rightType:'sessions_quota',quotaScope:'shared',weeklyFrequency:frequency,quantityRule:'weekday_ratio_v1'};
   const response = await app.inject({method:'POST',url:'/api/plans',headers:{'idempotency-key':randomUUID()},payload:{
     name:`F1-B ${randomUUID()}`,serviceIds:[serviceId],kind,renewalCadence:kind==='recurring'?'monthly':null,
@@ -88,6 +88,8 @@ async function createSiblingAssignment(source,{sameClient=false}={}) {
 }
 
 function hash(value){return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
+function canaryToday(){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const part=type=>parts.find(entry=>entry.type===type)?.value;return `${part('year')}-${part('month')}-${part('day')}`;}
+function nextMonthStart(value){const date=new Date(`${value.slice(0,7)}-01T00:00:00.000Z`);date.setUTCMonth(date.getUTCMonth()+1);return date.toISOString().slice(0,10);}
 
 async function insertDirectQuotaPeriod(tx,fixture,{periodId=randomUUID(),periodIndex=0,start='2026-10-15',end='2026-10-31',frequency=3,rightId=fixture.rightId,assignmentId=fixture.assignmentId,clientId=fixture.clientId}={}){
   return tx`INSERT INTO assignment_entitlement_periods(id,assignment_id,client_id,right_id,period_index,entitlement_mode,formula_id,period_start,period_end,weekdays_in_period,weekly_frequency,sessions_granted,sessions_snapshot,snapshot,idempotency_key,request_hash)
@@ -329,20 +331,29 @@ test('period overlap guard rejects same assignment/right and nullable fixed peri
   }),error=>error.code==='23514'&&/cannot overlap/.test(error.message),'NULL period_end must still overlap as an unbounded range');
 });
 
-test('term-enabled public contract sale remains disabled and creates no financial or entitlement records',async()=>{
+test('term-enabled contract sale creates one charge and the frozen monthly entitlement bags',async()=>{
   const fixture=await createContract();
   const clientResponse=await app.inject({method:'POST',url:'/api/clients',headers:{'idempotency-key':randomUUID()},payload:{firstName:'F1-B guard',lastName:'Synthetic',email:null,phone:null}});
   assert.equal(clientResponse.statusCode,201,clientResponse.body);const client=clientResponse.json();
   const assignable=await app.inject({method:'GET',url:'/api/plans/assignable'});
-  assert.equal(assignable.statusCode,200);assert.equal(assignable.json().some(plan=>plan.id===fixture.planId),false);
-  const response=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:fixture.planId,startsOn:'2026-10-15',endsOn:'2027-01-14',dueOn:'2026-10-15',amountCents:1000}});
-  assert.equal(response.statusCode,409);assert.equal(response.json().error,'contract_terms_not_available');
+  assert.equal(assignable.statusCode,200);assert.equal(assignable.json().some(plan=>plan.id===fixture.planId),true);
+  const startsOn=nextMonthStart(canaryToday());
+  const response=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:fixture.planId,startsOn,dueOn:startsOn,amountCents:1000,adjustmentReason:'Precio sintético de prueba'}});
+  assert.equal(response.statusCode,201,response.body);assert.equal(response.json().replay,false);
   const [counts]=await sql`SELECT
     (SELECT count(*)::int FROM economic_charges WHERE client_id=${client.id}) charges,
     (SELECT count(*)::int FROM client_plan_assignments WHERE client_id=${client.id}) assignments,
     (SELECT count(*)::int FROM client_entitlement_ledger WHERE client_id=${client.id}) ledger,
     (SELECT count(*)::int FROM assignment_entitlement_periods WHERE client_id=${client.id}) periods`;
-  assert.deepEqual(counts,{charges:0,assignments:0,ledger:0,periods:0});
+  assert.equal(counts.charges,1);assert.equal(counts.assignments,1);assert.ok(counts.ledger>=1);assert.ok(counts.periods>=1);
+  assert.equal((await sql`SELECT count(*)::int AS count FROM assignment_contract_terms WHERE assignment_id=${response.json().id}`)[0].count,1);
+  const profile=await app.inject({method:'GET',url:`/api/clients/${client.id}`});
+  assert.equal(profile.statusCode,200,profile.body);
+  const quota=profile.json().summary.plans.data[0].rights.find(right=>right.rightType==='sessions_quota');
+  assert.ok(quota.periods.length>=3,'Client 360 exposes each frozen monthly bag separately');
+  assert.equal(quota.balance,0,'future period bags are not aggregated into current available balance');
+  assert.ok(quota.periods.every(period=>period.startsOn>canaryToday()),'the assignment starts next month in Atlantic/Canary');
+  assert.ok(quota.periods.some(period=>period.balance>0),'future grants remain visible in their own period rows');
 });
 
 test('outer transaction rollback removes all periods and grants',async()=>{
@@ -366,11 +377,16 @@ test('conflicting pre-existing deterministic period key fails without adding par
   assert.equal((await sql`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE assignment_id=${fixture.assignmentId} AND entry_type='grant'`)[0].count,1);
 });
 
-test('pack and one_off do not activate fixed bags before payment activation in F1-C',async()=>{
+test('pack and one_off materialize one fixed bag but do not grant it before validated payment',async()=>{
   for(const type of ['pack','one_off']){
     const fixture=await createContract({termKind:type,termMonths:null,start:null,end:null,pack:type==='pack',oneOff:type==='one_off'});
-    await assert.rejects(materialize(fixture.assignmentId),error=>error.code==='payment_activation_required');
-    assert.equal((await sql`SELECT count(*)::int AS count FROM assignment_entitlement_periods WHERE assignment_id=${fixture.assignmentId}`)[0].count,0);
+    const result=await materialize(fixture.assignmentId);
+    assert.equal(result.periods.length,1);
+    assert.equal(result.periods[0].mode,'quota');
+    assert.equal(result.periods[0].sessionsGranted,type==='one_off'?1:8);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM assignment_entitlement_periods WHERE assignment_id=${fixture.assignmentId} AND formula_id='fixed_v1'`)[0].count,1);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM client_entitlement_ledger WHERE assignment_id=${fixture.assignmentId} AND entry_type='grant'`)[0].count,0);
+    assert.equal((await sql`SELECT count(*)::int AS count FROM assignment_entitlement_period_events WHERE assignment_id=${fixture.assignmentId} AND event_type='charge_linked'`)[0].count,1);
     assert.equal(fixture.termKind,type);
   }
 });

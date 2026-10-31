@@ -68,10 +68,11 @@ test('the dialog is organised in the five blocks, with the final labels', async 
   const dialog = await openNewPlan();
   fireEvent.change(within(dialog).getByLabelText('Tipo de plan'), { target: { value: 'recurring' } });
   assert.deepEqual(names(dialog), ['Datos del plan', 'Servicios incluidos', 'Frecuencia', 'Accesos', 'Vigencia']);
-  for (const label of ['Nombre', 'Precio (€), opcional', 'Tipo de plan', 'Frecuencia', 'Tipo de vigencia']) assert.ok(within(dialog).getByLabelText(label), label);
-  assert.deepEqual([...within(dialog).getByLabelText('Tipo de plan').options].map((node) => node.textContent), ['Selecciona el tipo', 'Plan recurrente', 'Bono de sesiones']);
-  assert.deepEqual([...within(dialog).getByLabelText('Tipo de vigencia').options].map((node) => node.textContent), ['Mensual natural', 'Semanal', 'Periodo personalizado']);
-  assert.equal(within(dialog).getByLabelText('Tipo de vigencia').value, 'monthly');
+  for (const label of ['Nombre', 'Precio (€), opcional', 'Tipo de plan', 'Periodo comercial']) assert.ok(within(dialog).getByLabelText(label), label);
+  assert.ok(within(dialog).getByLabelText(/Frecuencia de sesiones por semana/));
+  assert.deepEqual([...within(dialog).getByLabelText('Tipo de plan').options].map((node) => node.textContent), ['Selecciona el tipo', 'Plan recurrente', 'Bono de sesiones o sesión puntual']);
+  assert.deepEqual([...within(dialog).getByLabelText('Periodo comercial').options].map((node) => node.textContent), ['Selecciona el periodo', 'Mensual natural', 'Medio mes o rango corto', 'Trimestral, semestral o anual']);
+  assert.equal(within(dialog).getByLabelText('Periodo comercial').value, 'natural_month');
 });
 
 test('B: a recurring plan offers Frecuencia 1-5 días / semana and Sin límite, with the period helper', async () => {
@@ -79,12 +80,12 @@ test('B: a recurring plan offers Frecuencia 1-5 días / semana and Sin límite, 
   mount();
   const dialog = await openNewPlan();
   fireEvent.change(within(dialog).getByLabelText('Tipo de plan'), { target: { value: 'recurring' } });
-  const frequency = within(dialog).getByLabelText('Frecuencia');
+  const frequency = within(dialog).getByLabelText(/Frecuencia de sesiones por semana/);
   assert.deepEqual([...frequency.options].map((node) => node.textContent), ['Selecciona la frecuencia', '1 día / semana', '2 días / semana', '3 días / semana', '4 días / semana', '5 días / semana', 'Sin límite']);
   assert.deepEqual([...frequency.options].map((node) => node.value), ['', '1', '2', '3', '4', '5', 'unlimited']);
-  assert.ok(within(dialog).getByText('La cantidad de sesiones del periodo se calculará según la duración real del periodo.'));
+  assert.ok(within(dialog).getByText(/Cada bolsa se calcula para la duración real del periodo/));
   assert.equal(within(dialog).queryByLabelText('Número de sesiones'), null, 'a recurring plan has no pack size');
-  assert.match(within(dialog).getByText(/todavía no está implementada/).textContent, /bolsas de sesiones/, 'the pending engine is stated, not hidden');
+  assert.ok(within(dialog).getByRole('checkbox', { name: /Acceso ilimitado a sesiones/ }));
   assert.doesNotMatch(dialog.textContent, /\b13\b|sesiones del mes|ROUND/i, 'nothing is computed in the frontend');
 });
 
@@ -120,10 +121,11 @@ test('C: a pack is saved with the exact semantics: automatic service access, one
   const body = posts[0].body;
   assert.equal(body.kind, 'session_pack'); assert.equal(body.basePriceCents, 6000); assert.equal(body.renewalCadence, undefined);
   assert.deepEqual(body.serviceIds, [fuerza.id, pilates.id]);
+  assert.equal(body.termKind, 'pack'); assert.equal(body.paymentBlock, 'off');
   assert.deepEqual(body.rights, [
     { rightType: 'service_access', serviceId: fuerza.id },
     { rightType: 'service_access', serviceId: pilates.id },
-    { rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantity: 10, validDays: 90, validDaysStartRule: 'first_use' },
+    { rightType: 'sessions_quota', serviceId: null, quotaScope: 'shared', quantityRule: 'fixed_v1', quantity: 10, validDays: 90, validDaysStartRule: 'first_use' },
   ]);
   assert.deepEqual(body.modules, [{ module: 'training', accessLevel: 'full', capabilities: [] }]);
 });
@@ -146,27 +148,23 @@ test('D: selecting services is enough: access is generated per service and unsel
   assert.equal(posts[0].body.rights.filter((right) => right.rightType === 'sessions_quota').length, 1);
 });
 
-test('F: a new recurring plan cannot be saved or activated until 2J-098E, and nothing is sent', async () => {
+test('F: a new recurring plan is submittable and sends the frequency quota to the API', async () => {
   const posts = serve();
   mount();
   const dialog = await openNewPlan();
   fireEvent.change(within(dialog).getByLabelText('Nombre'), { target: { value: 'Mensual 3 días' } });
   fireEvent.change(within(dialog).getByLabelText('Precio (€), opcional'), { target: { value: '50' } });
   fireEvent.change(within(dialog).getByLabelText('Tipo de plan'), { target: { value: 'recurring' } });
-  fireEvent.change(within(dialog).getByLabelText('Frecuencia'), { target: { value: '3' } });
+  fireEvent.change(within(dialog).getByLabelText(/Frecuencia de sesiones por semana/), { target: { value: '3' } });
   assert.equal(within(dialog).getByText('Resumen del plan').nextSibling.textContent, 'Mensual · 3 días/semana · Fuerza funcional · 50 €');
   const save = within(dialog).getByRole('button', { name: 'Crear borrador' });
-  assert.equal(save.disabled, true);
-  assert.match(dialog.textContent, /El nuevo modelo de cuotas recurrentes se habilitará con 2J-098E\./);
-  assert.equal(save.getAttribute('aria-describedby'), 'plan-blocked-note', 'the reason is attached to the button');
-  fireEvent.submit(dialog.querySelector('form'));
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.equal(posts.length, 0, 'even a forced submit sends nothing');
-  fireEvent.change(within(dialog).getByLabelText('Frecuencia'), { target: { value: 'unlimited' } });
-  assert.equal(within(dialog).getByText('Resumen del plan').nextSibling.textContent, 'Mensual · Sin límite · Fuerza funcional · 50 €');
-  assert.equal(save.disabled, true);
+  assert.equal(save.disabled, false);
+  fireEvent.click(save);
+  await waitFor(() => assert.equal(posts.length, 1));
+  assert.equal(posts[0].body.termKind, 'natural_month');
+  assert.equal(posts[0].body.paymentBlock, 'enforce');
+  assert.ok(posts[0].body.rights.some((right) => right.rightType === 'sessions_quota' && right.quantityRule === 'weekday_ratio_v1' && right.weeklyFrequency === 3));
 });
-
 test('the frequency is never converted into a weekly quota: the recurring summary says days per week, not a limit', () => {
   assert.equal(copy.frequencyShortLabel('3'), '3 días/semana');
   assert.equal(copy.frequencyShortLabel('1'), '1 día/semana');
@@ -187,17 +185,17 @@ test('E: legacy plans still render, in human language, with the previous-model n
   assert.ok(within(legacy).getByText('3 accesos / semana'));
   assert.ok(within(legacy).getByText('Cuota actual'));
   fireEvent.click(within(legacy).getByRole('button', { name: 'Detalles' }));
-  assert.equal(screen.getByTestId('plan-legacy-note').textContent.startsWith('Este plan usa el modelo anterior de cuotas.'), true);
+  assert.equal(screen.getByTestId('plan-legacy-note').textContent, 'Esta versión mantiene su configuración histórica y sus asignaciones no cambian.');
   assert.doesNotMatch(legacy.textContent, /period_quota|sessions_quota|service_access|quotaScope|ledger|entitlement|derecho/i);
   const pack = within(cards).getByRole('article', { name: 'Bono 10' });
-  assert.ok(within(pack).getByText('10 sesiones'), 'a pack reads naturally');
+  assert.ok(within(pack).getByText('10 sesiones compartidas'), 'a pack reads naturally');
   assert.ok(within(pack).getByText('Sesiones'));
   fireEvent.click(within(pack).getByRole('button', { name: 'Detalles' }));
   assert.equal(document.querySelectorAll('[data-testid="plan-legacy-note"]').length, 0, 'a pack does not carry the legacy note');
   assert.ok(within(pack).getByText('Búnker / Training'));
 });
 
-test('E: a new version of a legacy recurring plan keeps its stored quotas read-only and never shows the old editor', async () => {
+test('E: a new version of a legacy recurring plan keeps its stored quotas read-only and remains saveable', async () => {
   const posts = serve({ plans: [legacyPlan()] });
   mount();
   await screen.findByRole('heading', { name: fuerza.name });
@@ -206,13 +204,16 @@ test('E: a new version of a legacy recurring plan keeps its stored quotas read-o
   fireEvent.click(within(card).getByRole('button', { name: 'Detalles' }));
   fireEvent.click(within(card).getByRole('button', { name: 'Crear nueva versión' }));
   const dialog = await screen.findByRole('dialog', { name: 'Nueva versión de plan' });
-  assert.ok(within(dialog).getByText(/Este plan usa el modelo anterior de cuotas\. Se conserva tal como está\./));
+  assert.ok(within(dialog).getByText(/Esta versión conserva el modelo de cuotas original; los cambios se guardan como una versión nueva sin alterar asignaciones existentes\./));
   assert.ok(within(dialog).getByText('3 accesos / semana · calendario · Fuerza funcional'));
   assert.equal(within(dialog).queryByLabelText('Frecuencia'), null, 'the new frequency selector is not mixed into an old plan');
   assert.doesNotMatch(dialog.textContent, /Límite de sesiones|Cuota por periodo|Alcance de la cuota|Derecho 1/);
   assert.equal(within(dialog).getByLabelText('Tipo de plan').disabled, true);
+  assert.equal(within(dialog).queryByLabelText('Periodo comercial'), null, 'legacy cadence is retained without forcing conversion to a new term model');
   assert.equal(within(dialog).queryByText(/habilitará con 2J-098E/), null, 'saving a version of an existing plan is not blocked');
   fireEvent.change(within(dialog).getByLabelText('Precio (€), opcional'), { target: { value: '42' } });
+  assert.equal(within(dialog).getByRole('button', { name: 'Guardar nueva versión' }).disabled, false);
+  assert.equal(dialog.querySelector('form').checkValidity(), true, [...dialog.querySelectorAll(':invalid')].map((node) => node.outerHTML).join('\n'));
   await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'Guardar nueva versión' })); await new Promise((resolve) => setTimeout(resolve, 40)); });
   await waitFor(() => assert.equal(posts.length, 1));
   assert.match(posts[0].path, /\/api\/plans\/plan-legacy\/versions$/);
@@ -232,6 +233,8 @@ test('a new version of a plain session pack opens in the pack form with its valu
   fireEvent.click(within(card).getByRole('button', { name: 'Detalles' }));
   fireEvent.click(within(card).getByRole('button', { name: 'Crear nueva versión' }));
   const dialog = await screen.findByRole('dialog', { name: 'Nueva versión de plan' });
+  fireEvent.change(within(dialog).getByLabelText('Tipo de plan'), { target: { value: 'session_pack' } });
+  fireEvent.change(within(dialog).getByLabelText('Modalidad'), { target: { value: 'pack' } });
   assert.equal(within(dialog).getByLabelText('Número de sesiones').value, '10');
   assert.equal(within(dialog).getByLabelText(/Vigencia del bono/).value, '90');
   assert.equal(within(dialog).getByLabelText('Inicio de vigencia').value, 'first_use');

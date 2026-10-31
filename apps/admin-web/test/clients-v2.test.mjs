@@ -10,6 +10,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, H
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 const { ClientsPage } = await import('../src/clients-page.tsx');
+const { ProfessionalCapabilitiesProvider } = await import('../src/app-shell.tsx');
 afterEach(() => { cleanup(); globalThis.fetch = undefined; window.location.hash = '#clients'; });
 after(() => dom.window.close());
 
@@ -53,11 +54,40 @@ test('Admin header is weighted: one primary «Nueva venta», secondary «Accione
   fireEvent.click(menu);
   assert.equal(menu.getAttribute('aria-expanded'), 'true');
   const items = within(screen.getByRole('menu', { name: 'Acciones del cliente' }));
-  for (const name of ['Añadir cuota', 'Editar datos', 'Archivar']) assert.ok(items.getByRole('menuitem', { name }), name);
+  for (const name of ['Editar datos', 'Archivar']) assert.ok(items.getByRole('menuitem', { name }), name);
   assert.match(items.getByRole('menuitem', { name: 'Archivar' }).className, /is-danger/);
   assert.equal(document.querySelectorAll('.client-header .ui-button--primary').length, 1, 'exactly one primary action in the header');
   fireEvent.keyDown(document, { key: 'Escape' });
   assert.equal(screen.queryByRole('menu'), null, 'Escape closes the menu');
+});
+
+test('A72 client action bar links only permissioned real flows and uses the current client and charge',async()=>{
+  const pending={id:'pending-charge',concept:'Cuota de noviembre',amountCents:5000,balanceCents:5000,dueOn:'2026-11-10',status:'pending'};
+  const paid={id:'paid-charge',concept:'Cuota de octubre',amountCents:5000,balanceCents:0,dueOn:'2026-10-10',status:'paid'};
+  const sections=sectionList().map(section=>section.id==='documents'?{...section,canManage:true}:section);
+  serve(profileOf({capabilities:{...adminCapabilities,bookReservations:true,sellStore:true,issueInvoices:true},payments:{balanceCents:5000,overdueCount:0,charges:[pending,paid],movements:[]},sections}));
+  render(React.createElement(ProfessionalCapabilitiesProvider,{capabilities:{store:true}},React.createElement(ClientsPage)));
+  fireEvent.click(await screen.findByRole('link',{name:/Marta Santos/}));
+  await screen.findByRole('heading',{level:1,name:'Marta Santos'});
+  fireEvent.click(screen.getByRole('button',{name:'Registrar pago'}));
+  const paymentDialog=await screen.findByRole('dialog',{name:'Registrar pago'});
+  assert.equal(within(paymentDialog).getByLabelText('Importe (€)').value,'50.00','payment opens for the first pending charge with its exact balance');
+  fireEvent.click(within(paymentDialog).getByRole('button',{name:'Cancelar'}));
+  const headerLink=(name)=>Array.from(document.querySelectorAll('.client-header-actions a')).find((element)=>element.textContent.trim()===name);
+  assert.equal(headerLink('Vender')?.getAttribute('href'),`#store?sale=1&clientId=${client.id}`,'store sale action should be a client-scoped link');
+  assert.equal(headerLink('Reservar clase')?.getAttribute('href'),`#calendar?book=1&clientId=${client.id}`,'booking action should be a client-scoped link');
+  assert.equal(headerLink('Enviar mensaje')?.getAttribute('href'),`#communications?clientId=${client.id}`,'message action should be a client-scoped link');
+  assert.equal(headerLink('Subir documento')?.getAttribute('href'),`#clients?clientId=${client.id}&tab=documents`,'document action should be a client-scoped link');
+  fireEvent.click(screen.getByRole('button',{name:'Acciones'}));
+  assert.equal(document.querySelector('[role="menuitem"]')?.textContent.trim(),'Emitir factura','a paid charge can be invoiced from the client actions menu');
+  assert.equal(document.querySelector('[role="menuitem"]')?.hasAttribute('disabled'),false);
+  cleanup();window.location.hash='#clients';
+  serve(profileOf({capabilities:{manage:true,collectPayments:false,sellStore:false,bookReservations:false,issueInvoices:false},payments:{balanceCents:5000,overdueCount:0,charges:[pending,paid],movements:[]},sections:sectionList()}));
+  await open();
+  assert.equal(Array.from(document.querySelectorAll('.client-header-actions button')).some((element)=>element.textContent.trim()==='Registrar pago'),false,'payment action hidden without collect permission');
+  assert.equal(Array.from(document.querySelectorAll('.client-header-actions a')).some((element)=>['Vender','Reservar clase','Subir documento'].includes(element.textContent.trim())),false,'write links hidden without their permissions');
+  fireEvent.click(screen.getByRole('button',{name:'Acciones'}));
+  assert.equal(Array.from(document.querySelectorAll('[role="menuitem"]')).some((element)=>element.textContent.includes('Emitir factura')),false,'invoice actions require the specific invoice permission');
 });
 
 test('Trainer (read-only capabilities) sees no write actions, no Pagos and no economic data', async () => {
@@ -149,6 +179,35 @@ test('Plan y sesiones assigns action weights and cancelling needs a reason, list
   assert.equal(confirm.disabled, false);
 });
 
+test('A72 shows independent period bags and sends manual adjustments to the selected period',async()=>{
+  const plan=assignment({kind:'recurring',planName:'Cuota trimestral',rights:[{id:'period-right',rightType:'sessions_quota',serviceName:'Fuerza',quantity:null,quantityRule:'weekday_ratio_v1',period:null,quotaScope:'shared',balance:4,periods:[
+    {id:'period-1',periodIndex:0,startsOn:'2026-10-01',endsOn:'2026-10-31',sessionsGranted:8,balance:0},
+    {id:'period-2',periodIndex:1,startsOn:'2026-11-01',endsOn:'2026-11-30',sessionsGranted:9,balance:4},
+  ]}]});
+  const profile=profileOf({plans:[plan],payments:{balanceCents:0,overdueCount:0,charges:[],movements:[]}});
+  let adjustmentPayload=null;
+  globalThis.fetch=async(url,options={})=>{
+    if(String(url).includes('/api/clients?'))return response(listResponse());
+    if(String(url).endsWith(`/api/clients/${client.id}`))return response(profile);
+    if(String(url).endsWith('/adjustments')){adjustmentPayload=JSON.parse(options.body);return response({ok:true},201);}
+    throw new Error(`Unexpected request ${url}`);
+  };
+  await open();
+  fireEvent.click(screen.getByRole('tab',{name:'Plan y sesiones'}));
+  await screen.findByRole('heading',{name:'Cuota trimestral'});
+  assert.ok(screen.getByText(/oct.*En curso.*0 sesiones disponibles de 8 concedidas/i));
+  assert.ok(screen.getByText(/nov.*Programado.*4 sesiones disponibles de 9 concedidas/i));
+  fireEvent.click(screen.getByRole('button',{name:'Ajustar saldo'}));
+  const dialog=await screen.findByRole('dialog',{name:'Ajustar saldo'});
+  const period=within(dialog).getByLabelText('Bolsa del periodo');
+  assert.equal(period.value,'period-1','the currently open bag is selected by default');
+  fireEvent.change(period,{target:{value:'period-2'}});
+  fireEvent.change(within(dialog).getByLabelText('Motivo obligatorio'),{target:{value:'Corrección sintética'} });
+  fireEvent.change(within(dialog).getByLabelText('Cantidad a ajustar'),{target:{value:'1'} });
+  fireEvent.click(within(dialog).getByRole('button',{name:'Guardar ajuste'}));
+  await waitFor(()=>assert.equal(adjustmentPayload?.periodId,'period-2'));
+});
+
 test('Resumen shows attention only from real signals and never an empty attention card', async () => {
   serve(profileOf());
   await open();
@@ -205,14 +264,14 @@ const charge = (overrides = {}) => ({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 const reopen = async (profile) => { cleanup(); window.location.hash = '#clients'; serve(profile); await open(); };
 
 test('Registrar pago appears in the header only when a charge is pending and the profile can collect; Emitir factura only works on a paid charge', async () => {
-  serve(profileOf({ payments: payments([charge()]) }));
+  serve(profileOf({ capabilities: { ...adminCapabilities, issueInvoices: true }, payments: payments([charge()]) }));
   await open();
   assert.ok(screen.getByRole('button', { name: 'Registrar pago' }), 'pending charge: the button is visible');
   fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
   const invoice = screen.getByRole('menuitem', { name: /Emitir factura/ });
   assert.equal(invoice.disabled, true); assert.match(invoice.textContent, /Sin cobros pagados/);
 
-  await reopen(profileOf({ payments: payments([charge({ balanceCents: 0, status: 'paid' })]) }));
+  await reopen(profileOf({ capabilities: { ...adminCapabilities, issueInvoices: true }, payments: payments([charge({ balanceCents: 0, status: 'paid' })]) }));
   assert.equal(screen.queryByRole('button', { name: 'Registrar pago' }), null, 'nothing pending: no button');
   fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
   assert.equal(screen.getByRole('menuitem', { name: /Emitir factura/ }).disabled, false);
@@ -227,15 +286,12 @@ test('Registrar pago appears in the header only when a charge is pending and the
 });
 
 test('Acciones links go to the right screen with the client: Reservar clase, Enviar mensaje, Subir documento', async () => {
-  serve(profileOf({ sections: sectionList().map((section) => section.id === 'documents' ? { ...section, canManage: true } : section) }));
+  serve(profileOf({ capabilities: { ...adminCapabilities, bookReservations: true }, sections: sectionList().map((section) => section.id === 'documents' ? { ...section, canManage: true } : section) }));
   await open();
-  fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
-  assert.equal(screen.getByRole('menuitem', { name: 'Reservar clase' }).getAttribute('href'), '#calendar?book=1');
-  assert.equal(screen.getByRole('menuitem', { name: 'Enviar mensaje' }).getAttribute('href'), '#communications?clientId=' + client.id);
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Subir documento' }));
-  assert.ok(await screen.findByRole('tab', { name: /Documentos/, selected: true }));
+  assert.equal(screen.getByRole('link', { name: 'Reservar clase' }).getAttribute('href'), `#calendar?book=1&clientId=${client.id}`);
+  assert.equal(screen.getByRole('link', { name: 'Enviar mensaje' }).getAttribute('href'), '#communications?clientId=' + client.id);
+  assert.equal(screen.getByRole('link', { name: 'Subir documento' }).getAttribute('href'), `#clients?clientId=${client.id}&tab=documents`);
 
   await reopen(profileOf({ sections: sectionList().map((section) => ['messages', 'documents', 'reservations'].includes(section.id) ? { ...section, access: 'forbidden' } : section) }));
-  fireEvent.click(screen.getByRole('button', { name: 'Acciones' }));
-  for (const name of ['Reservar clase', 'Enviar mensaje', 'Subir documento']) assert.equal(screen.queryByRole('menuitem', { name }), null, name + ' hidden without access');
+  for (const name of ['Reservar clase', 'Enviar mensaje', 'Subir documento']) assert.equal(screen.queryByRole('link', { name }), null, name + ' hidden without access');
 });

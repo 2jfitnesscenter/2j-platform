@@ -85,8 +85,9 @@ export function CalendarPage() {
   const [serviceFilter,setServiceFilter]=useState('');
   const [areaFilter,setAreaFilter]=useState('');
   // `#calendar?book=1` (ver deep-link.ts): la reserva se hace dentro del detalle de una sesión, así que se guía a elegirla.
+  const bookingClientLink=useRef<string|null>(readDeepLink(['clientId'] as const).clientId??null);
   const [bookHint,setBookHint]=useState(()=>readDeepLink(['book'] as const).book==='1');
-  useEffect(()=>{clearDeepLink(['book']);},[]);
+  useEffect(()=>{clearDeepLink(['book','clientId']);},[]);
   const [professionalFilter,setProfessionalFilter]=useState('');
   const [dialog, setDialog] = useState<'session' | 'template' | 'bulk-template' | null>(null);
   const dialogMode = dialog as 'session' | 'template' | 'bulk-template' | null;
@@ -158,10 +159,13 @@ export function CalendarPage() {
   }
 
   function openSession(session: Session, opener: HTMLElement | null = openerRef.current) {
+    const linkedClientId=bookHint?bookingClientLink.current:null;
+    if(bookHint)bookingClientLink.current=null;
     setBookHint(false);
     document.querySelectorAll<HTMLDetailsElement>('.calendar-overflow[open]').forEach((details) => { details.open = false; });
     if (opener) openerRef.current = opener;
     setDialog(null); setSelectedSession(session); setAttendees(null); setAttendeeError(''); setClientId(''); setClientQuery(''); setActionError(''); setNotice(''); setMissingDocuments([]); setOverrideDocuments(false); setDocumentOverrideReason('');setBookingPreview(null);setOverrideDebt(false);setOverrideDebtReason('');
+    if(linkedClientId&&/^[0-9a-f-]{36}$/i.test(linkedClientId))void apiFetch(`${apiUrl}/api/clients/${linkedClientId}`).then(async response=>{const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error();return body as {client:ClientOption&{status:string}};}).then(body=>{if(body.client.status==='active'){setClientId(body.client.id);setClientQuery(`${body.client.firstName} ${body.client.lastName}`);}}).catch(()=>setClientSearchError('No se pudo precargar el cliente; selecciónalo de nuevo en la reserva.'));
     void apiFetch(`${apiUrl}/api/calendar/sessions/${session.id}/attendees`).then(async (response) => {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(humanError(body.error ?? 'No se pudo cargar la sesión.'));

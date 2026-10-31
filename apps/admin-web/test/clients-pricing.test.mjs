@@ -21,7 +21,7 @@ const profileOf = (plans = [], capabilities = { manage: true, assignPlans: true,
   summary: { profile: slot(), plans: slot(plans), reservations: slot(), payments: slot({ balanceCents: 0, overdueCount: 0, charges: [], movements: [] }), documents: slot(), messages: slot({ unreadCount: 0 }), followup: slot() },
 });
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
-const menuItem = async (name) => { fireEvent.click(await screen.findByRole('button', { name: 'Acciones' })); fireEvent.click(await screen.findByRole('menuitem', { name })); };
+const clickClientAction = async (name) => fireEvent.click(await screen.findByRole('button', { name }));
 
 /** The real API serialises the PostgreSQL bigint basePriceCents as a STRING ("5000"). Tests use that shape on purpose. */
 const plan3Days = (basePriceCents) => ({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: '3 días', kind: 'recurring', renewalCadence: 'monthly', periodDays: null, basePriceCents, services: [{ id: 's1', name: 'Fuerza funcional', area: 'Sala' }], rights: [{ rightType: 'service_access', serviceName: 'Fuerza funcional', quantity: null, period: null, quotaScope: null }] });
@@ -38,7 +38,7 @@ const openSale = async ({ basePriceCents, capabilities, onPost }) => {
   render(React.createElement(ClientsPage));
   fireEvent.click(await screen.findByRole('link', { name: /Lucía Díaz/ }));
   await screen.findByRole('heading', { level: 1, name: 'Lucía Díaz' });
-  await menuItem('Añadir cuota');
+  await clickClientAction('Añadir cuota');
   const dialog = await screen.findByRole('dialog', { name: 'Añadir cuota' });
   await waitFor(() => assert.ok(dialog.querySelector('select')));
   fireEvent.change(within(dialog).getByLabelText('Producto o plan'), { target: { value: plan3Days().id } });
@@ -88,9 +88,9 @@ test('without price permission the catalogue price is read-only and never asks f
   assert.ok(within(dialog).queryByLabelText('Motivo del ajuste de precio') === null);
 });
 
-test('recurring plans carry a neutral note that the definitive duration comes with the new plan model; packs do not', async () => {
+test('legacy recurring plans explain that their stored historical terms remain unchanged', async () => {
   const dialog = await openSale({ basePriceCents: '5000', capabilities: { manage: true, assignPlans: true, manageCatalogPrice: true } });
-  assert.match(within(dialog).getByText(/La duración definitiva del plan se aplicará con el nuevo modelo de cuotas/).textContent, /comportamiento legacy/);
+  assert.match(within(dialog).getByTestId('legacy-duration-note').textContent, /condiciones históricas/);
 });
 
 test('sessions are shown only from a real quota balance: balance=null shows nothing invented', async () => {

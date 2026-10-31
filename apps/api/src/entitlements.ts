@@ -241,7 +241,7 @@ export function registerEntitlementRoutes(app: FastifyInstance<any,any,any,any,a
   app.post('/api/clients/:clientId/plans/:assignmentId/adjustments',async(request,reply)=>{
     reply.header('Cache-Control','no-store');
     const context=await auth(request,reply,'entitlements.adjust');if(!context)return;
-    const params=paramsSchema.safeParse(request.params);const key=uuid.safeParse(request.headers['idempotency-key']);const body=z.object({rightId:uuid,quantity:z.number().int().min(-100000).max(100000).refine(v=>v!==0),reason:z.string().trim().min(3).max(240),externalReference:z.string().trim().max(160).nullable().optional()}).strict().safeParse(request.body);
+    const params=paramsSchema.safeParse(request.params);const key=uuid.safeParse(request.headers['idempotency-key']);const body=z.object({rightId:uuid,periodId:uuid.nullable().optional(),quantity:z.number().int().min(-100000).max(100000).refine(v=>v!==0),reason:z.string().trim().min(3).max(240),externalReference:z.string().trim().max(160).nullable().optional()}).strict().safeParse(request.body);
     if(!params.success)return reply.code(400).send({error:'invalid_assignment'});if(!key.success)return reply.code(400).send({error:'idempotency_key_required'});if(!body.success)return reply.code(400).send({error:'validation_error',details:body.error.flatten()});
     const requestHash=digest({assignmentId:params.data.assignmentId,...body.data});
     try{
@@ -251,19 +251,54 @@ export function registerEntitlementRoutes(app: FastifyInstance<any,any,any,any,a
         if(prior)return prior.requestHash.trim()===requestHash?{replay:true,id:prior.id}:{error:'idempotency_conflict'};
         const [assignment]=await tx`SELECT id,client_id AS "clientId",plan_id AS "planId",plan_version AS "planVersion",status FROM client_plan_assignments WHERE id=${params.data.assignmentId} AND client_id=${params.data.clientId} FOR UPDATE`;
         if(!assignment)return {error:'assignment_not_found'};
-        const [product]=await tx`SELECT kind FROM plan_versions WHERE plan_id=${assignment.planId} AND version=${assignment.planVersion}`;
-        if(product?.kind!=='session_pack')return {error:'balance_adjustment_only_for_bonuses'};
+        const [product]=await tx`SELECT kind,term_kind AS "termKind" FROM plan_versions WHERE plan_id=${assignment.planId} AND version=${assignment.planVersion}`;
+        const periodId=body.data.periodId??null;
+        const termKind=String(product?.termKind??'');
+        const fixedContract=['pack','one_off'].includes(termKind);
+        const periodContract=['natural_month','custom_range','rolling_months'].includes(termKind)||fixedContract;
+        if(periodContract&&!periodId)return {error:'balance_adjustment_requires_contract_period'};
+        if(!periodContract&&product?.kind==='session_pack'&&periodId)return {error:'period_not_found'};
+        if(!periodContract&&product?.kind!=='session_pack')return {error:'balance_adjustment_requires_contract_period'};
         const [right]=await tx`SELECT id,quantity FROM plan_rights WHERE id=${body.data.rightId} AND plan_id=${assignment.planId} AND plan_version=${assignment.planVersion} AND right_type='sessions_quota'`;
         if(!right)return {error:'bonus_right_not_found'};
-        const [balance]=await tx`SELECT COALESCE(sum(quantity),0)::int AS quantity FROM client_entitlement_ledger WHERE assignment_id=${assignment.id} AND right_key=${right.id}`;
+        if(periodId){const [period]=await tx`SELECT id FROM assignment_entitlement_periods WHERE id=${periodId} AND assignment_id=${assignment.id} AND right_id=${right.id} AND entitlement_mode='quota' FOR UPDATE`;if(!period)return {error:'period_not_found'};}
+        const [balance]=periodId
+          ?await tx`SELECT COALESCE(sum(quantity),0)::int AS quantity FROM client_entitlement_ledger WHERE assignment_id=${assignment.id} AND right_key=${right.id} AND entitlement_period_id=${periodId}`
+          :await tx`SELECT COALESCE(sum(quantity),0)::int AS quantity FROM client_entitlement_ledger WHERE assignment_id=${assignment.id} AND right_key=${right.id} AND entitlement_period_id IS NULL`;
         if(balance!.quantity+body.data.quantity<0)return {error:'balance_cannot_be_negative'};
-        const [row]=await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash) VALUES (${assignment.clientId},${assignment.id},${right.id},'adjustment',${body.data.quantity},${body.data.reason},${body.data.externalReference??null},${context.actorId},${key.data},${requestHash}) RETURNING id`;
+        const [row]=await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entitlement_period_id,entry_type,quantity,reason,external_reference,actor_id,idempotency_key,request_hash) VALUES (${assignment.clientId},${assignment.id},${right.id},${periodId},'adjustment',${body.data.quantity},${body.data.reason},${body.data.externalReference??null},${context.actorId},${key.data},${requestHash}) RETURNING id`;
         await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details) VALUES (${context.actorId},'client_plan.balance_adjusted','client_entitlement_ledger',${row!.id},${assignment.clientId},${JSON.stringify({assignmentId:assignment.id,rightId:right.id,quantity:body.data.quantity,reason:body.data.reason})}::jsonb)`;
         return {replay:false,id:row!.id};
       });
       if('error'in result)return reply.code(result.error==='assignment_not_found'||result.error==='bonus_right_not_found'?404:409).send({error:result.error});
       return reply.code(result.replay?200:201).send(result);
     }catch(error){app.log.error({route:'POST entitlement adjustments',databaseCode:dbCode(error)},'entitlement adjustment failed');return reply.code(500).send({error:'internal_error'});}
+  });
+
+  app.post('/api/clients/:clientId/plans/:assignmentId/adjustments/:entryId/reverse',async(request,reply)=>{
+    reply.header('Cache-Control','no-store');
+    const context=await auth(request,reply,'entitlements.adjust');if(!context)return;
+    const params=z.object({clientId:uuid,assignmentId:uuid,entryId:uuid}).safeParse(request.params);const key=uuid.safeParse(request.headers['idempotency-key']);const body=z.object({reason:z.string().trim().min(3).max(240)}).strict().safeParse(request.body);
+    if(!params.success||!key.success)return reply.code(400).send({error:'validation_error'});if(!body.success)return reply.code(400).send({error:'validation_error'});
+    const requestHash=digest({assignmentId:params.data.assignmentId,entryId:params.data.entryId,...body.data});
+    try{
+      const result=await db.begin(async tx=>{
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${key.data},0))`;
+        const [prior]=await tx`SELECT id,request_hash AS "requestHash" FROM client_entitlement_ledger WHERE idempotency_key=${key.data}`;
+        if(prior)return prior.requestHash.trim()===requestHash?{replay:true,id:prior.id}:{error:'idempotency_conflict'};
+        const [source]=await tx`SELECT id,client_id AS "clientId",assignment_id AS "assignmentId",right_key AS "rightKey",entitlement_period_id AS "periodId",entry_type AS "entryType",quantity FROM client_entitlement_ledger WHERE id=${params.data.entryId} AND assignment_id=${params.data.assignmentId} AND client_id=${params.data.clientId} FOR UPDATE`;
+        if(!source||source.entryType!=='adjustment')return {error:'movement_not_reversible'};
+        const [assignment]=await tx`SELECT id FROM client_plan_assignments WHERE id=${source.assignmentId} AND client_id=${source.clientId} FOR UPDATE`;if(!assignment)return {error:'assignment_not_found'};
+        const [balance]=await tx`SELECT COALESCE(sum(quantity),0)::int AS quantity FROM client_entitlement_ledger WHERE assignment_id=${source.assignmentId} AND right_key=${source.rightKey} AND entitlement_period_id IS NOT DISTINCT FROM ${source.periodId}`;
+        if(Number(balance!.quantity)-Number(source.quantity)<0)return {error:'movement_reversal_would_make_balance_negative'};
+        const [row]=await tx`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entitlement_period_id,reversal_of_id,entry_type,quantity,reason,actor_id,idempotency_key,request_hash)
+          VALUES (${source.clientId},${source.assignmentId},${source.rightKey},${source.periodId},${source.id},'reversal',${-Number(source.quantity)},${body.data.reason},${context.actorId},${key.data},${requestHash}) RETURNING id`;
+        await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details) VALUES (${context.actorId},'client_plan.entitlement_movement_reversed','client_entitlement_ledger',${row!.id},${source.clientId},${JSON.stringify({assignmentId:source.assignmentId,originalEntryId:source.id,originalEntryType:source.entryType,reversalEntryId:row!.id,reason:body.data.reason})}::jsonb)`;
+        return {replay:false,id:row!.id,reversalOfId:source.id};
+      });
+      if('error'in result)return reply.code(result.error==='movement_not_reversible'||result.error==='assignment_not_found'?404:409).send({error:result.error});
+      return reply.code(result.replay?200:201).send(result);
+    }catch(error){app.log.error({route:'POST entitlement movement reversal',databaseCode:dbCode(error)},'entitlement movement reversal failed');return reply.code(dbCode(error)==='23505'?409:500).send({error:dbCode(error)==='23505'?'movement_already_reversed':'internal_error'});}
   });
 }
 

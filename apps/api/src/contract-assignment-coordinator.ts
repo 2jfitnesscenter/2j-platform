@@ -19,6 +19,7 @@ const requestSchema = z.object({
   planId: uuid,
   idempotencyKey: uuid,
   contractStart: dateOnly,
+  dueOn: dateOnly.optional(),
   customRangeEnd: dateOnly.optional(),
   amountCents: z.number().int().min(1).max(100_000_000_000),
   adjustmentReason: z.string().trim().min(3).max(240).optional(),
@@ -88,6 +89,7 @@ export async function coordinateContractAssignment(
     planId: input.planId,
     contractStart: input.contractStart,
     customRangeEnd: input.customRangeEnd ?? null,
+    dueOn: input.dueOn ?? null,
     amountCents: input.amountCents,
     adjustmentReason: input.adjustmentReason ?? null,
   });
@@ -110,7 +112,7 @@ export async function coordinateContractAssignment(
           v.base_price_cents AS "basePriceCents",v.renewal_cadence AS "renewalCadence",v.period_days AS "periodDays",v.timezone,v.frozen_at AS "frozenAt"
         FROM plans p JOIN plan_versions v ON v.plan_id=p.id AND v.version=p.current_version
         WHERE p.id=${input.planId} AND p.status='active' AND v.frozen_at IS NOT NULL
-          AND v.term_kind IN ('natural_month','custom_range','rolling_months')
+          AND v.term_kind IN ('natural_month','custom_range','rolling_months','pack','one_off')
           AND EXISTS (SELECT 1 FROM plan_services ps WHERE ps.plan_id=p.id AND ps.plan_version=v.version)
           AND NOT EXISTS (SELECT 1 FROM plan_rights r WHERE r.plan_id=p.id AND r.plan_version=v.version AND r.right_type='service_access' AND r.service_id IS NULL)
           AND NOT EXISTS (SELECT 1 FROM plan_services ps JOIN services s ON s.id=ps.service_id JOIN areas a ON a.id=s.area_id
@@ -118,9 +120,19 @@ export async function coordinateContractAssignment(
         FOR SHARE OF p,v`;
       if (!plan) throw new ContractAssignmentError('term_plan_unavailable');
 
-      const termKind = String(plan.termKind) as 'natural_month' | 'custom_range' | 'rolling_months';
-      let contractEnd: string;
-      if (termKind === 'natural_month') {
+      const termKind = String(plan.termKind) as 'natural_month' | 'custom_range' | 'rolling_months' | 'pack' | 'one_off';
+      const fixedTerm = termKind === 'pack' || termKind === 'one_off';
+      if(!fixedTerm&&input.dueOn!=null)throw new ContractAssignmentError('validation_error');
+      let contractEnd: string | null;
+      let deadline: {rule:string;assignedLocalDate:string;inputs:Record<string,unknown>;dueOn:string;accessBlockEffectiveOn?:string|null} | null = null;
+      let paymentBlock: 'enforce'|'off' = 'off';
+      if (fixedTerm) {
+        if (input.customRangeEnd || !input.dueOn || input.dueOn < assignedLocalDate) throw new ContractAssignmentError('fixed_term_due_date_required');
+        if (plan.paymentRule !== 'on_payment_v1' || plan.paymentBlock !== 'off') throw new ContractAssignmentError('term_plan_invalid');
+        contractEnd = null;
+        paymentBlock = 'off';
+        deadline = {rule:'on_payment_v1',assignedLocalDate,inputs:{dueOn:input.dueOn},dueOn:input.dueOn,accessBlockEffectiveOn:null};
+      } else if (termKind === 'natural_month') {
         if (input.customRangeEnd) throw new ContractAssignmentError('contract_range_not_allowed');
         contractEnd = monthEnd(input.contractStart);
         const valid = validateNaturalMonthContract(assignedLocalDate, input.contractStart, contractEnd);
@@ -136,18 +148,23 @@ export async function coordinateContractAssignment(
         if (contractEnd < assignedLocalDate) throw new ContractAssignmentError('contract_start_before_assignment');
       }
 
-      const expectedPaymentRule = termKind === 'natural_month' ? 'monthly_day10_v1' : 'grace_from_assignment_v1';
-      if (plan.paymentRule !== expectedPaymentRule || !['enforce', 'off'].includes(String(plan.paymentBlock))) throw new ContractAssignmentError('term_plan_invalid');
-      const [settings] = await tx`SELECT due_day AS "dueDay",grace_days AS "graceDays",timezone FROM economic_settings WHERE singleton=true FOR SHARE`;
-      if (!settings || settings.timezone !== 'Atlantic/Canary') throw new ContractAssignmentError('economic_settings_unavailable');
-      const deadline = calculateContractPaymentDeadline({
-        termKind,
-        assignedLocalDate,
-        contractStart: input.contractStart,
-        contractEnd,
-        dueDay: Number(settings.dueDay),
-        graceDays: Number(settings.graceDays),
-      });
+      if (!fixedTerm) {
+        const expectedPaymentRule = termKind === 'natural_month' ? 'monthly_day10_v1' : 'grace_from_assignment_v1';
+        if (plan.paymentRule !== expectedPaymentRule || !['enforce', 'off'].includes(String(plan.paymentBlock))) throw new ContractAssignmentError('term_plan_invalid');
+        const [settings] = await tx`SELECT due_day AS "dueDay",grace_days AS "graceDays",timezone FROM economic_settings WHERE singleton=true FOR SHARE`;
+        if (!settings || settings.timezone !== 'Atlantic/Canary') throw new ContractAssignmentError('economic_settings_unavailable');
+        deadline = calculateContractPaymentDeadline({
+          termKind:termKind as 'natural_month'|'custom_range'|'rolling_months',
+          assignedLocalDate,
+          contractStart: input.contractStart,
+          contractEnd: contractEnd!,
+          dueDay: Number(settings.dueDay),
+          graceDays: Number(settings.graceDays),
+        });
+        paymentBlock=String(plan.paymentBlock) as 'enforce'|'off';
+      }
+      if (!deadline) throw new ContractAssignmentError('term_plan_invalid');
+      const paymentDeadline=deadline;
 
       const [commercial] = await tx`SELECT
         COALESCE((SELECT jsonb_agg(jsonb_build_object('id',s.id,'name',s.name,'area',a.name) ORDER BY s.id)
@@ -171,10 +188,10 @@ export async function coordinateContractAssignment(
       const contractSnapshot = {
         termKind,
         termMonths: termKind === 'rolling_months' ? Number(plan.termMonths) : null,
-        contractStart: input.contractStart,
+        contractStart: fixedTerm ? null : input.contractStart,
         contractEnd,
-        paymentRule: deadline.rule,
-        paymentBlock: plan.paymentBlock,
+        paymentRule: paymentDeadline.rule,
+        paymentBlock,
       };
       const assignmentSnapshot = {
         planId: plan.id,
@@ -194,24 +211,24 @@ export async function coordinateContractAssignment(
         endsOn: contractEnd,
         terms: { ...contractSnapshot, renewalCadence: plan.renewalCadence, periodDays: plan.periodDays, timezone: plan.timezone },
       };
-      const paymentBlockEffectiveOn = plan.paymentBlock === 'enforce' ? deadline.accessBlockEffectiveOn : null;
-      const deadlineSnapshot = { ...deadline, paymentBlockEffectiveOn };
+      const paymentBlockEffectiveOn = paymentBlock === 'enforce' ? paymentDeadline.accessBlockEffectiveOn ?? null : null;
+      const deadlineSnapshot = { ...paymentDeadline, paymentBlockEffectiveOn };
 
       await tx`INSERT INTO economic_charges(id,client_id,plan_id,concept,amount_cents,due_on,state,created_by,idempotency_key,request_hash)
-        VALUES (${chargeId},${client.id},${plan.id},${concept},${input.amountCents},${deadline.dueOn},'pending',${context.actorId},${chargeKey},${requestHash})`;
+        VALUES (${chargeId},${client.id},${plan.id},${concept},${input.amountCents},${paymentDeadline.dueOn},'pending',${context.actorId},${chargeKey},${requestHash})`;
       await tx`INSERT INTO client_plan_assignments(id,client_id,plan_id,plan_version,charge_id,starts_on,ends_on,idempotency_key,request_hash,created_by,sale_price_cents,snapshot)
-        VALUES (${assignmentId},${client.id},${plan.id},${plan.currentVersion},${chargeId},${input.contractStart},${contractEnd},${input.idempotencyKey},${requestHash},${context.actorId},${input.amountCents},${tx.json(assignmentSnapshot)})`;
+        VALUES (${assignmentId},${client.id},${plan.id},${plan.currentVersion},${chargeId},${input.contractStart},${fixedTerm?null:contractEnd},${input.idempotencyKey},${requestHash},${context.actorId},${input.amountCents},${JSON.stringify(assignmentSnapshot)}::text::jsonb)`;
       await tx`INSERT INTO assignment_contract_terms(assignment_id,term_kind,contract_start,contract_end,term_months,payment_rule,payment_block,deadline_computation,assigned_local_date)
-        VALUES (${assignmentId},${termKind},${input.contractStart},${contractEnd},${contractSnapshot.termMonths},${deadline.rule},${plan.paymentBlock},${tx.json(deadlineSnapshot)},${assignedLocalDate})`;
+        VALUES (${assignmentId},${termKind},${fixedTerm?null:input.contractStart},${fixedTerm?null:contractEnd},${contractSnapshot.termMonths},${paymentDeadline.rule},${paymentBlock},${JSON.stringify(deadlineSnapshot)}::text::jsonb,${assignedLocalDate})`;
       await tx`INSERT INTO client_plan_assignment_events(assignment_id,event_type,effective_on,actor_id,actor_role,idempotency_key,request_hash)
         VALUES (${assignmentId},'activated',${input.contractStart},${context.actorId},${context.role},${randomUUID()},${requestHash})`;
 
       await materializeContractEntitlementPeriods(tx as Tx, assignmentId, context.actorId);
       await tx`INSERT INTO client_events(client_id,event_type,actor_id,actor_role) VALUES (${client.id},'client.plan_assigned',${context.actorId},${context.role})`;
       await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
-        VALUES (${context.actorId},'client_plan.assigned','client_plan_assignment',${assignmentId},${client.id},${tx.json({planId:plan.id,planVersion:Number(plan.currentVersion),chargeId,amountCents:input.amountCents,termKind,contractStart:input.contractStart,contractEnd,dueOn:deadline.dueOn})})`;
+        VALUES (${context.actorId},'client_plan.assigned','client_plan_assignment',${assignmentId},${client.id},${JSON.stringify({planId:plan.id,planVersion:Number(plan.currentVersion),chargeId,amountCents:input.amountCents,termKind,contractStart:fixedTerm?null:input.contractStart,contractEnd,dueOn:paymentDeadline.dueOn})}::text::jsonb)`;
       await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details)
-        VALUES (${context.actorId},'charge.created','charge',${chargeId},${client.id},${tx.json({amountCents:input.amountCents,planId:plan.id,assignmentId,dueOn:deadline.dueOn})})`;
+        VALUES (${context.actorId},'charge.created','charge',${chargeId},${client.id},${JSON.stringify({amountCents:input.amountCents,planId:plan.id,assignmentId,dueOn:paymentDeadline.dueOn})}::text::jsonb)`;
       return loadPersistedAssignmentResult(tx as Tx, assignmentId, false);
     });
   } catch (error) {

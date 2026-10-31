@@ -14,8 +14,10 @@ const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && 
 const overview = { overdueCount: 0, overdueCents: 0, chargeCount: 1, cashSession: null, capabilities: { payments: true, cash: true, invoices: true } };
 function mockFetch({ shift = undefined, onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201), onCash = () => response({ id: 'cash' }, 201), cashSession = null, ownerPanelRead = false } = {}) {
   const pageOverview = { ...overview, capabilities: { ...overview.capabilities, ownerPanelRead } };
+  const requests=[];
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
+    requests.push(path);
     if (path.endsWith('/api/timeclock/self')) return shift ? response({ openShift: shift.open ? { id: 'shift-1' } : null }) : response({}, 404);
     if (path.endsWith('/api/timeclock/clock-in') && options.method === 'POST') { shift.open = true; shift.punches = (shift.punches ?? 0) + 1; return response({ id: 'event-1' }, 201); }
     if (path.endsWith('/api/economics/overview')) return response(pageOverview);
@@ -36,6 +38,7 @@ function mockFetch({ shift = undefined, onPayment = () => response({ id: 'txn' }
     if (path.endsWith('/api/economics/payments')) return onPayment(url, options);
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${path}`);
   };
+  return requests;
 }
 
 afterEach(() => { cleanup(); globalThis.fetch = undefined; });
@@ -214,4 +217,15 @@ test('the count form is compact: bills and coins grouped, 0 by default, numeric 
   fireEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }));
   const closing = await screen.findByRole('dialog', { name: 'Cerrar caja' });
   assert.equal(within(closing).queryByText(/Total contado/), null, 'blind close (D111): no running total');
+});
+
+test('client payment deep link filters to the exact charge and opens the payment flow with its balance',async()=>{
+  window.location.hash=`#economics?intent=pay&clientId=${client.id}&chargeId=${charge.id}`;
+  const requests=mockFetch();
+  render(React.createElement(EconomicsPage));
+  const dialog=await screen.findByRole('dialog',{name:'Registrar pago'});
+  const chargeRequest=requests.find(path=>path.includes('/api/economics/charges?'));
+  assert.equal(new URL(chargeRequest).searchParams.get('clientId'),client.id);
+  assert.equal(within(dialog).getByLabelText('Importe (€)').value,'75.00');
+  assert.match(window.location.hash,/^#economics$/,'the one-shot action is removed from browser history');
 });

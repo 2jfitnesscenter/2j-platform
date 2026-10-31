@@ -35,12 +35,14 @@ async function createService() {
   assert.equal(result.statusCode,201,result.body);return result.json();
 }
 async function createContractPlan(service,{paymentBlock='enforce',unlimited=false,termKind='rolling_months'}={}) {
+  const fixed=['pack','one_off'].includes(termKind);
   const result=await app.inject({method:'POST',url:'/api/plans',headers:{'idempotency-key':randomUUID()},payload:{
-    name:`F1C2 ${randomUUID()}`,serviceIds:[service.id],kind:'recurring',renewalCadence:'monthly',basePriceCents:5000,
-    termKind,...(termKind==='rolling_months'?{termMonths:3}:{}),paymentBlock,
+    name:`F1C2 ${randomUUID()}`,serviceIds:[service.id],kind:fixed?'session_pack':'recurring',...(fixed?{}:{renewalCadence:'monthly'}),basePriceCents:5000,
+    termKind,...(termKind==='rolling_months'?{termMonths:3}:{}),paymentBlock:fixed?'off':paymentBlock,
     rights:[{rightType:'service_access',serviceId:service.id},unlimited
       ?{rightType:'sessions_quota',quotaScope:'shared',quantityRule:'unlimited'}
-      :{rightType:'sessions_quota',quotaScope:'shared',weeklyFrequency:3,quantityRule:'weekday_ratio_v1'}],
+      :fixed?{rightType:'sessions_quota',quotaScope:'shared',quantity:termKind==='one_off'?1:8,quantityRule:'fixed_v1'}
+        :{rightType:'sessions_quota',quotaScope:'shared',weeklyFrequency:3,quantityRule:'weekday_ratio_v1'}],
   }});
   assert.equal(result.statusCode,201,result.body);
   assert.equal((await app.inject({method:'POST',url:`/api/plans/${result.json().id}/activate`})).statusCode,200);
@@ -122,6 +124,70 @@ test('F1-C term payment access uses ledger truth; unpaid/partial overdue is deni
   const rest=await recordPayment(assignment.chargeId,2500);assert.equal(rest.statusCode,201,rest.body);
   assert.equal((await evaluate(client.id,service.id)).eligible,true,'full net settlement automatically allows access');
   assert.equal((await recordPayment(assignment.chargeId,1)).json().error,'amount_exceeds_balance');
+});
+
+test('client plan assignment route coordinates a frozen natural-month contract and replays without duplicating charge or bags',async()=>{
+  const client=await createClient(),service=await createService(),plan=await createContractPlan(service,{termKind:'natural_month'});
+  const start=utcDateOffset(1);
+  const headers={'idempotency-key':randomUUID()};
+  const payload={planId:plan.id,startsOn:start,dueOn:start.slice(0,8)+'10',amountCents:5000};
+  const first=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers,payload});
+  assert.equal(first.statusCode,201,first.body);
+  const response=first.json();
+  assert.equal(response.dueOn,start.slice(0,8)+'10');
+  assert.equal(response.periods.length,1);
+  assert.ok(response.periods[0].sessionsGranted>0);
+  const replay=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers,payload});
+  assert.equal(replay.statusCode,200,replay.body);
+  const replayBody=replay.json();
+  assert.equal(replayBody.id,response.id);
+  assert.equal(replayBody.chargeId,response.chargeId);
+  assert.equal(replayBody.replay,true);
+  assert.equal(await sql`SELECT count(*)::int AS n FROM client_plan_assignments WHERE idempotency_key=${headers['idempotency-key']}`.then(rows=>rows[0].n),1);
+  assert.equal(await sql`SELECT count(*)::int AS n FROM economic_charges WHERE id=${response.chargeId}`.then(rows=>rows[0].n),1);
+});
+
+test('contract-period adjustments are audited and can be reversed exactly once without mutating the ledger',async()=>{
+  const client=await createClient(),service=await createService(),plan=await createContractPlan(service,{paymentBlock:'off'});
+  const assignment=await assign(client,plan);
+  const [period]=await sql`SELECT id,right_id AS "rightId",sessions_granted AS granted FROM assignment_entitlement_periods WHERE assignment_id=${assignment.assignmentId} AND entitlement_mode='quota' ORDER BY period_index LIMIT 1`;
+  await assert.rejects(sql`INSERT INTO client_entitlement_ledger(client_id,assignment_id,right_key,entitlement_period_id,entry_type,quantity,reason,actor_id,idempotency_key,request_hash)
+    VALUES (${client.id},${assignment.assignmentId},${period.rightId},${period.id},'reversal',-1,'Unlinked reversal','f1c2-test',${randomUUID()},${'e'.repeat(64)})`,error=>error.code==='23514'&&error.constraint_name==='client_entitlement_ledger_reversal_type');
+  const adjustmentKey=randomUUID();
+  const adjusted=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans/${assignment.assignmentId}/adjustments`,headers:{'idempotency-key':adjustmentKey},payload:{rightId:period.rightId,periodId:period.id,quantity:2,reason:'Corrección de prueba'}});
+  assert.equal(adjusted.statusCode,201,adjusted.body);
+  const adjustmentId=adjusted.json().id;
+  const reversal=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans/${assignment.assignmentId}/adjustments/${adjustmentId}/reverse`,headers:{'idempotency-key':randomUUID()},payload:{reason:'Reversión de prueba'}});
+  assert.equal(reversal.statusCode,201,reversal.body);
+  assert.equal(reversal.json().reversalOfId,adjustmentId);
+  assert.equal(await sql`SELECT count(*)::int AS n FROM client_entitlement_ledger WHERE id=${adjustmentId} AND quantity=2 AND reversal_of_id IS NULL`.then(rows=>rows[0].n),1);
+  assert.equal(await sql`SELECT count(*)::int AS n FROM client_entitlement_ledger WHERE reversal_of_id=${adjustmentId} AND quantity=-2 AND entitlement_period_id=${period.id}`.then(rows=>rows[0].n),1);
+  assert.equal(await sql`SELECT count(*)::int AS n FROM economic_audit_events WHERE action='client_plan.balance_adjusted' AND resource_id=${adjustmentId}`.then(rows=>rows[0].n),1);
+  assert.equal(await sql`SELECT count(*)::int AS n FROM economic_audit_events WHERE action='client_plan.entitlement_movement_reversed' AND resource_id=${reversal.json().id}`.then(rows=>rows[0].n),1);
+  const duplicate=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans/${assignment.assignmentId}/adjustments/${adjustmentId}/reverse`,headers:{'idempotency-key':randomUUID()},payload:{reason:'Segundo intento'}});
+  assert.equal(duplicate.statusCode,409);assert.equal(duplicate.json().error,'movement_already_reversed');
+  const reverseOfReverse=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans/${assignment.assignmentId}/adjustments/${reversal.json().id}/reverse`,headers:{'idempotency-key':randomUUID()},payload:{reason:'No se revierte una reversión'}});
+  assert.equal(reverseOfReverse.statusCode,404);assert.equal(reverseOfReverse.json().error,'movement_not_reversible');
+  assert.equal(await sql`SELECT count(*)::int AS n FROM client_entitlement_ledger WHERE assignment_id=${assignment.assignmentId} AND entry_type='reversal'`.then(rows=>rows[0].n),1);
+  const session=await createSession(service);
+  const booking=await app.inject({method:'POST',url:`/api/calendar/sessions/${session.id}/reservations`,headers:{'idempotency-key':randomUUID()},payload:{clientId:client.id,entitlementAssignmentId:assignment.assignmentId}});
+  assert.equal(booking.statusCode,201,booking.body);
+  const [consumption]=await sql`SELECT id,entitlement_period_id AS "periodId" FROM client_entitlement_ledger WHERE assignment_id=${assignment.assignmentId} AND entry_type='consume' ORDER BY occurred_at DESC LIMIT 1`;
+  const reverseConsumption=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans/${assignment.assignmentId}/adjustments/${consumption.id}/reverse`,headers:{'idempotency-key':randomUUID()},payload:{reason:'No se revierte una reserva activa'}});
+  assert.equal(reverseConsumption.statusCode,404,reverseConsumption.body);
+  assert.equal(reverseConsumption.json().error,'movement_not_reversible');
+  assert.equal(await sql`SELECT count(*)::int AS n FROM client_entitlement_ledger WHERE reversal_of_id=${consumption.id}`.then(rows=>rows[0].n),0);
+});
+
+test('fixed pack contracts accept audited adjustments only against their frozen bag',async()=>{
+  const client=await createClient(),service=await createService(),plan=await createContractPlan(service,{termKind:'pack'});
+  const assignment=await coordinateContractAssignment(sql,{clientId:client.id,planId:plan.id,idempotencyKey:randomUUID(),contractStart:utcDateOffset(-1),dueOn:utcDateOffset(1),amountCents:5000},actor);
+  const [period]=await sql`SELECT id,right_id AS "rightId" FROM assignment_entitlement_periods WHERE assignment_id=${assignment.assignmentId} AND formula_id='fixed_v1'`;
+  assert.ok(period);
+  const adjusted=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans/${assignment.assignmentId}/adjustments`,headers:{'idempotency-key':randomUUID()},payload:{rightId:period.rightId,periodId:period.id,quantity:1,reason:'Ajuste autorizado del bono'}});
+  assert.equal(adjusted.statusCode,201,adjusted.body);
+  const [ledger]=await sql`SELECT entry_type AS type,quantity,entitlement_period_id AS period FROM client_entitlement_ledger WHERE id=${adjusted.json().id}`;
+  assert.deepEqual(ledger,{type:'adjustment',quantity:1,period:period.id});
 });
 
 test('refund re-blocks only the affected assignment, another assignment remains bookable, and existing reservation is preserved',async()=>{
