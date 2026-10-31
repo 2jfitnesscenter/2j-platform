@@ -144,9 +144,9 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
 
   async function confirm() {
     if (paying && !capabilities.collectPayments) { setError('Tu perfil no puede registrar cobros. Marca «Dejar pendiente de pago».'); return; }
-    setBusy(true); setAttempted(true); setError(''); setDocumentNotice(''); setLineErrors({}); shiftBlocked.current = false;
+    setBusy(true); setError(''); setDocumentNotice(''); setLineErrors({}); shiftBlocked.current = false;
     const finished: Record<string, Done> = { ...done };
-    let failed = false;
+    let failed = false; let unknownOutcome = false;
     try {
       for (const line of planLines) {
         if (finished[line.key]) continue;
@@ -154,17 +154,17 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
         const payload = { planId: line.planId, startsOn: line.startsOn, endsOn: null, dueOn: line.startsOn, amountCents, adjustmentReason: line.basePriceCents != null && amountCents !== line.basePriceCents ? line.reason.trim() : null, paymentAmountCents: paying ? amountCents : null, paymentMethod: paying ? method : null };
         const response = await apiFetch(`${api}/api/clients/${clientId}/plans`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey(line.key, { clientId, payload }) }, body: JSON.stringify(payload) });
         const body = await response.json().catch(() => ({})) as { chargeId?: string; error?: string };
-        if (!response.ok) { const message = await failure(body.error, response.status); setLineErrors((current) => ({ ...current, [line.key]: message })); failed = true; break; }
+        if (!response.ok) { if (response.status >= 500) unknownOutcome = true; const message = await failure(body.error, response.status); setLineErrors((current) => ({ ...current, [line.key]: message })); failed = true; break; }
         finished[line.key] = { chargeId: body.chargeId }; writeRecents([line.planId]);
       }
       if (!failed && productLines.length > 0 && !productLines.every((line) => finished[line.key])) {
         const payload = { clientId, lines: productLines.map((line) => ({ variantId: line.variantId, quantity: line.quantity })), paymentState: paying ? 'paid' : 'pending', paymentMethod: paying ? method : null, note: note.trim() };
         const response = await apiFetch(`${api}/api/admin/store/sales`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey('products', payload) }, body: JSON.stringify(payload) });
         const body = await response.json().catch(() => ({})) as { error?: string };
-        if (!response.ok) { const message = await failure(body.error, response.status); for (const line of productLines) setLineErrors((current) => ({ ...current, [line.key]: message })); failed = true; }
+        if (!response.ok) { if (response.status >= 500) unknownOutcome = true; const message = await failure(body.error, response.status); for (const line of productLines) setLineErrors((current) => ({ ...current, [line.key]: message })); failed = true; }
         else { for (const line of productLines) finished[line.key] = {}; writeRecents(productLines.map((line) => line.variantId)); }
       }
-      if (failed) { setError(shiftBlocked.current ? '' : 'Algo no se pudo registrar. Lo ya registrado queda guardado; vuelve a confirmar.'); return; }
+      if (failed) { setError(shiftBlocked.current ? '' : unknownOutcome ? 'No se pudo confirmar el resultado. Vuelve a confirmar: no se duplicará lo ya registrado.' : 'Algo no se pudo registrar. Lo ya registrado queda guardado.'); return; }
       if (paying) {
         let issued = 0; let refused = '';
         for (const line of planLines) {
@@ -177,8 +177,9 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
         setDocumentNotice(refused ? `La venta está registrada. ${refused}` : issued > 0 ? `${issued === 1 ? 'Documento emitido' : 'Documentos emitidos'} (${asInvoice ? 'factura' : 'ticket'}).` : '');
       }
       setStep('done');
-    } catch { setError('No se pudo conectar con el servidor. Puede que algo ya esté registrado: vuelve a confirmar, no se duplicará.'); } finally {
+    } catch { unknownOutcome = true; setError('No se pudo conectar con el servidor. Puede que algo ya esté registrado: vuelve a confirmar, no se duplicará.'); } finally {
       // Siempre, también si una petición lanza: lo ya registrado se marca como tal y la ficha se recargará al cerrar.
+      if (unknownOutcome || Object.keys(finished).length > 0) setAttempted(true);
       setDone({ ...finished }); if (Object.keys(finished).length > 0) registered.current = true; setBusy(false);
     }
   }
@@ -210,7 +211,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
               <div className="new-sale-line-head"><strong>{line.name}</strong><button type="button" className="text-button" aria-label={`Quitar ${line.name}`} disabled={busy || locked} onClick={() => remove(line.key)}>Quitar</button></div>
               {line.kind === 'plan' ? <div className="new-sale-fields">
                 <label>Precio (€)<input inputMode="decimal" value={line.price} disabled={!capabilities.manageCatalogPrice || busy || locked} onChange={(event) => patch(line.key, { price: event.target.value })} aria-label={`Precio de ${line.name}`} /></label>
-                {capabilities.manageCatalogPrice && line.basePriceCents != null && planCents(line) !== line.basePriceCents ? <label>Motivo del descuento<input value={line.reason} maxLength={240} onChange={(event) => patch(line.key, { reason: event.target.value })} aria-label={`Motivo del descuento de ${line.name}`} /></label> : null}
+                {capabilities.manageCatalogPrice && line.basePriceCents != null && planCents(line) !== line.basePriceCents ? <label>Motivo del descuento<input value={line.reason} maxLength={240} disabled={busy || locked} onChange={(event) => patch(line.key, { reason: event.target.value })} aria-label={`Motivo del descuento de ${line.name}`} /></label> : null}
                 <label>Inicio<input type="date" value={line.startsOn} disabled={busy || locked} onChange={(event) => patch(line.key, { startsOn: event.target.value || today() })} aria-label={`Inicio de ${line.name}`} /></label>
               </div> : <div className="new-sale-fields">
                 <label>Cantidad<input inputMode="numeric" value={line.quantity} disabled={busy || locked} aria-label={`Cantidad de ${line.name}`} onChange={(event) => { const next = Number(event.target.value.replace(/\D/g, '')) || 1; patch(line.key, { quantity: Math.max(1, Math.min(next, line.stock ?? 1000)) }); }} /></label>

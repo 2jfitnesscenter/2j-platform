@@ -313,3 +313,40 @@ test('D113: an account that does not clock in is told to open the register (not 
   await within(dialog).findByText('Venta registrada');
   assert.match(dialog.textContent, /Faltan datos fiscales del cliente/);
 });
+
+test('the discount reason locks with the rest after an unknown outcome, and a definite rejection with nothing registered leaves the cart editable', async () => {
+  let lose = true;
+  const calls = serve({ onPlan: () => { if (lose) { lose = false; throw new Error('network down'); } return response({ id: 'asg-1', chargeId: 'charge-1' }, 201); } });
+  let dialog = await open();
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Mensual ilimitada/ }));
+  fireEvent.change(within(dialog).getByLabelText('Precio de Mensual ilimitada'), { target: { value: '50' } });
+  fireEvent.change(within(dialog).getByLabelText('Motivo del descuento de Mensual ilimitada'), { target: { value: 'Amigo de la casa' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  await within(dialog).findByRole('alert');
+  assert.equal(within(dialog).getByLabelText('Motivo del descuento de Mensual ilimitada').disabled, true, 'the reason is part of the payload, so it is frozen');
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  await within(dialog).findByText('Venta registrada');
+  const plans = writes(calls).filter((call) => call.path.endsWith('/plans'));
+  assert.equal(plans.length, 2); assert.equal(plans[0].key, plans[1].key); assert.equal(plans[1].body.adjustmentReason, 'Amigo de la casa');
+  cleanup();
+
+  let outOfStock = true;
+  const sales = serve({ onSale: () => outOfStock ? response({ error: 'insufficient_stock' }, 409) : response({ id: 'sale-1' }, 201) });
+  dialog = await open();
+  fireEvent.click(within(dialog).getByRole('tab', { name: 'Productos' }));
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Talla M/ }));
+  fireEvent.change(within(dialog).getByLabelText('Cantidad de Camiseta 2J · Talla M'), { target: { value: '3' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  assert.ok(await within(dialog).findAllByText('No hay stock suficiente de alguno de los productos.'));
+  assert.equal(within(dialog).getByRole('button', { name: 'Volver' }).disabled, false, 'nothing was registered: the user can go back and fix the cart');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Volver' }));
+  fireEvent.change(within(dialog).getByLabelText('Cantidad de Camiseta 2J · Talla M'), { target: { value: '1' } });
+  outOfStock = false;
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
+  await within(dialog).findByText('Venta registrada');
+  const attempts = writes(sales).filter((call) => call.path === '/api/admin/store/sales');
+  assert.equal(attempts.length, 2); assert.equal(attempts[1].body.lines[0].quantity, 1);
+});
