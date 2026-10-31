@@ -55,7 +55,7 @@ export function registerSettingsOverviewRoutes(app: FastifyInstance<any, any, an
     });
     return {
       timezone: 'Atlantic/Canary',
-      payments: settings ? { dueDay: Number(settings.dueDay), graceDays: Number(settings.graceDays), timezone: String(settings.timezone), debtBlocksNewReservations: settings.debtBlocksNewReservations === true, fiscalLegalGateOpen: settings.fiscalLegalGateOpen === true, documentRetentionMonths: settings.documentRetentionMonths == null ? null : Number(settings.documentRetentionMonths), methods: ['cash', 'card', 'transfer', 'direct_debit', 'other'] } : null,
+      payments: settings ? { dueDay: Number(settings.dueDay), graceDays: Number(settings.graceDays), timezone: String(settings.timezone), debtBlocksNewReservations: settings.debtBlocksNewReservations === true, fiscalLegalGateOpen: settings.fiscalLegalGateOpen === true, documentRetentionMonths: settings.documentRetentionMonths == null ? null : Number(settings.documentRetentionMonths), methods: ['cash', 'card', 'transfer', 'bizum', 'direct_debit', 'other'] } : null,
       profiles,
       integrations,
     };

@@ -57,7 +57,7 @@ function DifferenceChip({ cents }: { cents: number | null | undefined }) {
 }
 
 const movementLabels: Record<string, string> = { payment: 'Cobro', refund: 'Devolución', store_sale: 'Venta en tienda', store_sale_refund: 'Devolución de tienda', annulment: 'Anulación de tienda', expense: 'Gasto', withdrawal: 'Retirada', adjustment: 'Ajuste', cash_sale_annulment: 'Anulación de tienda' };
-const paymentMethodLabels: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', bank_transfer: 'Transferencia bancaria', other: 'Otro medio' };
+const paymentMethodLabels: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', bank_transfer: 'Transferencia bancaria', bizum: 'Bizum', other: 'Otro medio' };
 const movementTime = (iso: string) => timeFmt.format(new Date(iso));
 const isOutflow = (kind: string) => ['refund', 'store_sale_refund', 'annulment', 'expense', 'withdrawal', 'cash_sale_annulment'].includes(kind);
 

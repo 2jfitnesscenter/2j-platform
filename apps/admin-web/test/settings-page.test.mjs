@@ -20,7 +20,7 @@ const model = {
 };
 const overview = {
   timezone: 'Atlantic/Canary',
-  payments: { dueDay: 10, graceDays: 5, timezone: 'Atlantic/Canary', debtBlocksNewReservations: true, fiscalLegalGateOpen: false, documentRetentionMonths: null, methods: ['cash', 'card', 'transfer', 'direct_debit', 'other'] },
+  payments: { dueDay: 10, graceDays: 5, timezone: 'Atlantic/Canary', debtBlocksNewReservations: true, fiscalLegalGateOpen: false, documentRetentionMonths: null, methods: ['cash', 'card', 'transfer', 'bizum', 'direct_debit', 'other'] },
   profiles: [
     { id: 'admin', label: 'Administración', wildcard: true, permissionCount: null, groups: [] },
     { id: 'accountant', label: 'Contabilidad', wildcard: false, permissionCount: 3, groups: [{ id: 'billing', label: 'Economía', permissions: ['billing.export', 'billing.read-basic', 'billing.read-tax'] }] },

@@ -159,7 +159,7 @@ export const economicTransactions = pgTable('economic_transactions', {
 
 export const economicPaymentSplits = pgTable('economic_payment_splits', {
   transactionId: uuid('transaction_id').notNull().references(()=>economicTransactions.id,{onDelete:'restrict'}), method: text('method').notNull(), amountCents: bigint('amount_cents',{mode:'number'}).notNull(),
-}, (table)=>[primaryKey({columns:[table.transactionId,table.method]}),check('economic_payment_splits_method',sql`${table.method} IN ('cash','card','transfer','direct_debit','other')`),check('economic_payment_splits_amount_positive',sql`${table.amountCents}>0`)]);
+}, (table)=>[primaryKey({columns:[table.transactionId,table.method]}),check('economic_payment_splits_method',sql`${table.method} IN ('cash','card','transfer','bizum','direct_debit','other')`),check('economic_payment_splits_amount_positive',sql`${table.amountCents}>0`)]);
 
 export const economicCashRegisters = pgTable('economic_cash_registers', {
   id: uuid('id').defaultRandom().primaryKey(), code: text('code').notNull(), name: text('name').notNull(), active: boolean('active').notNull().default(true), createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(),

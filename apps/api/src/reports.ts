@@ -9,7 +9,7 @@ const CSV_EXPORT_LIMIT = 500;
 const XLSX_EXPORT_LIMIT = 5_000;
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value);
-const methods = ['cash', 'card', 'transfer', 'direct_debit', 'other'] as const;
+const methods = ['cash', 'card', 'transfer', 'bizum', 'direct_debit', 'other'] as const;
 const salesQuery = z.object({
   from: day,
   to: day,
@@ -192,7 +192,7 @@ export function registerReportRoutes(app: FastifyInstance<any, any, any, any, an
     const pct = (rate: number | null) => (rate === null ? 'Sin datos' : `${(rate * 100).toFixed(1).replace('.', ',')} %`);
     const kindLabel: Record<string, string> = { plan: 'Cuota', charge: 'Cargo', store: 'Tienda' };
     const statusLabel: Record<string, string> = { paid: 'Cobrada', partial: 'Cobro parcial', pending: 'Pendiente', unpaid: 'Vencida', refunded: 'Devuelta', void: 'Anulada', exempt: 'Exenta' };
-    const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', other: 'Otro' };
+    const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', bizum: 'Bizum', direct_debit: 'Domiciliación', other: 'Otro' };
     const fmtDate = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
     const workbook = buildXlsx([
       { name: 'Resumen', money: [1], rows: [['Indicador', 'Valor'], ['Periodo', `${from} a ${to}`], ['Vencido sin cobrar (EUR, hoy)', eur(summary.overdue.cents)], ['Cuotas vencidas sin cobrar', summary.overdue.count], ['Cuota media (EUR)', eur(summary.averageFee.cents)], ['Sesiones programadas', summary.occupancy.sessions], ['Plazas ofertadas', summary.occupancy.capacity], ['Plazas ocupadas', summary.occupancy.occupied], ['Ocupación', pct(summary.occupancy.rate)], ['Asistencias', summary.attendance.attended], ['Ausencias', summary.attendance.noShow], ['Asistencia', pct(summary.attendance.rate)]] },

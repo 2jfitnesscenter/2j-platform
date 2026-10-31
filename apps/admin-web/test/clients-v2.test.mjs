@@ -295,3 +295,21 @@ test('Acciones links go to the right screen with the client: Reservar clase, Env
   await reopen(profileOf({ sections: sectionList().map((section) => ['messages', 'documents', 'reservations'].includes(section.id) ? { ...section, access: 'forbidden' } : section) }));
   for (const name of ['Reservar clase', 'Enviar mensaje', 'Subir documento']) assert.equal(screen.queryByRole('link', { name }), null, name + ' hidden without access');
 });
+
+test('A73 overview: the profile summary shows Saldo de cuota and the month calendar from data it already carries, and hides them without the data or the reservations section', async () => {
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+  serve(profileOf({
+    plans: [assignment()], payments: { balanceCents: 0, overdueCount: 0, charges: [], movements: [] },
+    reservations: [{ id: 'res1', status: 'reserved', startsAt: tomorrow, durationMinutes: 60, sessionStatus: 'scheduled', serviceName: 'Fuerza', areaName: 'Sala 1', entitlementName: null, rightsUsed: [], entitlementMovements: [] }],
+  }));
+  await open();
+  const balance = screen.getByRole('region', { name: 'Saldo de cuota' });
+  assert.match(balance.textContent, /7 sesiones disponibles/);
+  const calendar = screen.getByRole('region', { name: 'Calendario del mes' });
+  assert.ok(calendar.querySelector('.has-bookings') || /Sin reservas este mes/.test(calendar.textContent), 'the calendar renders for the current month');
+  cleanup(); window.location.hash = '#clients';
+  serve(profileOf({ plans: [], sections: sectionList().map((section) => section.id === 'reservations' ? { ...section, access: 'forbidden' } : section) }));
+  await open();
+  assert.ok(screen.queryByRole('region', { name: 'Saldo de cuota' }) === null, 'no plan data, no balance card');
+  assert.ok(screen.queryByRole('region', { name: 'Calendario del mes' }) === null, 'no reservations access, no calendar');
+});

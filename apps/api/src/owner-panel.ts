@@ -9,7 +9,7 @@ type SqlClient = ReturnType<typeof createDatabase>['client'];
 const LOW_OCCUPANCY_PERCENT = 25;
 const LOW_STOCK_UNITS = 3;
 const LIST_LIMIT = 10;
-const METHODS = ['cash', 'card', 'transfer', 'direct_debit', 'other'] as const;
+const METHODS = ['cash', 'card', 'transfer', 'bizum', 'direct_debit', 'other'] as const;
 
 const n = (value: unknown) => Number(value ?? 0);
 

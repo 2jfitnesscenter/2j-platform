@@ -38,7 +38,7 @@ type Metric = { id: string; label: string; value: string; detail: string; href?:
 const euros = (cents: number) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(cents / 100);
 const clock = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', hour: '2-digit', minute: '2-digit' });
 const dayTime = new Intl.DateTimeFormat('es-ES', { timeZone: 'Atlantic/Canary', weekday: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', other: 'Otro' };
+const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', bizum: 'Bizum', other: 'Otro' };
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const delta = (now: number, before: number) => before === 0 ? (now === 0 ? 'Sin cambios' : 'Mes anterior: 0') : `${now >= before ? '+' : '−'}${Math.round(Math.abs(now - before) / before * 100)} % frente al mes anterior`;
 

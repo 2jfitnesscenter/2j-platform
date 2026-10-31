@@ -14,8 +14,8 @@ type ProductLine = { key: string; kind: 'product'; variantId: string; name: stri
 type Line = PlanLine | ProductLine;
 type Done = { chargeId?: string | undefined; invoiced?: boolean };
 
-/** Métodos del cobro. Bizum se registra como «otro» (el API no distingue Bizum de otros métodos). */
-const METHODS = [['cash', 'Efectivo'], ['other', 'Bizum'], ['transfer', 'Transferencia']] as const;
+/** Métodos del cobro de la ficha. */
+const METHODS = [['cash', 'Efectivo'], ['bizum', 'Bizum'], ['transfer', 'Transferencia']] as const;
 const RECENTS_KEY = '2j-new-sale-recents';
 const euro = (cents: number) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(cents / 100);
 const toCents = (value: string) => { const match = /^\d{1,7}(?:[.,]\d{1,2})?$/.exec(value.trim()); return match ? Math.round(Number(value.trim().replace(',', '.')) * 100) : null; };
@@ -42,7 +42,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
   const [igic, setIgic] = React.useState<number | null>(null);
   const [lines, setLines] = React.useState<Line[]>([]);
   const [step, setStep] = React.useState<'cart' | 'confirm' | 'done'>('cart');
-  const [method, setMethod] = React.useState<'cash' | 'other' | 'transfer'>('cash');
+  const [method, setMethod] = React.useState<'cash' | 'bizum' | 'transfer'>('cash');
   const [pending, setPending] = React.useState(false);
   const [asInvoice, setAsInvoice] = React.useState(false);
   const [note, setNote] = React.useState('');

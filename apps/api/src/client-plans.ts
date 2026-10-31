@@ -9,7 +9,7 @@ import type { createDatabase } from './db.js';
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0,10) === value);
-const methods = ['cash','card','transfer','direct_debit','other'] as const;
+const methods = ['cash','card','transfer','bizum','direct_debit','other'] as const;
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const code = (error: unknown) => typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
 

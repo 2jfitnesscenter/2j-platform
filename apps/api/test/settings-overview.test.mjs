@@ -61,7 +61,7 @@ test('payment rules come from economic_settings (day 10, grace days, timezone, f
   assert.equal(payments.debtBlocksNewReservations, row.debt_blocks_new_reservations);
   assert.equal(payments.fiscalLegalGateOpen, row.fiscal_legal_gate_open);
   assert.equal(payments.fiscalLegalGateOpen, false, 'the fiscal gate stays closed');
-  assert.deepEqual(payments.methods, ['cash', 'card', 'transfer', 'direct_debit', 'other']);
+  assert.deepEqual(payments.methods, ['cash', 'card', 'transfer', 'bizum', 'direct_debit', 'other']);
 });
 
 test('profiles are reusable roles with their permissions grouped, never per-user; Administración is the wildcard', async () => {

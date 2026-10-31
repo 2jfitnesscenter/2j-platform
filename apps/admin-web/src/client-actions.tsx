@@ -41,11 +41,11 @@ export function firstPendingCharge(charges: Charge[] | undefined): Charge | null
   return [...(charges ?? [])].filter((charge) => Number(charge.balanceCents) > 0 && (charge.status === 'pending' || charge.status === 'unpaid')).sort((a, b) => a.dueOn.localeCompare(b.dueOn))[0] ?? null;
 }
 
-const METHODS = [['cash', 'Efectivo'], ['other', 'Bizum'], ['transfer', 'Transferencia']] as const;
+const METHODS = [['cash', 'Efectivo'], ['bizum', 'Bizum'], ['transfer', 'Transferencia']] as const;
 /** Registrar pago (D250): importe pendiente precargado + método + confirmar. D113: sin turno, aviso guiado de A70. */
 export function RegisterPaymentDialog({ charge, onClose, onDone }: { charge: Charge; onClose: () => void; onDone: () => void }) {
   const shift = useShift();
-  const [method, setMethod] = React.useState<'cash' | 'other' | 'transfer'>('cash');
+  const [method, setMethod] = React.useState<'cash' | 'bizum' | 'transfer'>('cash');
   const [amount, setAmount] = React.useState((Number(charge.balanceCents) / 100).toFixed(2));
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');

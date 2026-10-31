@@ -125,3 +125,17 @@ test('coming back to the Resumen after Cobrar, Vender or Caja refreshes it by it
   await screen.findByText('13');
   assert.equal(loads, firstLoads + 1, 'returning reloads exactly once');
 });
+
+test('the Resumen offers "Nueva venta" only to profiles the server lets sell or collect, and it opens the client picker without leaving the page', async () => {
+  serve({ ...model, quickActions: [{ id: 'new-client', label: 'Nuevo cliente', href: '#clients?new=1' }] });
+  window.location.hash = '#home'; mount();
+  await screen.findByRole('heading', { name: 'Resumen' });
+  assert.equal(screen.queryByRole('button', { name: 'Nueva venta' }), null, 'no sale permission, no button');
+  cleanup();
+  serve({ ...model, quickActions: [{ id: 'collect-payment', label: 'Cobrar', href: '#economics' }] });
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Nueva venta' }));
+  const picker = await screen.findByRole('dialog', { name: 'Nueva venta' });
+  assert.ok(within(picker).getByLabelText('Buscar cliente'));
+  assert.equal(window.location.hash, '#home', 'the page does not change');
+});
