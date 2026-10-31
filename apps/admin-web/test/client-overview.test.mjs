@@ -63,18 +63,20 @@ test('the month calendar marks days with the client\'s bookings (Canary time), l
     reservation('r3', '2026-10-20T09:00:00.000Z', { status: 'cancelled' }),
     reservation('r4', '2026-10-21T09:00:00.000Z', { sessionStatus: 'cancelled' }),
     reservation('r5', '2026-11-03T09:00:00.000Z'),
+    reservation('r7', '2026-10-12T23:30:00.000Z'), // 00:30 del 13 en Canarias (UTC+1 hasta el 25 de octubre): el día es el local, no el UTC
   ];
   render(React.createElement(MonthCalendar, { reservations, now: new Date('2026-10-15T10:00:00.000Z') }));
   const calendar = screen.getByRole('region', { name: 'Calendario del mes' });
   assert.equal(within(calendar).getByRole('status').textContent, 'octubre de 2026');
   const day12 = within(calendar).getByRole('button', { name: '12 de octubre: 2 reservas' });
   assert.equal(day12.disabled, false);
+  assert.ok(within(calendar).getByRole('button', { name: '13 de octubre: 1 reserva' }), 'a booking after 23:00 UTC lands on the next local day');
   assert.equal(within(calendar).getByRole('button', { name: '20 de octubre' }).disabled, true, 'a cancelled booking does not mark the day');
   assert.equal(within(calendar).getByRole('button', { name: '21 de octubre' }).disabled, true, 'nor does a cancelled session');
   assert.equal(within(calendar).queryByRole('list', { name: 'Reservas del día' }), null);
   fireEvent.click(day12);
   const list = within(calendar).getByRole('list', { name: 'Reservas del día' });
-  assert.equal(within(list).getAllByRole('listitem').length, 2);
+  assert.equal(within(list).getAllByRole('listitem').length, 2, 'the 23:30 UTC booking is not in the 12th');
   assert.match(list.textContent, /Pilates/); assert.match(list.textContent, /Asistió/);
   fireEvent.click(day12);
   assert.equal(within(calendar).queryByRole('list', { name: 'Reservas del día' }), null, 'the same day toggles off');
@@ -85,4 +87,9 @@ test('the month calendar marks days with the client\'s bookings (Canary time), l
   fireEvent.click(within(calendar).getByRole('button', { name: 'Mes anterior' }));
   assert.equal(within(calendar).getByRole('status').textContent, 'septiembre de 2026');
   assert.ok(screen.getByText('Sin reservas este mes.'));
+});
+
+test('a negative balance never shows as negative sessions', () => {
+  render(React.createElement(BalanceCards, { assignments: [{ id: 'n', planName: 'Bono', endsOn: null, derivedStatus: 'active', rights: [{ rightType: 'sessions_quota', serviceName: 'Fuerza', quantity: 10, balance: -1 }] }] }));
+  assert.match(screen.getByRole('region', { name: 'Saldo de cuota' }).textContent, /0 sesiones disponibles de 10/);
 });

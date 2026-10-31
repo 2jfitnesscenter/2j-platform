@@ -44,7 +44,7 @@ export function BalanceCards({ assignments }: { assignments: OverviewAssignment[
       const ratio = counter.granted && counter.granted > 0 ? Math.max(0, Math.min(1, counter.available / counter.granted)) : null;
       return <li key={counter.id} className="client-balance">
         <span className="client-balance-label">{counter.label}</span>
-        {counter.unlimited ? <strong className="client-balance-value">Sin límite</strong> : <strong className="client-balance-value">{counter.available} <small>{counter.available === 1 ? 'sesión disponible' : 'sesiones disponibles'}{counter.granted != null ? ` de ${counter.granted}` : ''}</small></strong>}
+        {counter.unlimited ? <strong className="client-balance-value">Sin límite</strong> : <strong className="client-balance-value">{Math.max(0, counter.available)} <small>{counter.available === 1 ? 'sesión disponible' : 'sesiones disponibles'}{counter.granted != null ? ` de ${counter.granted}` : ''}</small></strong>}
         {ratio !== null && <span className="client-balance-bar" role="progressbar" aria-label={`Saldo de ${counter.label}`} aria-valuemin={0} aria-valuemax={counter.granted ?? 0} aria-valuenow={Math.max(0, counter.available)}><span style={{ width: `${Math.round(ratio * 100)}%` }} /></span>}
         <span className="client-balance-detail">{counter.plan}{counter.until ? ` · hasta ${shortDate(counter.until)}` : ''}</span>
       </li>;

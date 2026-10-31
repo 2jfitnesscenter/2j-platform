@@ -98,3 +98,22 @@ test('the search waits for two letters and says so when nothing matches; closing
   assert.equal(screen.queryByRole('dialog'), null);
   assert.ok(screen.getByRole('button', { name: 'Nueva venta' }));
 });
+
+test('closing the picker while a client lookup is in flight discards that lookup: the next opening starts at the picker, not at the earlier client', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  serve({ profiles: { [MARTA]: profileOf(MARTA, 'Marta', 'Santos') } });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, options) => { if (new URL(String(url)).pathname === `/api/clients/${MARTA}`) await gate; return inner(url, options); };
+  render(React.createElement(NewSaleLauncher, { onDone: () => {} }));
+  const picker = await search('mar');
+  fireEvent.click(await within(picker).findByRole('button', { name: /Marta Santos/ }));
+  fireEvent.keyDown(document, { key: 'Escape' });
+  assert.equal(screen.queryByRole('dialog'), null);
+  release(); await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(screen.queryByRole('dialog'), null, 'the late answer does not open a sale');
+  fireEvent.click(screen.getByRole('button', { name: 'Nueva venta' }));
+  const again = await screen.findByRole('dialog', { name: 'Nueva venta' });
+  assert.ok(within(again).getByLabelText('Buscar cliente'), 'a fresh picker, not the earlier client');
+  assert.ok(!screen.queryByText(/Venta para/));
+});

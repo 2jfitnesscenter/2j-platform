@@ -22,6 +22,8 @@ export function NewSaleLauncher({ onDone }: { onDone: () => void }) {
   const [error, setError] = React.useState('');
   const [loadingId, setLoadingId] = React.useState('');
   const [chosen, setChosen] = React.useState<Chosen | null>(null);
+  // Cada apertura/cierre del selector invalida las búsquedas de ficha en vuelo: una respuesta tardía no puede abrir la venta de otro cliente.
+  const session = React.useRef(0);
 
   React.useEffect(() => {
     if (!open || chosen) return;
@@ -38,18 +40,20 @@ export function NewSaleLauncher({ onDone }: { onDone: () => void }) {
     return () => { current = false; window.clearTimeout(timer); };
   }, [query, open, chosen]);
 
-  const close = () => { setOpen(false); setQuery(''); setMatches([]); setError(''); setLoadingId(''); setChosen(null); };
+  const close = () => { session.current += 1; setOpen(false); setQuery(''); setMatches([]); setError(''); setLoadingId(''); setChosen(null); };
 
   async function choose(match: Match) {
+    const mine = session.current;
     setLoadingId(match.id); setError('');
     try {
       const response = await apiFetch(`${api}/api/clients/${match.id}`);
       const body = await response.json().catch(() => ({})) as { client?: { id: string; firstName: string; lastName: string; status: string }; capabilities?: NewSaleCapabilities };
+      if (mine !== session.current) return;
       if (!response.ok || !body.client || !body.capabilities) { setError('No se pudo abrir la ficha del cliente. Inténtalo de nuevo.'); return; }
       if (body.client.status !== 'active') { setError('Este cliente está archivado: no se le puede vender.'); return; }
       if (!body.capabilities.assignPlans && !body.capabilities.collectPayments) { setError('Tu perfil no puede registrar ventas.'); return; }
       setChosen({ id: body.client.id, name: `${body.client.firstName} ${body.client.lastName}`, capabilities: body.capabilities });
-    } catch { setError('No se pudo conectar con el servidor. Inténtalo de nuevo.'); } finally { setLoadingId(''); }
+    } catch { if (mine === session.current) setError('No se pudo conectar con el servidor. Inténtalo de nuevo.'); } finally { if (mine === session.current) setLoadingId(''); }
   }
 
   return <>

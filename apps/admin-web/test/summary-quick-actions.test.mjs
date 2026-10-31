@@ -127,10 +127,10 @@ test('coming back to the Resumen after Cobrar, Vender or Caja refreshes it by it
 });
 
 test('the Resumen offers "Nueva venta" only to profiles the server lets sell or collect, and it opens the client picker without leaving the page', async () => {
-  serve({ ...model, quickActions: [{ id: 'new-client', label: 'Nuevo cliente', href: '#clients?new=1' }] });
+  serve({ ...model, quickActions: [{ id: 'new-client', label: 'Nuevo cliente', href: '#clients?new=1' }, { id: 'new-sale', label: 'Vender', href: '#store?sale=1' }] });
   window.location.hash = '#home'; mount();
   await screen.findByRole('heading', { name: 'Resumen' });
-  assert.equal(screen.queryByRole('button', { name: 'Nueva venta' }), null, 'no sale permission, no button');
+  assert.equal(screen.queryByRole('button', { name: 'Nueva venta' }), null, 'no plan or payment permission (store-only sellers keep "Vender"), no button');
   cleanup();
   serve({ ...model, quickActions: [{ id: 'collect-payment', label: 'Cobrar', href: '#economics' }] });
   mount();

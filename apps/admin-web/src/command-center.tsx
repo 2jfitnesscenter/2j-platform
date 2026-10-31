@@ -291,7 +291,7 @@ export function CommandCenter() {
   const recentMovements = data.commercial?.recentMovements ?? null;
   const refreshing = state === 'loading';
   // «Nueva venta» la ofrece quien el servidor deja vender o cobrar; el diálogo vuelve a comprobar los permisos del cliente elegido.
-  const canSell = data.quickActions.some(action => ['new-sale', 'assign-plan', 'collect-payment'].includes(action.id));
+  const canSell = data.quickActions.some(action => ['assign-plan', 'collect-payment'].includes(action.id));
 
   return <main className="summary" id="home" data-2j-design="v2">
     <PageHeader
