@@ -22,16 +22,25 @@ const profileOf = (plans = [], capabilities = { manage: true, assignPlans: true,
 });
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const clickClientAction = async (name) => fireEvent.click(await screen.findByRole('button', { name }));
+const localDateKey = () => {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone:'Atlantic/Canary', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date());
+  const part = (type) => parts.find(item => item.type === type)?.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+};
+const nextMonthStart = () => {
+  const [year, month] = localDateKey().split('-').map(Number);
+  return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+};
 
 /** The real API serialises the PostgreSQL bigint basePriceCents as a STRING ("5000"). Tests use that shape on purpose. */
 const plan3Days = (basePriceCents) => ({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: '3 días', kind: 'recurring', renewalCadence: 'monthly', periodDays: null, basePriceCents, services: [{ id: 's1', name: 'Fuerza funcional', area: 'Sala' }], rights: [{ rightType: 'service_access', serviceName: 'Fuerza funcional', quantity: null, period: null, quotaScope: null }] });
 
-const openSale = async ({ basePriceCents, capabilities, onPost }) => {
+const openSale = async ({ basePriceCents, capabilities, onPost, assignablePlan=plan3Days(basePriceCents) }) => {
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
     if (path.includes('/api/clients?')) return response({ items: [client], capabilities: { manage: true, assignPlans: true }, hasMore: false, nextCursor: null });
     if (path.endsWith(`/api/clients/${client.id}`)) return response(profileOf([], capabilities));
-    if (path.endsWith('/api/plans/assignable')) return response([plan3Days(basePriceCents)]);
+    if (path.endsWith('/api/plans/assignable')) return response([assignablePlan]);
     if (path.endsWith(`/api/clients/${client.id}/plans`) && options.method === 'POST') { onPost?.(JSON.parse(options.body)); return response({ id: 'new' }, 201); }
     throw new Error(`Unexpected ${options.method ?? 'GET'} ${path}`);
   };
@@ -86,6 +95,55 @@ test('without price permission the catalogue price is read-only and never asks f
   const price = within(dialog).getByLabelText('Precio de venta (€)');
   assert.equal(price.readOnly, true);
   assert.ok(within(dialog).queryByLabelText('Motivo del ajuste de precio') === null);
+});
+
+test('monthly assignment auto-fills the natural month end, day-10 due date, and catalogue price', async () => {
+  const dialog = await openSale({ basePriceCents:'5000', capabilities:{ manage:true, assignPlans:true, manageCatalogPrice:true, adjustEntitlements:true } });
+  const startsOn = `${nextMonthStart().slice(0, 7)}-12`;
+  fireEvent.change(within(dialog).getByLabelText('Inicio'), { target:{ value:startsOn } });
+  assert.equal(within(dialog).getByLabelText('Fin (opcional)').value, `${startsOn.slice(0, 7)}-${new Date(Date.UTC(Number(startsOn.slice(0,4)), Number(startsOn.slice(5,7)), 0)).getUTCDate()}`);
+  assert.equal(within(dialog).getByLabelText('Vencimiento del cargo').value, `${startsOn.slice(0, 7)}-10`);
+  assert.equal(within(dialog).getByLabelText('Precio de venta (€)').value, '50.00');
+  assert.equal(within(dialog).getByLabelText('Fin (opcional)').readOnly, false);
+  assert.equal(within(dialog).getByLabelText('Vencimiento del cargo').readOnly, false);
+});
+
+test('assignment end and due date are read-only without entitlement adjustment permission', async () => {
+  const dialog = await openSale({ basePriceCents:'5000', capabilities:{ manage:true, assignPlans:true, manageCatalogPrice:true, adjustEntitlements:false } });
+  assert.equal(within(dialog).getByLabelText('Fin (opcional)').readOnly, true);
+  assert.equal(within(dialog).getByLabelText('Vencimiento del cargo').readOnly, true);
+});
+
+test('contract range defaults show the configured period end and assignment-based due date', async () => {
+  const plan={...plan3Days('5000'),termKind:'custom_range',maxSpanDays:20,assignedLocalDate:'2026-10-15',graceDays:5};
+  const dialog=await openSale({basePriceCents:'5000',capabilities:{manage:true,assignPlans:true,manageCatalogPrice:true,adjustEntitlements:false},assignablePlan:plan});
+  fireEvent.change(within(dialog).getByLabelText('Inicio'),{target:{value:'2026-10-15'}});
+  assert.equal(within(dialog).getByLabelText('Fin del periodo').value,'2026-11-03');
+  assert.equal(within(dialog).getByLabelText('Fin del periodo').readOnly,true);
+  assert.equal(within(dialog).getByLabelText('Vencimiento del cargo').value,'2026-10-20');
+  assert.equal(within(dialog).getByLabelText('Vencimiento del cargo').readOnly,true);
+});
+
+test('monthly automatic renewal control loads, enables and disables the audited permission-gated state', async () => {
+  const capabilities={manage:true,assignPlans:true,manageCatalogPrice:true,renewEntitlements:true};
+  const assignment={id:'ffffffff-ffff-4fff-8fff-ffffffffffff',planId:plan3Days().id,planName:'Mensual',kind:'recurring',renewalCadence:'monthly',termKind:'natural_month',startsOn:'2026-11-01',endsOn:'2026-11-30',derivedStatus:'scheduled',rights:[]};
+  const submitted=[];
+  globalThis.fetch=async(url,options={})=>{
+    const path=String(url);
+    if(path.includes('/api/clients?'))return response({items:[client],capabilities:{manage:true,assignPlans:true},hasMore:false,nextCursor:null});
+    if(path.endsWith(`/api/clients/${client.id}`))return response(profileOf([assignment],capabilities));
+    if(path.endsWith(`/api/clients/${client.id}/plans/${assignment.id}/auto-renewal`)&&options.method==='PATCH'){submitted.push(JSON.parse(options.body));return response({id:'renewal-event',replay:false},201);}
+    if(path.endsWith(`/api/clients/${client.id}/plans/${assignment.id}/auto-renewal`))return response({enabled:false,effectiveOn:null});
+    throw new Error(`Unexpected ${options.method??'GET'} ${path}`);
+  };
+  render(React.createElement(ClientsPage));
+  fireEvent.click(await screen.findByRole('link',{name:/Lucía Díaz/}));
+  fireEvent.click(await screen.findByRole('tab',{name:'Plan y sesiones'}));
+  const enable=await screen.findByRole('button',{name:'Activar renovación automática'});
+  fireEvent.click(enable);
+  fireEvent.click(await screen.findByRole('button',{name:'Desactivar renovación automática'}));
+  await screen.findByRole('button',{name:'Activar renovación automática'});
+  assert.deepEqual(submitted,[{enabled:true,reason:'Activación desde la ficha del cliente'},{enabled:false,reason:'Desactivación desde la ficha del cliente'}]);
 });
 
 test('legacy recurring plans explain that their stored historical terms remain unchanged', async () => {

@@ -16,6 +16,7 @@ import { registerTrainingSsoRoutes } from './training-sso.js';
 import { registerTrainingSuspensionRoutes } from './training-suspensions.js';
 import { createTrainingSignalDispatcher } from './training-signals.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
+import { registerAutomaticRenewalRoutes } from './auto-renewal.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
 import { createPushService, registerPushRoutes, type PushProvider } from './push.js';
@@ -427,6 +428,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     allowedOrigin: options.memberAppOrigin ?? null,
   });
   registerAssignmentPeriodRoutes(app, client, authorizationResolver);
+  registerAutomaticRenewalRoutes(app, client, authorizationResolver);
   const bookingEligibilityResolver = options.bookingEligibilityResolver ?? createBookingEligibilityResolver();
   const allowMemberBooking = async (personId: string | undefined, request: import('fastify').FastifyRequest) => {
     if (!options.memberPilotBookingEnabled || !personId) return false;

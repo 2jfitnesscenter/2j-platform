@@ -8,6 +8,7 @@ import { InvoiceDialog } from './invoice-ui.js';
 import { ActionsMenu, RegisterPaymentDialog, firstPendingCharge, type ActionItem } from './client-actions.js';
 import { NewSaleDialog } from './new-sale-dialog.js';
 import { BalanceCards, MonthCalendar } from './client-overview.js';
+import { assignmentDateDefaults } from '@2j/domain';
 import { ClientAvatar, SECTION_LABEL, SECTION_ORDER, chargeChip, clientPlanChip, euros, planStatusChip, reservationChip, reservationRightsLabel, rightLine } from './client-presenters.js';
 
 type Client = { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; birthDate?:string|null; status: 'active' | 'archived'; createdAt: string; updatedAt?: string };
@@ -17,8 +18,8 @@ type ClientReservation = { id: string; status: 'reserved' | 'attended' | 'no_sho
 type ClientWaitlistEntry={id:string;status:string;startsAt:string;sessionStatus:'scheduled'|'cancelled';serviceName:string;areaName:string};
 type PlanPeriod={id:string;periodIndex:number|null;startsOn:string;endsOn:string|null;sessionsGranted:number|null;balance:number};
 type PlanRight = { id?:string; rightType:string; serviceName:string|null; quantity:number|null; quantityRule?:string|null; period:string|null; quotaScope:string|null; balance?:number|null;periods?:PlanPeriod[] };
-type ClientPlanAssignment = { id:string; planId:string; planName:string; kind:string; termKind?:string|null; startsOn:string; endsOn:string|null; derivedStatus:'active'|'scheduled'|'paused'|'expired'|'cancelled'|'exhausted'; concept?:string; amountCents?:number; salePriceCents?:number; dueOn?:string; rights:PlanRight[]; modules?:Array<{module:string;accessLevel:string;capabilities:string[]}> };
-type AssignablePlan = { id:string; name:string; kind:string; termKind?:'natural_month'|'custom_range'|'rolling_months'|'pack'|'one_off'|null;termMonths?:number|null;maxSpanDays?:number|null;renewalCadence:string|null; periodDays:number|null; basePriceCents:number|null; services:Array<{id:string;name:string;area:string}>; rights:PlanRight[]; modules?:Array<{module:string;accessLevel:string;capabilities:string[]}> };
+type ClientPlanAssignment = { id:string; planId:string; planName:string; kind:string; renewalCadence?:string|null; termKind?:string|null; startsOn:string; endsOn:string|null; derivedStatus:'active'|'scheduled'|'paused'|'expired'|'cancelled'|'exhausted'; concept?:string; amountCents?:number; salePriceCents?:number; dueOn?:string; rights:PlanRight[]; modules?:Array<{module:string;accessLevel:string;capabilities:string[]}> };
+type AssignablePlan = { id:string; name:string; kind:string; termKind?:'natural_month'|'custom_range'|'rolling_months'|'pack'|'one_off'|null;termMonths?:number|null;maxSpanDays?:number|null;renewalCadence:string|null; periodDays:number|null; basePriceCents:number|null; assignedLocalDate?:string; dueDay?:number; graceDays?:number; services:Array<{id:string;name:string;area:string}>; rights:PlanRight[]; modules?:Array<{module:string;accessLevel:string;capabilities:string[]}> };
 /** The API serialises PostgreSQL bigint columns as strings ("5000"); money is always compared as integer cents, never as strings or euro floats. */
 function toIntegerCents(value: unknown): number | null { if (value === null || value === undefined || value === '') return null; const cents = Number(value); return Number.isSafeInteger(cents) ? cents : null; }
 function normalizeAssignablePlan(plan: AssignablePlan): AssignablePlan { return { ...plan, basePriceCents: toIntegerCents(plan.basePriceCents) }; }
@@ -28,9 +29,8 @@ function monthEndFor(value:string){const [year,month]=value.slice(0,7).split('-'
 function planSaleDates(plan:AssignablePlan|undefined,requestedStart:string){
   let startsOn=requestedStart;
   if(plan?.termKind==='natural_month'&&startsOn.slice(-2)!=='01')startsOn=plusLocalDays(monthEndFor(startsOn),1);
-  const dueDay=`${startsOn.slice(0,7)}-10`;
-  const dueOn=dueDay<localDateKey()?startsOn:dueDay;
-  return {startsOn,endsOn:plan?.termKind==='natural_month'?monthEndFor(startsOn):'',dueOn};
+  const dates=assignmentDateDefaults(startsOn,{kind:plan?.kind??'',renewalCadence:plan?.renewalCadence??null,periodDays:plan?.periodDays??null,termKind:plan?.termKind??null,termMonths:plan?.termMonths??null,maxSpanDays:plan?.maxSpanDays??null,dueDay:plan?.dueDay??10,graceDays:plan?.graceDays??5,assignedLocalDate:plan?.assignedLocalDate??localDateKey()},localDateKey());
+  return {startsOn,endsOn:dates.endsOn??'',dueOn:dates.dueOn};
 }
 type PlanAction = {assignment:ClientPlanAssignment;action:'pause'|'resume'|'cancel'|'adjust'|'movements';rightId?:string;periodId?:string};
 type PlanMovementData = {movements:Array<{id:string;rightKey:string;entryType:string;quantity:number;reason:string;occurredAt:string}>;events:Array<{id:string;eventType:string;effectiveOn:string;reason:string|null;createdAt:string}>};
@@ -97,6 +97,8 @@ export function ClientsPage() {
   const [profileState, setProfileState] = useState<'idle' | 'loading' | 'ready' | 'error' | 'unauthorized'>('idle');
   const [profileError, setProfileError] = useState('');
   const [profileRetry, setProfileRetry] = useState(0);
+  const [autoRenewal, setAutoRenewal] = useState<Record<string,boolean>>({});
+  const [autoRenewalBusy, setAutoRenewalBusy] = useState<string|null>(null);
   const [invoiceCharge, setInvoiceCharge] = useState<{ id: string; concept: string } | null>(null);
   const [showSale, setShowSale] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
@@ -321,6 +323,20 @@ export function ClientsPage() {
   const activeSectionData = useMemo(() => profile?.sections?.find((section) => section.id === activeSection) ?? null, [profile, activeSection]);
   const visibleSections = useMemo(() => (profile?.sections ?? []).filter((section) => client360Sections.has(section.id) && section.access === 'available').sort((left, right) => SECTION_ORDER.indexOf(left.id as typeof SECTION_ORDER[number]) - SECTION_ORDER.indexOf(right.id as typeof SECTION_ORDER[number])), [profile]);
   const clientPlans = (profile?.summary.plans?.data as ClientPlanAssignment[] | undefined) ?? [];
+  useEffect(()=>{
+    if(profileState!=='ready'||!selectedId||!profile?.capabilities.renewEntitlements){setAutoRenewal({});return;}
+    const items=clientPlans.filter(item=>item.kind==='recurring'&&item.renewalCadence==='monthly'&&(item.termKind==null||item.termKind==='natural_month')&&item.derivedStatus==='active');
+    let active=true;
+    void Promise.all(items.map(async item=>{const response=await apiFetch(`${apiUrl}/api/clients/${selectedId}/plans/${item.id}/auto-renewal`);if(!response.ok)throw new Error('No se pudo consultar la renovación');return [item.id,Boolean((await response.json()).enabled)] as const;}))
+      .then(entries=>{if(active)setAutoRenewal(Object.fromEntries(entries));}).catch(()=>{if(active)setAutoRenewal({});});
+    return()=>{active=false;};
+  },[profileState,profile,selectedId]);
+  async function toggleAutoRenewal(item:ClientPlanAssignment){
+    const enabled=!autoRenewal[item.id];setAutoRenewalBusy(item.id);
+    try{const response=await apiFetch(`${apiUrl}/api/clients/${selectedId}/plans/${item.id}/auto-renewal`,{method:'PATCH',headers:{'content-type':'application/json','idempotency-key':createIdempotencyKey()},body:JSON.stringify({enabled,reason:enabled?'Activación desde la ficha del cliente':'Desactivación desde la ficha del cliente'})});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error==='permission_denied'?'Tu perfil no puede cambiar la renovación automática.':'No se pudo guardar la renovación automática.');setAutoRenewal(previous=>({...previous,[item.id]:enabled}));setArchiveFeedback(enabled?'Renovación automática activada. La siguiente cuota quedará pendiente de pago.':'Renovación automática desactivada.');}
+    catch(error){setArchiveFeedback(error instanceof Error?error.message:'No se pudo guardar la renovación automática.');}
+    finally{setAutoRenewalBusy(null);}
+  }
   const clientPlanDisplay = [
     { label: 'Activas', items: clientPlans.filter((item) => ['active', 'paused'].includes(item.derivedStatus)) },
     { label: 'Programadas', items: clientPlans.filter((item) => item.derivedStatus === 'scheduled') },
@@ -621,6 +637,7 @@ export function ClientsPage() {
                   {canReadClientFinance && item.dueOn && <a className="ui-link" href="#economics">Ver cargo · vence {item.dueOn}</a>}
                   <div className="client-plan-actions">
                     {item.derivedStatus === 'active' && profile.capabilities.renewEntitlements && <Button size="sm" onClick={() => startPlanSale({ assignment: item, kind: 'renewal' })}>Renovar</Button>}
+                    {(item.derivedStatus === 'active' || item.derivedStatus === 'scheduled') && item.kind==='recurring' && item.renewalCadence==='monthly' && (item.termKind==null||item.termKind==='natural_month') && profile.capabilities.renewEntitlements && <Button size="sm" variant="ghost" aria-pressed={autoRenewal[item.id]??false} disabled={autoRenewalBusy===item.id} onClick={()=>void toggleAutoRenewal(item)}>{autoRenewalBusy===item.id?'Guardando…':autoRenewal[item.id]?'Desactivar renovación automática':'Activar renovación automática'}</Button>}
                     {item.derivedStatus === 'active' && profile.capabilities.assignPlans && <Button size="sm" variant="ghost" onClick={() => startPlanSale({ assignment: item, kind: 'change' })}>Cambiar plan</Button>}
                     {item.derivedStatus === 'active' && profile.capabilities.pauseEntitlements && <Button size="sm" onClick={() => void openPlanAction(item, 'pause')}>Pausar</Button>}
                     {item.derivedStatus === 'paused' && profile.capabilities.pauseEntitlements && <Button size="sm" onClick={() => void openPlanAction(item, 'resume')}>Reanudar</Button>}
@@ -717,9 +734,9 @@ export function ClientsPage() {
       {planCatalogState === 'ready' && assignablePlans.length > 0 && <form onSubmit={(event) => void assignPlan(event)}>
         <label>Producto o plan<select required value={selectedPlanId} onChange={(event) => { const id = event.target.value; const plan = assignablePlans.find((item) => item.id === id); setSelectedPlanId(id); setPlanPrice(plan?.basePriceCents == null ? '' : (plan.basePriceCents / 100).toFixed(2)); setPlanAdjustmentReason(''); const dates=planSaleDates(plan,planStartsOn||localDateKey());setPlanStartsOn(dates.startsOn);setPlanEndsOn(dates.endsOn);setPlanDueOn(dates.dueOn); }}><option value="">Selecciona un plan</option>{assignablePlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {planTypeSummary(plan)}</option>)}</select></label>
         {selectedPlan && <div className="client-plan-preview"><strong>{selectedPlan.name}</strong><small>{planTypeSummary(selectedPlan)}</small><span>Servicios · {selectedPlan.services.map((service) => service.name).join(' · ')}</span>{selectedPlan.rights.map((right, index) => <small key={index}>{rightLine(right)}</small>)}<small>La vigencia y el vencimiento del cargo se confirman en este formulario.</small></div>}
-        <div className="ui-modal-grid"><label>Inicio<input type="date" required value={planStartsOn} onChange={(event) => { const start=event.target.value;setPlanStartsOn(start);const dates=planSaleDates(selectedPlan,start);setPlanDueOn(dates.dueOn);if(selectedPlan?.termKind==='natural_month')setPlanEndsOn(dates.endsOn); }} /></label>{selectedPlan?.termKind==='custom_range'||!selectedPlan?.termKind?<label>Fin (opcional)<input type="date" value={planEndsOn} min={planStartsOn} onChange={(event) => setPlanEndsOn(event.target.value)} /></label>:selectedPlan?.termKind==='natural_month'?<label>Fin del periodo<input type="date" value={planEndsOn} readOnly /></label>:selectedPlan?.termKind==='rolling_months'?<label>Fin del periodo<input type="text" value={`${selectedPlan.termMonths} meses desde el inicio`} readOnly /></label>:<div className="ui-modal-note">La bolsa de sesiones se habilita al validar el pago.</div>}</div>
+        <div className="ui-modal-grid"><label>Inicio<input type="date" required value={planStartsOn} onChange={(event) => { const start=event.target.value;setPlanStartsOn(start);const dates=planSaleDates(selectedPlan,start);setPlanDueOn(dates.dueOn);setPlanEndsOn(dates.endsOn); }} /></label>{selectedPlan?.termKind==='custom_range'||!selectedPlan?.termKind?<label>Fin{selectedPlan?.termKind==='custom_range'?' del periodo':' (opcional)'}<input type="date" value={planEndsOn} min={planStartsOn} readOnly={!profile?.capabilities.adjustEntitlements} onChange={(event) => setPlanEndsOn(event.target.value)} /></label>:selectedPlan?.termKind==='natural_month'||selectedPlan?.termKind==='rolling_months'||selectedPlan?.termKind==='pack'?<label>Fin del periodo<input type="date" value={planEndsOn} readOnly /></label>:<div className="ui-modal-note">La bolsa de sesiones se habilita al validar el pago.</div>}</div>
         {selectedPlan?.kind === 'recurring' && !selectedPlan.termKind && <p className="ui-modal-note" data-testid="legacy-duration-note">Esta versión conserva sus condiciones históricas. Las nuevas cuotas usan el periodo y la bolsa definidos en el catálogo.</p>}
-        <div className="ui-modal-grid"><label>Precio de venta (€)<input inputMode="decimal" placeholder="0,00" value={planPrice} onChange={(event) => setPlanPrice(event.target.value)} readOnly={!profile?.capabilities.manageCatalogPrice} required /></label>{selectedPlan?.basePriceCents == null && !profile?.capabilities.manageCatalogPrice && <p className="ui-modal-note">Este plan necesita un precio base configurado por Administración antes de poder venderse.</p>}<label>Vencimiento del cargo<input type="date" value={planDueOn} onChange={(event) => setPlanDueOn(event.target.value)} required /></label></div>
+        <div className="ui-modal-grid"><label>Precio de venta (€)<input inputMode="decimal" placeholder="0,00" value={planPrice} onChange={(event) => setPlanPrice(event.target.value)} readOnly={!profile?.capabilities.manageCatalogPrice} required /></label>{selectedPlan?.basePriceCents == null && !profile?.capabilities.manageCatalogPrice && <p className="ui-modal-note">Este plan necesita un precio base configurado por Administración antes de poder venderse.</p>}<label>Vencimiento del cargo<input type="date" value={planDueOn} readOnly={!profile?.capabilities.adjustEntitlements} onChange={(event) => setPlanDueOn(event.target.value)} required /></label></div>
         {selectedPlan?.basePriceCents != null && planPriceCents !== null && planPriceCents !== selectedPlan.basePriceCents ? <label>Motivo del ajuste de precio<input required minLength={3} maxLength={240} value={planAdjustmentReason} onChange={(event) => setPlanAdjustmentReason(event.target.value)} /></label> : null}
         {profile?.capabilities.collectPayments && <label><input type="checkbox" checked={collectNow} onChange={(event) => setCollectNow(event.target.checked)} /> Cobrar ahora el importe completo</label>}
         {collectNow && profile?.capabilities.collectPayments && <label>Método de pago<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as typeof paymentMethod)}><option value="card">Tarjeta</option><option value="cash">Efectivo · requiere caja abierta</option><option value="transfer">Transferencia</option><option value="direct_debit">Domiciliación</option><option value="bizum">Bizum</option><option value="other">Otro</option></select></label>}

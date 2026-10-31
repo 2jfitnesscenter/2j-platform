@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { TransactionSql } from 'postgres';
-import { canaryBusinessDate, calculateContractEnd, calculateContractPaymentDeadline, EntitlementMaterializationError, validateCustomContractRange, validateNaturalMonthContract } from '@2j/domain';
+import { addDateDays, assignmentDateDefaults, canaryBusinessDate, calculateContractEnd, calculateContractPaymentDeadline, EntitlementMaterializationError, validateCustomContractRange, validateNaturalMonthContract } from '@2j/domain';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import { z } from 'zod';
 import type { createDatabase } from './db.js';
@@ -122,16 +122,17 @@ export async function coordinateContractAssignment(
 
       const termKind = String(plan.termKind) as 'natural_month' | 'custom_range' | 'rolling_months' | 'pack' | 'one_off';
       const fixedTerm = termKind === 'pack' || termKind === 'one_off';
-      if(!fixedTerm&&input.dueOn!=null)throw new ContractAssignmentError('validation_error');
       let contractEnd: string | null;
       let deadline: {rule:string;assignedLocalDate:string;inputs:Record<string,unknown>;dueOn:string;accessBlockEffectiveOn?:string|null} | null = null;
       let paymentBlock: 'enforce'|'off' = 'off';
       if (fixedTerm) {
         if (input.customRangeEnd || !input.dueOn || input.dueOn < assignedLocalDate) throw new ContractAssignmentError('fixed_term_due_date_required');
+        const defaults=assignmentDateDefaults(input.contractStart,{kind:String(plan.kind),renewalCadence:plan.renewalCadence==null?null:String(plan.renewalCadence),periodDays:plan.periodDays==null?null:Number(plan.periodDays)},assignedLocalDate);
+        if(input.dueOn!==defaults.dueOn&&!can(context,'entitlements.adjust'))throw new ContractAssignmentError('assignment_dates_override_forbidden');
         if (plan.paymentRule !== 'on_payment_v1' || plan.paymentBlock !== 'off') throw new ContractAssignmentError('term_plan_invalid');
         contractEnd = null;
         paymentBlock = 'off';
-        deadline = {rule:'on_payment_v1',assignedLocalDate,inputs:{dueOn:input.dueOn},dueOn:input.dueOn,accessBlockEffectiveOn:null};
+        deadline = {rule:'on_payment_v1',assignedLocalDate,inputs:{dueOn:input.dueOn,...(input.dueOn!==defaults.dueOn?{defaultDueOn:defaults.dueOn,overridden:true}:{})},dueOn:input.dueOn,accessBlockEffectiveOn:null};
       } else if (termKind === 'natural_month') {
         if (input.customRangeEnd) throw new ContractAssignmentError('contract_range_not_allowed');
         contractEnd = monthEnd(input.contractStart);
@@ -140,6 +141,10 @@ export async function coordinateContractAssignment(
       } else if (termKind === 'custom_range') {
         if (!input.customRangeEnd) throw new ContractAssignmentError('contract_end_required');
         contractEnd = input.customRangeEnd;
+        if (plan.maxSpanDays != null) {
+          const defaultEnd=addDateDays(input.contractStart,Number(plan.maxSpanDays)-1);
+          if(contractEnd!==defaultEnd&&!can(context,'entitlements.adjust'))throw new ContractAssignmentError('assignment_dates_override_forbidden');
+        } else if(!can(context,'entitlements.adjust')) throw new ContractAssignmentError('assignment_dates_override_forbidden');
         const valid = validateCustomContractRange(assignedLocalDate, input.contractStart, contractEnd, plan.maxSpanDays == null ? null : Number(plan.maxSpanDays));
         if (!valid.valid) throw new ContractAssignmentError(valid.error);
       } else {
@@ -161,6 +166,11 @@ export async function coordinateContractAssignment(
           dueDay: Number(settings.dueDay),
           graceDays: Number(settings.graceDays),
         });
+        if (input.dueOn && input.dueOn !== deadline.dueOn) {
+          if (!can(context, 'entitlements.adjust')) throw new ContractAssignmentError('assignment_dates_override_forbidden');
+          if (input.dueOn < (termKind === 'natural_month' ? input.contractStart : assignedLocalDate)) throw new ContractAssignmentError('validation_error');
+          deadline = { ...deadline, dueOn: input.dueOn, accessBlockEffectiveOn: addDateDays(input.dueOn, 1), inputs: { ...deadline.inputs, defaultDueOn: deadline.dueOn, overridden: true } };
+        }
         paymentBlock=String(plan.paymentBlock) as 'enforce'|'off';
       }
       if (!deadline) throw new ContractAssignmentError('term_plan_invalid');

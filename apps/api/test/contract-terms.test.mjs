@@ -347,8 +347,14 @@ test('F1-C coordinator serializes same-key retries and rejects changed payload w
   const clientId=randomUUID(),key=randomUUID(),actor={actorId:'f1c-race-admin',role:'admin'},now=new Date('2026-10-15T12:00:00Z');
   await sql`INSERT INTO clients(id,first_name,last_name) VALUES (${clientId},'F1-C','Race fixture')`;
   const input={clientId,planId,idempotencyKey:key,contractStart:'2026-10-15',amountCents:5000};
-  await assert.rejects(coordinateContractAssignment(sql,{...input,dueOn:'2026-10-22'},actor,now),
-    error=>error instanceof ContractAssignmentError&&error.code==='validation_error','caller-supplied dueOn is rejected; the coordinator is authoritative');
+  const adjustDenied={actorId:'f1c-no-date-adjust',role:'trainer',explicitPermissions:['entitlements.manage']};
+  await assert.rejects(coordinateContractAssignment(sql,{...input,dueOn:'2026-10-22'},adjustDenied,now),
+    error=>error instanceof ContractAssignmentError&&error.code==='assignment_dates_override_forbidden','a non-adjuster cannot override the server-derived deadline');
+  const adjusted=await coordinateContractAssignment(sql,{...input,idempotencyKey:randomUUID(),dueOn:'2026-10-22'},actor,now);
+  assert.equal(adjusted.dueOn,'2026-10-22');assert.equal(adjusted.paymentBlockEffectiveOn,'2026-10-23');
+  const [adjustedDeadline]=await sql`SELECT deadline_computation FROM assignment_contract_terms WHERE assignment_id=${adjusted.assignmentId}`;
+  assert.equal(adjustedDeadline.deadline_computation.inputs.defaultDueOn,'2026-10-20');
+  assert.equal(adjustedDeadline.deadline_computation.inputs.overridden,true);
   const results=await Promise.all([coordinateContractAssignment(sql,input,actor,now),coordinateContractAssignment(sql,input,actor,now)]);
   assert.deepEqual(results.map(row=>row.replay).sort(),[false,true]);
   assert.equal(results[0].assignmentId,results[1].assignmentId);assert.equal(results[0].chargeId,results[1].chargeId);
@@ -381,7 +387,7 @@ test('F1-C coordinator serializes same-key retries and rejects changed payload w
     (SELECT count(*)::int FROM assignment_entitlement_periods WHERE assignment_id=${results[0].assignmentId}) AS periods,
     (SELECT count(*)::int FROM client_entitlement_ledger WHERE assignment_id=${results[0].assignmentId} AND entry_type='grant') AS grants
     FROM client_plan_assignments WHERE client_id=${clientId}`;
-  assert.deepEqual(counts,{assignments:1,charges:1,periods:4,grants:4});
+  assert.deepEqual(counts,{assignments:2,charges:2,periods:4,grants:4});
 });
 
 test('F1-C idempotency key is isolated across clients, while independent keys execute concurrently',async()=>{

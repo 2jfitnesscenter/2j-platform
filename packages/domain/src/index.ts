@@ -45,3 +45,4 @@ export interface UnitOfWork {
 export * from './period-entitlements.js';
 export * from './training-capabilities.js';
 export * from './contract-terms.js';
+export * from './assignment-dates.js';

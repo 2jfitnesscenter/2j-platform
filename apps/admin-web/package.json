@@ -10,6 +10,7 @@
     "test": "node --import tsx --test test/*.test.mjs"
   },
   "dependencies": {
+    "@2j/domain": "workspace:*",
     "@2j/design-tokens": "workspace:*",
     "@2j/ui": "workspace:*",
     "@vitejs/plugin-react": "^4.3.4",
