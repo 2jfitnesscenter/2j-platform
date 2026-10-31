@@ -1,0 +1,48 @@
+{
+  "task": "2J-A58-cash-register-design",
+  "status": "draft-design-awaiting-independent-rereview",
+  "base": "5e1d6b26079228aa13c5f32e37cd75199e7c1a7b",
+  "ownerDecision": {
+    "oneRegisterPerCustodian": true,
+    "registersMayBeOpenSimultaneously": true,
+    "handoverIsPerRegister": true,
+    "sourceClarification": "Direct user instruction confirms defaults listed as pending in attached A58."
+  },
+  "physicalRegisters": [
+    {
+      "code": "bunker",
+      "name": "Búnker"
+    },
+    {
+      "code": "sala",
+      "name": "Sala"
+    }
+  ],
+  "candidateMigration": "0055_cash_registers.sql",
+  "migrationCollisionCheck": {
+    "checkedAt": "2026-10-27",
+    "openPrBranchTreesChecked": 16,
+    "originMainLatest": "0052_reactivate_archived_plans.sql",
+    "pr124": "0053_center_hours_staff_shifts.sql",
+    "pr125": "0054_staff_passkey_sessions.sql",
+    "otherOpenPr0055Collision": false,
+    "recheckBeforeWritingMigration": true
+  },
+  "reviewFindingsAddressed": [
+    "API-side per-register filtering for staff; owner-only global movements, aggregates, reports, differences and incidents",
+    "Legacy open register_id NULL sessions block new operations until audited owner resolution with real count, reason and trainer notice; no timeclock mutation",
+    "Clock-out blocked during active cash custody until close or completed handover, transactionally serialized",
+    "Opening flow never reads or returns previous close or expected amount",
+    "Expenses/withdrawals: specific permission, mandatory type/reason, optional receipt, optional owner limit NULL by default and approval above configured limit",
+    "Staff movement reads additionally filter by authenticated actor; no operations by previous/alternate custodians, with handover counts limited to the actor own side."
+  ],
+  "files": [
+    "docs/design/2J-A58-two-cash-registers.md",
+    "docs/handoffs/2J-A58-two-cash-registers.md",
+    "docs/handoffs/2J-A58-two-cash-registers.json"
+  ],
+  "implementationStarted": false,
+  "migrationCreatedOrApplied": false,
+  "productionTouched": false,
+  "independentRereviewRequired": "Work Home before implementation and merge"
+}
