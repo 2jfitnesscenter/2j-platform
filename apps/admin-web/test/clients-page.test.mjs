@@ -23,7 +23,10 @@ const sections = [
 const summary = Object.fromEntries(['profile', 'plans', 'reservations', 'payments', 'documents', 'messages', 'followup'].map((id) => [id, { access: id === 'payments' ? 'forbidden' : 'available', dataState: id === 'profile' ? 'ready' : 'not_connected', data: null }]));
 const profile = { client, capabilities: { manage: true }, summary, sections, history: [{ id: 'event-1', eventType: 'client.created', actorLabel: 'Administración', occurredAt: client.createdAt }] };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
-const menuItem = async (name) => { fireEvent.click(await screen.findByRole('button', { name: 'Acciones' })); fireEvent.click(await screen.findByRole('menuitem', { name })); };
+const menuItem = async (name) => {
+  if (name === 'Añadir cuota') return fireEvent.click((await screen.findAllByRole('button', { name }))[0]);
+  fireEvent.click(await screen.findByRole('button', { name: 'Acciones' })); fireEvent.click(await screen.findByRole('menuitem', { name }));
+};
 
 const listResponse = (items = [client], overrides = {}) => ({ items, capabilities: { manage: true }, hasMore: false, nextCursor: null, ...overrides });
 
