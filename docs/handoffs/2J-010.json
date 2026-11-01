@@ -4,8 +4,8 @@
   "agent": "codex",
   "branch": "agent/codex/2J-010-services-plans-rights",
   "pull_request": "https://github.com/2jfitnesscenter/2j-platform/pull/6",
-  "status": "REVIEW",
-  "review_state": "Claude backend/domain APPROVED on exact SHA d40eb6d064ddc4628f94f13beb9a662ae368d96e; only non-blocking P3 notes remain. Antigravity requested one P1 UX correction on d40eb6d; neutral copy and tests are implemented at 0fb2876e54ced026b472d967510523dc848b2745. Independent Antigravity re-review and requested supplemental screenshots remain pending. Keep unmerged.",
+  "status": "DONE",
+  "review_state": "Claude backend/domain and Antigravity UX/UI both APPROVED the exact PR head 2f209a5809d1987e772306e79632e24c70fbf5fd. No P0/P1/P2 remain. PR #6 was squash-merged into main as 0b51c77dc2fd8b7f0e1bc7eceff9e2889a041513.",
   "scope": [
     "services",
     "plans",
@@ -20,8 +20,8 @@
     "training",
     "Bunker"
   ],
-  "implementation_head": "0fb2876e54ced026b472d967510523dc848b2745",
-  "final_head": "Current PR head; implementation_head records the tested UI correction.",
+  "implementation_head": "2f209a5809d1987e772306e79632e24c70fbf5fd",
+  "final_head": "0b51c77dc2fd8b7f0e1bc7eceff9e2889a041513",
   "evidence": {
     "visual": [
       {
@@ -44,7 +44,7 @@
       "name": "Workspace tests",
       "command": "corepack pnpm@10.34.6 test",
       "result": "PASS",
-      "evidence": "GitHub Actions push run 37757015801 and pull_request run 37757024318 on head c005256425bf89a9d5b3801fdb19cd8f13956a37: 57/57 tests passed (31 PostgreSQL API, 10 admin UI, 16 design-token/domain/permissions/auth/audit). The two new admin tests verify neutral targetless-access copy in multi-service plans and optional targetless submission with serviceId null."
+      "evidence": "GitHub Actions push run 37757299075 and pull_request run 37757305187 on exact approved head 2f209a5809d1987e772306e79632e24c70fbf5fd: 57/57 tests passed (31 PostgreSQL API, 10 admin UI, 16 design-token/domain/permissions/auth/audit), 0 failed and 0 skipped."
     },
     {
       "name": "Migration repeat/checksum",
@@ -98,12 +98,11 @@
     "Claude identified non-blocking P3 database-hardening and error-message items recorded in non_blocking_findings."
   ],
   "followups": [
-    "Record and review one final PR head SHA independently with Claude and Gemini/Antigravity.",
-    "Capture a multi-service plan, service and plan dialogs at 390px, plus loading, error and empty states.",
-    "Keep PR #6 unmerged until both reviews and hosted gates pass.",
-    "Continue 2J-020 and 2J-030 only in their own tasks, branches and PRs after 2J-010 integration."
+    "Track supplemental visual evidence and the aria-describedby/copy polish as separate non-blocking P3 TASK 2J-011; do not reopen 2J-010.",
+    "Keep unresolved service_access inclusion semantics as a Juanjo product decision before booking authorization is built.",
+    "Continue 2J-020 in PR #7; keep 2J-030 PR #8 waiting for 2J-020 integration."
   ],
-  "summary": "Claude approved the backend/domain scope at d40eb6d. Antigravity's P1 about targetless service_access was fixed with neutral UI copy and regression tests; 57/57 tests and hosted checks pass on the latest PR head. Antigravity re-review and supplemental visual captures are pending; do not merge yet.",
+  "summary": "2J-010 was approved by Claude and Antigravity on the exact head 2f209a5809d1987e772306e79632e24c70fbf5fd and squash-merged as 0b51c77dc2fd8b7f0e1bc7eceff9e2889a041513. CI passed 57/57 tests with no P0/P1/P2. Supplemental UX/accessibility P3 is tracked separately in 2J-011.",
   "source_commit": "bbc2f601feb79b9c2adda37467c49f8a24cdcd49",
   "open_decisions": [
     {
