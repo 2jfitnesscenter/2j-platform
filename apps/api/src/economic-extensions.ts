@@ -204,8 +204,6 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         if (!register) return { error: 'cash_register_not_found' as const };
         const [open] = await tx`SELECT id,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE register_id=${register.id} AND status='open' LIMIT 1 FOR UPDATE`;
         if (open) return { error: 'cash_already_open' as const };
-        const [usedToday] = await tx`SELECT id FROM economic_cash_sessions WHERE register_id=${register.id} AND local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date LIMIT 1 FOR UPDATE`;
-        if (usedToday) return { error: 'cash_register_already_used_today' as const };
         const [row] = await tx`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},(now() AT TIME ZONE 'Atlantic/Canary')::date,${openingCents},${JSON.stringify(parsed.data.openingDenominations)}::jsonb,${context.actorId}) RETURNING id,register_id AS "registerId",local_date AS "localDate",status,opened_at AS "openedAt"`;
         if (!row) throw new Error('cash session insert returned no row');
         await tx`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${row.id},${person.id},${context.actorId})`;
@@ -217,16 +215,16 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       return reply.code(201).send({ ...result.row, openingCents, openingDenominations: parsed.data.openingDenominations });
     } catch (error) {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
-      const constraint=typeof error==='object'&&error&&'constraint'in error?String(error.constraint):'';
-      const uniqueViolation=constraint==='economic_cash_one_session_per_register_day'||(typeof error==='object'&&error&&'message'in error&&String(error.message).includes('economic_cash_one_session_per_register_day'));
-      return reply.code(code === '23505' ? 409 : 500).send({ error: code === '23505'&&uniqueViolation ? 'cash_register_already_used_today' : code === '23505' ? 'cash_session_exists' : 'cash_open_failed' });
+      const constraint = typeof error === 'object' && error && 'constraint' in error ? String(error.constraint) : '';
+      const alreadyOpen = constraint === 'economic_cash_one_open_session_per_register' || (typeof error === 'object' && error && 'message' in error && String(error.message).includes('economic_cash_one_open_session_per_register'));
+      return reply.code(code === '23505' ? 409 : 500).send({ error: code === '23505' && alreadyOpen ? 'cash_already_open' : code === '23505' ? 'cash_session_exists' : 'cash_open_failed' });
     }
   });
 
   app.post('/api/economics/cash/:sessionId/owner-reopen',async(request,reply)=>{
     const context=await auth(request,reply,'owner.panel.read');if(!context)return;
     const params=z.object({sessionId:uuid}).safeParse(request.params);
-    const body=z.object({custodianActorId:z.string().trim().min(1).max(120),openingDenominations:cashDenominationsSchema}).strict().safeParse(request.body);
+    const body=z.object({custodianActorId:z.string().trim().min(1).max(120),openingDenominations:cashDenominationsSchema,reason:z.string().trim().max(500).optional()}).strict().safeParse(request.body);
     if(!params.success||!body.success)return reply.code(400).send({error:'validation_error'});
     const openingCents=cashDenominationsToCents(body.data.openingDenominations);
     try{
@@ -245,8 +243,9 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         if(clock?.eventType!=='clock_in')return {error:'cash_custodian_not_clocked_in'} as const;
         const [held]=await tx`SELECT id FROM economic_cash_custodies WHERE actor_id=${custodian.actorId} AND ended_at IS NULL FOR UPDATE`;
         if(held)return {error:'already_holds_register'} as const;
+        const [previous]=await tx`SELECT closed_at AS "closedAt",expected_cents AS "expectedCents",counted_cents AS "countedCents",difference_cents AS "differenceCents",counted_denominations AS "countedDenominations" FROM economic_cash_sessions WHERE id=${session.id}`;
         await tx`SELECT set_config('twoj.cash_reopen_actor',${context.actorId},true)`;
-        await audit(tx,context,'cash.reopened','cash_session',session.id,null,{registerId:session.registerId,localDate:String(session.localDate),custodianActorId:custodian.actorId,openingCents,openingDenominations:body.data.openingDenominations});
+        await audit(tx,context,'cash.reopened','cash_session',session.id,null,{registerId:session.registerId,localDate:String(session.localDate),custodianActorId:custodian.actorId,openingCents,openingDenominations:body.data.openingDenominations,reason:body.data.reason??null,previousClosedAt:previous?.closedAt?new Date(previous.closedAt).toISOString():null,previousExpectedCents:previous?.expectedCents==null?null:Number(previous.expectedCents),previousCountedCents:previous?.countedCents==null?null:Number(previous.countedCents),previousDifferenceCents:previous?.differenceCents==null?null:Number(previous.differenceCents),previousCountedDenominations:previous?.countedDenominations??null});
         const [reopened]=await tx`UPDATE economic_cash_sessions SET status='open',closed_at=NULL,closed_by=NULL,expected_cents=NULL,counted_cents=NULL,counted_denominations=NULL,difference_cents=NULL,close_kind=NULL WHERE id=${session.id} AND status IN ('closed','late_close') RETURNING id,register_id AS "registerId",local_date AS "localDate",status`;
         if(!reopened)return {error:'cash_session_not_closed'} as const;
         await tx`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${session.id},${custodian.id},${custodian.actorId})`;

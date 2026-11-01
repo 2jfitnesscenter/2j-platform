@@ -10,6 +10,7 @@ type Management = {
   closedShifts: Array<{ id: string; registerName: string; localDate: string; openedAt: string; closedAt: string | null; status: string; countedCents: number | null; expectedCents: number | null; differenceCents: number | null }>;
   accumulatedDifference: { differenceCents: number; shiftsWithDifference: number; shifts: number };
   teamClockings: Array<{ id: string; displayName: string; eventType: 'clock_in' | 'clock_out'; occurredAt: string; origin: string }>;
+  cashHistory: Array<{ id: string; action: string; actorId: string; actorName: string; occurredAt: string; registerName: string; details: Record<string, unknown> }>;
 };
 type LoadState = { status: 'loading' } | { status: 'ready'; data: Management } | { status: 'denied' } | { status: 'error' };
 
@@ -20,6 +21,7 @@ const day = (value: string) => dayFmt.format(new Date(`${value}T12:00:00Z`));
 const signed = (cents: number) => cents === 0 ? 'Cuadra' : `${cents > 0 ? '+' : '−'}${euros(Math.abs(cents))}`;
 const tone = (cents: number | null): StatusTone => cents == null ? 'neutral' : cents === 0 ? 'success' : 'warning';
 const originLabel: Record<string, string> = { web: 'Web', staff_app: 'App del equipo', manual_admin: 'Corrección' };
+const cashActionLabel: Record<string, string> = { 'cash.opened': 'Apertura', 'cash.closed': 'Cierre', 'cash.reopened': 'Reapertura', 'cash.handover_started': 'Traspaso iniciado', 'cash.handover_completed': 'Traspaso completado' };
 
 /**
  * Panel de gestión (paridad con Administration.jsx de 2jfit-admin), solo para quien tiene `owner.panel.read`.
@@ -86,6 +88,18 @@ export function ManagementPage() {
         : <ul className="summary-list" aria-label="Fichajes de hoy">{data.teamClockings.map((row) => <li key={row.id}><div className="summary-row">
           <span className="summary-row-copy"><strong>{row.displayName}</strong><small>{originLabel[row.origin] ?? row.origin}</small></span>
           <span className="summary-row-meta"><StatusChip tone={row.eventType === 'clock_in' ? 'success' : 'neutral'}>{row.eventType === 'clock_in' ? 'Entrada' : 'Salida'}</StatusChip><time dateTime={row.occurredAt}>{clock.format(new Date(row.occurredAt))}</time></span></div></li>)}</ul>}
+    </Card>
+    <Card as="section" padding="none" className="summary-card" aria-labelledby="mgmt-cash-history-title">
+      <div className="summary-card-head"><CardHeader title="Historial de caja" titleId="mgmt-cash-history-title" level={2} description="Aperturas, cierres, reaperturas y traspasos. Visible solo para el propietario." /></div>
+      {data.cashHistory.length === 0
+        ? <div className="summary-empty"><strong>Sin movimientos de caja en este periodo</strong></div>
+        : <ul className="summary-list" aria-label="Historial de caja">{data.cashHistory.map((event) => {
+          const details = event.details;
+          const difference = typeof details.differenceCents === 'number' ? Number(details.differenceCents) : null;
+          const previousDifference = typeof details.previousDifferenceCents === 'number' ? Number(details.previousDifferenceCents) : null;
+          const reason = typeof details.reason === 'string' && details.reason ? details.reason : null;
+          return <li key={event.id}><div className="summary-row"><span className="summary-row-copy"><strong>{cashActionLabel[event.action] ?? 'Movimiento de caja'} · {event.registerName}</strong><small>{event.actorName} · {clock.format(new Date(event.occurredAt))}{reason ? ` · ${reason}` : ''}</small></span><span className="summary-row-meta">{difference != null ? <StatusChip tone={tone(difference)}>{signed(difference)}</StatusChip> : null}{previousDifference != null ? <small>Cierre anterior: {signed(previousDifference)}</small> : null}{details.mismatch === true ? <StatusChip tone="warning">Diferencia en traspaso</StatusChip> : null}</span></div></li>;
+        })}</ul>}
     </Card>
   </main>;
 }

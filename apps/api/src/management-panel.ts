@@ -20,7 +20,7 @@ export function registerManagementPanelRoutes(app: FastifyInstance<any, any, any
     if (!context) return reply.code(401).send({ error: 'authentication_required' });
     if (!can(context, 'owner.panel.read')) return reply.code(403).send({ error: 'permission_denied' });
     try {
-      const [openRegisters, closedShifts, accumulated, clockings] = await Promise.all([
+      const [openRegisters, closedShifts, accumulated, clockings, cashHistory] = await Promise.all([
         db`SELECT s.id, COALESCE(r.name, 'Histórica sin registro') AS "registerName", s.local_date::text AS "localDate", s.opened_at AS "openedAt",
                   (SELECT p.display_name FROM economic_cash_custodies c JOIN staff_professionals p ON p.id = c.professional_id WHERE c.cash_session_id = s.id AND c.ended_at IS NULL LIMIT 1) AS "custodian",
                   s.local_date < (now() AT TIME ZONE 'Atlantic/Canary')::date AS "forgotten"
@@ -36,6 +36,15 @@ export function registerManagementPanelRoutes(app: FastifyInstance<any, any, any
         db`SELECT e.id, p.display_name AS "displayName", e.event_type AS "eventType", e.occurred_at AS "occurredAt", e.origin
            FROM staff_timeclock_events e JOIN staff_professionals p ON p.id = e.professional_id
            WHERE e.local_date = (now() AT TIME ZONE 'Atlantic/Canary')::date ORDER BY e.occurred_at DESC, e.id DESC LIMIT 60`,
+        db`SELECT e.id,e.action,e.actor_id AS "actorId",COALESCE(p.display_name,e.actor_id) AS "actorName",e.occurred_at AS "occurredAt",
+                  COALESCE(r.name,'Histórica sin registro') AS "registerName",e.details
+           FROM economic_audit_events e
+           LEFT JOIN economic_cash_sessions s ON e.resource_type='cash_session' AND s.id=e.resource_id
+           LEFT JOIN economic_cash_registers r ON r.id=COALESCE(s.register_id,NULLIF(e.details->>'registerId','')::uuid)
+           LEFT JOIN staff_professionals p ON p.auth_actor_id=e.actor_id
+           WHERE e.action IN ('cash.opened','cash.closed','cash.reopened','cash.handover_started','cash.handover_completed')
+             AND e.occurred_at >= now() - (${SHIFT_DAYS}::text || ' days')::interval
+           ORDER BY e.occurred_at DESC,e.id DESC LIMIT 200`,
       ]);
       return {
         timezone: 'Atlantic/Canary',
@@ -44,6 +53,7 @@ export function registerManagementPanelRoutes(app: FastifyInstance<any, any, any
         closedShifts: closedShifts.map((row: any) => ({ id: row.id, registerName: row.registerName, localDate: row.localDate, openedAt: new Date(row.openedAt).toISOString(), closedAt: row.closedAt ? new Date(row.closedAt).toISOString() : null, status: row.status, countedCents: row.countedCents == null ? null : n(row.countedCents), expectedCents: row.expectedCents == null ? null : n(row.expectedCents), differenceCents: row.differenceCents == null ? null : n(row.differenceCents) })),
         accumulatedDifference: { differenceCents: n(accumulated[0]?.differenceCents), shiftsWithDifference: n(accumulated[0]?.withDifference), shifts: n(accumulated[0]?.shifts) },
         teamClockings: clockings.map((row: any) => ({ id: row.id, displayName: row.displayName, eventType: row.eventType, occurredAt: new Date(row.occurredAt).toISOString(), origin: row.origin })),
+        cashHistory: cashHistory.map((row: any) => ({ id: row.id, action: row.action, actorId: row.actorId, actorName: row.actorName, occurredAt: new Date(row.occurredAt).toISOString(), registerName: row.registerName, details: row.details })),
       };
     } catch (error) {
       const databaseCode = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'unknown';
