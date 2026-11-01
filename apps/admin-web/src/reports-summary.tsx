@@ -23,6 +23,24 @@ const euros = (cents: number) => new Intl.NumberFormat('es-ES', { style: 'curren
 const percent = (rate: number | null) => (rate === null ? 'Sin datos' : `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(rate * 100)} %`);
 const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', direct_debit: 'Domiciliación', bizum: 'Bizum', other: 'Otro' };
 const monthLabel = (month: string) => monthName.format(new Date(`${month}-01T00:00:00Z`));
+const exportSections = [
+  ['sales', 'Ventas'], ['payments', 'Cobros por método'], ['pending', 'Pendientes y programados'], ['defaults', 'Impagos y cancelaciones'],
+  ['cash', 'Caja'], ['expenses', 'Gastos'], ['igic', 'IGIC'], ['staffHours', 'Horas de personal'],
+] as const;
+
+function presetRange(preset: 'today' | 'week' | 'month' | 'year') {
+  const today = canaryDay.format(new Date());
+  const value = new Date(`${today}T12:00:00Z`);
+  if (preset === 'today') return { from: today, to: today };
+  if (preset === 'week') {
+    const weekday = (value.getUTCDay() + 6) % 7;
+    const monday = new Date(value); monday.setUTCDate(value.getUTCDate() - weekday);
+    const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate() + 6);
+    return { from: monday.toISOString().slice(0, 10), to: sunday.toISOString().slice(0, 10) };
+  }
+  if (preset === 'month') return { from: `${today.slice(0, 7)}-01`, to: today };
+  return { from: `${today.slice(0, 4)}-01-01`, to: today };
+}
 
 function defaultRange() {
   const today = canaryDay.format(new Date());
@@ -75,9 +93,10 @@ function MonthlyChart({ monthly }: { monthly: Summary['monthly'] }) {
  */
 export function ReportsSummary() {
   const [range, setRange] = React.useState(defaultRange);
+  const [selectedSections, setSelectedSections] = React.useState<string[]>(exportSections.map(([id]) => id));
   const [state, setState] = React.useState<LoadState>({ status: 'loading' });
   const valid = range.from !== '' && range.to !== '' && range.to >= range.from && Date.parse(range.to) - Date.parse(range.from) <= 366 * 86_400_000;
-  const query = new URLSearchParams(range).toString();
+  const query = new URLSearchParams({ ...range, sections: selectedSections.join(',') }).toString();
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
     try {
@@ -104,10 +123,17 @@ export function ReportsSummary() {
     <Card as="section" padding="none" className={`summary-card reports-chart-card${wide ? ' is-wide' : ''}`} aria-labelledby={id}><div className="summary-card-head"><CardHeader title={title} titleId={id} level={2} description={description} /></div>{body}</Card>;
   return <div className="reports-summary">
     <form className="reports-filters" aria-label="Periodo del resumen" onSubmit={(event) => event.preventDefault()}>
+      <div className="reports-range-presets" role="group" aria-label="Periodos rápidos">
+        {([['today', 'Hoy'], ['week', 'Esta semana'], ['month', 'Este mes'], ['year', 'Este año']] as const).map(([id, label]) => <button key={id} type="button" className="text-button" onClick={() => setRange(presetRange(id))}>{label}</button>)}
+      </div>
       <label>Desde<input type="date" value={range.from} max={range.to || undefined} onChange={(event) => setRange((current) => ({ ...current, from: event.target.value }))} /></label>
       <label>Hasta<input type="date" value={range.to} min={range.from || undefined} onChange={(event) => setRange((current) => ({ ...current, to: event.target.value }))} /></label>
-      {data?.capabilities.export && valid && <a className="button secondary" href={`${apiUrl}/api/reports/export.xlsx?${query}`} download>Exportar Excel</a>}
+      {data?.capabilities.export && valid && <>
+        {selectedSections.length > 0 ? <a className="button secondary" href={`${apiUrl}/api/reports/export.xlsx?${query}`} download>Exportar Excel</a> : <button className="button secondary" type="button" disabled>Selecciona una sección</button>}
+        <a className="button secondary" href={`${apiUrl}/api/reports/export.pdf?${new URLSearchParams(range)}`} download>Descargar resumen PDF</a>
+      </>}
     </form>
+    {data?.capabilities.export && <fieldset className="reports-export-sections"><legend>Secciones del Excel</legend>{exportSections.map(([id, label]) => <label key={id}><input type="checkbox" checked={selectedSections.includes(id)} onChange={(event) => setSelectedSections((current) => event.target.checked ? [...current, id] : current.filter((item) => item !== id))} />{label}</label>)}</fieldset>}
     {!valid && <div className="form-error" role="alert">Elige un periodo de como máximo 366 días, con la fecha final igual o posterior a la inicial.</div>}
     {valid && state.status === 'loading' && <div className="summary-state" role="status"><span className="spinner" /> Cargando el resumen…</div>}
     {valid && state.status === 'error' && <div className="summary-state summary-error" role="alert"><strong>No se pudo cargar el resumen</strong><Button onClick={() => { setState({ status: 'loading' }); void load(); }}>Reintentar</Button></div>}

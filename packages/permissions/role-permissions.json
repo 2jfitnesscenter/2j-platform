@@ -38,6 +38,7 @@
     "billing.read-tax",
     "billing.write-tax",
     "billing.export",
+    "economy.read",
     "billing.validate_transfer",
     "billing.debt.override",
     "scheduling.override_capacity",
@@ -145,7 +146,8 @@
     "accountant": [
       "billing.read-basic",
       "billing.read-tax",
-      "billing.export"
+      "billing.export",
+      "economy.read"
     ],
     "owner": []
   },

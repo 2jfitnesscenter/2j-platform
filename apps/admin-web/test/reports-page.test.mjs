@@ -113,7 +113,7 @@ const serveSummary = (summary) => {
   return urls;
 };
 
-test('A59: the Resumen tab shows financial and operational KPIs and accessible SVG charts next to the sales list', async () => {
+test('A80-2: the Resumen tab offers fast date ranges, selectable export sections, XLSX and a PDF summary', async () => {
   const urls = serveSummary(() => response(summaryBody()));
   window.location.hash = '#reports'; mount();
   const tabs = await screen.findByRole('tablist', { name: 'Secciones de informes' });
@@ -135,10 +135,18 @@ test('A59: the Resumen tab shows financial and operational KPIs and accessible S
   assert.ok(urls.some((url) => /\/api\/reports\/summary\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/.test(url)));
   const link = screen.getByRole('link', { name: 'Exportar Excel' });
   assert.ok(link.getAttribute('href').includes('/api/reports/export.xlsx?from='));
+  assert.match(link.getAttribute('href'), /sections=sales%2Cpayments%2Cpending%2Cdefaults%2Ccash%2Cexpenses%2Cigic%2CstaffHours/);
+  assert.ok(screen.getByRole('link', { name: 'Descargar resumen PDF' }).getAttribute('href').includes('/api/reports/export.pdf?from='));
+  assert.ok(screen.getByRole('group', { name: 'Periodos rápidos' }));
+  assert.ok(screen.getByRole('button', { name: 'Hoy' }));
+  assert.ok(screen.getByRole('button', { name: 'Esta semana' }));
+  const expenses = screen.getByRole('checkbox', { name: 'Gastos' });
+  fireEvent.click(expenses);
+  assert.doesNotMatch(screen.getByRole('link', { name: 'Exportar Excel' }).getAttribute('href'), /expenses/);
   assert.ok(!/Cliente \d/.test(document.body.textContent), 'no personal data in the summary');
 });
 
-test('A59: without billing.export there is no Excel link, a bad range blocks the request and a failure offers retry', async () => {
+test('A80-2: without economy.read there are no export links, a bad range blocks the request and a failure offers retry', async () => {
   let fail = true;
   const urls = serveSummary(() => (fail ? response({}, 500) : response(summaryBody({ capabilities: { export: false } }))));
   window.location.hash = '#reports'; mount();

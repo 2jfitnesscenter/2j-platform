@@ -208,6 +208,13 @@ a.summary-row:focus-visible { outline: 2px solid var(--2j-color-focus); outline-
 /* Informes · pestaña Resumen (A59): gráficos SVG propios con tokens de color, válidos en claro y oscuro */
 .reports-page > .ui-tabs { margin-bottom: var(--2j-space-4); }
 .reports-summary .reports-filters { padding: 0 0 var(--2j-space-4); }
+.reports-range-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--2j-space-2); }
+.reports-range-presets .text-button { min-height: 44px; padding: 0 var(--2j-space-3); border: 1px solid var(--2j-color-border-subtle); border-radius: var(--2j-radius-md); background: var(--2j-color-surface-subtle); }
+.reports-export-sections { display: flex; flex-wrap: wrap; gap: var(--2j-space-2) var(--2j-space-4); min-width: 0; margin: 0 0 var(--2j-space-4); padding: var(--2j-space-3) var(--2j-space-4) var(--2j-space-4); border: 1px solid var(--2j-color-border-subtle); border-radius: var(--2j-radius-lg); }
+.reports-export-sections legend { padding: 0 var(--2j-space-1); color: var(--2j-color-text-secondary); font-size: 13px; }
+.reports-export-sections label { display: inline-flex; align-items: center; gap: var(--2j-space-2); min-height: 44px; color: var(--2j-color-text-primary); font-size: 14px; }
+.reports-export-sections input { width: 18px; height: 18px; accent-color: var(--2j-color-accent); }
+@media (max-width: 640px) { .reports-export-sections { padding-inline: var(--2j-space-3); } }
 .reports-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: var(--2j-space-4); margin-bottom: var(--2j-space-4); }
 .reports-chart-card.is-wide { grid-column: 1 / -1; }
 .reports-chart { margin: 0; padding: var(--2j-space-2) var(--2j-space-5) var(--2j-space-4); }

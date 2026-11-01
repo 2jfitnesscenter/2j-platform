@@ -2,11 +2,10 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
-import { buildXlsx } from './xlsx.js';
+import { registerDetailedReportRoutes } from './economy-report-export.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
 const CSV_EXPORT_LIMIT = 500;
-const XLSX_EXPORT_LIMIT = 5_000;
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value);
 const methods = ['cash', 'card', 'transfer', 'bizum', 'direct_debit', 'other'] as const;
@@ -135,12 +134,15 @@ export function registerReportRoutes(app: FastifyInstance<any, any, any, any, an
    */
   async function loadSummary(from: string, to: string) {
     const inRange = (column: string) => db`(${db.unsafe(column)} AT TIME ZONE 'Atlantic/Canary')::date BETWEEN ${from}::date AND ${to}::date`;
-    const [monthlyRows, [overdue], [fees], [occupancy], [attendance], serviceRows, planRows, methodRows] = await Promise.all([
+    const [monthlyRows, [overdue], [pending], [fees], [occupancy], [attendance], serviceRows, planRows, methodRows] = await Promise.all([
       db`SELECT to_char(v."occurredAt" AT TIME ZONE 'Atlantic/Canary', 'YYYY-MM') AS month,
           COALESCE(sum(v."soldCents") FILTER (WHERE v.status NOT IN ('void','exempt')),0)::bigint AS sold, COALESCE(sum(v."collectedCents"),0)::bigint AS collected
         FROM (${salesBase()}) v WHERE ${inRange('v."occurredAt"')} GROUP BY 1 ORDER BY 1`,
       db`SELECT COALESCE(sum(v."soldCents" - v."collectedCents"),0)::bigint AS cents, count(*)::int AS count
         FROM (${salesBase()}) v WHERE v.kind IN ('plan','charge') AND v.status IN ('unpaid','partial') AND v."dueOn" < (now() AT TIME ZONE 'Atlantic/Canary')::date`,
+      db`SELECT COALESCE(sum(GREATEST(v."soldCents"-v."collectedCents",0)) FILTER(WHERE v.status NOT IN ('void','exempt','refunded')),0)::bigint AS cents,
+          count(*) FILTER(WHERE v.status NOT IN ('void','exempt','refunded') AND v."soldCents">v."collectedCents")::int AS count
+        FROM (${salesBase()}) v WHERE ${inRange('v."occurredAt"')}`,
       db`SELECT COALESCE(round(avg(v."soldCents")),0)::bigint AS average, count(*)::int AS count
         FROM (${salesBase()}) v WHERE v.kind='plan' AND v.status NOT IN ('void','exempt') AND ${inRange('v."occurredAt"')}`,
       db`SELECT count(*)::int AS sessions, COALESCE(sum(s.capacity),0)::int AS capacity, COALESCE(sum(r.n),0)::int AS occupied
@@ -164,6 +166,7 @@ export function registerReportRoutes(app: FastifyInstance<any, any, any, any, an
     return {
       currency: 'EUR', timezone: 'Atlantic/Canary', from, to, monthly,
       overdue: { cents: Number(overdue?.cents ?? 0), count: Number(overdue?.count ?? 0) },
+      pending: { cents: Number(pending?.cents ?? 0), count: Number(pending?.count ?? 0) },
       averageFee: { cents: Number(fees?.average ?? 0), count: Number(fees?.count ?? 0) },
       occupancy: { sessions: Number(occupancy?.sessions ?? 0), capacity, occupied: Number(occupancy?.occupied ?? 0), rate: capacity > 0 ? Number(occupancy?.occupied ?? 0) / capacity : null },
       attendance: { attended: Number(attendance?.attended ?? 0), noShow: Number(attendance?.noShow ?? 0), rate: decided > 0 ? Number(attendance?.attended ?? 0) / decided : null },
@@ -177,33 +180,7 @@ export function registerReportRoutes(app: FastifyInstance<any, any, any, any, an
     const context = await authorize(request, reply, 'billing.read-basic'); if (!context) return;
     const parsed = rangeQuery.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
-    return { ...(await loadSummary(parsed.data.from, parsed.data.to)), capabilities: { export: can(context, 'billing.export') } };
+    return { ...(await loadSummary(parsed.data.from, parsed.data.to)), capabilities: { export: can(context, 'economy.read') } };
   });
-
-  app.get('/api/reports/export.xlsx', async (request, reply) => {
-    const context = await authorize(request, reply, 'billing.export'); if (!context) return;
-    const parsed = rangeQuery.safeParse(request.query);
-    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
-    const { from, to } = parsed.data;
-    const sales = await loadSales({ from, to, kind: 'all', invoice: 'all', limit: XLSX_EXPORT_LIMIT });
-    if (sales.truncated) return reply.code(413).send({ error: 'export_result_limit_exceeded', limit: XLSX_EXPORT_LIMIT });
-    const summary = await loadSummary(from, to);
-    const eur = (cents: number) => Math.round(cents) / 100;
-    const pct = (rate: number | null) => (rate === null ? 'Sin datos' : `${(rate * 100).toFixed(1).replace('.', ',')} %`);
-    const kindLabel: Record<string, string> = { plan: 'Cuota', charge: 'Cargo', store: 'Tienda' };
-    const statusLabel: Record<string, string> = { paid: 'Cobrada', partial: 'Cobro parcial', pending: 'Pendiente', unpaid: 'Vencida', refunded: 'Devuelta', void: 'Anulada', exempt: 'Exenta' };
-    const methodLabel: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', bizum: 'Bizum', direct_debit: 'Domiciliación', other: 'Otro' };
-    const fmtDate = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
-    const workbook = buildXlsx([
-      { name: 'Resumen', money: [1], rows: [['Indicador', 'Valor'], ['Periodo', `${from} a ${to}`], ['Vencido sin cobrar (EUR, hoy)', eur(summary.overdue.cents)], ['Cuotas vencidas sin cobrar', summary.overdue.count], ['Cuota media (EUR)', eur(summary.averageFee.cents)], ['Sesiones programadas', summary.occupancy.sessions], ['Plazas ofertadas', summary.occupancy.capacity], ['Plazas ocupadas', summary.occupancy.occupied], ['Ocupación', pct(summary.occupancy.rate)], ['Asistencias', summary.attendance.attended], ['Ausencias', summary.attendance.noShow], ['Asistencia', pct(summary.attendance.rate)]] },
-      { name: 'Ventas', money: [4, 5, 6], rows: [['Fecha', 'Cliente', 'Concepto', 'Tipo', 'Vendido (EUR)', 'Cobrado (EUR)', 'Pendiente (EUR)', 'Estado', 'Métodos', 'Factura'], ...sales.items.map((item) => [fmtDate(item.occurredAt), item.clientName, item.concept, kindLabel[item.kind] ?? item.kind, eur(item.soldCents), eur(item.collectedCents), eur(item.status === 'void' || item.status === 'exempt' ? 0 : Math.max(0, item.soldCents - item.collectedCents)), statusLabel[item.status] ?? item.status, item.methods.map((m) => methodLabel[m] ?? m).join(' + '), item.invoice === 'issued' ? 'Con factura' : 'Sin factura'])] },
-      { name: 'Cobros por método', money: [1], rows: [['Método', 'Cobrado (EUR)'], ...summary.collectedByMethod.map((row) => [methodLabel[row.method] ?? row.method, eur(row.cents)])] },
-      { name: 'Ingresos mensuales', money: [1, 2], rows: [['Mes', 'Vendido (EUR)', 'Cobrado (EUR)'], ...summary.monthly.map((row) => [row.month, eur(row.soldCents), eur(row.collectedCents)])] },
-      { name: 'Reservas por servicio', rows: [['Servicio', 'Reservas'], ...summary.reservationsByService.map((row) => [row.name, row.count])] },
-      { name: 'Cuotas por plan', money: [2], rows: [['Plan', 'Cuotas', 'Vendido (EUR)'], ...summary.feesByPlan.map((row) => [row.name, row.count, eur(row.soldCents)])] },
-    ]);
-    reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    reply.header('Content-Disposition', `attachment; filename="informes-${from}-${to}.xlsx"`);
-    return reply.send(workbook);
-  });
+  registerDetailedReportRoutes(app, db, resolveAuthorization, loadSales, loadSummary);
 }

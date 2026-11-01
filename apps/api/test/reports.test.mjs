@@ -18,7 +18,9 @@ const accountant = as('accountant');
 const trainer = as('trainer');
 const reception = as('reception-management');
 const anonymous = buildServer(process.env.DATABASE_URL);
-after(async () => { await Promise.all([admin.close(), accountant.close(), trainer.close(), reception.close(), anonymous.close()]); await sql.end(); });
+const billingOnly = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'reports-billing-only', role: 'owner', explicitPermissions: ['billing.export'] }) });
+const ownerPanel = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'reports-owner', role: 'admin', explicitPermissions: ['owner.panel.read'] }) });
+after(async () => { await Promise.all([admin.close(), accountant.close(), trainer.close(), reception.close(), anonymous.close(), billingOnly.close(), ownerPanel.close()]); await sql.end(); });
 
 const tag = randomUUID().slice(0, 8);
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Atlantic/Canary', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -179,25 +181,74 @@ function unzip(buffer) {
   return entries;
 }
 
-test('the multi-sheet xlsx export needs billing.export and neutralises spreadsheet formulas in free text', async () => {
+test('detailed exports need economy.read, and selected XLSX sections neutralise formula-like free text', async () => {
   const url = `/api/reports/export.xlsx?${range}`;
   assert.equal((await anonymous.inject({ method: 'GET', url })).statusCode, 401);
   assert.equal((await reception.inject({ method: 'GET', url })).statusCode, 403);
   assert.equal((await trainer.inject({ method: 'GET', url })).statusCode, 403);
+  assert.equal((await billingOnly.inject({ method: 'GET', url })).statusCode, 403, 'legacy billing.export does not silently grant the new economy.read permission');
   assert.equal((await admin.inject({ method: 'GET', url: '/api/reports/export.xlsx?from=2026-10-10&to=2026-10-01' })).statusCode, 400);
+  for (const section of ['sales','payments','pending','defaults','cash','expenses','igic','staffHours']) {
+    const sectionResponse = await accountant.inject({ method: 'GET', url: `${url}&sections=${section}` });
+    assert.equal(sectionResponse.statusCode, 200, `${section}: ${sectionResponse.body}`);
+  }
+  const defaultExport = await accountant.inject({ method: 'GET', url });
+  assert.equal(defaultExport.statusCode, 200, `accountant receives economy.read: ${defaultExport.body}`);
+  assert.equal((await accountant.inject({ method: 'GET', url: `${url}&sections=unknown` })).statusCode, 400);
+  const remaining = await accountant.inject({ method: 'GET', url: `${url}&sections=pending,defaults,cash,expenses,igic,staffHours` });
+  assert.equal(remaining.statusCode, 200, remaining.body);
+  const remainingWorkbook = unzip(remaining.rawPayload)['xl/workbook.xml'];
+  for (const name of ['Totales', 'Pendientes y programados', 'Impagos y cancelaciones', 'Caja', 'Traspasos de caja', 'Gastos y retiradas', 'IGIC por tipo', 'Horas de personal']) assert.ok(remainingWorkbook.includes(`name="${name}"`), name);
   const evil = await client('Formula', '=HYPERLINK("http://x")');
   await pay(await charge(evil, `=1+1 ${tag}`, 1234), 'cash', 1234);
-  const response = await accountant.inject({ method: 'GET', url });
+  const response = await accountant.inject({ method: 'GET', url: `${url}&sections=sales,payments` });
   assert.equal(response.statusCode, 200);
   assert.match(response.headers['content-type'], /spreadsheetml\.sheet/);
-  assert.match(response.headers['content-disposition'], /informes-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.xlsx/);
+  assert.match(response.headers['content-disposition'], /economia-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.xlsx/);
   const files = unzip(response.rawPayload);
   const workbook = files['xl/workbook.xml'];
-  for (const name of ['Resumen', 'Ventas', 'Cobros por método', 'Ingresos mensuales', 'Reservas por servicio', 'Cuotas por plan']) assert.ok(workbook.includes(`name="${name}"`), name);
+  for (const name of ['Totales', 'Ventas', 'Cobros por método']) assert.ok(workbook.includes(`name="${name}"`), name);
+  for (const name of ['Pendientes y programados', 'Impagos y cancelaciones', 'Caja', 'IGIC por tipo', 'Horas de personal']) assert.ok(!workbook.includes(`name="${name}"`), `${name} omitted when not selected`);
   const sales = files['xl/worksheets/sheet2.xml'];
   assert.ok(sales.includes(`'=1+1 ${tag}`) && sales.includes(`'=HYPERLINK`), 'formula-looking text is prefixed');
   assert.ok(!/<t[^>]*>=/.test(sales) && !sales.includes('<f>'), 'no cell starts with = and there are no formulas');
   assert.ok(sales.includes('<v>12.34</v>'), 'amounts are numeric euros');
+});
+
+test('XLSX totals match the Reports dashboard summary and cash differences appear only for owner.panel.read', async () => {
+  const customer = await client('ExportTotal');
+  await pay(await charge(customer, `Cobro export total ${tag}`, 4321), 'card', 4321);
+  const dashboard = await summary();
+  const expectedSold = dashboard.monthly.reduce((sum, item) => sum + item.soldCents, 0) / 100;
+  const expectedCollected = dashboard.monthly.reduce((sum, item) => sum + item.collectedCents, 0) / 100;
+  const [cashSession] = await sql`SELECT id FROM economic_cash_sessions WHERE opened_by='reports-test-admin' AND status='open' AND local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date`;
+  assert.ok(cashSession, 'the synthetic report actor has an open register');
+  const denominations = Object.fromEntries(['coin_0_01','coin_0_02','coin_0_05','coin_0_10','coin_0_20','coin_0_50','coin_1','coin_2','bill_5','bill_10','bill_20','bill_50','bill_100','bill_200','bill_500'].map(key => [key,0]));
+  const closed = await admin.inject({ method: 'POST', url: `/api/economics/cash/${cashSession.id}/close`, payload: { countedDenominations: denominations } });
+  assert.equal(closed.statusCode, 200, closed.body);
+  const exportUrl = `/api/reports/export.xlsx?${range}&sections=cash`;
+  const cashierResponse = await accountant.inject({ method: 'GET', url: exportUrl });
+  const ownerResponse = await ownerPanel.inject({ method: 'GET', url: exportUrl });
+  assert.equal(cashierResponse.statusCode, 200, cashierResponse.body); assert.equal(ownerResponse.statusCode, 200, ownerResponse.body);
+  const cashierFile = unzip(cashierResponse.rawPayload);
+  const ownerFile = unzip(ownerResponse.rawPayload);
+  const cashSheet = cashierFile['xl/worksheets/sheet2.xml'];
+  const ownerCashSheet = ownerFile['xl/worksheets/sheet2.xml'];
+  assert.ok(!/<c r="(?:F|G|H|I|J|K|L)2"/.test(cashSheet), 'non-owner gets no cash float, denomination, expected, count or difference cells');
+  assert.match(ownerCashSheet, /<c r="K2"[^>]*><v>-?\d+(?:\.\d+)?<\/v><\/c>/, 'owner export includes the register difference');
+
+  const totalsFile = unzip((await accountant.inject({ method: 'GET', url: `/api/reports/export.xlsx?${range}&sections=payments` })).rawPayload);
+  const totals = totalsFile['xl/worksheets/sheet1.xml'];
+  const cellValue = (ref) => Number(totals.match(new RegExp(`<c r="${ref}"[^>]*><v>([^<]+)<\\/v><\\/c>`))?.[1]);
+  assert.equal(cellValue('B5'), expectedSold);
+  assert.equal(cellValue('B6'), expectedCollected);
+  assert.equal((await billingOnly.inject({ method: 'GET', url: `/api/reports/export.pdf?${range}` })).statusCode, 403);
+  const pdf = await accountant.inject({ method: 'GET', url: `/api/reports/export.pdf?${range}` });
+  assert.equal(pdf.statusCode, 200, pdf.body);
+  assert.equal(pdf.headers['content-type'], 'application/pdf');
+  assert.equal(pdf.rawPayload.subarray(0, 5).toString(), '%PDF-');
+  const reopened = await ownerPanel.inject({ method: 'POST', url: `/api/economics/cash/${cashSession.id}/owner-reopen`, payload: { custodianActorId: 'reports-test-admin', openingDenominations: denominations } });
+  assert.equal(reopened.statusCode, 200, reopened.body);
 });
 
 test('CSV and XLSX exports fail closed instead of returning silently truncated financial data', async () => {

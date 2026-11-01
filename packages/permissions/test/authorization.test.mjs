@@ -33,6 +33,7 @@ test('approved role matrix grants only named operations and denies by default', 
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.read-basic'), true);
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.read-tax'), true);
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.export'), true);
+  assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'economy.read'), true);
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.payments.manage'), false);
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.cash.manage'), false);
   assert.equal(can({ actorId: 'fixture', role: 'accountant' }, 'billing.write-tax'), false);
