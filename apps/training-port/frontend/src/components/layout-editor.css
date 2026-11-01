@@ -21,17 +21,17 @@
 .pz-panel .pz-lead{margin:0;color:var(--label-2);font-size:12.5px;line-height:1.4}
 .pz-done{min-height:44px}
 /* first-time guide */
-.pg-back{position:fixed;inset:0;z-index:300;display:flex;align-items:flex-end;justify-content:center;padding:16px 16px calc(16px + env(safe-area-inset-bottom));background:rgba(5,8,10,.62);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
-.pg{width:min(100%,460px);display:grid;gap:12px;padding:20px 18px 16px;border-radius:24px;background:#0F1519;color:#EEF3F1;border:1px solid rgba(255,255,255,.1);box-shadow:0 24px 60px rgba(0,0,0,.5)}
-.pg-art{display:grid;place-items:center;height:92px;border-radius:18px;background:radial-gradient(90% 90% at 70% 0%,rgba(16,185,129,.28),transparent 60%),#121B20;border:1px solid rgba(255,255,255,.07)}
+.pg-back{position:fixed;inset:0;z-index:300;display:flex;align-items:flex-end;justify-content:center;padding:16px 16px calc(16px + env(safe-area-inset-bottom));background:color-mix(in srgb, var(--2j-color-sidebar) 62%, transparent);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.pg{width:min(100%,460px);display:grid;gap:12px;padding:20px 18px 16px;border-radius:24px;background:var(--2j-color-sidebar);color:var(--2j-color-sidebar-text);border:1px solid color-mix(in srgb, var(--2j-color-sidebar-text) 10%, transparent);box-shadow:0 24px 60px color-mix(in srgb, var(--2j-color-sidebar) 50%, transparent)}
+.pg-art{display:grid;place-items:center;height:92px;border-radius:18px;background:radial-gradient(90% 90% at 70% 0%,rgba(16,185,129,.28),transparent 60%),var(--2j-color-sidebar);border:1px solid color-mix(in srgb, var(--2j-color-sidebar-text) 7%, transparent)}
 .pg-art svg{width:40px;height:40px;color:#34D399}
 .pg-step{font-size:11px;letter-spacing:.14em;font-weight:800;color:#D9B45B;text-transform:uppercase}
 .pg h3{margin:0;font-size:20px;letter-spacing:-.02em}
-.pg p{margin:0;color:#9FB0AA;font-size:14px;line-height:1.5}
+.pg p{margin:0;color:var(--2j-color-sidebar-muted);font-size:14px;line-height:1.5}
 .pg-dots{display:flex;gap:6px;justify-content:center}
-.pg-dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.18)}
+.pg-dots i{width:7px;height:7px;border-radius:50%;background:color-mix(in srgb, var(--2j-color-sidebar-text) 18%, transparent)}
 .pg-dots i.on{background:#10B981;width:20px;border-radius:99px}
 .pg-acts{display:flex;gap:8px}
-.pg-acts button{flex:1;min-height:46px;border-radius:14px;font-weight:750;font-size:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#EEF3F1}
+.pg-acts button{flex:1;min-height:46px;border-radius:14px;font-weight:750;font-size:14px;border:1px solid color-mix(in srgb, var(--2j-color-sidebar-text) 12%, transparent);background:color-mix(in srgb, var(--2j-color-sidebar-text) 5%, transparent);color:var(--2j-color-sidebar-text)}
 .pg-acts button.go{background:linear-gradient(135deg,#34D399,#10B981);color:#04140E;border-color:transparent}
 .pz-set{margin-bottom:12px}
