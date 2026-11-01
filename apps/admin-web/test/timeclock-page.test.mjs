@@ -85,7 +85,7 @@ test('the date filter narrows the list and can be cleared; server refusals show 
   fireEvent.click(screen.getByRole('button', { name: 'Quitar filtro' }));
   assert.equal(within(screen.getByRole('table')).getAllByRole('row').length - 1, 2);
   fireEvent.click(screen.getByRole('button', { name: 'Fichar entrada' }));
-  assert.ok(await screen.findByText('Ya tienes una jornada abierta.'));
+  assert.ok(await screen.findByText(/Ya tienes la entrada fichada y la jornada sigue abierta/));
 });
 
 test('an unlinked account and a profile without permission get explanations instead of buttons', async () => {
@@ -102,4 +102,30 @@ test('the navigation has a top-level Fichaje link for profiles with staff access
   await screen.findByRole('heading', { name: 'Mis fichajes' });
   const nav = within(document.querySelector('.app-navigation'));
   assert.equal(nav.getByRole('link', { name: 'Fichaje' }).getAttribute('aria-current'), 'page');
+});
+
+test('A74/A75: every refusal of Fichar entrada or salida names the cause and the action, for known codes, server failures and a dead network', async () => {
+  const attempt = async (punch, label, self) => {
+    serve({ punch, self }); window.location.hash = '#timeclock'; mount();
+    await screen.findByRole('heading', { name: 'Mis fichajes' });
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    const alert = await screen.findByRole('alert');
+    const text = alert.textContent;
+    cleanup(); globalThis.fetch = undefined;
+    return text;
+  };
+  const open = () => response(selfOf({ openShift: true }));
+  const custody = await attempt(() => response({ error: 'cash_register_must_be_closed_or_handed_over' }, 409), 'Fichar salida', open);
+  assert.match(custody, /caja a tu cargo/); assert.match(custody, /Ciérrala o entrégasela en Caja/);
+  const noShift = await attempt(() => response({ error: 'no_open_shift' }, 409), 'Fichar salida', open);
+  assert.match(noShift, /No tienes ninguna entrada fichada/); assert.match(noShift, /Ficha primero la entrada/);
+  const unlinked = await attempt(() => response({ error: 'staff_account_unlinked' }, 409), 'Fichar entrada');
+  assert.match(unlinked, /Pide a Administración que la vincule/);
+  const server = await attempt(() => response({ error: 'internal_error' }, 500), 'Fichar entrada');
+  assert.match(server, /error interno/); assert.match(server, /repítela/);
+  const unknown = await attempt(() => response({ error: 'something_new' }, 422), 'Fichar entrada');
+  assert.match(unknown, /al fichar la entrada/); assert.match(unknown, /código: something_new/); assert.match(unknown, /avisa a Administración/);
+  const dead = await attempt(() => { throw new TypeError('Failed to fetch'); }, 'Fichar entrada');
+  assert.match(dead, /No hay conexión con el servidor para fichar la entrada/);
+  for (const text of [custody, noShift, unlinked, server, unknown, dead]) assert.ok(!/No se pudo completar|No se pudo fichar\.?$/.test(text), `generic message: ${text}`);
 });

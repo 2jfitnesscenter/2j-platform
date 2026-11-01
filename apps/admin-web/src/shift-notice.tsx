@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { apiFetch } from './api-fetch.js';
+import { networkReason, reasonText } from './reason-text.js';
 
 const api = import.meta.env?.VITE_API_URL ?? 'http://127.0.0.1:3100';
 
@@ -30,9 +31,9 @@ export function useShift() {
     try {
       const response = await apiFetch(`${api}/api/timeclock/clock-in`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'web' }) });
       const body = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok && body.error !== 'shift_already_open') throw new Error('No se pudo fichar. Inténtalo desde Fichaje.');
+      if (!response.ok && body.error !== 'shift_already_open') throw new Error(reasonText(body.error, response.status, null, { action: 'fichar la entrada' }));
       setState('open');
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo fichar.'); } finally { setBusy(false); }
+    } catch (caught) { setError(caught instanceof TypeError ? networkReason('fichar la entrada') : caught instanceof Error ? caught.message : reasonText(undefined, undefined, null, { action: 'fichar la entrada' })); } finally { setBusy(false); }
   }, []);
   /** El API acaba de rechazar una acción por no haber turno: se muestra el aviso aunque la lectura previa dijera otra cosa. */
   const markClosed = React.useCallback(() => setState('closed'), []);

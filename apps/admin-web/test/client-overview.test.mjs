@@ -33,7 +33,7 @@ test('balanceCounters shows the balance of the current period or right, unlimite
 });
 
 test('Saldo de cuota renders one card per counter with an accessible progress bar', () => {
-  render(React.createElement(BalanceCards, { assignments: assignments.slice(0, 3) }));
+  render(React.createElement(BalanceCards, { assignments: assignments.slice(0, 3), today: '2026-10-31' }));
   const section = screen.getByRole('region', { name: 'Saldo de cuota' });
   assert.match(section.textContent, /7 sesiones disponibles de 12/);
   assert.match(section.textContent, /4 sesiones disponibles de 10/);
@@ -90,6 +90,6 @@ test('the month calendar marks days with the client\'s bookings (Canary time), l
 });
 
 test('a negative balance never shows as negative sessions', () => {
-  render(React.createElement(BalanceCards, { assignments: [{ id: 'n', planName: 'Bono', endsOn: null, derivedStatus: 'active', rights: [{ rightType: 'sessions_quota', serviceName: 'Fuerza', quantity: 10, balance: -1 }] }] }));
+  render(React.createElement(BalanceCards, { today: '2026-10-31', assignments: [{ id: 'n', planName: 'Bono', endsOn: null, derivedStatus: 'active', rights: [{ rightType: 'sessions_quota', serviceName: 'Fuerza', quantity: 10, balance: -1 }] }] }));
   assert.match(screen.getByRole('region', { name: 'Saldo de cuota' }).textContent, /0 sesiones disponibles de 10/);
 });
