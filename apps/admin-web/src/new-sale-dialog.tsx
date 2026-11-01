@@ -11,7 +11,7 @@ type Plan = { id: string; name: string; basePriceCents: number | null };
 type Variant = { id: string; label: string; priceCents: number; active: boolean; stockTracked: boolean; stock: number | null };
 type Product = { id: string; name: string; category: string; active: boolean; variants: Variant[] };
 type PlanLine = { key: string; kind: 'plan'; planId: string; name: string; basePriceCents: number | null; price: string; reason: string; startsOn: string };
-type ProductLine = { key: string; kind: 'product'; variantId: string; name: string; priceCents: number; quantity: number; stock: number | null };
+type ProductLine = { key: string; kind: 'product'; variantId: string; name: string; priceCents: number; quantity: number; stock: number | null; discount: string; discountReason: string };
 type Line = PlanLine | ProductLine;
 type Done = { chargeId?: string | undefined; invoiced?: boolean };
 
@@ -47,6 +47,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
   const [pending, setPending] = React.useState(false);
   const [asInvoice, setAsInvoice] = React.useState(false);
   const [note, setNote] = React.useState('');
+  const [invoiceNote, setInvoiceNote] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const [lineErrors, setLineErrors] = React.useState<Record<string, string>>({});
@@ -90,7 +91,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
     .filter((product) => product.variants.length > 0).sort((a, b) => Math.min(...a.variants.map((v) => rank(v.id))) - Math.min(...b.variants.map((v) => rank(v.id))) || a.name.localeCompare(b.name, 'es'));
 
   const planCents = (line: PlanLine) => toCents(line.price);
-  const lineCents = (line: Line) => line.kind === 'plan' ? (planCents(line) ?? 0) : line.priceCents * line.quantity;
+  const lineCents = (line: Line) => line.kind === 'plan' ? (planCents(line) ?? 0) : Math.max(0, line.priceCents - (toCents(line.discount) ?? 0)) * line.quantity;
   const total = lines.reduce((sum, line) => sum + lineCents(line), 0);
   const planLines = lines.filter((line): line is PlanLine => line.kind === 'plan');
   const productLines = lines.filter((line): line is ProductLine => line.kind === 'product');
@@ -107,7 +108,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
     setLines((current) => {
       const existing = current.find((line): line is ProductLine => line.kind === 'product' && line.variantId === variant.id);
       if (existing) return current.map((line) => line === existing ? { ...existing, quantity: Math.min(existing.quantity + 1, existing.stock ?? 1000) } : line);
-      return [...current, { key: uuid(), kind: 'product', variantId: variant.id, name: `${product.name} · ${variant.label}`, priceCents: variant.priceCents, quantity: 1, stock: variant.stockTracked ? variant.stock : null }];
+      return [...current, { key: uuid(), kind: 'product', variantId: variant.id, name: `${product.name} · ${variant.label}`, priceCents: variant.priceCents, quantity: 1, stock: variant.stockTracked ? variant.stock : null, discount: '', discountReason: '' }];
     });
   };
   const patch = (key: string, change: Partial<PlanLine> | Partial<ProductLine>) => setLines((current) => current.map((line) => line.key === key ? { ...line, ...change } as Line : line));
@@ -118,6 +119,12 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
       const cents = planCents(line);
       if (!cents || cents < 1) return `Indica un precio válido para «${line.name}».`;
       if (line.basePriceCents != null && cents !== line.basePriceCents && line.reason.trim().length < 3) return `Explica el descuento o ajuste de «${line.name}».`;
+    }
+    for (const line of productLines) {
+      const discount=toCents(line.discount)??0;
+      if(line.discount.trim()!==''&&toCents(line.discount)===null)return `Indica un descuento válido para «${line.name}».`;
+      if(discount>line.priceCents)return `El descuento de «${line.name}» no puede superar su precio.`;
+      if(discount>0&&line.discountReason.trim().length<3)return `Explica el descuento de «${line.name}».`;
     }
     return '';
   }
@@ -158,7 +165,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
         finished[line.key] = { chargeId: body.chargeId }; writeRecents([line.planId]);
       }
       if (!failed && productLines.length > 0 && !productLines.every((line) => finished[line.key])) {
-        const payload = { clientId, lines: productLines.map((line) => ({ variantId: line.variantId, quantity: line.quantity })), paymentState: paying ? 'paid' : 'pending', paymentMethod: paying ? method : null, note: note.trim() };
+        const payload = { clientId, lines: productLines.map((line) => ({ variantId: line.variantId, quantity: line.quantity, discountCents: toCents(line.discount) ?? 0, ...(line.discountReason.trim()?{discountReason:line.discountReason.trim()}: {}) })), paymentState: paying ? 'paid' : 'pending', paymentMethod: paying ? method : null, note: note.trim() };
         const response = await apiFetch(`${api}/api/admin/store/sales`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey('products', payload) }, body: JSON.stringify(payload) });
         const body = await response.json().catch(() => ({})) as { error?: string };
         if (!response.ok) { if (response.status >= 500) unknownOutcome = true; const message = await failure(body.error, response.status); for (const line of productLines) setLineErrors((current) => ({ ...current, [line.key]: message })); failed = true; }
@@ -169,7 +176,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
         let issued = 0; let refused = '';
         for (const line of planLines) {
           const chargeId = finished[line.key]?.chargeId; if (!chargeId || finished[line.key]?.invoiced) continue;
-          const response = await apiFetch(`${api}/api/economics/charges/${chargeId}/invoice`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ documentType: asInvoice ? 'full_invoice' : 'simplified_ticket' }) });
+          const response = await apiFetch(`${api}/api/economics/charges/${chargeId}/invoice`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ documentType: asInvoice ? 'full_invoice' : 'simplified_ticket', invoiceNote: invoiceNote.trim() || undefined }) });
           if (response.ok) { finished[line.key] = { ...finished[line.key], invoiced: true }; issued += 1; }
           else { const body = await response.json().catch(() => ({})) as { error?: string; missing?: string[] }; refused = body.error === 'issuer_incomplete' ? `Falta configurar los datos de facturación${body.missing?.length ? ` (${body.missing.join(', ')})` : ''}.` : body.error === 'client_fiscal_data_missing' ? 'Faltan datos fiscales del cliente.' : response.status === 403 ? 'Tu perfil no puede emitir facturas.' : 'No se pudo emitir el documento; puedes hacerlo desde Pagos.'; }
         }
@@ -210,12 +217,13 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
             {lines.length === 0 ? <p className="new-sale-empty">Elige una cuota o un producto.</p> : <ul>{lines.map((line) => <li key={line.key} className="new-sale-line">
               <div className="new-sale-line-head"><strong>{line.name}</strong><button type="button" className="text-button" aria-label={`Quitar ${line.name}`} disabled={busy || locked} onClick={() => remove(line.key)}>Quitar</button></div>
               {line.kind === 'plan' ? <div className="new-sale-fields">
-                <label>Precio (€)<input inputMode="decimal" value={line.price} disabled={!capabilities.manageCatalogPrice || busy || locked} onChange={(event) => patch(line.key, { price: event.target.value })} aria-label={`Precio de ${line.name}`} /></label>
+                <label>Precio final (€)<input inputMode="decimal" value={line.price} disabled={!capabilities.manageCatalogPrice || busy || locked} onChange={(event) => patch(line.key, { price: event.target.value })} aria-label={`Precio final de ${line.name}`} /></label>
                 {capabilities.manageCatalogPrice && line.basePriceCents != null && planCents(line) !== line.basePriceCents ? <label>Motivo del descuento<input value={line.reason} maxLength={240} disabled={busy || locked} onChange={(event) => patch(line.key, { reason: event.target.value })} aria-label={`Motivo del descuento de ${line.name}`} /></label> : null}
                 <label>Inicio<input type="date" value={line.startsOn} disabled={busy || locked} onChange={(event) => patch(line.key, { startsOn: event.target.value || today() })} aria-label={`Inicio de ${line.name}`} /></label>
               </div> : <div className="new-sale-fields">
                 <label>Cantidad<input inputMode="numeric" value={line.quantity} disabled={busy || locked} aria-label={`Cantidad de ${line.name}`} onChange={(event) => { const next = Number(event.target.value.replace(/\D/g, '')) || 1; patch(line.key, { quantity: Math.max(1, Math.min(next, line.stock ?? 1000)) }); }} /></label>
                 <span>{euro(line.priceCents)} × {line.quantity}</span>
+                {capabilities.manageCatalogPrice ? <><label>Descuento por unidad (€)<input inputMode="decimal" value={line.discount} disabled={busy||locked} onChange={event=>patch(line.key,{discount:event.target.value})} aria-label={`Descuento de ${line.name}`} /></label>{(toCents(line.discount)??0)>0?<label>Motivo del descuento<input value={line.discountReason} maxLength={240} disabled={busy||locked} onChange={event=>patch(line.key,{discountReason:event.target.value})} aria-label={`Motivo del descuento de ${line.name}`} /></label>:null}</>:null}
               </div>}
               <p className="new-sale-line-total">{euro(lineCents(line))}{done[line.key] ? ' · registrado' : ''}</p>
               {lineErrors[line.key] ? <p className="new-sale-error" role="alert">{lineErrors[line.key]}</p> : null}
@@ -232,7 +240,8 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
             {planLines.length > 0 ? <label className="new-sale-check"><input type="checkbox" checked={asInvoice} onChange={(event) => setAsInvoice(event.target.checked)} disabled={busy} /> Emitir factura <small>(sin marcar se emite un ticket)</small></label> : null}
           </> : null}
           {productLines.length > 0 ? <label>Nota interna de la venta de productos<input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} disabled={busy || locked} /></label> : null}
-          <p className="new-sale-muted">Descuentos de productos y notas en factura aún no están conectados. La renovación automática de una cuota mensual se activa en la ficha, en la tarjeta de la cuota.</p>
+          {planLines.length > 0 && !pending ? <label>Nota para la factura o ticket<input value={invoiceNote} maxLength={1000} onChange={(event)=>setInvoiceNote(event.target.value)} disabled={busy||locked} /></label> : null}
+          <p className="new-sale-muted">La cuota conserva su precio final y motivo por línea. El IGIC se calcula por línea en el documento emitido.</p>
         </section> : null}
         {error ? <p className="new-sale-error" role="alert">{error}</p> : null}
         <div className="new-sale-actions">

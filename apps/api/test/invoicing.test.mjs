@@ -6,7 +6,7 @@ import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
 import { MemoryObjectStorage } from '../src/object-storage.ts';
-import { renderInvoicePdf, rateBreakdown } from '../src/invoice-pdf.ts';
+import { renderInvoicePdf, rateBreakdown, invoiceNoteLines } from '../src/invoice-pdf.ts';
 import { sniffLogo, svgIsSafe } from '../src/invoicing.ts';
 import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
@@ -65,6 +65,8 @@ test('unit: logos are identified by their bytes, unsafe SVG is refused and the I
     { description: 'c', netCents: 500, taxTreatment: 'taxable', taxRateBasisPoints: 300, taxCents: 15 }, { description: 'd', netCents: 100, taxTreatment: 'exempt', taxRateBasisPoints: null, taxCents: 0 },
   ]);
   assert.deepEqual(rows.map((row) => [row.taxTreatment, row.rateBasisPoints, row.baseCents, row.taxCents]), [['exempt', null, 100, 0], ['taxable', 300, 1500, 45], ['taxable', 700, 2000, 140]]);
+  assert.deepEqual(invoiceNoteLines('  Nota   de prueba  '), ['Nota', 'Nota de prueba']);
+  assert.equal(invoiceNoteLines('   '), null);
 });
 
 test('unit: the PDF renderer returns a valid A4 PDF with the right title, repeats the table over pages and makes a short roll for tickets', async () => {
@@ -152,8 +154,11 @@ test('issuing numbers documents consecutively with no gaps, splits IGIC per rate
 
 test('issued documents are immutable, keep the data and logo they were issued with, and download as a valid PDF in both variants', async () => {
   const c = await paidCharge('Inmutable');
-  const issued = (await post(`/api/economics/charges/${c.chargeId}/invoice`, { documentType: 'full_invoice' })).json();
+  const issueResponse = await post(`/api/economics/charges/${c.chargeId}/invoice`, { documentType: 'full_invoice', invoiceNote: 'Conservar esta nota en el documento' });
+  assert.equal(issueResponse.statusCode, 201, issueResponse.body);
+  const issued = issueResponse.json();
   const before = await document(issued.id);
+  assert.equal(before.invoiceNote, 'Conservar esta nota en el documento');
   await assert.rejects(sql`UPDATE economic_fiscal_documents SET document_number='X' WHERE id=${issued.id}::uuid`, { code: '55000' });
   await assert.rejects(sql`DELETE FROM economic_fiscal_documents WHERE id=${issued.id}::uuid`, { code: '55000' });
   await admin.inject({ method: 'PUT', url: '/api/economics/invoice-settings', payload: { issuerName: 'Otro Nombre Posterior', footerText: 'Otro pie' } });

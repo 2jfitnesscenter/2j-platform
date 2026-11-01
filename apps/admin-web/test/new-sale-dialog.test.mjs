@@ -77,10 +77,11 @@ test('the method (Efectivo, Bizum, Transferencia), the invoice checkbox and "pen
   assert.deepEqual([...within(dialog).getByLabelText('Método').options].map((option) => option.textContent), ['Efectivo', 'Bizum', 'Transferencia']);
   fireEvent.change(within(dialog).getByLabelText('Método'), { target: { value: 'transfer' } });
   fireEvent.click(within(dialog).getByRole('checkbox', { name: /Emitir factura/ }));
+  fireEvent.change(within(dialog).getByLabelText('Nota para la factura o ticket'), { target: { value: 'Texto para la persona' } });
   fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
   await within(dialog).findByText('Venta registrada');
   assert.equal(writes(calls).find((call) => call.path.endsWith('/plans')).body.paymentMethod, 'transfer');
-  assert.equal(writes(calls).find((call) => call.path.includes('/invoice')).body.documentType, 'full_invoice');
+  assert.deepEqual(writes(calls).find((call) => call.path.includes('/invoice')).body, { documentType: 'full_invoice', invoiceNote: 'Texto para la persona' });
   cleanup();
 
   calls = serve();
@@ -115,8 +116,20 @@ test('products come with variants and stock: sold-out variants cannot be added, 
   fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
   await within(dialog).findByText('Venta registrada');
   const sale = writes(calls).find((call) => call.path === '/api/admin/store/sales');
-  assert.deepEqual(sale.body, { clientId: CLIENT, lines: [{ variantId: TEE.id, quantity: 2 }, { variantId: PROTEIN.id, quantity: 1 }], paymentState: 'paid', paymentMethod: 'bizum', note: '' });
+  assert.deepEqual(sale.body, { clientId: CLIENT, lines: [{ variantId: TEE.id, quantity: 2, discountCents: 0 }, { variantId: PROTEIN.id, quantity: 1, discountCents: 0 }], paymentState: 'paid', paymentMethod: 'bizum', note: '' });
   assert.equal(writes(calls).filter((call) => call.path.includes('/invoice')).length, 0, 'product sales have no charge to invoice');
+});
+
+test('an authorized product discount is recorded per cart line with a reason and reduces the displayed and submitted total', async () => {
+  const calls=serve();const dialog=await open();fireEvent.click(within(dialog).getByRole('tab',{name:'Productos'}));
+  fireEvent.click(await within(dialog).findByRole('button',{name:/Talla M/}));
+  fireEvent.change(within(dialog).getByLabelText('Descuento de Camiseta 2J · Talla M'),{target:{value:'2'}});
+  fireEvent.change(within(dialog).getByLabelText('Motivo del descuento de Camiseta 2J · Talla M'),{target:{value:'Promoción aprobada'}});
+  assert.match(within(dialog).getByText(/^Total/).textContent,/16,00\s*€/);
+  fireEvent.click(within(dialog).getByRole('button',{name:/^Cobrar/}));fireEvent.click(within(dialog).getByRole('button',{name:/Confirmar cobro de/}));
+  await within(dialog).findByText('Venta registrada');
+  const sale=writes(calls).find(call=>call.path==='/api/admin/store/sales');
+  assert.deepEqual(sale.body.lines,[{variantId:TEE.id,quantity:1,discountCents:200,discountReason:'Promoción aprobada'}]);
 });
 
 test('recents come first, and the search filters both catalogues', async () => {
@@ -136,7 +149,7 @@ test('a price change needs a reason (D257) and is only allowed with the catalogu
   const calls = serve();
   let dialog = await open();
   fireEvent.click(await within(dialog).findByRole('button', { name: /Mensual ilimitada/ }));
-  fireEvent.change(within(dialog).getByLabelText('Precio de Mensual ilimitada'), { target: { value: '50' } });
+  fireEvent.change(within(dialog).getByLabelText('Precio final de Mensual ilimitada'), { target: { value: '50' } });
   fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
   assert.match((await within(dialog).findByRole('alert')).textContent, /Explica el descuento/);
   fireEvent.change(within(dialog).getByLabelText('Motivo del descuento de Mensual ilimitada'), { target: { value: 'Amigo de la casa' } });
@@ -150,7 +163,7 @@ test('a price change needs a reason (D257) and is only allowed with the catalogu
   serve();
   dialog = await open({ assignPlans: true, collectPayments: true });
   fireEvent.click(await within(dialog).findByRole('button', { name: /Mensual ilimitada/ }));
-  assert.equal(within(dialog).getByLabelText('Precio de Mensual ilimitada').disabled, true);
+  assert.equal(within(dialog).getByLabelText('Precio final de Mensual ilimitada').disabled, true);
   fireEvent.click(within(dialog).getByRole('button', { name: /Cuota sin precio/ }));
   assert.match((await within(dialog).findByRole('alert')).textContent, /necesita un precio base/);
 });
@@ -187,7 +200,7 @@ test('D113: without a shift the guided notice appears when collecting, fichar ke
   assert.equal(within(dialog).queryByText(/No se pudo registrar/), null, 'no generic error');
   fireEvent.click(within(dialog).getByRole('button', { name: 'Fichar entrada ahora' }));
   await waitFor(() => assert.ok(!within(dialog).queryByText('Para cobrar primero tienes que fichar la entrada')));
-  assert.ok(within(dialog).getByLabelText('Precio de Mensual ilimitada'), 'the cart is kept');
+  assert.ok(within(dialog).getByLabelText('Precio final de Mensual ilimitada'), 'the cart is kept');
   fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
   await within(dialog).findByText('Venta registrada');
   const plans = writes(calls).filter((call) => call.path.endsWith('/plans'));
@@ -263,7 +276,7 @@ test('a lost response never lets a changed cart register twice: after the first 
   // The terms that feed the idempotency fingerprint can no longer change.
   assert.equal(within(dialog).getByLabelText('Método').disabled, true);
   assert.equal(within(dialog).getByRole('checkbox', { name: /Dejar pendiente de pago/ }).disabled, true);
-  assert.equal(within(dialog).getByLabelText('Precio de Mensual ilimitada').disabled, true);
+  assert.equal(within(dialog).getByLabelText('Precio final de Mensual ilimitada').disabled, true);
   assert.equal(within(dialog).getByLabelText('Inicio de Mensual ilimitada').disabled, true);
   assert.equal(within(dialog).getByRole('button', { name: 'Quitar Mensual ilimitada' }).disabled, true);
   assert.equal(within(dialog).queryByRole('button', { name: 'Volver' }), null, 'no way back into the cart');
@@ -319,7 +332,7 @@ test('the discount reason locks with the rest after an unknown outcome, and a de
   const calls = serve({ onPlan: () => { if (lose) { lose = false; throw new Error('network down'); } return response({ id: 'asg-1', chargeId: 'charge-1' }, 201); } });
   let dialog = await open();
   fireEvent.click(await within(dialog).findByRole('button', { name: /Mensual ilimitada/ }));
-  fireEvent.change(within(dialog).getByLabelText('Precio de Mensual ilimitada'), { target: { value: '50' } });
+  fireEvent.change(within(dialog).getByLabelText('Precio final de Mensual ilimitada'), { target: { value: '50' } });
   fireEvent.change(within(dialog).getByLabelText('Motivo del descuento de Mensual ilimitada'), { target: { value: 'Amigo de la casa' } });
   fireEvent.click(within(dialog).getByRole('button', { name: /^Cobrar/ }));
   fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar cobro de/ }));
