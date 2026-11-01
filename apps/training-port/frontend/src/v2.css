@@ -26,8 +26,8 @@
   --v2-gold-2: #a97c10;
   --v2-gold-soft: color-mix(in srgb, var(--v2-gold) 16%, transparent);
   --v2-gold-line: color-mix(in srgb, var(--v2-gold) 42%, transparent);
-  --v2-graphite: #121315;
-  --v2-graphite-2: #1b1d20;
+  --v2-graphite: var(--2j-color-sidebar);
+  --v2-graphite-2: var(--2j-color-sidebar);
 
   /* surfaces */
   --v2-card: color-mix(in srgb, var(--surface) 92%, var(--label) 3%);
@@ -37,9 +37,9 @@
   --v2-glass-blur: 18px;
 
   /* elevation */
-  --v2-e1: 0 1px 2px rgba(0,0,0,.28), 0 4px 14px -6px rgba(0,0,0,.32);
-  --v2-e2: 0 2px 4px rgba(0,0,0,.3), 0 14px 32px -14px rgba(0,0,0,.5);
-  --v2-e3: 0 4px 8px rgba(0,0,0,.34), 0 28px 60px -20px rgba(0,0,0,.62);
+  --v2-e1: 0 1px 2px color-mix(in srgb, var(--2j-color-sidebar) 28%, transparent), 0 4px 14px -6px color-mix(in srgb, var(--2j-color-sidebar) 32%, transparent);
+  --v2-e2: 0 2px 4px color-mix(in srgb, var(--2j-color-sidebar) 30%, transparent), 0 14px 32px -14px color-mix(in srgb, var(--2j-color-sidebar) 50%, transparent);
+  --v2-e3: 0 4px 8px color-mix(in srgb, var(--2j-color-sidebar) 34%, transparent), 0 28px 60px -20px color-mix(in srgb, var(--2j-color-sidebar) 62%, transparent);
 
   /* motion */
   --v2-ease: cubic-bezier(.2,.8,.2,1);
@@ -47,12 +47,12 @@
 }
 :root[data-theme="light"] {
   --v2-card: var(--surface);
-  --v2-card-line: rgba(0,0,0,.06);
-  --v2-glass-bg: color-mix(in srgb, #fff 84%, transparent);
-  --v2-glass-line: rgba(0,0,0,.08);
-  --v2-e1: 0 1px 2px rgba(20,24,28,.08), 0 4px 14px -6px rgba(20,24,28,.12);
-  --v2-e2: 0 2px 4px rgba(20,24,28,.08), 0 14px 32px -14px rgba(20,24,28,.2);
-  --v2-e3: 0 4px 8px rgba(20,24,28,.1), 0 28px 60px -20px rgba(20,24,28,.28);
+  --v2-card-line: color-mix(in srgb, var(--2j-color-sidebar) 6%, transparent);
+  --v2-glass-bg: color-mix(in srgb, var(--2j-color-surface) 84%, transparent);
+  --v2-glass-line: color-mix(in srgb, var(--2j-color-sidebar) 8%, transparent);
+  --v2-e1: 0 1px 2px color-mix(in srgb, var(--2j-color-sidebar) 8%, transparent), 0 4px 14px -6px color-mix(in srgb, var(--2j-color-sidebar) 12%, transparent);
+  --v2-e2: 0 2px 4px color-mix(in srgb, var(--2j-color-sidebar) 8%, transparent), 0 14px 32px -14px color-mix(in srgb, var(--2j-color-sidebar) 20%, transparent);
+  --v2-e3: 0 4px 8px color-mix(in srgb, var(--2j-color-sidebar) 10%, transparent), 0 28px 60px -20px color-mix(in srgb, var(--2j-color-sidebar) 28%, transparent);
 }
 
 /* ------------------------------------------------------------ surfaces -- */
@@ -170,16 +170,16 @@
 .v2-ach {
   position: relative; overflow: hidden; isolation: isolate; text-align: center;
   width: 100%; max-width: 340px; margin: 0 auto; padding: 18px 20px 20px; border-radius: 24px;
-  color: #f4f5f6; font-family: 'Sora', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, system-ui, sans-serif;
-  background: linear-gradient(165deg, #1d1f22 0%, #0c0d0e 70%);
-  border: 1px solid rgba(255,255,255,.09);
+  color: var(--2j-color-sidebar-text); font-family: 'Sora', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, system-ui, sans-serif;
+  background: linear-gradient(165deg, var(--2j-color-sidebar) 0%, var(--2j-color-sidebar) 70%);
+  border: 1px solid color-mix(in srgb, var(--2j-color-sidebar-text) 9%, transparent);
 }
 .v2-ach::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background: radial-gradient(110% 70% at 50% -10%, rgba(47,209,139,.26), transparent 62%); }
 .v2-ach.gold { border-color: rgba(232,187,76,.38); }
 .v2-ach.gold::before { background: radial-gradient(110% 70% at 50% -10%, rgba(232,187,76,.30), transparent 62%), radial-gradient(80% 50% at 50% 115%, rgba(47,209,139,.14), transparent 70%); }
 .v2-ach-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 10px; margin-bottom: 14px; }
-.v2-ach-brand { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 11px; font-weight: 800; letter-spacing: .12em; color: rgba(255,255,255,.82); }
+.v2-ach-brand { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 11px; font-weight: 800; letter-spacing: .12em; color: color-mix(in srgb, var(--2j-color-sidebar-text) 82%, transparent); }
 .v2-ach-brand img { width: 18px; height: 18px; object-fit: contain; filter: brightness(0) invert(1); opacity: .9; }
 .v2-ach-kind { white-space: nowrap; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; background: rgba(47,209,139,.16); color: #2fd18b; }
 .v2-ach.gold .v2-ach-kind { background: rgba(232,187,76,.16); color: #e8bb4c; }
@@ -188,13 +188,13 @@
 .v2-ach.gold .v2-ach-medal { color: #e8bb4c; background: radial-gradient(circle at 35% 30%, rgba(232,187,76,.34), rgba(232,187,76,.06)); box-shadow: 0 0 0 2px rgba(232,187,76,.55), 0 12px 32px -10px rgba(232,187,76,.6); }
 .v2-ach-medal img { width: 100%; height: 100%; object-fit: contain; border-radius: 50%; }
 .v2-ach-title { font-size: 19px; font-weight: 700; letter-spacing: -.015em; line-height: 1.2; text-transform: capitalize; }
-.v2-ach-sub { margin-top: 3px; font-size: 12.5px; color: rgba(255,255,255,.6); line-height: 1.35; }
-.v2-ach-value { margin-top: 12px; font-size: 34px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.05; color: #fff; }
+.v2-ach-sub { margin-top: 3px; font-size: 12.5px; color: color-mix(in srgb, var(--2j-color-sidebar-text) 60%, transparent); line-height: 1.35; }
+.v2-ach-value { margin-top: 12px; font-size: 34px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.05; color: var(--2j-color-sidebar-text); }
 .v2-ach.gold .v2-ach-value { color: #f3cf74; }
 .v2-ach-delta { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
   background: rgba(47,209,139,.16); color: #2fd18b; }
 .v2-ach-delta .icn { font-size: 13px; }
-.v2-ach-date { margin-top: 14px; font-size: 11px; letter-spacing: .06em; color: rgba(255,255,255,.45); }
+.v2-ach-date { margin-top: 14px; font-size: 11px; letter-spacing: .06em; color: color-mix(in srgb, var(--2j-color-sidebar-text) 45%, transparent); }
 
 /* ---------------------------------------------------- premium body map -- */
 .v2-bmp-map { position: relative; padding: 6px 0 2px; }
