@@ -259,7 +259,7 @@ test('a failed template load is distinct from empty and offers retry', async () 
   assert.ok(await screen.findByText('No hay textos de consentimiento'));
 });
 
-test('the navigation lists Mi gimnasio inside Gestión', async () => {
+test('the navigation lists Mi gimnasio inside Centro', async () => {
   serve(); window.location.hash = '#my-gym'; mount();
   await screen.findByRole('heading', { level: 1, name: 'Mi gimnasio' });
   const nav = within(document.querySelector('.app-navigation'));
