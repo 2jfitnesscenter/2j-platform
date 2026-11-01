@@ -127,3 +127,24 @@ test('Caja aparece en el menú solo con el permiso de caja del perfil', () => {
   assert.equal(flat({ calendar: true, clients: true, communications: true, billing: true, staff: true, cash: false }).includes('caja'), false);
   assert.equal(flat(null).includes('caja'), false);
 });
+
+test('A74/A75: closing a register that fails always says why and what to do, even for a code or a failure the screen has never seen', async () => {
+  for (const [onPost, expected] of [
+    [() => response({ error: 'cash_custodian_required' }, 409), /Solo quien tiene la caja a su cargo puede cerrarla.*Pídele que la cierre/],
+    [() => response({ error: 'brand_new_code' }, 422), /al cerrar la caja.*avisa a Administración.*código: brand_new_code/],
+    [() => response({ error: 'internal_error' }, 500), /error interno.*repítela/],
+    [() => { throw new TypeError('Failed to fetch'); }, /No hay conexión con el servidor para cerrar la caja/],
+  ]) {
+    const regs = registers({ bunker: { available: false, ownCustody: true, sessionId: 'sess-1' } });
+    serve({ regs, onPost });
+    render(React.createElement(CajaPage));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }));
+    const form = await screen.findByRole('form', { name: 'Cerrar Búnker' });
+    within(form).getAllByRole('textbox').forEach(input => fireEvent.change(input, { target: { value: '0' } }));
+    fireEvent.submit(form);
+    const text = (await screen.findByRole('alert')).textContent;
+    assert.match(text, expected);
+    assert.ok(!/No se pudo completar/.test(text), `generic message: ${text}`);
+    cleanup();
+  }
+});

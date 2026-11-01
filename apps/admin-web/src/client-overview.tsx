@@ -37,8 +37,8 @@ export function balanceCounters(assignments: OverviewAssignment[], today = dayKe
   return counters;
 }
 
-export function BalanceCards({ assignments }: { assignments: OverviewAssignment[] }) {
-  const counters = balanceCounters(assignments);
+export function BalanceCards({ assignments, today }: { assignments: OverviewAssignment[]; today?: string }) {
+  const counters = balanceCounters(assignments, today);
   return <Card as="section" aria-labelledby="client-balance-title"><CardHeader title="Saldo de cuota" titleId="client-balance-title" level={3} />
     {counters.length === 0 ? <p className="client-muted">Sin cuota con sesiones activa.</p> : <ul className="client-balance-list">{counters.map((counter) => {
       const ratio = counter.granted && counter.granted > 0 ? Math.max(0, Math.min(1, counter.available / counter.granted)) : null;

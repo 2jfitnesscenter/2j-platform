@@ -1,4 +1,5 @@
 import React from 'react';
+import { networkReason, reasonText } from './reason-text.js';
 import { Button, Card, CardHeader, EmptyState, PageHeader, StatusChip, icons } from '@2j/ui';
 import { CashCountGrid, cashCountsValid, emptyCashCounts } from './cash-count-grid.js';
 import { ShiftNotice, SHIFT_REQUIRED_CODES, useShift } from './shift-notice.js';
@@ -135,11 +136,11 @@ export function CajaPage() {
         : await fetch(`${apiUrl}/api/economics/cash/${dialog.register.sessionId}/close`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ countedDenominations: counts }) });
       const body = await readJson(response);
       if (!response.ok && (SHIFT_REQUIRED_CODES as readonly string[]).includes(body.error as string)) { shift.markClosed(); return; }
-      if (!response.ok) { setDialogError(errorText[body.error as string] ?? body.message ?? 'No se pudo completar la operación. Inténtalo de nuevo.'); return; }
+      if (!response.ok) { setDialogError(reasonText(body.error as string | undefined, response.status, body.message as string | undefined, { action: dialog.mode === 'open' ? 'abrir la caja' : 'cerrar la caja' })); return; }
       setFeedback(dialog.mode === 'open' ? `${dialog.register.name} abierta.` : `${dialog.register.name} cerrada. El recuento queda registrado.`);
       setDialog(null);
       await load();
-    } catch { setDialogError('No se pudo conectar con el servidor.'); } finally { setBusy(false); }
+    } catch { setDialogError(networkReason(dialog.mode === 'open' ? 'abrir la caja' : 'cerrar la caja')); } finally { setBusy(false); }
   }
 
   const header = <PageHeader title="Caja" description="Dos cajas físicas, Búnker y Sala: una sesión por caja y día, abierta y cerrada con recuento por denominación." actions={<Button icon={icons.RefreshCw} onClick={() => void load()}>Actualizar</Button>} />;

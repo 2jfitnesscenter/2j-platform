@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Button, icons } from '@2j/ui';
 import { apiFetch } from './api-fetch.js';
 import { Modal } from './modal.js';
+import { reasonText } from './reason-text.js';
 import { ShiftNotice, SHIFT_REQUIRED_CODES, useShift } from './shift-notice.js';
 
 const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
@@ -139,7 +140,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
     if (code === 'cash_session_previous_day_requires_owner_resolution') return 'Hay una caja de un día anterior pendiente de resolución del propietario.';
     if (status === 403 || code === 'permission_denied') return 'Tu perfil no puede registrar esta venta.';
     if (status === 401) return 'Tu sesión ha caducado. Vuelve a entrar.';
-    return 'No se pudo registrar. Inténtalo de nuevo; no se duplicará lo ya registrado.';
+    return `${reasonText(code, status, null, { action: 'registrar la venta' })} Lo ya registrado no se duplicará.`;
   }
 
   async function confirm() {

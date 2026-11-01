@@ -1,4 +1,5 @@
 import { apiFetch } from './api-fetch.js';
+import { networkReason, reasonText } from './reason-text.js';
 import React from 'react';
 import { Button, Card, CardHeader, EmptyState, Icon, PageHeader, StatusChip, icons } from '@2j/ui';
 import { clearDeepLink, readDeepLink } from './deep-link.js';
@@ -60,10 +61,10 @@ export function TimeClockPage() {
     setBusy(true); setError(''); setNotice('');
     try {
       const response = await apiFetch(`${apiUrl}/api/timeclock/${kind}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'web' }) });
-      if (!response.ok) { const body = await readJson(response) as { error?: string }; throw new Error(body.error === 'shift_already_open' ? 'Ya tienes una jornada abierta.' : body.error === 'no_open_shift' ? 'No tienes una jornada abierta.' : body.error === 'cash_register_must_be_closed_or_handed_over' ? 'Antes de fichar la salida, cierra la caja o entrégasela a otra persona que ya haya fichado.' : 'No se pudo fichar. Inténtalo de nuevo.'); }
+      if (!response.ok) { const body = await readJson(response) as { error?: string; message?: string }; throw new Error(reasonText(body.error, response.status, body.message, { action: kind === 'clock-in' ? 'fichar la entrada' : 'fichar la salida' })); }
       setNotice(kind === 'clock-in' ? 'Entrada registrada.' : 'Salida registrada.');
       await load();
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo fichar.'); } finally { setBusy(false); }
+    } catch (caught) { setError(caught instanceof TypeError ? networkReason(kind === 'clock-in' ? 'fichar la entrada' : 'fichar la salida') : caught instanceof Error ? caught.message : reasonText(undefined, undefined, null, { action: 'fichar' })); } finally { setBusy(false); }
   }
 
   React.useEffect(() => {

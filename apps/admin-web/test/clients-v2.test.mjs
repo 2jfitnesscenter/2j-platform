@@ -180,9 +180,13 @@ test('Plan y sesiones assigns action weights and cancelling needs a reason, list
 });
 
 test('A72 shows independent period bags and sends manual adjustments to the selected period',async()=>{
+  // Los periodos se construyen respecto a hoy (hora de Canarias): el mes actual está «En curso» y el siguiente «Programado» en cualquier fecha.
+  const nowKey=new Intl.DateTimeFormat('en-CA',{timeZone:'Atlantic/Canary',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const monthOf=(offset)=>{const [y,m]=nowKey.split('-').map(Number);const first=new Date(Date.UTC(y,m-1+offset,1));const last=new Date(Date.UTC(y,m+offset,0));const iso=(d)=>d.toISOString().slice(0,10);return {first:iso(first),last:iso(last),label:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',month:'short'}).format(first).replace('.','')};};
+  const thisMonth=monthOf(0),nextMonth=monthOf(1);
   const plan=assignment({kind:'recurring',planName:'Cuota trimestral',rights:[{id:'period-right',rightType:'sessions_quota',serviceName:'Fuerza',quantity:null,quantityRule:'weekday_ratio_v1',period:null,quotaScope:'shared',balance:4,periods:[
-    {id:'period-1',periodIndex:0,startsOn:'2026-10-01',endsOn:'2026-10-31',sessionsGranted:8,balance:0},
-    {id:'period-2',periodIndex:1,startsOn:'2026-11-01',endsOn:'2026-11-30',sessionsGranted:9,balance:4},
+    {id:'period-1',periodIndex:0,startsOn:thisMonth.first,endsOn:thisMonth.last,sessionsGranted:8,balance:0},
+    {id:'period-2',periodIndex:1,startsOn:nextMonth.first,endsOn:nextMonth.last,sessionsGranted:9,balance:4},
   ]}]});
   const profile=profileOf({plans:[plan],payments:{balanceCents:0,overdueCount:0,charges:[],movements:[]}});
   let adjustmentPayload=null;
@@ -195,8 +199,8 @@ test('A72 shows independent period bags and sends manual adjustments to the sele
   await open();
   fireEvent.click(screen.getByRole('tab',{name:'Plan y sesiones'}));
   await screen.findByRole('heading',{name:'Cuota trimestral'});
-  assert.ok(screen.getByText(/oct.*En curso.*0 sesiones disponibles de 8 concedidas/i));
-  assert.ok(screen.getByText(/nov.*Programado.*4 sesiones disponibles de 9 concedidas/i));
+  assert.ok(screen.getByText(new RegExp(`${thisMonth.label}.*En curso.*0 sesiones disponibles de 8 concedidas`,'i')));
+  assert.ok(screen.getByText(new RegExp(`${nextMonth.label}.*Programado.*4 sesiones disponibles de 9 concedidas`,'i')));
   fireEvent.click(screen.getByRole('button',{name:'Ajustar saldo'}));
   const dialog=await screen.findByRole('dialog',{name:'Ajustar saldo'});
   const period=within(dialog).getByLabelText('Bolsa del periodo');
