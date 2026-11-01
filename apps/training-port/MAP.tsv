@@ -408,3 +408,5 @@ frontend/src/views/trainer/studio/ProgramEditor.jsx	ui-copy	0	1
 frontend/src/views/trainer/studio/StudioAdmin.jsx	ui-copy	0	1
 frontend/src/views/trainer/studio/parts.jsx	ui-copy	0	1
 frontend/src/views/trainer/studio/studio.css	visual-css	0	0
+frontend/src/lib/exercises.js	pure-logic	0	0	copied from 2jfitnessapp b7d8e68 (missing from port)
+frontend/src/lib/features.js	pure-logic	0	0	copied from 2jfitnessapp b7d8e68 (missing from port)
