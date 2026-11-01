@@ -18,6 +18,7 @@ export type InvoiceDocumentData = {
   issuer: InvoiceParty & { footerText?: string | null; legalText?: string | null };
   client: InvoiceParty;
   lines: InvoiceLine[];
+  invoiceNote?: string | null;
   totals: InvoiceTotals;
   paymentMethods: Array<{ method: string; amountCents: number }>;
   paymentStatus?: 'paid' | 'pending' | null;
@@ -35,6 +36,10 @@ export const eurosText = (cents: number) => `${new Intl.NumberFormat('es-ES', { 
 const percentText = (basisPoints: number | null) => basisPoints == null ? '—' : `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(basisPoints / 100)} %`;
 const dateText = (value: string) => { const [year, month, day] = value.slice(0, 10).split('-'); return `${day}/${month}/${year}`; };
 const clean = (value: string | null | undefined) => (value ?? '').replace(/\s+/g, ' ').trim();
+export function invoiceNoteLines(value: string | null | undefined): [string, string] | null {
+  const note = clean(value);
+  return note ? ['Nota', note] : null;
+}
 
 function partyLines(party: InvoiceParty): string[] {
   const place = [clean(party.postalCode), clean(party.locality)].filter(Boolean).join(' ');
@@ -140,6 +145,14 @@ function renderA4(doc: PDFKit.PDFDocument, data: InvoiceDocumentData, logo: Invo
     y = doc.y;
   }
 
+  const invoiceNote = invoiceNoteLines(data.invoiceNote);
+  if (invoiceNote) {
+    y += 10;
+    doc.font('semibold').fontSize(8.5).fillColor(GRAPHITE).text(invoiceNote[0], left, y, { width });
+    doc.font('regular').fontSize(9).fillColor(GRAPHITE).text(invoiceNote[1], left, doc.y + 2, { width });
+    y = doc.y;
+  }
+
   // Footer: business data and the editable legal text, only what exists.
   const footer = [clean(data.issuer.footerText), clean(data.issuer.legalText)].filter(Boolean);
   if (footer.length) {
@@ -182,6 +195,8 @@ function renderTicket(doc: PDFKit.PDFDocument, data: InvoiceDocumentData, logo: 
   row('TOTAL', eurosText(data.totals.grossCents), true);
   const payment = statusText(data);
   if (payment.methods || payment.status) { doc.font('regular').fontSize(7.5).fillColor(MUTED).text([payment.methods, payment.status].filter(Boolean).join(' · '), left, y + 2, { width, align: 'center' }); y = doc.y; }
+  const invoiceNote = invoiceNoteLines(data.invoiceNote);
+  if (invoiceNote) { doc.font('semibold').fontSize(7).fillColor(GRAPHITE).text(invoiceNote[0], left, y + 4, { width, align: 'center' }); doc.font('regular').fontSize(7).fillColor(GRAPHITE).text(invoiceNote[1], left, doc.y + 1, { width, align: 'center' }); y = doc.y; }
   const footer = [clean(data.issuer.footerText), clean(data.issuer.legalText)].filter(Boolean).join('\n');
   if (footer) { doc.font('regular').fontSize(6.5).fillColor(MUTED).text(footer, left, y + 8, { width, align: 'center' }); y = doc.y; }
   return y + 16;

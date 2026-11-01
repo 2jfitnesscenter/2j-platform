@@ -29,6 +29,7 @@ export function svgIsSafe(svg: string) {
 
 const text = (max: number, min = 1) => z.string().trim().min(min).max(max);
 const optionalText = (max: number) => z.union([text(max), z.literal('').transform(() => null), z.null()]).optional();
+const invoiceNoteInput = z.string().max(2000).transform(value => value.normalize('NFKC').trim()).pipe(z.string().max(1000));
 const settingsInput = z.object({
   issuerName: optionalText(160), issuerTaxId: optionalText(30), issuerAddress: optionalText(240), issuerPostalCode: optionalText(20), issuerLocality: optionalText(100), issuerProvince: optionalText(100),
   defaultIgicBasisPoints: z.number().int().min(0).max(10_000).optional(), defaultSeriesId: uuid.nullable().optional(), footerText: optionalText(600), legalText: optionalText(1500),
@@ -50,7 +51,7 @@ export async function buildDocumentPdf(db: DB, storage: ObjectStorage, documentI
     documentType: row.document_type, documentNumber: row.document_number, documentDate: String(row.document_date).slice(0, 10),
     rectifies: row.rectifies_document_id ? { documentNumber: row.originalNumber, documentDate: String(row.originalDate), reason: row.rectification_reason } : null,
     issuer: { name: issuerSnapshot.name, taxId: issuerSnapshot.taxId, address: issuerSnapshot.address, postalCode: issuerSnapshot.postalCode, locality: issuerSnapshot.locality, province: issuerSnapshot.province, footerText: issuerSnapshot.footerText, legalText: issuerSnapshot.legalText },
-    client: row.client_snapshot as InvoiceDocumentData['client'], lines: row.lines_snapshot as InvoiceLine[], totals,
+    client: row.client_snapshot as InvoiceDocumentData['client'], lines: row.lines_snapshot as InvoiceLine[], totals, invoiceNote: row.invoice_note ?? null,
     paymentMethods: methods, paymentStatus: row.rectifies_document_id ? null : methods.reduce((sum, item) => sum + Number(item.amountCents), 0) >= Number(totals.grossCents) ? 'paid' : 'pending',
   };
   const pdf = await renderInvoicePdf(data, { logo, variant });
@@ -195,7 +196,7 @@ export function registerInvoicingRoutes(app: FastifyInstance<any, any, any, any,
   // ------------------------------------------------------------------------------------------------------------------ issuing
   /** Takes the next number of the series inside the caller's transaction: a rolled-back issue gives the number back, so numbering has no gaps. */
   async function issueFromDraft(tx: any, context: AuthorizationContext, draftId: string) {
-    const [draft] = await tx`SELECT id,client_id AS "clientId",series_id AS "seriesId",document_type AS "documentType",source_charge_id AS "sourceChargeId",line_items AS lines,payment_methods AS "paymentMethods",fiscal_snapshot AS "fiscalSnapshot",net_cents AS "netCents",tax_cents AS "taxCents",gross_cents AS "grossCents" FROM economic_invoice_drafts WHERE id=${draftId}::uuid FOR UPDATE`;
+    const [draft] = await tx`SELECT id,client_id AS "clientId",series_id AS "seriesId",document_type AS "documentType",source_charge_id AS "sourceChargeId",line_items AS lines,payment_methods AS "paymentMethods",fiscal_snapshot AS "fiscalSnapshot",net_cents AS "netCents",tax_cents AS "taxCents",gross_cents AS "grossCents",invoice_note AS "invoiceNote" FROM economic_invoice_drafts WHERE id=${draftId}::uuid FOR UPDATE`;
     if (!draft) return { error: 'draft_not_found' as const };
     const [already] = await tx`SELECT id,document_number AS "documentNumber",status FROM economic_fiscal_documents WHERE draft_id=${draftId}::uuid AND rectifies_document_id IS NULL`;
     if (already) return { document: { id: already.id as string, documentNumber: already.documentNumber as string, status: already.status as string }, replay: true as const };
@@ -211,8 +212,8 @@ export function registerInvoicingRoutes(app: FastifyInstance<any, any, any, any,
     else { const [person] = await tx`SELECT first_name AS "firstName",last_name AS "lastName" FROM clients WHERE id=${draft.clientId}::uuid`; client = { name: draft.documentType === 'full_invoice' || !person ? null : `${person.firstName} ${person.lastName}` }; }
     const issuer = { name: settings.issuerName, taxId: settings.issuerTaxId, address: settings.issuerAddress, postalCode: settings.issuerPostalCode ?? null, locality: settings.issuerLocality ?? null, province: settings.issuerProvince ?? null, footerText: settings.footerText ?? null, legalText: settings.legalText ?? null, logo: settings.logoKey ? { key: settings.logoKey, mime: settings.logoMime } : null };
     const totals = { netCents: Number(draft.netCents), taxCents: Number(draft.taxCents), grossCents: Number(draft.grossCents), byRate: rateBreakdown(lines) };
-    const [document] = await tx`INSERT INTO economic_fiscal_documents(draft_id,document_type,status,series_id,series_name,document_number,source_charge_id,client_id,issuer_snapshot,client_snapshot,lines_snapshot,payment_methods,totals_snapshot,issued_by)
-      VALUES (${draft.id}::uuid,${draft.documentType},'issued',${draft.seriesId}::uuid,${taken.series_name},${taken.display_number},${draft.sourceChargeId}::uuid,${draft.clientId}::uuid,${JSON.stringify(issuer)}::jsonb,${JSON.stringify(client)}::jsonb,${JSON.stringify(lines)}::jsonb,${JSON.stringify(draft.paymentMethods)}::jsonb,${JSON.stringify(totals)}::jsonb,${context.actorId})
+    const [document] = await tx`INSERT INTO economic_fiscal_documents(draft_id,document_type,status,series_id,series_name,document_number,source_charge_id,client_id,issuer_snapshot,client_snapshot,lines_snapshot,payment_methods,totals_snapshot,invoice_note,issued_by)
+      VALUES (${draft.id}::uuid,${draft.documentType},'issued',${draft.seriesId}::uuid,${taken.series_name},${taken.display_number},${draft.sourceChargeId}::uuid,${draft.clientId}::uuid,${JSON.stringify(issuer)}::jsonb,${JSON.stringify(client)}::jsonb,${JSON.stringify(lines)}::jsonb,${JSON.stringify(draft.paymentMethods)}::jsonb,${JSON.stringify(totals)}::jsonb,${draft.invoiceNote??null},${context.actorId})
       RETURNING id,document_number AS "documentNumber",status`;
     if (!document) throw new Error('document insert returned no row');
     await audit(tx, context, 'invoice.issued', 'fiscal_document', document.id, draft.clientId, { documentNumber: document.documentNumber, documentType: draft.documentType, grossCents: euros(Number(draft.grossCents)) });
@@ -237,7 +238,7 @@ export function registerInvoicingRoutes(app: FastifyInstance<any, any, any, any,
     reply.header('Cache-Control', 'no-store');
     const context = await auth(request, reply, MANAGE); if (!context) return;
     const params = z.object({ chargeId: uuid }).strict().safeParse(request.params);
-    const body = z.object({ documentType: z.enum(['simplified_ticket', 'full_invoice']), seriesId: uuid.optional(), igicBasisPoints: z.number().int().min(0).max(10_000).optional() }).strict().safeParse(request.body);
+    const body = z.object({ documentType: z.enum(['simplified_ticket', 'full_invoice']), seriesId: uuid.optional(), igicBasisPoints: z.number().int().min(0).max(10_000).optional(), invoiceNote: invoiceNoteInput.optional() }).strict().safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error' });
     try {
       const result = await db.begin(async (tx) => {
@@ -259,9 +260,10 @@ export function registerInvoicingRoutes(app: FastifyInstance<any, any, any, any,
         const net = Math.round(gross * 10_000 / (10_000 + rate));
         const line = { description: charge.concept, quantity: 1, unitNetCents: net, netCents: net, taxTreatment: 'taxable', taxRateBasisPoints: rate, taxCents: gross - net, taxDescription: null };
         const draftId = randomUUID();
-        const requestHash = createHash('sha256').update(`charge-invoice:${charge.id}:${body.data.documentType}:${rate}`).digest('hex');
-        await tx`INSERT INTO economic_invoice_drafts(id,client_id,series_id,series_name,invoice_number,concept,net_cents,tax_basis_points,tax_cents,gross_cents,tax_description,fiscal_snapshot,created_by,idempotency_key,request_hash,document_type,source_charge_id,line_items,tax_treatment,tax_rate_basis_points,payment_methods)
-          VALUES (${draftId}::uuid,${charge.clientId}::uuid,${seriesId}::uuid,NULL,NULL,${charge.concept},${net},${rate},${gross - net},${gross},NULL,${JSON.stringify(profile ?? {})}::jsonb,${context.actorId},${randomUUID()}::uuid,${requestHash},${body.data.documentType},${charge.id}::uuid,${JSON.stringify([line])}::jsonb,'taxable',${rate},${JSON.stringify(methods.map((m: any) => ({ method: m.method, amountCents: Number(m.amountCents) })))}::jsonb)`;
+        const invoiceNote=body.data.invoiceNote||null;
+        const requestHash = createHash('sha256').update(JSON.stringify({kind:'charge-invoice',chargeId:charge.id,documentType:body.data.documentType,rate,invoiceNote})).digest('hex');
+        await tx`INSERT INTO economic_invoice_drafts(id,client_id,series_id,series_name,invoice_number,concept,net_cents,tax_basis_points,tax_cents,gross_cents,tax_description,fiscal_snapshot,created_by,idempotency_key,request_hash,document_type,source_charge_id,line_items,tax_treatment,tax_rate_basis_points,payment_methods,invoice_note)
+          VALUES (${draftId}::uuid,${charge.clientId}::uuid,${seriesId}::uuid,NULL,NULL,${charge.concept},${net},${rate},${gross - net},${gross},NULL,${JSON.stringify(profile ?? {})}::jsonb,${context.actorId},${randomUUID()}::uuid,${requestHash},${body.data.documentType},${charge.id}::uuid,${JSON.stringify([line])}::jsonb,'taxable',${rate},${JSON.stringify(methods.map((m: any) => ({ method: m.method, amountCents: Number(m.amountCents) })))}::jsonb,${invoiceNote})`;
         const issued = await issueFromDraft(tx, context, draftId);
         return issued;
       });
@@ -289,8 +291,8 @@ export function registerInvoicingRoutes(app: FastifyInstance<any, any, any, any,
         const lines = (original.lines_snapshot as InvoiceLine[]).map((line) => ({ ...line, netCents: negate(line.netCents), taxCents: negate(line.taxCents), unitNetCents: line.unitNetCents ?? line.netCents }));
         const originalTotals = original.totals_snapshot as Record<string, any>;
         const totals = { netCents: negate(Number(originalTotals.netCents)), taxCents: negate(Number(originalTotals.taxCents)), grossCents: negate(Number(originalTotals.grossCents)), byRate: rateBreakdown(lines) };
-        const [document] = await tx`INSERT INTO economic_fiscal_documents(draft_id,document_type,status,series_id,series_name,document_number,source_charge_id,client_id,issuer_snapshot,client_snapshot,lines_snapshot,payment_methods,totals_snapshot,rectifies_document_id,rectification_reason,issued_by)
-          VALUES (${original.draft_id}::uuid,${original.document_type},'rectified',${original.series_id}::uuid,${taken.series_name},${taken.display_number},${original.source_charge_id}::uuid,${original.client_id}::uuid,${JSON.stringify(original.issuer_snapshot)}::jsonb,${JSON.stringify(original.client_snapshot)}::jsonb,${JSON.stringify(lines)}::jsonb,'[]'::jsonb,${JSON.stringify(totals)}::jsonb,${original.id}::uuid,${body.data.reason},${context.actorId})
+        const [document] = await tx`INSERT INTO economic_fiscal_documents(draft_id,document_type,status,series_id,series_name,document_number,source_charge_id,client_id,issuer_snapshot,client_snapshot,lines_snapshot,payment_methods,totals_snapshot,invoice_note,rectifies_document_id,rectification_reason,issued_by)
+          VALUES (${original.draft_id}::uuid,${original.document_type},'rectified',${original.series_id}::uuid,${taken.series_name},${taken.display_number},${original.source_charge_id}::uuid,${original.client_id}::uuid,${JSON.stringify(original.issuer_snapshot)}::jsonb,${JSON.stringify(original.client_snapshot)}::jsonb,${JSON.stringify(lines)}::jsonb,'[]'::jsonb,${JSON.stringify(totals)}::jsonb,${original.invoice_note??null},${original.id}::uuid,${body.data.reason},${context.actorId})
           RETURNING id,document_number AS "documentNumber",status`;
         if (!document) throw new Error('rectifying document insert returned no row');
         await audit(tx, context, 'invoice.rectified', 'fiscal_document', document.id, original.client_id, { rectifies: original.document_number, documentNumber: document.documentNumber });
@@ -319,7 +321,7 @@ export function registerInvoicingRoutes(app: FastifyInstance<any, any, any, any,
     const params = z.object({ documentId: uuid }).strict().safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: 'validation_error' });
     const [row] = await db`SELECT id,document_type AS "documentType",status,series_name AS "seriesName",document_number AS "documentNumber",document_date::text AS "documentDate",source_charge_id AS "chargeId",client_id AS "clientId",
-      issuer_snapshot AS issuer,client_snapshot AS client,lines_snapshot AS lines,payment_methods AS "paymentMethods",totals_snapshot AS totals,rectifies_document_id AS "rectifiesDocumentId",rectification_reason AS "rectificationReason",issued_at AS "issuedAt"
+      issuer_snapshot AS issuer,client_snapshot AS client,lines_snapshot AS lines,payment_methods AS "paymentMethods",totals_snapshot AS totals,invoice_note AS "invoiceNote",rectifies_document_id AS "rectifiesDocumentId",rectification_reason AS "rectificationReason",issued_at AS "issuedAt"
       FROM economic_fiscal_documents WHERE id=${params.data.documentId}::uuid`;
     return row ?? reply.code(404).send({ error: 'document_not_found' });
   });

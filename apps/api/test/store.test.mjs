@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
+import { canonicalSaleHashBody } from '../src/store.ts';
 import { ensureCashSessionForActor } from './cash-fixture.mjs';
 
 process.env.NODE_ENV ??= 'test';
@@ -11,12 +12,13 @@ if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required: Store 
 const sql=postgres(process.env.DATABASE_URL,{max:12,connect_timeout:5});await migrateDatabase(sql);
 const admin=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'store-test-admin',role:'admin'}),ownerActorId:'store-test-admin'});
 const trainer=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'store-test-trainer',role:'trainer'})});
+const discountDenied=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'store-test-no-discount',role:'trainer',explicitPermissions:['store.sales.create']})});
 const accountant=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'store-test-accountant',role:'accountant'})});
 const memberIds={};
 const member=(name)=>buildServer(process.env.DATABASE_URL,{clientAuthorizationResolver:async()=>({clientId:memberIds[name]})});
 for(const [name,firstName] of [['a','Tienda A'],['b','Tienda B']]){const created=await admin.inject({method:'POST',url:'/api/clients',headers:{'idempotency-key':randomUUID()},payload:{firstName,lastName:`Store ${randomUUID().slice(0,8)}`}});assert.equal(created.statusCode,201,created.body);memberIds[name]=created.json().id;}
 const memberA=member('a');const memberB=member('b');
-after(async()=>{await Promise.all([admin.close(),trainer.close(),accountant.close(),memberA.close(),memberB.close()]);await sql.end();});
+after(async()=>{await Promise.all([admin.close(),trainer.close(),accountant.close(),discountDenied.close(),memberA.close(),memberB.close()]);await sql.end();});
 const post=(url,payload,extra={})=>admin.inject({method:'POST',url,headers:extra,payload});
 const cashDenominationKeys=['coin_0_01','coin_0_02','coin_0_05','coin_0_10','coin_0_20','coin_0_50','coin_1','coin_2','bill_5','bill_10','bill_20','bill_50','bill_100','bill_200','bill_500'];
 const cashCount=(cents)=>Object.fromEntries(cashDenominationKeys.map((key,index)=>[key,index===0?cents:0]));
@@ -139,6 +141,31 @@ test('failed insufficient-stock sale rolls back; concurrent last-unit attempts a
   assert.equal(salesAfter.count,salesBefore.count);assert.equal(movementsAfter.count,movementsBefore.count);
   const results=await Promise.all([sale(memberIds.a,v.id,1),sale(memberIds.b,v.id,1)]);assert.deepEqual(results.map(result=>result.statusCode).sort(),[201,409]);
   const [balance]=await sql`SELECT sum(quantity_delta)::int AS stock FROM store_inventory_movements WHERE variant_id=${v.id}`;assert.equal(balance.stock,0);
+});
+
+test('product discounts are per line, require permission and reason, and preserve list price plus final total',async()=>{
+  const item=await product();const v=await variant(item.id,{label:'Descuento por unidad',priceCents:2000});await stock(v.id,3);
+  const noPermission=await discountDenied.inject({method:'POST',url:'/api/admin/store/sales',headers:{'idempotency-key':randomUUID()},payload:{clientId:memberIds.a,lines:[{variantId:v.id,quantity:1,discountCents:100,discountReason:'Ajuste autorizado'}],paymentState:'pending'}});
+  assert.equal(noPermission.statusCode,403);assert.equal(noPermission.json().error,'discount_permission_required');
+  const missingReason=await post('/api/admin/store/sales',{clientId:memberIds.a,lines:[{variantId:v.id,quantity:1,discountCents:100}],paymentState:'pending'},{'idempotency-key':randomUUID()});
+  assert.equal(missingReason.statusCode,400);
+  const excessive=await post('/api/admin/store/sales',{clientId:memberIds.a,lines:[{variantId:v.id,quantity:1,discountCents:2001,discountReason:'Descuento mayor al precio'}],paymentState:'pending'},{'idempotency-key':randomUUID()});
+  assert.equal(excessive.statusCode,409,excessive.body);assert.equal(excessive.json().error,'discount_exceeds_price');
+  const created=await post('/api/admin/store/sales',{clientId:memberIds.a,lines:[{variantId:v.id,quantity:2,discountCents:250,discountReason:'Descuento de campaña sintética'}],paymentState:'pending'},{'idempotency-key':randomUUID()});
+  assert.equal(created.statusCode,201,created.body);assert.equal(Number(created.json().totalCents),3500);
+  assert.deepEqual(created.json().lines.map(line=>[Number(line.unitPriceCents),Number(line.discountCents),line.discountReason,Number(line.lineTotalCents),line.igicBasisPoints,Number(line.taxCents)]),[[2000,250,'Descuento de campaña sintética',3500,300,102]]);
+  const [stored]=await sql`SELECT unit_price_cents AS "unitPriceCents",discount_cents AS "discountCents",discount_reason AS "discountReason",line_total_cents AS "lineTotalCents",igic_basis_points AS "igicBasisPoints",tax_cents AS "taxCents" FROM store_sale_lines WHERE sale_id=${created.json().id}::uuid`;
+  assert.deepEqual([Number(stored.unitPriceCents),Number(stored.discountCents),stored.discountReason,Number(stored.lineTotalCents),stored.igicBasisPoints,Number(stored.taxCents)],[2000,250,'Descuento de campaña sintética',3500,300,102]);
+  const [auditRow]=await sql`SELECT details->'discounts' AS discounts FROM store_audit_events WHERE resource_id=${created.json().id}::uuid AND action='sale.created'`;
+  assert.deepEqual(auditRow.discounts,[{variantId:v.id,discountCents:250,reason:'Descuento de campaña sintética'}]);
+});
+
+test('zero-discount retries retain the pre-discount canonical hash body',()=>{
+  const oldBody={clientId:memberIds.a.toLowerCase(),lines:[{variantId:randomUUID(),quantity:1}],paymentState:'pending',paymentMethod:null,note:''};
+  const currentBody={...oldBody,lines:oldBody.lines.map(line=>({...line,discountCents:0,discountReason:null}))};
+  assert.deepEqual(canonicalSaleHashBody(currentBody),oldBody);
+  const discounted={...oldBody,lines:[{...oldBody.lines[0],discountCents:100,discountReason:'Ajuste autorizado'}]};
+  assert.deepEqual(canonicalSaleHashBody(discounted).lines[0],{...oldBody.lines[0],discountCents:100,discountReason:'Ajuste autorizado'});
 });
 
 test('void restores tracked stock once and preserves sale, lines, movement ledger and audit history',async()=>{
