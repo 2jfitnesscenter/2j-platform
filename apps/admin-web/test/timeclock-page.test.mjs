@@ -115,8 +115,8 @@ test('A74/A75: every refusal of Fichar entrada or salida names the cause and the
     return text;
   };
   const open = () => response(selfOf({ openShift: true }));
-  const custody = await attempt(() => response({ error: 'cash_register_must_be_closed_or_handed_over' }, 409), 'Fichar salida', open);
-  assert.match(custody, /caja a tu cargo/); assert.match(custody, /Ciérrala o entrégasela en Caja/);
+  const custody = await attempt(() => response({ error: 'clock_out_conflict' }, 409), 'Fichar salida', open);
+  assert.match(custody, /al fichar la salida/); assert.match(custody, /código: clock_out_conflict/);
   const noShift = await attempt(() => response({ error: 'no_open_shift' }, 409), 'Fichar salida', open);
   assert.match(noShift, /No tienes ninguna entrada fichada/); assert.match(noShift, /Ficha primero la entrada/);
   const unlinked = await attempt(() => response({ error: 'staff_account_unlinked' }, 409), 'Fichar entrada');
