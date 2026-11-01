@@ -80,6 +80,7 @@ function capabilityHeaders(personId, requestId = randomUUID(), overrides = {}) {
 }
 
 test('versioned Training access rights require effective payment without a tracked quota and the internal endpoint consumes service requests', async () => {
+  const D = canaryBusinessDate(new Date()), E = new Date(Date.UTC(Number(D.slice(0, 4)), Number(D.slice(5, 7)), 0)).toISOString().slice(0, 10); // hoy y fin de mes: las ventas del test siempre están vigentes
   const service = await createService(`Training access ${randomUUID()}`);
   const createSubject = async (level, additionalRights = []) => {
     const plan = await createPlan([service.id], { basePriceCents:4500, rights:[
@@ -91,7 +92,7 @@ test('versioned Training access rights require effective payment without a track
     assert.equal(plan.response.json().rights.find(item=>item.rightType==='training_access').trainingAccessLevel,level);
     assert.equal((await app.inject({method:'POST',url:`/api/plans/${plan.response.json().id}/activate`})).statusCode,200);
     const client = (await createClientRequest(clientsAdminApp,{firstName:'Capability',lastName:`${level} ${randomUUID()}`})).json();
-    const sale = await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:plan.response.json().id,startsOn:'2026-10-01',endsOn:'2026-10-31',dueOn:'2026-10-01',amountCents:4500}});
+    const sale = await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId:plan.response.json().id,startsOn:D,endsOn:E,dueOn:D,amountCents:4500}});
     assert.equal(sale.statusCode,201,sale.body);
     const person = await clientsAdminApp.inject({method:'POST',url:'/api/platform/v1/persons',payload:{clientId:client.id}});
     assert.equal(person.statusCode,201,person.body);
@@ -1764,6 +1765,7 @@ test('service_access needs a valid service target in new plans and plan versions
 });
 
 test('approved entitlement roles are enforced server-side for reads, sales, lifecycle, payment and adjustments', async () => {
+  const D = canaryBusinessDate(new Date()), E = new Date(Date.UTC(Number(D.slice(0, 4)), Number(D.slice(5, 7)), 0)).toISOString().slice(0, 10); // hoy y fin de mes: las ventas del test siempre están vigentes
   const service = await createService();
   const created = await createPlan([service.id], { basePriceCents: 3200 });
   assert.equal(created.response.statusCode, 201, created.response.body);
@@ -1774,10 +1776,11 @@ test('approved entitlement roles are enforced server-side for reads, sales, life
   assert.equal(clientList.statusCode, 200); assert.equal(clientList.json().capabilities.assignPlans, true); assert.equal(clientList.json().capabilities.collectPayments, false);
   assert.equal((await clientsReceptionApp.inject({ method: 'GET', url: `/api/clients/${client.id}` })).statusCode, 200);
   assert.equal((await clientsReceptionApp.inject({ method: 'GET', url: '/api/plans/assignable' })).statusCode, 200);
-  assert.equal((await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${client.id}/entitlements/effective?date=2026-10-09` })).statusCode, 200);
-  assert.equal((await clientsAccountantApp.inject({ method: 'GET', url: `/api/clients/${client.id}/entitlements/effective?date=2026-10-09` })).statusCode, 403);
+  assert.equal((await clientsTrainerApp.inject({ method: 'GET', url: `/api/clients/${client.id}/entitlements/effective?date=${D}` })).statusCode, 200);
+  assert.equal((await clientsAccountantApp.inject({ method: 'GET', url: `/api/clients/${client.id}/entitlements/effective?date=${D}` })).statusCode, 403);
 
-  const salePayload = { planId, startsOn: '2026-10-09', endsOn: '2026-10-31', dueOn: '2026-10-09', amountCents: 3200 };
+  const DUE = `${D.slice(0, 8)}10` < D ? D : `${D.slice(0, 8)}10`; // vencimiento por defecto: día 10 del mes, o hoy si ya pasó (sin permiso de ajuste las fechas no se pueden cambiar)
+  const salePayload = { planId, startsOn: D, endsOn: E, dueOn: DUE, amountCents: 3200 };
   const sale = await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: salePayload });
   assert.equal(sale.statusCode, 201, sale.body);
   assert.equal((await sql`SELECT count(*)::int AS count FROM economic_transactions WHERE charge_id=${sale.json().chargeId}`).at(0).count, 0, 'an unpaid counter sale does not require payment permission');
@@ -1802,11 +1805,13 @@ test('approved entitlement roles are enforced server-side for reads, sales, life
   assert.equal((await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans/${sale.json().id}/resume`, headers: { 'idempotency-key': randomUUID() }, payload: {} })).statusCode, 201);
   assert.equal((await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${client.id}/plans/${sale.json().id}/cancel`, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'Baja solicitada' } })).statusCode, 201);
 
+  // La operación empieza el día siguiente al de la venta de origen, con las fechas por defecto de ese mes.
+  const N = new Date(Date.parse(`${D}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10), NE = new Date(Date.UTC(Number(N.slice(0, 4)), Number(N.slice(5, 7)), 0)).toISOString().slice(0, 10), ND = `${N.slice(0, 8)}10` < D ? N : `${N.slice(0, 8)}10`;
   for (const operationKind of ['renewal','change']) {
     const operationClient = (await createClientRequest(clientsAdminApp, { firstName: 'Operación', lastName: `${operationKind} ${randomUUID()}` })).json();
-    const source = await clientsAdminApp.inject({ method: 'POST', url: `/api/clients/${operationClient.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { planId, startsOn: '2026-10-09', endsOn: '2026-10-09', dueOn: '2026-10-09', amountCents: 3200 } });
+    const source = await clientsAdminApp.inject({ method: 'POST', url: `/api/clients/${operationClient.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { planId, startsOn: D, endsOn: D, dueOn: D, amountCents: 3200 } });
     assert.equal(source.statusCode, 201, source.body);
-    const operation = await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${operationClient.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { planId, sourceAssignmentId: source.json().id, operationKind, startsOn: '2026-10-10', endsOn: '2026-10-31', dueOn: '2026-10-10', amountCents: 3200 } });
+    const operation = await clientsReceptionApp.inject({ method: 'POST', url: `/api/clients/${operationClient.id}/plans`, headers: { 'idempotency-key': randomUUID() }, payload: { planId, sourceAssignmentId: source.json().id, operationKind, startsOn: N, endsOn: NE, dueOn: ND, amountCents: 3200 } });
     assert.equal(operation.statusCode, 201, `${operationKind}: ${operation.body}`);
   }
   for (const actor of [clientsTrainerApp, clientsAccountantApp]) {

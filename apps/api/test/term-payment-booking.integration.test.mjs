@@ -128,7 +128,7 @@ test('F1-C term payment access uses ledger truth; unpaid/partial overdue is deni
 
 test('client plan assignment route coordinates a frozen natural-month contract and replays without duplicating charge or bags',async()=>{
   const client=await createClient(),service=await createService(),plan=await createContractPlan(service,{termKind:'natural_month'});
-  const start=utcDateOffset(1);
+  const start=utcMonthDateFrom(utcDateOffset(0),1,1); // un mes natural empieza siempre el día 1: el del mes siguiente vale cualquier día
   const headers={'idempotency-key':randomUUID()};
   const payload={planId:plan.id,startsOn:start,dueOn:start.slice(0,8)+'10',amountCents:5000};
   const first=await app.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers,payload});
