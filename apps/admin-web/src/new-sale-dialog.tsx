@@ -137,7 +137,6 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
     if (code === 'price_override_forbidden') return 'Tu perfil no puede cambiar el precio del plan.';
     if (code === 'adjustment_reason_required') return 'Explica el ajuste del precio.';
     if (code === 'insufficient_stock') return 'No hay stock suficiente de alguno de los productos.';
-    if (code === 'cash_session_previous_day_requires_owner_resolution') return 'Hay una caja de un día anterior pendiente de resolución del propietario.';
     if (status === 403 || code === 'permission_denied') return 'Tu perfil no puede registrar esta venta.';
     if (status === 401) return 'Tu sesión ha caducado. Vuelve a entrar.';
     return `${reasonText(code, status, null, { action: 'registrar la venta' })} Lo ya registrado no se duplicará.`;
@@ -233,7 +232,7 @@ export function NewSaleDialog({ clientId, clientName, capabilities, onClose, onD
             {planLines.length > 0 ? <label className="new-sale-check"><input type="checkbox" checked={asInvoice} onChange={(event) => setAsInvoice(event.target.checked)} disabled={busy} /> Emitir factura <small>(sin marcar se emite un ticket)</small></label> : null}
           </> : null}
           {productLines.length > 0 ? <label>Nota interna de la venta de productos<input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} disabled={busy || locked} /></label> : null}
-          <p className="new-sale-muted">Descuentos de productos, notas en factura y renovación automática de la cuota aún no están conectados.</p>
+          <p className="new-sale-muted">Descuentos de productos y notas en factura aún no están conectados. La renovación automática de una cuota mensual se activa en la ficha, en la tarjeta de la cuota.</p>
         </section> : null}
         {error ? <p className="new-sale-error" role="alert">{error}</p> : null}
         <div className="new-sale-actions">
