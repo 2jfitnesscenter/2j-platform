@@ -8,6 +8,7 @@ import { materializeCalendarTemplates } from './calendar-materializer.js';
 import type { TrainingAdapter, TrainingEvolutionAdapter } from './training-integration.js';
 import { memberTrainingCapabilities } from './training-capabilities-api.js';
 import { registerTrainingMemberRoutes } from './training-member.js';
+import { registerExerciseLibraryRoutes } from './exercise-catalog.js';
 import { canaryBusinessDate, canaryLocalMidnightUtc } from '@2j/domain';
 import { evaluateTermPaymentAccess } from './term-payment-access.js';
 import { resolveEffectiveClientAssignments } from './entitlements.js';
@@ -209,6 +210,7 @@ export function registerClientAppRoutes(
   });
 
   registerTrainingMemberRoutes(app, db, client, memberNow);
+  registerExerciseLibraryRoutes(app, db, client);
 
   app.get('/api/me/training-summary', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;
