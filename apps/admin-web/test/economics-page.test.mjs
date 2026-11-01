@@ -12,8 +12,8 @@ const client = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', firstName: 'Ada', l
 const charge = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', clientId: client.id, firstName: client.firstName, lastName: client.lastName, concept: 'Cuota mensual', amountCents: 10000, paidCents: 2500, balanceCents: 7500, dueOn: '2099-12-10', status: 'pending' };
 const response = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 const overview = { overdueCount: 0, overdueCents: 0, chargeCount: 1, cashSession: null, capabilities: { payments: true, cash: true, invoices: true } };
-function mockFetch({ shift = undefined, onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201), onCash = () => response({ id: 'cash' }, 201), cashSession = null, ownerPanelRead = false } = {}) {
-  const pageOverview = { ...overview, capabilities: { ...overview.capabilities, ownerPanelRead } };
+function mockFetch({ shift = undefined, onPayment = () => response({ id: 'txn' }, 201), onCharge = () => response({ id: 'charge' }, 201), onCash = () => response({ id: 'cash' }, 201), onOutflow = () => response({ id: 'outflow' }, 201), cashSession = null, ownerPanelRead = false, cashAdjust = false } = {}) {
+  const pageOverview = { ...overview, capabilities: { ...overview.capabilities, ownerPanelRead, cashAdjust } };
   const requests=[];
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
@@ -33,6 +33,7 @@ function mockFetch({ shift = undefined, onPayment = () => response({ id: 'txn' }
     }
     if (path.endsWith('/api/economics/cash/settings/outflow-limit')) return response({ limitCents: null });
     if (path.endsWith('/api/economics/cash/open') || path.includes('/api/economics/cash/cash-1/close') || path.includes('/api/economics/cash/cash-1/handover')) return onCash(url, options);
+    if (path.endsWith('/api/economics/cash/outflows')) return onOutflow(url, options);
     if (path.startsWith('http://127.0.0.1:3100/api/clients?')) return response({ items: [client] });
     if (new URL(path).pathname === '/api/clients' && new URL(path).searchParams.has('q')) return response({ items: [client] });
     if (path.endsWith('/api/economics/payments')) return onPayment(url, options);
@@ -103,6 +104,34 @@ test('cash handover is confirmed by an independent blind count', async () => {
   assert.equal(request.payload.outgoingDenominations.bill_5,0);
 });
 
+test('failed cash handover explains that the result is uncertain and asks to check before retrying', async () => {
+  const cashSession={id:'cash-1',registerId:'register-bunker',registerCode:'bunker',registerName:'Búnker',localDate:'2026-10-27',status:'open',openedAt:'2026-10-27T10:00:00Z',closedAt:null};
+  mockFetch({ cashSession, onCash: () => response({ error: 'cash_handover_start_failed' }, 500) });
+  render(React.createElement(EconomicsPage));
+  fireEvent.click(await screen.findByRole('button', { name: 'Entregar caja' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Entregar caja' });
+  fireEvent.change(within(dialog).getByRole('combobox', { name: 'Recibe la caja' }), { target: { value: 'professional-b' } });
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /recuento físico de salida/i }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Entregar para recuento' }));
+  const alert = await within(dialog).findByRole('alert');
+  assert.match(alert.textContent, /no confirmó el inicio del traspaso/i);
+  assert.match(alert.textContent, /comprueba si ya aparece pendiente antes de repetirlo/i);
+});
+
+test('failed cash outflow explains that the result is uncertain and asks to check before retrying', async () => {
+  const cashSession={id:'cash-1',registerId:'register-bunker',registerCode:'bunker',registerName:'Búnker',localDate:'2026-10-27',status:'open',openedAt:'2026-10-27T10:00:00Z',closedAt:null};
+  mockFetch({ cashSession, cashAdjust: true, onOutflow: () => response({ error: 'cash_outflow_failed' }, 500) });
+  render(React.createElement(EconomicsPage));
+  fireEvent.click(await screen.findByRole('button', { name: 'Registrar gasto o retirada' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Registrar gasto o retirada' });
+  fireEvent.change(within(dialog).getByLabelText('Importe (€)'), { target: { value: '5.00' } });
+  fireEvent.change(within(dialog).getByLabelText('Motivo'), { target: { value: 'Reposición sintética' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Registrar movimiento' }));
+  const alert = await within(dialog).findByRole('alert');
+  assert.match(alert.textContent, /no confirmó si el gasto o la retirada quedó registrado/i);
+  assert.match(alert.textContent, /antes de repetirlo para evitar duplicados/i);
+});
+
 test('creates a charge with integer cents and records a partial payment idempotently', async () => {
   let createdCharge;
   let paymentRequest;
@@ -151,6 +180,19 @@ test('payment refusal shows the server reason and a next step instead of a gener
   assert.match(alert.textContent, /se devolvió completamente/);
   assert.match(alert.textContent, /Selecciona un cargo pendiente distinto/);
   assert.doesNotMatch(alert.textContent, /^No se pudo registrar el pago\.?$/);
+});
+
+test('an internal payment failure names the attempted action and asks to verify before retrying', async () => {
+  mockFetch({ onPayment: () => response({ error: 'internal_error' }, 500) });
+  render(React.createElement(EconomicsPage));
+  fireEvent.click((await screen.findAllByRole('button', { name: 'Registrar pago' }))[0]);
+  const dialog = await screen.findByRole('dialog', { name: 'Registrar pago' });
+  fireEvent.change(within(dialog).getByLabelText('Importe (€)'), { target: { value: '10.00' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirmar pago' }));
+  const alert = await within(dialog).findByRole('alert');
+  assert.match(alert.textContent, /error al registrar el pago/i);
+  assert.match(alert.textContent, /comprueba el estado antes de repetirlo/i);
+  assert.doesNotMatch(alert.textContent, /El servidor falló al procesar la acción/);
 });
 
 const openCashDialog = async () => { fireEvent.click(await screen.findByRole('button', { name: 'Abrir caja' })); return screen.findByRole('dialog', { name: 'Abrir caja' }); };
