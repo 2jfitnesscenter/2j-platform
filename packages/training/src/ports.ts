@@ -10,12 +10,18 @@ export interface TrainingPorts {
   isCardio: (exerciseId: string | null | undefined) => boolean;
   /** Whether a feature flag is on for this member state (e.g. 'effort'). */
   uxOn: (state: TrainingState, feature: string) => boolean;
+  /** Catalogue lookup used by progression: body part (increment size) and equipment (loading rules). */
+  exercise: (exerciseId: string) => { bp?: string | undefined; eq?: string | undefined } | undefined;
+  /** True when the exercise is currently unavailable (dropped from the catalogue or disabled). */
+  isUnavailable: (exerciseId: string) => boolean;
   formatter: Formatter;
 }
 
 let current: TrainingPorts = {
   isCardio: () => false,
   uxOn: () => true,
+  exercise: () => undefined,
+  isUnavailable: () => false,
   formatter: { t: s => s, locale: 'en-GB' },
 };
 
