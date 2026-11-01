@@ -249,6 +249,8 @@ importers:
 
   packages/permissions: {}
 
+  packages/training: {}
+
   packages/ui:
     dependencies:
       '@2j/design-tokens':
