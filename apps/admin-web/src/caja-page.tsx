@@ -35,19 +35,6 @@ const dayFmt = new Intl.DateTimeFormat('es-ES', { timeZone: 'UTC', weekday: 'sho
 const formatDay = (isoDate: string) => dayFmt.format(new Date(`${isoDate}T00:00:00Z`));
 const formatTime = (iso: string | null) => (iso ? timeFmt.format(new Date(iso)) : '—');
 const statusText: Record<SessionStatus, string> = { open: 'Abierta', closed: 'Cerrada', late_close: 'Cerrada tarde' };
-const errorText: Record<string, string> = {
-  clock_in_required: 'Para abrir la caja primero tienes que fichar la entrada.',
-  already_holds_register: 'Ya tienes otra caja a tu cargo.',
-  cash_already_open: 'Esa caja ya está abierta.',
-  cash_register_already_used_today: 'Esa caja ya tuvo su sesión de hoy (una sesión por caja y día).',
-  cash_session_previous_day_requires_owner_resolution: 'Hay una caja abierta de un día anterior. El propietario debe resolverla primero.',
-  cash_legacy_session_requires_owner_resolution: 'Hay una caja anterior sin registro asignado. El propietario debe resolverla primero.',
-  staff_account_unlinked: 'Tu cuenta no está vinculada a una ficha de equipo.',
-  cash_outflow_approval_pending: 'Hay un gasto o retirada pendiente de aprobación del propietario.',
-  cash_custodian_required: 'Solo quien tiene la caja a su cargo puede cerrarla.',
-  cash_custodian_not_clocked_in: 'Para cerrar la caja primero tienes que fichar la entrada.',
-  cash_already_closed: 'Esa caja ya está cerrada.',
-};
 async function readJson(response: Response) { try { return await response.json(); } catch { return {}; } }
 const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Atlantic/Canary' });
 

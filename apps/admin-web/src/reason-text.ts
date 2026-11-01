@@ -15,7 +15,7 @@ export const REASONS: Record<string, string> = {
   already_holds_register: 'Ya tienes otra caja a tu cargo. Ciérrala o entrégala en Caja antes de abrir otra.',
   cash_already_open: 'Esa caja ya está abierta. Actualiza la pantalla para verla y trabajar con ella.',
   cash_register_already_used_today: 'Esa caja ya tuvo su sesión de hoy (una sesión por caja y día). Usa la otra caja o espera a mañana.',
-  cash_session_previous_day_requires_owner_resolution: 'Hay una caja de un día anterior sin cerrar: hoy no se puede cerrar ni abrir otra desde aquí, y mientras siga a tu cargo tampoco podrás fichar la salida. Avisa al propietario para que la resuelva (Caja → día anterior).',
+  cash_session_previous_day_requires_owner_resolution: 'Hay una caja de un día anterior sin cerrar: hoy no se puede cerrar ni abrir otra desde aquí, y mientras siga a tu cargo tampoco podrás fichar la salida. Avisa al propietario para que la resuelva (Economía → «Resolver caja pendiente»).',
   cash_legacy_session_requires_owner_resolution: 'Hay una caja antigua sin registro asignado. Avisa al propietario para que la resuelva en Caja antes de abrir otra.',
   cash_outflow_approval_pending: 'Hay un gasto o retirada pendiente de aprobación del propietario, y hasta entonces no se puede cerrar la caja. Pídele que lo apruebe o lo rechace.',
   cash_custodian_required: 'Solo quien tiene la caja a su cargo puede cerrarla. Pídele que la cierre o que te la entregue.',
@@ -28,7 +28,7 @@ export const REASONS: Record<string, string> = {
   handover_recipient_not_clocked_in: 'La persona que recibe la caja no ha fichado la entrada. Pídele que fiche y vuelve a entregarla.',
   handover_recipient_holds_register: 'La persona que recibe ya tiene otra caja a su cargo. Elige a otra persona o que cierre la suya.',
   handover_recipient_invalid: 'Esa persona no puede recibir la caja. Elige a otro profesional activo.',
-  handover_already_pending: 'Ya hay una entrega de esta caja esperando confirmación. Confírmala o cancélala antes de iniciar otra.',
+  handover_already_pending: 'Ya hay una entrega de esta caja esperando confirmación. Confírmala antes de iniciar otra.',
   handover_already_completed: 'Esa entrega ya está completada. Actualiza la pantalla.',
   handover_custody_changed: 'La caja cambió de manos mientras tanto. Actualiza la pantalla y vuelve a intentarlo.',
   handover_not_found: 'No se encuentra esa entrega. Actualiza la pantalla.',
@@ -51,7 +51,7 @@ export const REASONS: Record<string, string> = {
 export type ReasonContext = { /** Qué se intentaba, p. ej. «fichar la entrada». */ action?: string };
 
 /**
- * Texto con causa y acción para un fallo del API. Orden: mensaje propio del servidor (si lo manda) → código conocido →
+ * Texto con causa y acción para un fallo del API. Orden: código conocido (texto revisado) → mensaje propio del servidor →
  * respuesta por estado HTTP. El código técnico se añade siempre al texto de último recurso para que el personal pueda citarlo.
  */
 export function reasonText(code: string | undefined | null, status?: number, serverMessage?: string | null, context: ReasonContext = {}): string {

@@ -279,7 +279,8 @@ test('Member outside the booking cohort can browse sessions but sees a clear dis
   });
   const { render, cleanup, fireEvent, within, ClientApp, clientAppTestHelpers } = await uiHarness();
   const days = clientAppTestHelpers.weekRangeDays();
-  const startsAt = new Date(`${days[1].date}T19:00:00+01:00`).toISOString();
+  // La agenda abre en el día de hoy: la sesión es de hoy a última hora (22:30 UTC es la misma fecha local en invierno y en verano).
+  const startsAt = new Date(`${clientAppTestHelpers.dateKey(new Date())}T22:30:00Z`).toISOString();
   const session = { id: '13111111-1111-4111-8111-111111111111', serviceId: '14111111-1111-4111-8111-111111111111', serviceName: 'Fuerza', areaName: 'La Sala', professionalName: null, startsAt, durationMinutes: 45, capacity: 8, occupiedCount: 2, waitlistCount: 0, isIndividual: false, status: 'scheduled', myReservationStatus: null, myWaitlistStatus: null };
   let mutationAttempted = false;
   globalThis.fetch = async (input, init = {}) => {
