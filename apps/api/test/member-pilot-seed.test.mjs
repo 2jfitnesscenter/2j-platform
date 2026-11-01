@@ -51,6 +51,30 @@ test('deterministic demo seed is repeatable and provisions distinct member ident
   assert.equal(sessionsA.statusCode, 200, sessionsA.body);
   const eligibleA = sessionsA.json().sessions.find(session => session.id === 'd0840000-0000-4000-8000-000000000112');
   assert.ok(eligibleA);
+  const [bookingSource] = await sql`SELECT service_id AS "serviceId",area_id AS "areaId" FROM calendar_sessions WHERE id=${eligibleA.id}`;
+  await sql`DELETE FROM calendar_reservations WHERE session_id IN (SELECT md5('a67-pagination-session-'||n)::uuid FROM generate_series(1,205) n)`;
+  await sql`DELETE FROM calendar_sessions WHERE id IN (SELECT md5('a67-pagination-session-'||n)::uuid FROM generate_series(1,205) n)`;
+  await sql`WITH generated AS (SELECT generate_series(1,205) AS n), sessions AS (
+      INSERT INTO calendar_sessions(id,service_id,area_id,source,starts_at,duration_minutes,capacity,status,created_by)
+      SELECT md5('a67-pagination-session-'||n)::uuid,${bookingSource.serviceId}::uuid,${bookingSource.areaId}::uuid,'manual',now()+make_interval(days=>n),60,8,'scheduled','a67-pagination-test' FROM generated RETURNING id
+    ) INSERT INTO calendar_reservations(session_id,client_id,entitlement_reference,status,created_by)
+      SELECT id,${rows[0].clientId}::uuid,'synthetic-pagination-test','reserved','a67-pagination-test' FROM sessions`;
+  try {
+    const bookingPages = [];
+    let offset = 0;
+    do {
+      const page = await app.inject({ method: 'GET', url: `/api/me/bookings?limit=100&offset=${offset}`, headers: { cookie: cookieA } });
+      assert.equal(page.statusCode, 200, page.body);
+      bookingPages.push(...page.json().reservations);
+      offset = page.json().nextOffset ?? -1;
+    } while (offset >= 0);
+    assert.ok(bookingPages.length >= 205, `received ${bookingPages.length} of the synthetic reservations`);
+    assert.equal(new Set(bookingPages.map(booking => booking.id)).size, bookingPages.length);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/me/bookings?limit=101', headers: { cookie: cookieA } })).statusCode, 400);
+  } finally {
+    await sql`DELETE FROM calendar_reservations WHERE session_id IN (SELECT md5('a67-pagination-session-'||n)::uuid FROM generate_series(1,205) n)`;
+    await sql`DELETE FROM calendar_sessions WHERE id IN (SELECT md5('a67-pagination-session-'||n)::uuid FROM generate_series(1,205) n)`;
+  }
   const detailA = await app.inject({ method: 'GET', url: `/api/me/sessions/${eligibleA.id}`, headers: { cookie: cookieA } });
   assert.equal(detailA.statusCode, 200, detailA.body); assert.equal(detailA.json().session.eligible, true);
   assert.deepEqual((await app.inject({ method: 'GET', url: '/api/me/booking-access', headers: { cookie: cookieA } })).json(), { enabled: true });

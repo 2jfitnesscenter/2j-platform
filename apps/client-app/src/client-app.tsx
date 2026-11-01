@@ -340,6 +340,27 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export async function readAllBookingPages(fetchPage: (offset: number) => Promise<{ reservations: Booking[]; waitlist: Booking[]; nextOffset?: number | null }>): Promise<{ reservations: Booking[]; waitlist: Booking[] }> {
+  const reservations: Booking[] = [];
+  const waitlist: Booking[] = [];
+  let offset = 0;
+  for (let pageNumber = 0; pageNumber < 10_001; pageNumber += 1) {
+    const page = await fetchPage(offset);
+    reservations.push(...page.reservations);
+    waitlist.push(...page.waitlist);
+    if (typeof page.nextOffset !== 'number' || !Number.isSafeInteger(page.nextOffset) || page.nextOffset <= offset) return { reservations, waitlist };
+    offset = page.nextOffset;
+  }
+  throw new Error('booking_history_page_limit_exceeded');
+}
+
+async function loadAllMemberBookings(): Promise<{ reservations: Booking[]; waitlist: Booking[] }> {
+  return readAllBookingPages(offset => {
+    const path = offset === 0 ? '/api/me/bookings' : `/api/me/bookings?limit=100&offset=${offset}`;
+    return api<{ reservations: Booking[]; waitlist: Booking[]; nextOffset?: number | null }>(path);
+  });
+}
+
 function invoiceFilename(invoice: MemberInvoice) {
   const kind = invoice.isRectification ? 'rectificativa' : invoice.documentType === 'full_invoice' ? 'factura' : 'ticket';
   const number = invoice.documentNumber.replace(/[^A-Za-z0-9._-]/g, '_');
@@ -520,7 +541,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
       const hasActivePlan = plans.active.length > 0;
       setInvoicesLoading(true);
       const [mine, documents, consentItems, bookingAccess, preferencesResult, newsResult, storeResult, purchaseResult, invoiceResult] = await Promise.all([
-        hasActivePlan ? api<{ reservations: Booking[]; waitlist: Booking[] }>('/api/me/bookings') : Promise.resolve({ reservations: [], waitlist: [] }),
+        hasActivePlan ? loadAllMemberBookings() : Promise.resolve({ reservations: [], waitlist: [] }),
         api<FormAssignment[]>('/api/client-portal/form-assignments'),
         api<Consent[]>('/api/client-portal/consents'),
         hasActivePlan ? api<{ enabled: boolean }>('/api/me/booking-access') : Promise.resolve({ enabled: false }),
@@ -807,7 +828,7 @@ export function ClientApp({ previewModeOverride, pilotLoginEnabledOverride, trai
   const refreshMemberBookings = async () => {
     if (previewMode) return;
     try {
-      const mine = await api<{ reservations: Booking[]; waitlist: Booking[] }>('/api/me/bookings');
+      const mine = await loadAllMemberBookings();
       setReservations(mine.reservations); setWaitlist(mine.waitlist); setScheduleVersion(value => value + 1);
     } catch { setMessage('El cambio se ha procesado, pero no se pudo actualizar tu agenda. Vuelve a consultar.'); }
   };
@@ -1125,4 +1146,4 @@ function weekRangeDays(selected = dateKey(new Date())) {
   return Array.from({length:7},(_,index)=>{const key=shiftDateKey(start,index);const date=new Date(`${key}T12:00:00Z`);return {date:key,label:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',weekday:'short'}).format(date),number:new Intl.DateTimeFormat('es-ES',{timeZone:'UTC',day:'numeric'}).format(date),today:key===todayKey};});
 }
 
-export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, isHubDemoBuild, selectNextConfirmedBooking, trainingCapabilityLabels, HUB_TRAINING_URL, sessionAvailabilityLabel, isMemberIntegrationEnabled };
+export const clientAppTestHelpers = { dateKey, timeLabel, weekRange, weekRangeDays, monthRange, monthGridDays, shiftMonthKey, shiftDateKey, labels, resolveClientNotificationTarget, isHubPreviewEnabled, isHubDemoBuild, selectNextConfirmedBooking, trainingCapabilityLabels, HUB_TRAINING_URL, sessionAvailabilityLabel, isMemberIntegrationEnabled, readAllBookingPages };
