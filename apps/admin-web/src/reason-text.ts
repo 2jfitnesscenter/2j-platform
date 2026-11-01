@@ -1,7 +1,7 @@
 /**
  * Motivos de error del API en español, siempre con causa y acción (A74/A75): nunca «No se pudo completar».
- * Solo traduce códigos que el API ya devuelve; no decide ni bloquea nada. Los códigos que Platform retire
- * (p. ej. al desvincular el fichaje de la caja) se pueden borrar de aquí sin tocar nada más.
+ * Solo traduce códigos que el API ya devuelve; no decide ni bloquea nada. Si Platform retira un código, se borra de aquí
+ * sin tocar nada más (A76 retiró los bloqueos de caja de día anterior y de fichar salida con caja a cargo).
  */
 export const REASONS: Record<string, string> = {
   // Fichaje
@@ -14,7 +14,6 @@ export const REASONS: Record<string, string> = {
   already_holds_register: 'Ya tienes otra caja a tu cargo. Ciérrala o entrégala en Caja antes de abrir otra.',
   cash_already_open: 'Esa caja ya está abierta. Actualiza la pantalla para verla y trabajar con ella.',
   cash_register_already_used_today: 'Esa caja ya tuvo su sesión de hoy (una sesión por caja y día). Usa la otra caja o espera a mañana.',
-  cash_session_previous_day_requires_owner_resolution: 'Hay una caja de un día anterior sin cerrar. Puedes continuar con el turno; cierra o entrega esa caja con su recuento ciego cuando tengas la custodia.',
   cash_legacy_session_requires_owner_resolution: 'Hay una caja antigua sin registro asignado. Avisa al propietario para que la resuelva en Economía → «Resolver caja pendiente» antes de abrir otra.',
   cash_outflow_approval_pending: 'Hay un gasto o retirada pendiente de aprobación del propietario, y hasta entonces no se puede cerrar la caja. Pídele que lo apruebe o lo rechace.',
   cash_custodian_required: 'Solo quien tiene la caja a su cargo puede cerrarla. Pídele que la cierre o que te la entregue.',

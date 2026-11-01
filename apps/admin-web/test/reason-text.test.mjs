@@ -9,7 +9,7 @@ test('every known reason names a cause and tells the person what to do, and none
     assert.match(text, /[.!]$/, `${code} must end as a sentence`);
   }
   // Los códigos que el API devuelve hoy en fichaje y caja tienen texto propio.
-  for (const code of ['shift_already_open', 'no_open_shift', 'staff_account_unlinked', 'clock_in_required', 'cash_custodian_or_clocked_staff_required', 'cash_custodian_required', 'cash_outflow_approval_pending', 'cash_session_previous_day_requires_owner_resolution', 'cash_already_closed', 'handover_recipient_not_clocked_in', 'internal_error']) assert.ok(REASONS[code], code);
+  for (const code of ['shift_already_open', 'no_open_shift', 'staff_account_unlinked', 'clock_in_required', 'cash_custodian_or_clocked_staff_required', 'cash_custodian_required', 'cash_outflow_approval_pending', 'cash_already_closed', 'handover_recipient_not_clocked_in', 'internal_error']) assert.ok(REASONS[code], code);
 });
 
 test('a code without text still gets a cause by status, the attempted action and the code to quote; a server message wins over a status guess but not over a known code', () => {

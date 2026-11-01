@@ -117,6 +117,8 @@ test('A74/A75: every refusal of Fichar entrada or salida names the cause and the
   const open = () => response(selfOf({ openShift: true }));
   const custody = await attempt(() => response({ error: 'clock_out_conflict' }, 409), 'Fichar salida', open);
   assert.match(custody, /al fichar la salida/); assert.match(custody, /código: clock_out_conflict/);
+  const gone = await attempt(() => response({ error: 'cash_register_must_be_closed_or_handed_over' }, 409), 'Fichar salida', open);
+  assert.match(gone, /código: cash_register_must_be_closed_or_handed_over/, 'a retired code still gets a quotable fallback, not a wrong explanation');
   const noShift = await attempt(() => response({ error: 'no_open_shift' }, 409), 'Fichar salida', open);
   assert.match(noShift, /No tienes ninguna entrada fichada/); assert.match(noShift, /Ficha primero la entrada/);
   const unlinked = await attempt(() => response({ error: 'staff_account_unlinked' }, 409), 'Fichar entrada');
@@ -127,5 +129,5 @@ test('A74/A75: every refusal of Fichar entrada or salida names the cause and the
   assert.match(unknown, /al fichar la entrada/); assert.match(unknown, /código: something_new/); assert.match(unknown, /avisa a Administración/);
   const dead = await attempt(() => { throw new TypeError('Failed to fetch'); }, 'Fichar entrada');
   assert.match(dead, /No hay conexión con el servidor para fichar la entrada/);
-  for (const text of [custody, noShift, unlinked, server, unknown, dead]) assert.ok(!/No se pudo completar|No se pudo fichar\.?$/.test(text), `generic message: ${text}`);
+  for (const text of [custody, gone, noShift, unlinked, server, unknown, dead]) assert.ok(!/No se pudo completar|No se pudo fichar\.?$/.test(text), `generic message: ${text}`);
 });
