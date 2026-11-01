@@ -1,4 +1,4 @@
-import { after, test } from 'node:test';
+import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
@@ -25,13 +25,15 @@ async function makeClient(name) {
 }
 
 /** Entitlement through Platform's own plan and assignment path, the same one the membership gates read. */
-async function entitle(clientId) {
+async function entitle(clientId, { training = true, startsOn = today, endsOn = null } = {}) {
   const [area] = await sql`SELECT id FROM areas WHERE status='active' ORDER BY id LIMIT 1`;
   const service = (await admin.inject({ method: 'POST', url: '/api/services', payload: { name: `Training slice ${randomUUID()}`, areaId: area.id, status: 'active' } })).json();
+  const rights = [{ rightType: 'service_access', serviceId: service.id }, { rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'per_service', quantity: 10 }];
+  if (training) rights.push({ rightType: 'training_access', trainingAccessLevel: 'full' });
   const plan = await admin.inject({ method: 'POST', url: '/api/plans', headers: { 'idempotency-key': randomUUID() }, payload: {
     name: `Training slice plan ${randomUUID()}`, serviceIds: [service.id], kind: 'session_pack', renewalCadence: null, basePriceCents: 1000,
     modules: [{ module: 'training', accessLevel: 'full', capabilities: [] }],
-    rights: [{ rightType: 'service_access', serviceId: service.id }, { rightType: 'sessions_quota', serviceId: service.id, quotaScope: 'per_service', quantity: 10 }, { rightType: 'training_access', trainingAccessLevel: 'full' }],
+    rights,
   } });
   assert.equal(plan.statusCode, 201, plan.body);
   assert.equal((await admin.inject({ method: 'POST', url: `/api/plans/${plan.json().id}/activate`, payload: {} })).statusCode, 200);
@@ -39,9 +41,11 @@ async function entitle(clientId) {
   assert.equal(sale.statusCode, 201, sale.body);
   const [charge] = await sql`INSERT INTO economic_charges(client_id,plan_id,concept,amount_cents,due_on,state,exempt_reason,created_by,idempotency_key,request_hash)
     VALUES (${clientId}::uuid,${plan.json().id},'Training slice fixture',1000,${today}::date,'exempt','Synthetic API fixture','training-member-test',${randomUUID()}::uuid,${'c'.repeat(64)}) RETURNING id`;
-  await sql`INSERT INTO client_plan_assignments(client_id,plan_id,plan_version,charge_id,starts_on,status,idempotency_key,request_hash,created_by,sale_price_cents,snapshot)
-    VALUES (${clientId}::uuid,${plan.json().id},1,${charge.id},${today}::date,'active',${randomUUID()}::uuid,${'d'.repeat(64)},'training-member-test',1000,'{}'::jsonb)`;
+  await sql`INSERT INTO client_plan_assignments(client_id,plan_id,plan_version,charge_id,starts_on,ends_on,status,idempotency_key,request_hash,created_by,sale_price_cents,snapshot)
+    VALUES (${clientId}::uuid,${plan.json().id},1,${charge.id},${startsOn}::date,${endsOn}::date,'active',${randomUUID()}::uuid,${'d'.repeat(64)},'training-member-test',1000,'{}'::jsonb)`;
 }
+
+const daysFromToday = offset => canaryBusinessDate(new Date(now.getTime() + offset * 86_400_000));
 
 async function addRoutine(clientId, { weekdays, name = 'Fuerza A' }) {
   const [routine] = await sql`INSERT INTO training_routines(client_id,name,scheduled_weekdays) VALUES (${clientId}::uuid,${name},${weekdays}::smallint[]) RETURNING id`;
@@ -154,4 +158,103 @@ test('a member cannot read or write another member\'s session', async () => {
   const [session] = await sql`SELECT id FROM training_sessions WHERE client_id=${entitled}::uuid ORDER BY started_at DESC LIMIT 1`;
   assert.equal((await appOther.inject({ method: 'POST', url: `/api/me/training/sessions/${session.id}/sets`, payload: { exerciseName: 'Sentadilla', setIndex: 1, reps: 1, weightKg: 1 } })).statusCode, 404);
   assert.equal((await appOther.inject({ method: 'POST', url: `/api/me/training/sessions/${session.id}/finish`, payload: {} })).statusCode, 404);
+});
+
+describe("follow-up hardening", () => {
+const anonymous = buildServer(process.env.DATABASE_URL, {});
+after(async () => {
+  await Promise.all([anonymous.close(), appNoSets.close(), appNoRight.close(), appExpired.close(), appPrevious.close()]);
+});
+let noSetsClient; let noRightClient; let expiredClient; let previousClient; let previousRoutine; let appNoSets; let appNoRight; let appExpired; let appPrevious;
+// Preparación en before(): los tests se ejecutan en cuanto se registran, y un await de nivel superior aún pendiente cerraría la base antes de tiempo.
+before(async () => {
+  noSetsClient = await makeClient('Eva'); await entitle(noSetsClient); await addRoutine(noSetsClient, { weekdays: [weekday] });
+  noRightClient = await makeClient('Fara'); await entitle(noRightClient, { training: false }); await addRoutine(noRightClient, { weekdays: [weekday] });
+  expiredClient = await makeClient('Gala'); await entitle(expiredClient, { startsOn: daysFromToday(-3), endsOn: daysFromToday(-1) }); await addRoutine(expiredClient, { weekdays: [weekday] });
+  previousClient = await makeClient('Hana'); await entitle(previousClient); previousRoutine = await addRoutine(previousClient, { weekdays: [weekday] });
+  appNoSets = appFor(noSetsClient); appNoRight = appFor(noRightClient); appExpired = appFor(expiredClient); appPrevious = appFor(previousClient);
+});
+
+test('finishing an empty session answers no_sets_logged and keeps the session open', async () => {
+  assert.equal((await appNoSets.inject({ method: 'POST', url: '/api/me/training/sessions', payload: {} })).statusCode, 201);
+  const [session] = await sql`SELECT id FROM training_sessions WHERE client_id=${noSetsClient}::uuid AND status='in_progress'`;
+  const finish = await appNoSets.inject({ method: 'POST', url: `/api/me/training/sessions/${session.id}/finish`, payload: {} });
+  assert.equal(finish.statusCode, 409, finish.body);
+  assert.equal(json(finish).error, 'no_sets_logged');
+  const [{ status }] = await sql`SELECT status FROM training_sessions WHERE id=${session.id}::uuid`;
+  assert.equal(status, 'in_progress');
+});
+
+test('a second finish is idempotent, keeps the first finish time, and refuses later sets', async () => {
+  const [session] = await sql`SELECT id FROM training_sessions WHERE client_id=${noSetsClient}::uuid AND status='in_progress'`;
+  assert.equal((await appNoSets.inject({ method: 'POST', url: `/api/me/training/sessions/${session.id}/sets`, payload: { exerciseName: 'Sentadilla', setIndex: 1, reps: 8, weightKg: 80 } })).statusCode, 200);
+  assert.equal((await appNoSets.inject({ method: 'POST', url: `/api/me/training/sessions/${session.id}/finish`, payload: {} })).statusCode, 200);
+  const [first] = await sql`SELECT finished_at FROM training_sessions WHERE id=${session.id}::uuid`;
+  const again = await appNoSets.inject({ method: 'POST', url: `/api/me/training/sessions/${session.id}/finish`, payload: {} });
+  assert.equal(again.statusCode, 200, again.body);
+  assert.equal(json(again).session.status, 'finished');
+  const [second] = await sql`SELECT finished_at FROM training_sessions WHERE id=${session.id}::uuid`;
+  assert.equal(second.finished_at.getTime(), first.finished_at.getTime());
+  const late = await appNoSets.inject({ method: 'POST', url: `/api/me/training/sessions/${session.id}/sets`, payload: { exerciseName: 'Press banca', setIndex: 1, reps: 5, weightKg: 60 } });
+  assert.equal(late.statusCode, 409);
+  assert.equal(json(late).error, 'session_not_open');
+});
+
+test('a plan without training_access blocks every training screen and reports no entitlement', async () => {
+  for (const [method, url] of [['GET', '/api/me/training/today'], ['POST', '/api/me/training/sessions'], ['GET', '/api/me/training/history']]) {
+    const response = await appNoRight.inject({ method, url, payload: method === 'POST' ? {} : undefined });
+    assert.equal(response.statusCode, 403, `${method} ${url}: ${response.body}`);
+    assert.equal(json(response).reason, 'entitlement_required');
+  }
+  assert.deepEqual(json(await appNoRight.inject({ method: 'GET', url: '/api/me/training/access' })), { entitled: false });
+});
+
+test('an expired plan blocks training even with a routine scheduled today', async () => {
+  const response = await appExpired.inject({ method: 'GET', url: '/api/me/training/today' });
+  assert.equal(response.statusCode, 403, response.body);
+  assert.equal(json(response).error, 'training_entitlement_required');
+});
+
+test('training requests without client authentication answer 401', async () => {
+  for (const [method, url] of [['GET', '/api/me/training/today'], ['POST', '/api/me/training/sessions'], ['GET', '/api/me/training/history'], ['GET', '/api/me/training/access']]) {
+    const response = await anonymous.inject({ method, url, payload: method === 'POST' ? {} : undefined });
+    assert.equal(response.statusCode, 401, `${method} ${url}: ${response.body}`);
+  }
+});
+
+test('history isolation: a member never sees another member sessions', async () => {
+  const mine = await sql`SELECT id FROM training_sessions WHERE client_id=${entitled}::uuid AND status='finished'`;
+  assert.ok(mine.length > 0);
+  const theirs = json(await appOther.inject({ method: 'GET', url: '/api/me/training/history' })).sessions.map(session => session.id);
+  for (const row of mine) assert.equal(theirs.includes(String(row.id)), false);
+});
+
+test('an open session from a previous day is abandoned at day change and never resumed', async () => {
+  const [old] = await sql`INSERT INTO training_sessions(client_id,routine_id,status,business_date,started_at)
+    VALUES (${previousClient}::uuid,${previousRoutine}::uuid,'in_progress',${daysFromToday(-1)}::date,now() - interval '1 day') RETURNING id`;
+  const started = await appPrevious.inject({ method: 'POST', url: '/api/me/training/sessions', payload: {} });
+  assert.equal(started.statusCode, 201, started.body);
+  assert.notEqual(json(started).session.id, String(old.id));
+  const [{ status, finished_at: finishedAt }] = await sql`SELECT status, finished_at FROM training_sessions WHERE id=${old.id}::uuid`;
+  assert.equal(status, 'abandoned');
+  assert.equal(finishedAt, null);
+  const today = json(await appPrevious.inject({ method: 'GET', url: '/api/me/training/today' }));
+  assert.equal(today.openSessionId, json(started).session.id);
+});
+
+test('weight is rounded to two decimals and out-of-range weights are rejected', async () => {
+  const started = await appEntitled.inject({ method: 'POST', url: '/api/me/training/sessions', payload: {} });
+  const sessionId = json(started).session.id;
+  const url = `/api/me/training/sessions/${sessionId}/sets`;
+  const rounded = await appEntitled.inject({ method: 'POST', url, payload: { exerciseName: 'Sentadilla', setIndex: 4, reps: 5, weightKg: 82.554 } });
+  assert.equal(rounded.statusCode, 200, rounded.body);
+  assert.equal(json(rounded).set.weightKg, 82.55);
+  assert.equal((await appEntitled.inject({ method: 'POST', url, payload: { exerciseName: 'Sentadilla', setIndex: 5, reps: 5, weightKg: 1000.01 } })).statusCode, 400);
+  assert.equal((await appEntitled.inject({ method: 'POST', url, payload: { exerciseName: 'Sentadilla', setIndex: 5, reps: 5, weightKg: -1 } })).statusCode, 400);
+});
+
+test('the access endpoint tells the home card whether the member is entitled, without revealing routines', async () => {
+  assert.deepEqual(json(await appEntitled.inject({ method: 'GET', url: '/api/me/training/access' })), { entitled: true });
+  assert.deepEqual(json(await appBlocked.inject({ method: 'GET', url: '/api/me/training/access' })), { entitled: false });
+});
 });

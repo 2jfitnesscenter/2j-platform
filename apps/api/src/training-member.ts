@@ -14,7 +14,7 @@ const setBody = z.object({
   exerciseName,
   setIndex: z.number().int().min(1).max(50),
   reps: z.number().int().min(0).max(100),
-  weightKg: z.number().min(0).max(1000),
+  weightKg: z.number().min(0).max(1000).transform(value => Math.round(value * 100) / 100),
   rir: z.number().int().min(0).max(10).nullable().optional(),
 }).strict();
 
@@ -30,7 +30,8 @@ export function isoWeekday(date: string) {
  */
 export async function hasTrainingEntitlement(db: DB, clientId: string, now: Date) {
   const entitlements = await resolveEffectiveClientAssignments(db, clientId, now);
-  return entitlements.effective.assignments.some(assignment => assignment.operationalAccess === 'active' && assignment.rights.some(right => right.rightType === 'training_access'));
+  // usable y status recogen las fechas de la asignación: una asignación terminada o aún no iniciada no da acceso.
+  return entitlements.effective.assignments.some(assignment => assignment.usable && assignment.status === 'active' && assignment.operationalAccess === 'active' && assignment.rights.some(right => right.rightType === 'training_access'));
 }
 
 /** Rutas de entrenamiento de un socio (slice 1): hoy, sesión, series, cierre e historial. */
@@ -44,8 +45,18 @@ export function registerTrainingMemberRoutes(app: FastifyInstance, db: DB, clien
       reply.code(403).send({ error: 'training_entitlement_required', reason: 'entitlement_required', action: 'contact_front_desk' });
       return null;
     }
-    return { clientId: actor.clientId, date: canaryBusinessDate(now) };
+    const date = canaryBusinessDate(now);
+    // Al cambiar de día, una sesión abierta de un día anterior se cierra como abandonada: nunca se reanuda.
+    await db`UPDATE training_sessions SET status='abandoned' WHERE client_id=${actor.clientId}::uuid AND status='in_progress' AND business_date < ${date}::date`;
+    return { clientId: actor.clientId, date };
   }
+
+  /** Solo para la tarjeta de Inicio: no revela si hay rutina, solo si el socio tiene el derecho. */
+  app.get('/api/me/training/access', async (request, reply) => {
+    const actor = await client(request, reply);
+    if (!actor) return;
+    return { entitled: await hasTrainingEntitlement(db, actor.clientId, memberNow()) };
+  });
 
   async function todaysRoutine(clientId: string, date: string) {
     const [routine] = await db`SELECT r.id, r.name FROM training_routines r
@@ -60,15 +71,16 @@ export function registerTrainingMemberRoutes(app: FastifyInstance, db: DB, clien
     return rows.map(row => ({ position: Number(row.position), exerciseName: String(row.exerciseName), targetSets: Number(row.targetSets) }));
   }
 
-  async function openSession(clientId: string) {
+  /** Solo cuenta una sesión abierta del día de negocio actual: las de días anteriores ya están abandonadas. */
+  async function openSession(clientId: string, date: string) {
     const [session] = await db`SELECT s.id, s.routine_id AS "routineId", s.started_at AS "startedAt" FROM training_sessions s
-      WHERE s.client_id=${clientId}::uuid AND s.status='in_progress'`;
+      WHERE s.client_id=${clientId}::uuid AND s.status='in_progress' AND s.business_date=${date}::date`;
     return session ? { id: String(session.id), routineId: session.routineId ? String(session.routineId) : null, startedAt: new Date(session.startedAt).toISOString() } : null;
   }
 
   app.get('/api/me/training/today', async (request, reply) => {
     const ctx = await gate(request, reply); if (!ctx) return;
-    const session = await openSession(ctx.clientId);
+    const session = await openSession(ctx.clientId, ctx.date);
     const routine = await todaysRoutine(ctx.clientId, ctx.date);
     if (!routine) return { status: 'rest_day' as const, date: ctx.date, openSessionId: session?.id ?? null };
     return { status: 'training_day' as const, date: ctx.date, routine: { ...routine, exercises: await routineExercises(routine.id) }, openSessionId: session?.id ?? null };
@@ -78,7 +90,7 @@ export function registerTrainingMemberRoutes(app: FastifyInstance, db: DB, clien
     const ctx = await gate(request, reply); if (!ctx) return;
     const body = z.object({ routineId: uuid.optional() }).strict().safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send({ error: 'invalid_training_session' });
-    const existing = await openSession(ctx.clientId);
+    const existing = await openSession(ctx.clientId, ctx.date);
     if (existing) return reply.code(200).send({ session: existing });
     let routineId: string | null = null;
     if (body.data.routineId) {
@@ -98,8 +110,8 @@ export function registerTrainingMemberRoutes(app: FastifyInstance, db: DB, clien
       return reply.code(201).send({ session: { id: String(session.id), routineId: String(session.routineId), startedAt: new Date(session.startedAt).toISOString() } });
     } catch (error: any) {
       // Otra petición abrió la sesión entre la lectura y el insert: se devuelve esa.
-      if (error?.code !== '23505') throw error;
-      return reply.code(200).send({ session: await openSession(ctx.clientId) });
+      if (error?.code !== '23505' || error?.constraint_name !== 'training_sessions_one_open_per_client') throw error;
+      return reply.code(200).send({ session: await openSession(ctx.clientId, ctx.date) });
     }
   });
 
@@ -117,11 +129,13 @@ export function registerTrainingMemberRoutes(app: FastifyInstance, db: DB, clien
     if (!session) return reply.code(404).send({ error: 'training_session_not_found' });
     if (session.status !== 'in_progress') return reply.code(409).send({ error: 'session_not_open' });
     const { exerciseName: name, setIndex, reps, weightKg, rir } = body.data;
+    // El EXISTS va en la misma sentencia que el upsert: una serie no entra en una sesión que acaba de cerrarse.
     const [set] = await db`INSERT INTO training_session_sets(session_id,exercise_name,set_index,reps,weight_kg,rir)
-      VALUES (${session.id}::uuid,${name},${setIndex},${reps},${weightKg},${rir ?? null})
+      SELECT s.id,${name},${setIndex},${reps},${weightKg},${rir ?? null} FROM training_sessions s
+      WHERE s.id=${session.id}::uuid AND s.client_id=${ctx.clientId}::uuid AND s.status='in_progress'
       ON CONFLICT (session_id,exercise_name,set_index) DO UPDATE SET reps=EXCLUDED.reps, weight_kg=EXCLUDED.weight_kg, rir=EXCLUDED.rir, updated_at=now()
       RETURNING exercise_name AS "exerciseName", set_index AS "setIndex", reps, weight_kg::float8 AS "weightKg", rir`;
-    if (!set) return reply.code(500).send({ error: 'training_set_not_saved' });
+    if (!set) return reply.code(409).send({ error: 'session_not_open' });
     return { set: { exerciseName: String(set.exerciseName), setIndex: Number(set.setIndex), reps: Number(set.reps), weightKg: Number(set.weightKg), rir: set.rir == null ? null : Number(set.rir) } };
   });
 
