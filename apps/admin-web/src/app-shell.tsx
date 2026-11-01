@@ -3,6 +3,7 @@ import React from 'react';
 import { GlobalSearchDialog } from './global-search.js';
 import { Icon, IconButton, icons, type LucideIcon } from '@2j/ui';
 import { StaffLogin } from './staff-login.js';
+import { attentionOf } from './command-center.js';
 
 const api = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 export type CommandCenterModel = {
@@ -53,13 +54,15 @@ const routes={
   'notification-settings':{id:'notification-settings',label:'Ajustes de avisos',href:'#notification-settings',permission:'notificationSettings',icon:icons.BellRing},
 } satisfies Record<string,NavRoute>;
 const navSections:NavSection[]=[
-  {id:'operation',label:'Operación',icon:icons.LayoutDashboard,children:[routes.home,routes.activity,routes.timeclock,routes.calendar,routes.clients]},
-  {id:'commercial',label:'Comercial',icon:icons.ShoppingBag,children:[routes.services,routes.spaces,routes.contracts,routes.plans,routes.economics,routes.caja,routes.store,routes.promotions]},
-  {id:'management',label:'Gestión',icon:icons.Briefcase,children:[routes.communications,routes.staff,routes.reports,routes['my-gym'],routes.news,routes.invitations,routes.import,routes.settings,routes['notification-settings']]},
+  {id:'start',label:'Inicio',icon:icons.LayoutDashboard,children:[routes.home,routes.activity]},
+  {id:'clients',label:'Clientes',icon:icons.Users,children:[routes.clients,routes.contracts,routes.plans,routes.promotions,routes.invitations,routes.import,routes.communications]},
+  {id:'agenda-team',label:'Agenda y equipo',icon:icons.CalendarDays,children:[routes.calendar,routes.services,routes.spaces,routes.timeclock,routes.staff]},
+  {id:'cash-sales',label:'Caja y ventas',icon:icons.Wallet,children:[routes.caja,routes.economics,routes.store]},
+  {id:'center',label:'Centro',icon:icons.Briefcase,children:[routes['my-gym'],routes.reports,routes.news,routes.settings,routes['notification-settings']]},
   {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.management,routes.monitoring]},
 ];
 /** Groups that start open on a wide sidebar. */
-const defaultOpenGroups=['operation','commercial','management','administration'];
+const defaultOpenGroups=navSections.map(section=>section.id);
 /** True when the professional shell has a screen for this route (used to show links to screens that another PR may add, e.g. #reports). */
 export const hasProfessionalRoute = (id: string) => Object.hasOwn(routes, id);
 const routeId = () => window.location.hash.slice(1).split('?')[0] || 'home';
@@ -76,7 +79,7 @@ export function getProfessionalPageContext(route:string){
     const match=(section.route?[section.route]:section.children??[]).find(item=>item.id===route);
     if(match)return {section:section.label,page:match.label};
   }
-  return {section:'Resumen',page:'Resumen'};
+  return {section:'Inicio',page:'Resumen'};
 }
 
 /**
@@ -172,6 +175,8 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const permissions=capabilities;
   const navigation=getProfessionalNavigation(permissions,route);
   const pageContext=getProfessionalPageContext(route);
+  /** Unread badges: Mensajes (unread conversations) and Avisos (incidences, without the unread-messages row to avoid counting it twice). */
+  const navCount=(id:string)=>!data?0:id==='communications'?(data.unread||0):id==='activity'?attentionOf(data).rows.filter(row=>row.id!=='unread-messages').length:0;
   const toggleGroup=(groupId:string)=>setExpandedGroups(current=>{const next=new Set(current);if(next.has(groupId))next.delete(groupId);else next.add(groupId);return next;});
   const logout=async()=>{try{const response=await apiFetch(`${api}/api/staff/auth/logout`,{method:'POST',credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();setAuthRequired(true);setCapabilities(null);setData(null);}catch{setError('No se pudo cerrar la sesión. Inténtalo de nuevo.');}};
   const sidebarHidden=isDrawer&&!drawerOpen;
@@ -189,7 +194,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
           if(section.route){const item=section.route;return <a key={section.id} className={`app-nav-item app-nav-top ${route===item.id?'active':''}`} href={item.href} aria-label={section.label} title={isRail?section.label:undefined} aria-current={route===item.id?'page':undefined}><Icon icon={section.icon} size={20} className="app-nav-icon"/><span className="nav-item-label">{section.label}</span></a>;}
           return <div className={`app-nav-group ${section.active?'is-active':''} ${isOpen?'is-open':''}`} key={section.id}>
             <button className="app-nav-item app-nav-top app-nav-group-trigger" type="button" aria-expanded={isOpen} aria-controls={`nav-subnav-${section.id}`} aria-label={section.label} title={isRail?section.label:undefined} onClick={()=>toggleGroup(section.id)}><Icon icon={section.icon} size={20} className="app-nav-icon"/><span className="nav-item-label">{section.label}</span><Icon icon={icons.ChevronDown} size={16} className="nav-chevron"/></button>
-            {isOpen&&<div className="app-subnav" id={`nav-subnav-${section.id}`} role="group" aria-label={`${section.label} subsecciones`}>{section.children!.map(item=><a key={item.id} className={`app-nav-item app-subnav-item ${route===item.id?'active':''}`} href={item.href} aria-current={route===item.id?'page':undefined} title={isRail?item.label:undefined}><Icon icon={item.icon} size={16} className="app-nav-icon"/><span className="nav-item-label">{item.label}</span>{item.id==='communications'&&data?.unread? <span className="nav-count">{data.unread>99?'99+':data.unread}</span>:null}</a>)}</div>}
+            {isOpen&&<div className="app-subnav" id={`nav-subnav-${section.id}`} role="group" aria-label={`${section.label} subsecciones`}>{section.children!.map(item=><a key={item.id} className={`app-nav-item app-subnav-item ${route===item.id?'active':''}`} href={item.href} aria-current={route===item.id?'page':undefined} title={isRail?item.label:undefined}><Icon icon={item.icon} size={16} className="app-nav-icon"/><span className="nav-item-label">{item.label}</span>{navCount(item.id)>0&&<span className="nav-count">{navCount(item.id)>99?'99+':navCount(item.id)}</span>}</a>)}</div>}
           </div>;
         })}
       </nav>

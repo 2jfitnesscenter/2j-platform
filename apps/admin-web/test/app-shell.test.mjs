@@ -52,9 +52,10 @@ test('Admin sees the professional sections and only their existing authorized ro
   window.location.hash='#home';render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav=within(document.querySelector('.app-navigation'));
-  for(const label of ['Operación','Comercial','Gestión'])assert.ok(nav.getByRole('button',{name:label}));
+  for(const label of ['Inicio','Clientes','Agenda y equipo','Caja y ventas','Centro'])assert.ok(nav.getByRole('button',{name:label}));
   assert.equal(nav.queryByRole('button',{name:'Administración'}),null,'a group with no permitted child is not shown');
-  for(const label of ['Resumen','Avisos y auditoría','Fichaje','Agenda','Clientes','Espacios','Servicios','Economía','Tienda','Equipo','Noticias','Invitaciones','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
+  for(const label of ['Resumen','Fichaje','Agenda','Clientes','Espacios','Servicios','Economía','Tienda','Equipo','Noticias','Invitaciones','Ajustes de avisos'])assert.ok(nav.getByRole('link',{name:label}));
+  assert.ok(nav.getByRole('link',{name:/Avisos y auditoría/}));
   assert.ok(nav.getByRole('link',{name:/Mensajes/}));
   assert.equal(screen.queryByText('Cobrado hoy'),null);
   assert.ok(screen.getByText('2 mensajes sin leer'));
@@ -67,7 +68,7 @@ test('Trainer sees only capability-allowed professional sections and no business
   globalThis.fetch=async url=>String(url).includes('/api/session/capabilities')?response(trainerCapabilities):String(url).includes('/api/dashboard/command-center')?response(model):response({groups:[]});
   window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement(CommandCenter)));
   await screen.findByRole('heading',{name:'Próximas sesiones'});const nav=within(document.querySelector('.app-navigation'));
-  for(const label of ['Operación','Comercial','Gestión'])assert.ok(nav.getByRole('button',{name:label}));
+  for(const label of ['Inicio','Clientes','Agenda y equipo'])assert.ok(nav.getByRole('button',{name:label}));
   for(const label of ['Resumen','Clientes','Equipo'])assert.ok(nav.getByRole('link',{name:label}));
   assert.equal(nav.queryByRole('link',{name:'Invitaciones'}),null,'link-review capability is not granted to Trainers');
   assert.equal(nav.queryByRole('button',{name:'Administración'}),null);
@@ -78,13 +79,14 @@ test('Trainer sees only capability-allowed professional sections and no business
 
 test('groups disappear when no child is allowed and partial grants expose only their matching subnavigation',()=>{
   const none={calendar:false,clients:false,communications:false,billing:false,staff:false,notificationSettings:false,news:false,store:false,linkReviewManage:false};
-  assert.deepEqual(getProfessionalNavigation(none).map(item=>item.label),['Operación']);
+  assert.deepEqual(getProfessionalNavigation(none).map(item=>item.label),['Inicio']);
   assert.deepEqual(getProfessionalNavigation(none)[0].children.map(item=>item.label),['Resumen']);
   const partial={...none,clients:true,notificationSettings:true};
   const nav=getProfessionalNavigation(partial);
-  assert.deepEqual(nav.map(item=>item.label),['Operación','Gestión']);
-  assert.deepEqual(nav.find(item=>item.id==='management').children.map(item=>item.label),['Importar clientes','Configuración','Ajustes de avisos']);
-  assert.ok(getProfessionalNavigation({...none,linkReviewManage:true}).find(item=>item.id==='management').children.some(item=>item.label==='Invitaciones'));
+  assert.deepEqual(nav.map(item=>item.label),['Inicio','Clientes','Centro']);
+  assert.deepEqual(nav.find(item=>item.id==='clients').children.map(item=>item.label),['Clientes','Importar clientes']);
+  assert.deepEqual(nav.find(item=>item.id==='center').children.map(item=>item.label),['Configuración','Ajustes de avisos']);
+  assert.ok(getProfessionalNavigation({...none,linkReviewManage:true}).find(item=>item.id==='clients').children.some(item=>item.label==='Invitaciones'));
 });
 
 test('global search opens with Ctrl+K, groups permitted results and closes with Escape', async () => {
@@ -135,7 +137,7 @@ test('permitted Communications navigation remains visible while moving between m
   render(React.createElement(AppShell, null, React.createElement(CommandCenter)));
   await screen.findByRole('heading',{name:'Próximas sesiones'});
   const nav = document.querySelector('.app-navigation');
-  assert.ok(within(nav).getByRole('button', { name: 'Gestión' }));
+  assert.ok(within(nav).getByRole('button', { name: 'Clientes' }));
   assert.ok(within(nav).getByRole('link', { name: /Mensajes/ }));
   for (const label of ['Servicios', 'Agenda', 'Clientes', 'Economía', 'Equipo']) {
     const link = within(nav).getByRole('link', { name: new RegExp(label) });
@@ -146,7 +148,7 @@ test('permitted Communications navigation remains visible while moving between m
   assert.ok(within(nav).getByRole('link', { name: /Mensajes/ }));
   fireEvent.click(within(nav).getByRole('link', { name: /Mensajes/ }));
   await waitFor(() => assert.equal(within(nav).getByRole('link', { name: /Mensajes/ }).getAttribute('aria-current'), 'page'));
-  assert.ok(within(nav).getByRole('button',{name:'Gestión'}).closest('.app-nav-group').classList.contains('is-active'));
+  assert.ok(within(nav).getByRole('button',{name:'Clientes'}).closest('.app-nav-group').classList.contains('is-active'));
 });
 
 test('News management navigation is visible only when the server grants its capability', async()=>{
@@ -169,22 +171,22 @@ test('authorized hash deep links retain their current subnavigation and page con
   await screen.findByText('Página existente');
   const nav=within(document.querySelector('.app-navigation'));
   assert.equal(nav.getByRole('link',{name:'Servicios'}).getAttribute('aria-current'),'page');
-  assert.ok(nav.getByRole('button',{name:'Comercial'}).closest('.app-nav-group').classList.contains('is-active'));
-  assert.equal(getProfessionalPageContext('services').section,'Comercial');
+  assert.ok(nav.getByRole('button',{name:'Agenda y equipo'}).closest('.app-nav-group').classList.contains('is-active'));
+  assert.equal(getProfessionalPageContext('services').section,'Agenda y equipo');
   assert.equal(getProfessionalPageContext('spaces').page,'Espacios');
   assert.equal(getProfessionalPageContext('notification-settings').page,'Ajustes de avisos');
 });
 
-test('Espacios and Servicios are separate destinations under Comercial',()=>{
-  const gym=getProfessionalNavigation({...capabilities,calendar:true}).find(item=>item.id==='commercial');
-  assert.deepEqual(gym.children.map(route=>route.label),['Servicios','Espacios']);
+test('Espacios and Servicios are separate destinations under Agenda y equipo',()=>{
+  const gym=getProfessionalNavigation({...capabilities,calendar:true}).find(item=>item.id==='agenda-team');
+  assert.deepEqual(gym.children.map(route=>route.label),['Agenda','Servicios','Espacios','Fichaje','Equipo']);
   assert.equal(gym.children.find(route=>route.id==='spaces').href,'#spaces');
   assert.equal(gym.children.find(route=>route.id==='services').href,'#services');
 });
 
 test('navigation introduces no Programación, Arena, or Athlete View destination',()=>{
   const nav=getProfessionalNavigation({...capabilities,billing:true,news:true,store:true,notificationSettings:true});
-  assert.deepEqual(nav.map(item=>item.label),['Operación','Comercial','Gestión']);
+  assert.deepEqual(nav.map(item=>item.label),['Inicio','Clientes','Agenda y equipo','Caja y ventas','Centro']);
   assert.equal(JSON.stringify(nav).match(/Programación|Arena|Athlete View|Entrenamientos/g),null);
 });
 
@@ -197,7 +199,7 @@ test('expanded navigation is the default and compact sidebar can expand without 
   const frame=document.querySelector('.app-frame');assert.equal(frame.classList.contains('is-rail'),false);
   fireEvent.click(screen.getByRole('button',{name:'Compactar menú'}));
   await waitFor(()=>assert.equal(frame.classList.contains('is-rail'),true));
-  const comm=screen.getByRole('button',{name:'Operación'});assert.ok(comm);assert.equal(comm.getAttribute('title'),'Operación');
+  const comm=screen.getByRole('button',{name:'Inicio'});assert.ok(comm);assert.equal(comm.getAttribute('title'),'Inicio');
   fireEvent.click(screen.getByRole('button',{name:'Expandir menú'}));
   await waitFor(()=>assert.equal(frame.classList.contains('is-rail'),false));
   fireEvent.click(screen.getByRole('link',{name:'Clientes'}));
@@ -330,4 +332,42 @@ test('global search also finds the screens this profile can open (ignoring accen
   fireEvent.keyDown(field, { key: '/' });
   assert.equal(screen.queryByRole('dialog', { name: 'Búsqueda global' }), null, '"/" typed inside a field does not hijack it');
   field.remove();
+});
+
+test('A78: the menu is grouped by function, keeps every route and href, and hides what the profile cannot use',()=>{
+  const owner={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true,cash:true,ownerPanel:true,catalogPricingManage:true,memberInvitationManage:true};
+  const nav=getProfessionalNavigation(owner,'home');
+  assert.deepEqual(nav.map(group=>[group.label,group.children.map(route=>route.label)]),[
+    ['Inicio',['Resumen','Avisos y auditoría']],
+    ['Clientes',['Clientes','Contratos','Planes y cuotas','Promociones','Invitaciones','Importar clientes','Mensajes']],
+    ['Agenda y equipo',['Agenda','Servicios','Espacios','Fichaje','Equipo']],
+    ['Caja y ventas',['Caja','Economía','Tienda']],
+    ['Centro',['Mi gimnasio','Informes','Noticias','Configuración','Ajustes de avisos']],
+    ['Administración',['Panel de gestión','Monitorización']],
+  ]);
+  for(const route of nav.flatMap(group=>group.children))assert.equal(route.href,`#${route.id}`,'URLs and routes are unchanged');
+  assert.equal(nav.flatMap(group=>group.children).length,new Set(nav.flatMap(group=>group.children.map(route=>route.id))).size,'no destination appears twice');
+  const cashier={calendar:false,clients:false,communications:false,billing:false,staff:false,cash:true};
+  assert.deepEqual(getProfessionalNavigation(cashier).map(group=>[group.label,group.children.map(route=>route.label)]),[['Inicio',['Resumen']],['Caja y ventas',['Caja']]]);
+});
+
+test('A78: the drawer on a phone lists the same groups in the same order as the desktop sidebar, with unread counts on Mensajes and Avisos',async()=>{
+  const owner={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true,cash:true,ownerPanel:true,catalogPricingManage:true,memberInvitationManage:true};
+  const withAttention={...model,unread:3,attention:[{id:'a-1',kind:'followup',title:'Seguimiento',summary:'x',href:'#clients',ageAt:null}]};
+  const labels=async width=>{
+    cleanup();
+    Object.defineProperty(dom.window,'innerWidth',{value:width,configurable:true});
+    dom.window.matchMedia=query=>({matches:/max-width:\s*1023/.test(query)?width<1024:/max-width:\s*1279/.test(query)?width<1280:false,media:query,addEventListener(){},removeEventListener(){}});
+    globalThis.fetch=async url=>String(url).includes('/api/session/capabilities')?response(owner):String(url).includes('/api/dashboard/command-center')?response(withAttention):response({groups:[]});
+    window.location.hash='#home';render(React.createElement(AppShell,null,React.createElement('main',null,'Página')));
+    await screen.findByText('Página');
+    const nav=document.querySelector('.app-navigation');
+    await waitFor(()=>assert.ok(nav.querySelector('a[href="#communications"]')));
+    return {groups:Array.from(nav.querySelectorAll('.app-nav-group > button')).map(button=>button.getAttribute('aria-label')),counts:Array.from(nav.querySelectorAll('.nav-count')).map(node=>node.textContent),links:Array.from(nav.querySelectorAll('.app-subnav-item')).map(node=>node.getAttribute('href'))};
+  };
+  const phone=await labels(390);
+  const desktop=await labels(1440);
+  assert.deepEqual(phone.groups,['Inicio','Clientes','Agenda y equipo','Caja y ventas','Centro','Administración']);
+  assert.deepEqual(phone,desktop);
+  assert.deepEqual(desktop.counts,['1','3'],'Avisos and Mensajes show their unread counts');
 });

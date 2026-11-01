@@ -62,12 +62,12 @@ test('tablet 1024-1279 switches to the rail automatically and groups still open 
   const frame = document.querySelector('.app-frame');
   assert.ok(frame.classList.contains('is-rail'));
   assert.equal(screen.queryByRole('button', { name: 'Compactar menú' }), null, 'the rail is automatic here, no fold toggle');
-  const group = screen.getByRole('button', { name: 'Operación' });
+  const group = screen.getByRole('button', { name: 'Inicio' });
   assert.equal(group.getAttribute('aria-expanded'), 'false');
-  assert.equal(group.getAttribute('title'), 'Operación');
+  assert.equal(group.getAttribute('title'), 'Inicio');
   fireEvent.click(group);
   assert.equal(group.getAttribute('aria-expanded'), 'true');
-  assert.ok(within(document.querySelector('.app-sidebar')).getByRole('link', { name: /Agenda/ }));
+  assert.ok(within(document.querySelector('.app-sidebar')).getByRole('link', { name: 'Resumen' }));
 });
 
 test('below 1024 the sidebar is an off-canvas drawer opened from the top bar, with focus management and Escape', async () => {
@@ -112,9 +112,9 @@ test('shell keeps permission-driven destinations in every mode (capabilities unc
   viewport(1100); serve(model, { calendar: false, clients: true, communications: false, billing: false, staff: false });
   mount();
   await screen.findByRole('heading', { name: 'Resumen' });
-  fireEvent.click(screen.getByRole('button', { name: 'Operación' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Clientes' }));
   assert.ok(screen.getByRole('link', { name: 'Clientes' }));
-  assert.equal(screen.queryByRole('button', { name: 'Comercial' }), null);
+  assert.equal(screen.queryByRole('button', { name: 'Caja y ventas' }), null);
   assert.equal(screen.queryByRole('link', { name: 'Equipo' }), null);
 });
 
