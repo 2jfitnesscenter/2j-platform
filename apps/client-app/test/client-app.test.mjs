@@ -133,6 +133,11 @@ test('pilot member login uses an opaque server session and logout returns to sig
   assert.ok(await ui.findByText('Sin datos disponibles.'));
   assert.equal(ui.queryByText(/no está disponible en este entorno/), null, 'A68 consent blocks are not shown as connectivity failures');
   fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
+  memberEvolutionResponse = { v: 1, state: 'not_available' };
+  fireEvent.click(await ui.findByRole('button', { name: /Abrir Mi evolución/ }));
+  assert.ok(await ui.findByText('Sin datos disponibles.'), 'a member without effective training access sees the blocked/empty state');
+  assert.equal(ui.queryByText(/no está disponible en este entorno/), null, 'missing entitlement is not presented as a service outage');
+  fireEvent.click(ui.getByRole('button', { name: /Volver al perfil/ }));
   fireEvent.click(ui.getByRole('button', { name: /Notificaciones.*avisos sin leer/ }));
   assert.ok(await ui.findByRole('heading', { name: 'Notificaciones' }));
   assert.equal(ui.getByRole('navigation', { name: 'Navegación principal' }).querySelector('[aria-current="page"]')?.textContent.trim(), 'Perfil');
