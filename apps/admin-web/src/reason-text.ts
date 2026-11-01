@@ -1,21 +1,19 @@
 /**
  * Motivos de error del API en español, siempre con causa y acción (A74/A75): nunca «No se pudo completar».
- * Solo traduce códigos que el API ya devuelve; no decide ni bloquea nada. Los códigos que Platform retire
- * (p. ej. al desvincular el fichaje de la caja) se pueden borrar de aquí sin tocar nada más.
+ * Solo traduce códigos que el API ya devuelve; no decide ni bloquea nada. Si Platform retira un código, se borra de aquí
+ * sin tocar nada más (A76 retiró los bloqueos de caja de día anterior y de fichar salida con caja a cargo).
  */
 export const REASONS: Record<string, string> = {
   // Fichaje
   shift_already_open: 'Ya tienes la entrada fichada y la jornada sigue abierta. Si has terminado, ficha la salida.',
   no_open_shift: 'No tienes ninguna entrada fichada, así que no hay salida que registrar. Ficha primero la entrada.',
   staff_account_unlinked: 'Tu cuenta no está vinculada a una ficha de equipo, y sin ella no se puede fichar ni usar la caja. Pide a Administración que la vincule.',
-  cash_register_must_be_closed_or_handed_over: 'Tienes una caja a tu cargo y el sistema no deja fichar la salida con ella abierta. Ciérrala o entrégasela en Caja a otra persona que haya fichado la entrada; después ficha la salida.',
   // Caja
   clock_in_required: 'Para abrir la caja primero tienes que fichar la entrada. Pulsa «Fichar entrada ahora» y vuelve a intentarlo.',
   cash_custodian_not_clocked_in: 'Para cerrar la caja primero tienes que fichar la entrada. Pulsa «Fichar entrada ahora» y vuelve a intentarlo.',
   already_holds_register: 'Ya tienes otra caja a tu cargo. Ciérrala o entrégala en Caja antes de abrir otra.',
   cash_already_open: 'Esa caja ya está abierta. Actualiza la pantalla para verla y trabajar con ella.',
   cash_register_already_used_today: 'Esa caja ya tuvo su sesión de hoy (una sesión por caja y día). Usa la otra caja o espera a mañana.',
-  cash_session_previous_day_requires_owner_resolution: 'Hay una caja de un día anterior sin cerrar: hoy no se puede cerrar ni abrir otra desde aquí, y mientras siga a tu cargo tampoco podrás fichar la salida. Avisa al propietario para que la resuelva (Economía → «Resolver caja pendiente»).',
   cash_legacy_session_requires_owner_resolution: 'Hay una caja antigua sin registro asignado. Avisa al propietario para que la resuelva en Economía → «Resolver caja pendiente» antes de abrir otra.',
   cash_outflow_approval_pending: 'Hay un gasto o retirada pendiente de aprobación del propietario, y hasta entonces no se puede cerrar la caja. Pídele que lo apruebe o lo rechace.',
   cash_custodian_required: 'Solo quien tiene la caja a su cargo puede cerrarla. Pídele que la cierre o que te la entregue.',
