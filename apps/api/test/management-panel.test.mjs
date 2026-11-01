@@ -31,11 +31,31 @@ test('the panel lists open registers, closed shifts, the accumulated difference 
   assert.ok(shift.id);
   const body = (await get(owner)).json();
   assert.equal(body.timezone, 'Atlantic/Canary');
-  assert.deepEqual(Object.keys(body).sort(), ['accumulatedDifference', 'closedShifts', 'openRegisters', 'teamClockings', 'timezone', 'windows']);
+  assert.deepEqual(Object.keys(body).sort(), ['accumulatedDifference', 'cashHistory', 'closedShifts', 'openRegisters', 'teamClockings', 'timezone', 'windows']);
   assert.ok(body.openRegisters.some((row) => row.id === shift.id), 'the shift opened by the fixture is listed as open');
   for (const row of body.openRegisters) assert.deepEqual(Object.keys(row).sort(), ['custodian', 'forgotten', 'id', 'localDate', 'openedAt', 'registerName']);
   assert.ok(Number.isInteger(body.accumulatedDifference.differenceCents) && Number.isInteger(body.accumulatedDifference.shifts));
   for (const row of body.closedShifts) assert.notEqual(row.status, 'open');
+  assert.ok(Array.isArray(body.cashHistory));
   const text = JSON.stringify(body).toLowerCase();
   for (const forbidden of ['totalhours', 'hours', 'email', 'phone', 'health', 'salud']) assert.equal(text.includes(forbidden), false, `no "${forbidden}" in the panel`);
+});
+
+test('owner cash history preserves open, close, reopen and difference audits with actor and prior balance', async () => {
+  const shift = await ensureCashSessionForActor(sql, 'management-panel-admin');
+  const details = { registerId: shift.registerId, registerCode: 'bunker', reason: 'Corrección sintética', differenceCents: -125, previousDifferenceCents: -125, previousExpectedCents: 5125, previousCountedCents: 5000 };
+  for (const [action, resourceType, resourceId, eventDetails] of [
+    ['cash.opened', 'cash_session', shift.id, { registerId: shift.registerId }],
+    ['cash.closed', 'cash_session', shift.id, details],
+    ['cash.reopened', 'cash_session', shift.id, details],
+    ['cash.handover_started', 'cash_handover', 'a7700000-0000-4000-8000-000000000001', { ...details, sessionId: shift.id }],
+    ['cash.handover_completed', 'cash_handover', 'a7700000-0000-4000-8000-000000000001', { ...details, sessionId: shift.id, mismatch: true }],
+  ]) await sql`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,details) VALUES ('management-panel-admin',${action},${resourceType},${resourceId},${sql.json(eventDetails)})`;
+  const body = (await get(owner)).json();
+  for (const action of ['cash.opened', 'cash.closed', 'cash.reopened', 'cash.handover_started', 'cash.handover_completed']) assert.ok(body.cashHistory.some((row) => row.action === action && row.actorId === 'management-panel-admin'));
+  const reopen = body.cashHistory.find((row) => row.action === 'cash.reopened' && row.details.reason === 'Corrección sintética');
+  assert.match(reopen.actorName, /^QA caja /, 'the owner gets the linked staff display name for the audit actor');
+  assert.equal(reopen.details.previousDifferenceCents, -125);
+  assert.equal(reopen.details.differenceCents, -125);
+  assert.ok(body.cashHistory.some((row) => row.action === 'cash.handover_completed' && row.details.mismatch === true));
 });

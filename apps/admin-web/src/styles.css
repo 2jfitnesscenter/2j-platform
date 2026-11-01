@@ -665,12 +665,12 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
 .plan-card-head p { margin: 4px 0 0; color: var(--2j-color-text-secondary); font-size: 13px; }
 .plan-card-side { display: grid; justify-items: end; gap: 7px; }
 .plan-price { font-size: 20px; white-space: nowrap; }
-.plan-facts { display: grid; gap: 10px; margin: 0; }
-.plan-facts > div { display: grid; grid-template-columns: minmax(76px, .55fr) minmax(0, 1fr); gap: 8px; }
+.plan-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 0; }
+.plan-facts > div { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
 .plan-facts dt { color: var(--2j-color-text-secondary); font-size: 13px; }
-.plan-facts dd { margin: 0; color: var(--2j-color-text-primary); font-size: 14px; }
+.plan-facts dd { margin: 0; color: var(--2j-color-text-primary); font-size: 14px; overflow-wrap: normal; word-break: normal; }
 .plan-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--2j-color-border); }
-@media (max-width: 640px) { .plan-cards .plan-card { padding: 14px; } .plan-facts > div { grid-template-columns: 1fr; gap: 3px; } }
+@media (max-width: 640px) { .plan-cards .plan-card { padding: 14px; } }
 .cash-owner-decisions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Recuento de caja compacto (A70): billetes y monedas agrupados, campos pequeños, sin desplazamiento interior en tablet. */

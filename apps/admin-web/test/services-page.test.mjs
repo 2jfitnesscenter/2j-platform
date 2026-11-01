@@ -1,5 +1,6 @@
 import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import React from 'react';
 
@@ -152,6 +153,11 @@ test('service navigation filters a scannable plan table while details retain rig
   assert.equal(within(table).getAllByText('Fuerza 3 días').length,1);
   assert.equal(within(table).getAllByText('3 accesos / semana').length,2);
   assert.equal(within(table).getAllByText('Recurrente · mensual').length,2);
+  for (const card of table.querySelectorAll('.plan-card')) {
+    const facts = card.querySelectorAll('.plan-facts > div');
+    assert.equal(facts.length, 3, 'sessions, validity and services remain separate readable facts');
+    for (const fact of facts) assert.ok(fact.querySelector('dt')?.textContent && fact.querySelector('dd')?.textContent);
+  }
   assert.ok(within(table).getByText(/40,00/));
   assert.ok(within(table).getByText('Activo'));
   fireEvent.click(within(table).getAllByRole('button',{name:'Detalles'})[0]);
@@ -173,6 +179,14 @@ test('service navigation filters a scannable plan table while details retain rig
     assert.ok(currentTable.textContent.includes('Funcional mensual'));
     assert.equal(currentTable.textContent.includes('Fuerza 3 días'),false);
   });
+});
+
+test('plan facts use a responsive full-width layout without breaking words vertically', async () => {
+  const css = await readFile(new URL('../src/services-v2.css', import.meta.url), 'utf8');
+  assert.match(css, /\.plan-facts\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.doesNotMatch(css, /\.plan-facts\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s, 'facts retain a single wide column at desktop sizes');
+  assert.match(css, /\.plan-facts dd\s*\{[^}]*word-break:\s*normal/s);
+  assert.doesNotMatch(css, /\.plan-facts dd\s*\{[^}]*overflow-wrap:\s*anywhere/s);
 });
 
 test('draft activation errors remain visible and the plan stays available for correction', async () => {

@@ -18,6 +18,7 @@ const panel = (extra = {}) => ({
   closedShifts: [{ id: 'c-1', registerName: 'Sala', localDate: '2026-10-28', openedAt: '2026-10-28T08:00:00Z', closedAt: '2026-10-28T20:00:00Z', status: 'closed', countedCents: 15000, expectedCents: 15250, differenceCents: -250 }, { id: 'c-2', registerName: 'Búnker', localDate: '2026-10-27', openedAt: '2026-10-27T08:00:00Z', closedAt: '2026-10-27T21:00:00Z', status: 'late_close', countedCents: 5000, expectedCents: 5000, differenceCents: 0 }],
   accumulatedDifference: { differenceCents: -250, shiftsWithDifference: 1, shifts: 2 },
   teamClockings: [{ id: 'k-1', displayName: 'Ana Coach', eventType: 'clock_in', occurredAt: '2026-10-29T08:05:00Z', origin: 'web' }],
+  cashHistory: [{ id: 'cash-1', action: 'cash.reopened', actorId: 'owner-1', actorName: 'Juanjo', occurredAt: '2026-10-29T10:00:00Z', registerName: 'Sala', details: { reason: 'Corrección de cierre', previousDifferenceCents: -250 } }],
   ...extra,
 });
 
@@ -37,6 +38,10 @@ test('Panel de gestión shows open registers (flagging a previous day), closed s
   assert.equal(rows.length, 2);
   assert.match(rows[0].textContent, /−2,50/); assert.match(rows[1].textContent, /Cierre tardío/); assert.match(rows[1].textContent, /Cuadra/);
   assert.match(screen.getByRole('list', { name: 'Fichajes de hoy' }).textContent, /Ana Coach.*Entrada/s);
+  const cashHistory = screen.getByRole('list', { name: 'Historial de caja' });
+  assert.match(cashHistory.textContent, /Reapertura · Sala/);
+  assert.match(cashHistory.textContent, /Juanjo.*Corrección de cierre/s);
+  assert.match(cashHistory.textContent, /Cierre anterior: −2,50/);
   assert.equal(/horas/i.test(document.body.textContent.replace('Sin totales de horas.', '')), false, 'D121: no hour totals');
 });
 
@@ -46,11 +51,12 @@ test('anyone without the owner grant only sees an explanation, never cash figure
   assert.ok(await screen.findByText('Este panel es solo para el propietario'));
   assert.equal(document.querySelector('table'), null);
   cleanup();
-  globalThis.fetch = async () => response(panel({ openRegisters: [], closedShifts: [], teamClockings: [], accumulatedDifference: { differenceCents: 0, shiftsWithDifference: 0, shifts: 0 } }));
+  globalThis.fetch = async () => response(panel({ openRegisters: [], closedShifts: [], cashHistory: [], teamClockings: [], accumulatedDifference: { differenceCents: 0, shiftsWithDifference: 0, shifts: 0 } }));
   render(React.createElement(ManagementPage));
   assert.ok(await screen.findByText('No hay ninguna caja abierta'));
   assert.ok(screen.getByText('Sin turnos cerrados en este periodo'));
   assert.ok(screen.getByText('Nadie ha fichado hoy'));
+  assert.ok(screen.getByText('Sin movimientos de caja en este periodo'));
   cleanup();
   globalThis.fetch = async () => response({}, 500);
   render(React.createElement(ManagementPage));

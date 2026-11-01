@@ -74,12 +74,12 @@
 .plan-card-head p { margin: var(--2j-space-1) 0 0; color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-sm); }
 .plan-card-side { display: flex; align-items: center; gap: var(--2j-space-3); }
 .plan-price { font-size: var(--2j-type-size-lg); font-weight: var(--2j-type-weight-bold); font-variant-numeric: tabular-nums; }
-/* A77-2: one fact per line (label left, value right) so words never break one letter per line in a narrow column. */
+/* A77-2: full-width label/value rows avoid narrow columns and vertical word breaks. */
 .plan-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--2j-space-3); margin: 0; }
-.plan-facts > div { min-width: 0; display: grid; grid-template-columns: minmax(5.5rem, 7rem) minmax(0, 1fr); align-items: baseline; gap: var(--2j-space-3); padding-bottom: var(--2j-space-3); border-bottom: 1px solid var(--2j-color-border); }
+.plan-facts > div { min-width: 0; display: grid; gap: 2px; padding-bottom: var(--2j-space-3); border-bottom: 1px solid var(--2j-color-border); }
 .plan-facts > div:last-child { padding-bottom: 0; border-bottom: 0; }
 .plan-facts dt { color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); overflow-wrap: normal; word-break: normal; hyphens: none; }
-.plan-facts dd { margin: 0; font-size: var(--2j-type-size-sm); line-height: 1.5; overflow-wrap: break-word; word-break: normal; }
+.plan-facts dd { min-width: 0; margin: 0; font-size: var(--2j-type-size-sm); line-height: 1.5; overflow-wrap: break-word; word-break: normal; }
 .plan-row-actions { display: flex; flex-wrap: wrap; gap: var(--2j-space-2); padding-top: var(--2j-space-3); border-top: 1px solid var(--2j-color-border); }
 .plan-detail-expanded { display: grid; gap: var(--2j-space-3); padding-top: var(--2j-space-2); }
 .services-v2 .service-chip { display: inline-flex; align-items: center; gap: var(--2j-space-2); padding: var(--2j-space-1) var(--2j-space-3); border: 0; border-radius: var(--2j-radius-pill); background: var(--2j-color-surface-subtle); font-size: var(--2j-type-size-xs); }
@@ -90,7 +90,7 @@
 .services-v2 .rights-block li strong { font-size: var(--2j-type-size-sm); }
 .plan-legacy-note { margin: 0; padding: var(--2j-space-3); border-radius: var(--2j-radius-md); background: var(--2j-color-info-soft); color: var(--2j-color-info-ink); font-size: var(--2j-type-size-xs); line-height: 1.5; }
 .plan-detail-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--2j-space-3); color: var(--2j-color-text-secondary); font-size: var(--2j-type-size-xs); }
-@media (max-width: 767.98px) { .plan-content { padding-inline: var(--2j-space-4); } .plan-facts > div { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+@media (max-width: 767.98px) { .plan-content { padding-inline: var(--2j-space-4); } }
 
 /* ---------- Dialogs (shared modal; plan form keeps its own inner classes) ---------- */
 .ui-modal.plan-dialog { width: min(100%, 44rem); }
