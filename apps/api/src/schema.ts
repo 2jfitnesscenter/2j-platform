@@ -325,12 +325,12 @@ export const platformMemberInvitationEvents = pgTable('platform_member_invitatio
   id: uuid('id').defaultRandom().primaryKey(), invitationId: uuid('invitation_id').notNull().references(() => platformMemberInvitations.id, { onDelete: 'restrict' }), actorId: text('actor_id').notNull(), action: text('action').notNull(), occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [index('platform_member_invitation_events_timeline_idx').on(t.invitationId, t.occurredAt, t.id), check('platform_member_invitation_events_actor', sql`char_length(btrim(${t.actorId})) BETWEEN 1 AND 120`), check('platform_member_invitation_events_action', sql`${t.action} IN ('created','revoked')`)]);
 
-// A81 slice 1: entrenamiento de socio. Mismo contrato que migrations/0075_training_member_slice1.sql.
+// A81 slice 1: entrenamiento de socio. Espejo de tipos y restricciones de migrations/0075 y 0076; la fuente de verdad es el SQL de las migraciones.
 export const trainingRoutines = pgTable('training_routines', {
   id: uuid('id').defaultRandom().primaryKey(), clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
   name: text('name').notNull(), scheduledWeekdays: smallint('scheduled_weekdays').array().notNull().default(sql`'{}'`), status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index('training_routines_client_listing_idx').on(t.clientId, t.status, t.id), check('training_routines_status_allowed', sql`${t.status} IN ('active','archived')`)]);
+}, (t) => [index('training_routines_client_listing_idx').on(t.clientId, t.status, t.id), check('training_routines_status_allowed', sql`${t.status} IN ('active','archived')`), check('training_routines_name_length', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 120`), check('training_routines_weekdays_valid', sql`${t.scheduledWeekdays} <@ ARRAY[1,2,3,4,5,6,7]::smallint[]`)]);
 
 export const trainingRoutineExercises = pgTable('training_routine_exercises', {
   id: uuid('id').defaultRandom().primaryKey(), routineId: uuid('routine_id').notNull().references(() => trainingRoutines.id, { onDelete: 'cascade' }),
@@ -341,7 +341,7 @@ export const trainingSessions = pgTable('training_sessions', {
   id: uuid('id').defaultRandom().primaryKey(), clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
   routineId: uuid('routine_id').references(() => trainingRoutines.id, { onDelete: 'restrict' }), status: text('status').notNull(), businessDate: date('business_date').notNull(),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(), finishedAt: timestamp('finished_at', { withTimezone: true }),
-}, (t) => [uniqueIndex('training_sessions_one_open_per_client').on(t.clientId).where(sql`${t.status} = 'in_progress'`), index('training_sessions_history_idx').on(t.clientId, t.startedAt, t.id), check('training_sessions_status_allowed', sql`${t.status} IN ('in_progress','finished')`)]);
+}, (t) => [uniqueIndex('training_sessions_one_open_per_client').on(t.clientId).where(sql`${t.status} = 'in_progress'`), index('training_sessions_history_idx').on(t.clientId, t.startedAt, t.id), check('training_sessions_status_allowed', sql`${t.status} IN ('in_progress','finished','abandoned')`), check('training_sessions_finished_consistent', sql`(${t.status} = 'finished') = (${t.finishedAt} IS NOT NULL)`)]);
 
 export const trainingSessionSets = pgTable('training_session_sets', {
   id: uuid('id').defaultRandom().primaryKey(), sessionId: uuid('session_id').notNull().references(() => trainingSessions.id, { onDelete: 'cascade' }),

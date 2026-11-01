@@ -201,3 +201,25 @@ export function TrainingModule({ onBack }: { onBack: () => void }) {
     </section>
   );
 }
+
+/** Tarjeta de Inicio: solo aparece con el derecho de entrenamiento. Sin derecho, el motivo y la acción se muestran al abrir Entrenar. */
+export function TrainingEntryCard({ onOpen, previewMode }: { onOpen: () => void; previewMode: boolean }) {
+  const [entitled, setEntitled] = React.useState(false);
+  React.useEffect(() => {
+    // La vista previa no llama a la API nunca.
+    if (previewMode) return;
+    let active = true;
+    trainingApi<{ entitled: boolean }>('/api/me/training/access')
+      .then(result => { if (active) setEntitled(result.entitled); })
+      .catch(() => { if (active) setEntitled(false); });
+    return () => { active = false; };
+  }, [previewMode]);
+  if (previewMode || !entitled) return null;
+  return (
+    <button type="button" className="profile-link-card training-home-card" onClick={onOpen}>
+      <span className="eyebrow">ENTRENAMIENTO</span>
+      <strong>Hoy y mi historial</strong>
+      <small className="muted">Empieza la sesión de hoy o revisa tus sesiones guardadas.</small>
+    </button>
+  );
+}
