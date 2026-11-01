@@ -1,0 +1,23 @@
+/* Health V2 — composition goals. App tokens only (follows light/dark); state is always a text label beside its colour. */
+.cg{margin:6px 0 4px}
+.cg-lead{margin:2px 0 10px}
+.cg-card{display:grid;gap:12px;margin-bottom:10px}
+.cg-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.cg-head b{font-size:16px}
+.cg-edit{width:auto!important;min-height:34px;padding:0 12px;font-size:12px}
+.cg-nums{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.cg-nums>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cg-k{font-size:11px;color:var(--label-2)}
+.cg-v{font-size:17px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.cg-bar{height:7px;border-radius:99px;background:color-mix(in srgb,var(--label) 10%,transparent);overflow:hidden}
+.cg-bar>i{display:block;height:100%;border-radius:inherit;background:var(--acc)}
+.cg-state{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:650}
+.cg-state svg{width:17px;height:17px}
+.cg-state.good{color:var(--green,#1f9d55)}
+.cg-state.warn{color:var(--orange,#d97706)}
+.cg-state.calm{color:var(--label-2)}
+.cg-range{display:grid;gap:3px;padding-top:10px;border-top:1px solid var(--sep)}
+.cg-range b{font-size:13px}
+.cg-sheet h3{margin:0 0 6px}
+.cg-field{display:flex;flex-direction:column;gap:5px;margin:10px 0;font-size:12px;color:var(--label-2)}
+@media(max-width:380px){.cg-nums{grid-template-columns:1fr 1fr}}

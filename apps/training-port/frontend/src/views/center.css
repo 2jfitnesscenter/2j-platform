@@ -1,0 +1,64 @@
+/* Gestión del centro V1 (Hoy · Miembros · Entrenadores). Tokens only, so it follows light/dark and the member's accent. Mobile first; two columns from 720 px. */
+.cmx { width: 100%; min-width: 0; }
+.cmx .hdr { display: flex; align-items: center; padding: 6px 0 12px; }
+.cm-tabs { margin: 0 0 14px; }
+.cm-scope { margin: 8px 2px 14px; font-size: 12.5px; color: var(--label-3); line-height: 1.4; }
+
+/* ---- Hoy ---- */
+.cm-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 560px) { .cm-tiles { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.cm-tile { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; min-width: 0; background: var(--surface); border: 1px solid var(--sep-op); border-radius: 16px; color: var(--label-2); }
+.cm-tile svg { width: 16px; height: 16px; margin-bottom: 2px; }
+.cm-tile b { font-size: 26px; line-height: 1.1; font-weight: 700; color: var(--label); }
+.cm-tile span { font-size: 12px; line-height: 1.25; }
+.cm-tile.live { border-color: var(--acc-line); background: color-mix(in srgb, var(--acc) 9%, var(--surface)); }
+.cm-tile.live svg { color: var(--acc); }
+.cm-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (min-width: 720px) { .cm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.cm-block { padding: 14px; min-width: 0; }
+.cm-block header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.cm-block h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.01em; text-transform: none; }
+.cm-ico { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; background: color-mix(in srgb, var(--label) 7%, transparent); color: var(--label-2); flex: none; }
+.cm-ico svg { width: 16px; height: 16px; }
+.cm-hint { margin: 0 0 8px; font-size: 12.5px; color: var(--label-3); }
+.cm-days { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cm-list { display: flex; flex-direction: column; }
+.cm-empty { margin: 4px 0 2px; font-size: 13.5px; color: var(--label-3); }
+.cm-person { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 9px 0; font: inherit; color: var(--label); text-align: left; background: none; border: 0; border-top: 1px solid var(--sep-op); }
+.cm-list > .cm-person:first-child { border-top: 0; }
+button.cm-person { cursor: pointer; }
+.cm-who { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.cm-who b { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14.5px; font-weight: 650; overflow-wrap: anywhere; }
+.cm-who small { font-size: 12.5px; line-height: 1.35; color: var(--label-2); overflow-wrap: anywhere; }
+.cm-who small.warn { color: var(--orange); }
+.cm-when { flex: none; max-width: 40%; font-size: 12px; color: var(--label-2); text-align: right; font-variant-numeric: tabular-nums; }
+.cm-more { margin-top: 6px; padding: 9px 0 2px; font: inherit; font-size: 13px; font-weight: 650; color: var(--acc); text-align: left; background: none; border: 0; cursor: pointer; }
+.cm-person:focus-visible, .cm-more:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: 8px; }
+
+/* ---- Miembros ---- */
+.cm-tools { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+@media (min-width: 720px) { .cm-tools { flex-direction: row; align-items: center; } .cm-tools .search { flex: 1; } }
+.cm-selects { display: flex; gap: 8px; flex-wrap: wrap; }
+.cm-selects .input { width: auto; min-width: 0; max-width: 100%; flex: 1 1 140px; }
+.cm-chips { margin-bottom: 12px; }
+.cm-chips .chip em { margin-left: 6px; font-style: normal; font-size: 11.5px; opacity: .7; font-variant-numeric: tabular-nums; }
+.cm-members { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+@media (min-width: 900px) { .cm-members { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.cm-member { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px; background: var(--surface); border: 1px solid var(--sep-op); border-radius: 16px; }
+.cm-member.off { opacity: .6; }
+.cm-acts { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.cm-acts .btn { width: auto; white-space: nowrap; }
+@media (max-width: 440px) { .cm-member { flex-wrap: wrap; } .cm-acts { flex-direction: row; width: 100%; } .cm-acts .btn { flex: 1; } }
+
+/* ---- Entrenadores ---- */
+.cm-trainers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+@media (min-width: 720px) { .cm-trainers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.cm-trainer { display: flex; flex-direction: column; gap: 12px; padding: 14px; min-width: 0; }
+.cm-trainer header { display: flex; align-items: center; gap: 12px; }
+.cm-trainer dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; margin: 0; }
+.cm-trainer dt { font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--label-3); line-height: 1.25; }
+.cm-trainer dd { margin: 2px 0 0; font-size: 18px; font-weight: 700; }
+.cm-trainer dd:not(.num) { font-size: 13px; font-weight: 600; }
+.cm-trainer .hot dd { color: var(--orange); }
+.cm-trainer .btn { align-self: flex-start; width: auto; }
+@media (max-width: 380px) { .cm-trainer dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
