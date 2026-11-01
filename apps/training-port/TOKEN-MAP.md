@@ -29,7 +29,8 @@ Regla: se conserva la jerarquía (fondo, superficie, texto, acento, estado), no 
 
 | `rgba(0,0,0,a)` (sombras) | Sombra neutra | `color-mix(in srgb, var(--2j-color-sidebar) a%, transparent)` | Grafito de Platform en ambos temas; el alfa se conserva |
 | `#fff` como superficie (fondo de medio) | Superficie | `--2j-color-surface` | Cambia con el tema |
-| `#7bd34a`, `#10B981` (acento verde de Búnker) | Acento de marca | `--2j-color-brand` (lima) | Verde de Búnker -> lima de Platform (A77-2) |
+| `#7bd34a` (acento verde de noticias) | Acento de marca | `--2j-color-brand` (lima) | Verde lima de Búnker -> lima de Platform (A77-2) |
+| `#10B981` (esmeralda) | Pendiente | Sin token; ver pendientes | Tanda 5 lo mapeó a lima en `studio.css` (`--st-em`); queda por decidir (ver pendientes) |
 | `#04130D` (texto sobre acento verde) | Texto sobre marca | `--2j-color-text-on-brand` | |
 | `#1f9d55`, `--green` (estado bueno) | Éxito | `--2j-color-success` | |
 | `#d97706`, `#D69E2E`, `#ff9f0a`, `--orange`, `--yellow` | Aviso | `--2j-color-warning` | |
@@ -37,6 +38,15 @@ Regla: se conserva la jerarquía (fondo, superficie, texto, acento, estado), no 
 | `#0a84ff`, `--blue` | Información | `--2j-color-info` | |
 
 Pantallas hechas: `v3-training.css` (post-entreno y héroe de Inicio); `intelligence-today.css`, `train2j-program-home.css`, `composition-goals.css`, `news.css`, `guided-programs.css`, `training-quality-panel.css`, `studio.css` (tanda 5).
-Pendiente de decisión por sección: colores de sección de Búnker sin token de Platform (`#d4af37` oro, `#d9b5ff` púrpura, etc.). Pendiente de pantalla: el resto de ficheros.
+Tanda 6a (`layout-editor.css`, `actions-sheet.css`, `v2-screens.css`): superficies y textos oscuros a tokens de sidebar; `#9FB0AA` a `--2j-color-sidebar-muted`.
+
+### Pendientes (sin token de Platform; no se sustituyen)
+
+- **Oro de sección:** `#D9B45B`, `#d9b45b`, `#d4af37`, `rgba(217,180,91,a)`, tinta dorada `#231a02`.
+- **Esmeralda de sección:** `#10B981`, `#34D399`, `#2fd18b`, `rgba(16,185,129,a)`, `rgba(52,211,153,a)`. Pendiente de decisión: si el esmeralda de Búnker debe pasar a lima (como en `studio.css`) o conservarse como color de sección.
+- **Texto oscuro sobre verde:** `#04140E`, `rgba(4,20,14,a)`.
+- **Púrpura de sección:** `#d9b5ff`.
+
+Pendiente de pantalla: `index.css` (582 colores), `views/premium.css`, `v3-progress.css`, `v2.css`, `views/opposition.css`, `v2-social.css`, `v3-library.css`.
 
 Pendiente: los 3 ficheros que usan `forwardRef` o APIs de React 19 se revisan antes de compilar con React 18. Lo demás se valida con typecheck y capturas.
