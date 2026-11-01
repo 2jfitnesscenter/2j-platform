@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import { assignmentDateDefaults, canaryBusinessDate } from '@2j/domain';
-import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
+import { lockOpenCashSession } from './cash-session.js';
 import { ContractAssignmentError, coordinateContractAssignment } from './contract-assignment-coordinator.js';
 import type { createDatabase } from './db.js';
 
@@ -167,7 +167,7 @@ export function registerClientPlanRoutes(app: FastifyInstance<any,any,any,any,an
         }
         return { id: assignmentId, chargeId, paymentId, replay: false as const };
       });
-      if ('error' in result) return reply.code(['price_override_forbidden','assignment_dates_override_forbidden'].includes(result.error)?403:409).send({ error: result.error, ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
+      if ('error' in result) return reply.code(['price_override_forbidden','assignment_dates_override_forbidden'].includes(result.error)?403:409).send({ error: result.error });
       return reply.code(result.replay ? 200 : 201).send(result);
     } catch (error) {
       const dbCode = code(error);

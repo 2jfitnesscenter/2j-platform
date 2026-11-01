@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
 import { activateSettledEntitlementPeriods } from './assignment-periods.js';
-import { lockOpenCashSession, previousDayCashSessionMessage } from './cash-session.js';
+import { lockOpenCashSession } from './cash-session.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -124,7 +124,7 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         await activateSettledEntitlementPeriods(tx,charge.id,context.actorId);
         return{id,replay:false as const};
       });
-      if('error'in result)return reply.code(result.error==='charge_not_found'?404:409).send({error:result.error,...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{})});
+      if('error'in result)return reply.code(result.error==='charge_not_found'?404:409).send({error:result.error});
       return reply.code(result.replay?200:201).send({id:result.id});
     }catch(e){return error(reply,e);}
   });
@@ -151,7 +151,7 @@ export function registerEconomicRoutes(app:FastifyInstance<any,any,any,any,any>,
         await audit(tx,context.actorId,'payment.refunded','transaction',id,payment.clientId,{amountCents:data.amountCents,reverses:payment.id,method:data.method,cashSessionId:cash.id});
         return{id,replay:false as const};
       });
-      if('error'in result)return reply.code(result.error==='payment_not_found'?404:409).send({error:result.error,...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{})});
+      if('error'in result)return reply.code(result.error==='payment_not_found'?404:409).send({error:result.error});
       return reply.code(result.replay?200:201).send({id:result.id});
     }catch(e){return error(reply,e);}
   });
