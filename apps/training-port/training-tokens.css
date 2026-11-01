@@ -1,0 +1,28 @@
+/* Capa de compatibilidad (A85): expone con sus nombres originales de Búnker las variables de color, sobre los tokens de Platform.
+   Se aplica al contenedor del módulo (.bunker-port). No cambia la estructura ni el comportamiento. */
+.bunker-port {
+  --bg: var(--2j-color-canvas);
+  --bg-el: var(--2j-color-canvas);
+  --surface: var(--2j-color-surface);
+  --surface-2: var(--2j-color-surface-raised);
+  --surface-3: var(--2j-color-surface-subtle);
+  --label: var(--2j-color-text-primary);
+  --label-2: var(--2j-color-text-secondary);
+  --label-3: var(--2j-color-text-secondary);
+  --label-4: var(--2j-color-text-secondary);
+  --sep: var(--2j-color-border);
+  --sep-op: var(--2j-color-border);
+  --acc: var(--2j-color-brand);
+  --acc-soft: var(--2j-color-brand-soft);
+  --acc-2: var(--2j-color-brand-strong);
+  --on-acc: var(--2j-color-brand-ink);
+  --v2-glass-bg: var(--2j-color-glass-fill);
+  --v2-glass-line: var(--2j-color-glass-edge);
+  --v2-glass-blur: var(--2j-color-glass-blur);
+  --v2-card: var(--2j-color-surface-raised);
+  --v2-card-line: var(--2j-color-border);
+  --red: var(--2j-color-danger);
+  --blue: var(--2j-color-info);
+  --yellow: var(--2j-color-warning);
+  --icon-stroke: 2;
+}
