@@ -85,9 +85,16 @@ for (const client of [a, b]) {
   await sql`INSERT INTO client_plan_assignments(client_id,plan_id,plan_version,charge_id,starts_on,status,idempotency_key,request_hash,created_by,sale_price_cents,snapshot)
     VALUES (${client.id}::uuid,${planResponse.json().id},1,${charge.id},${localDate}::date,'active',${randomUUID()}::uuid,${'b'.repeat(64)},'client-app-test',1000,'{}'::jsonb)`;
 }
+// El sistema admite un único consentimiento activo de Mi evolución (índice client_consents_one_active_home_evolution).
+// Una ejecución anterior de esta prueba puede haber dejado uno: se archiva antes de crear el de esta prueba.
+// Solo se archivan los de esta prueba (mismo nombre sintético); un consentimiento real activo hace fallar la prueba en lugar de archivarlo.
+for (const { id } of await sql`SELECT id FROM client_consents WHERE consent_type='home_evolution' AND status='active' AND name='Consentimiento sintético Mi evolución'`) {
+  assert.equal((await admin.inject({ method: 'POST', url: `/api/consents/${id}/archive`, payload: {} })).statusCode, 200);
+}
 const evolutionConsent = await admin.inject({ method: 'POST', url: '/api/consents', payload: { name: 'Consentimiento sintético Mi evolución', consentType: 'home_evolution', required: true, title: 'Uso de Mi evolución', body: 'Texto sintético de aceptación para pruebas de integración.' } });
 assert.equal(evolutionConsent.statusCode, 201, evolutionConsent.body);
 assert.equal((await admin.inject({ method: 'POST', url: `/api/consents/${evolutionConsent.json().id}/activate`, payload: {} })).statusCode, 200);
+assert.equal((await sql`SELECT count(*)::int AS n FROM client_consents WHERE consent_type='home_evolution' AND status='active'`)[0].n, 1, 'exactly one active home_evolution consent after activation, on a clean database or one that already holds data');
 const memberClock = new Date();
 const startsAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
 const [session] = await sql`INSERT INTO calendar_sessions(service_id,area_id,starts_at,duration_minutes,capacity,created_by) VALUES (${service.id},${area.id},${startsAt},45,1,'client-app-test') RETURNING id`;
