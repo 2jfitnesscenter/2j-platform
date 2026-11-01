@@ -195,6 +195,26 @@ test('dates and times are formatted in Atlantic/Canary', () => {
   });
 });
 
+test('member booking history reads every page instead of stopping at the first 100 records', async () => {
+  const { clientAppTestHelpers } = await import('../src/client-app.tsx');
+  const offsets = [];
+  const page = async offset => {
+    offsets.push(offset);
+    const remaining = 205 - offset;
+    const count = Math.min(100, remaining);
+    return {
+      reservations: Array.from({ length: count }, (_, index) => ({ id: `r-${offset + index}` })),
+      waitlist: offset === 0 ? [{ id: 'w-0' }] : [],
+      nextOffset: count === 100 ? offset + 100 : null,
+    };
+  };
+  const result = await clientAppTestHelpers.readAllBookingPages(page);
+  assert.deepEqual(offsets, [0, 100, 200]);
+  assert.equal(result.reservations.length, 205);
+  assert.equal(result.reservations.at(-1).id, 'r-204');
+  assert.deepEqual(result.waitlist, [{ id: 'w-0' }]);
+});
+
 test('client notification bell opens a self-scoped inbox and marks notices read', async () => {
   const dom=new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',{url:'http://localhost/'});
   Object.defineProperties(globalThis,{window:{configurable:true,value:dom.window},document:{configurable:true,value:dom.window.document},navigator:{configurable:true,value:dom.window.navigator},HTMLElement:{configurable:true,value:dom.window.HTMLElement},sessionStorage:{configurable:true,value:dom.window.sessionStorage},crypto:{configurable:true,value:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'}}});

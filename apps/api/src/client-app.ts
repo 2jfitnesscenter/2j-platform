@@ -359,16 +359,19 @@ export function registerClientAppRoutes(
 
   app.get('/api/me/bookings', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(100).default(100), offset: z.coerce.number().int().min(0).max(1_000_000).default(0) }).strict().safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: 'invalid_pagination' });
+    const { limit, offset } = query.data;
     const reservations = await db`
       SELECT r.id,r.status,s.id AS "sessionId",s.starts_at AS "startsAt",s.duration_minutes AS "durationMinutes",s.capacity,
         sv.name AS "serviceName",a.name AS "areaName",s.status AS "sessionStatus",(s.individual_client_id IS NOT NULL) AS "isIndividual",r.created_at AS "createdAt"
       FROM calendar_reservations r JOIN calendar_sessions s ON s.id=r.session_id JOIN services sv ON sv.id=s.service_id JOIN areas a ON a.id=s.area_id
-      WHERE r.client_id=${actor.clientId} ORDER BY s.starts_at DESC,r.created_at DESC,r.id DESC LIMIT 200`;
+      WHERE r.client_id=${actor.clientId} ORDER BY s.starts_at DESC,r.created_at DESC,r.id DESC LIMIT ${limit} OFFSET ${offset}`;
     const waitlist = await db`
       SELECT w.id,w.status,s.id AS "sessionId",s.starts_at AS "startsAt",s.duration_minutes AS "durationMinutes",sv.name AS "serviceName",a.name AS "areaName",s.status AS "sessionStatus",w.created_at AS "createdAt"
       FROM calendar_waitlist_entries w JOIN calendar_sessions s ON s.id=w.session_id JOIN services sv ON sv.id=s.service_id JOIN areas a ON a.id=s.area_id
-      WHERE w.client_id=${actor.clientId} ORDER BY s.starts_at DESC,w.created_at DESC,w.id DESC LIMIT 200`;
-    return { reservations, waitlist };
+      WHERE w.client_id=${actor.clientId} ORDER BY s.starts_at DESC,w.created_at DESC,w.id DESC LIMIT ${limit} OFFSET ${offset}`;
+    return { reservations, waitlist, nextOffset: reservations.length === limit || waitlist.length === limit ? offset + limit : null };
   });
 
   app.get('/api/me/bookings/:reservationId/cancellation-preview', async (request, reply) => {
