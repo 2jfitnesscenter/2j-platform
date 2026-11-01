@@ -13,8 +13,8 @@
 .cg-bar>i{display:block;height:100%;border-radius:inherit;background:var(--acc)}
 .cg-state{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:650}
 .cg-state svg{width:17px;height:17px}
-.cg-state.good{color:var(--green,#1f9d55)}
-.cg-state.warn{color:var(--orange,#d97706)}
+.cg-state.good{color:var(--2j-color-success)}
+.cg-state.warn{color:var(--2j-color-warning)}
 .cg-state.calm{color:var(--label-2)}
 .cg-range{display:grid;gap:3px;padding-top:10px;border-top:1px solid var(--sep)}
 .cg-range b{font-size:13px}
