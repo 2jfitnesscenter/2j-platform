@@ -145,18 +145,18 @@
   gap: 8px;
   min-width: 0;
   padding: 10px 11px;
-  border: 1px solid color-mix(in srgb, var(--orange, #ff9f0a) 28%, var(--sep));
+  border: 1px solid color-mix(in srgb, var(--2j-color-warning) 28%, var(--sep));
   border-radius: 12px;
-  background: color-mix(in srgb, var(--orange, #ff9f0a) 6%, var(--surface));
+  background: color-mix(in srgb, var(--2j-color-warning) 6%, var(--surface));
 }
-.training-quality-finding > span { color: var(--orange, #ff9f0a); }
+.training-quality-finding > span { color: var(--2j-color-warning); }
 .training-quality-finding.important,
 .training-quality-finding.importante {
-  border-color: color-mix(in srgb, var(--red, #ff453a) 32%, var(--sep));
-  background: color-mix(in srgb, var(--red, #ff453a) 6%, var(--surface));
+  border-color: color-mix(in srgb, var(--2j-color-danger) 32%, var(--sep));
+  background: color-mix(in srgb, var(--2j-color-danger) 6%, var(--surface));
 }
 .training-quality-finding.important > span,
-.training-quality-finding.importante > span { color: var(--red, #ff453a); }
+.training-quality-finding.importante > span { color: var(--2j-color-danger); }
 .training-quality-finding b { display: block; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .training-quality-finding p {
   margin: 4px 0 0;
@@ -226,8 +226,8 @@
 .training-quality-reference > h4 small { display: block; margin-top: 2px; color: var(--label-2); font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; }
 .training-quality-reference > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .tq-ref { display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; border: 1px solid var(--sep); border-radius: 999px; font-size: 11px; color: var(--label); }
-.tq-ref.above { border-color: var(--orange, #ff9f0a); }
-.tq-ref.below { border-color: var(--blue, #0a84ff); }
+.tq-ref.above { border-color: var(--2j-color-warning); }
+.tq-ref.below { border-color: var(--2j-color-info); }
 .tq-ref i { font-style: normal; color: var(--label-2); }
 .training-quality-refnote { color: var(--label-2); font-size: 11px; }
 .tq-tag { margin-right: 6px; padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-style: normal; font-weight: 600; background: color-mix(in srgb, var(--label) 8%, transparent); color: var(--label-2); }

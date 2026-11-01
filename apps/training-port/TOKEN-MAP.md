@@ -27,6 +27,16 @@ Regla: se conserva la jerarquía (fondo, superficie, texto, acento, estado), no 
 | `#08090a` (fondo del héroe) | Superficie oscura | `--2j-color-sidebar` | |
 | `rgba(255,255,255,a)` (texto, bordes, fondos) | Veladura clara sobre oscuro | `color-mix(in srgb, var(--2j-color-sidebar-text) a%, transparent)` | Conserva el alfa exacto del original |
 
-Pantalla hecha: `v3-training.css` (post-entreno y héroe de Inicio). Pendiente en la misma regla: el resto de pantallas, y los colores de sección de Búnker (`#d4af37`, `#10b981`, `#73b52e`...) que requieren decisión por sección.
+| `rgba(0,0,0,a)` (sombras) | Sombra neutra | `color-mix(in srgb, var(--2j-color-sidebar) a%, transparent)` | Grafito de Platform en ambos temas; el alfa se conserva |
+| `#fff` como superficie (fondo de medio) | Superficie | `--2j-color-surface` | Cambia con el tema |
+| `#7bd34a`, `#10B981` (acento verde de Búnker) | Acento de marca | `--2j-color-brand` (lima) | Verde de Búnker -> lima de Platform (A77-2) |
+| `#04130D` (texto sobre acento verde) | Texto sobre marca | `--2j-color-text-on-brand` | |
+| `#1f9d55`, `--green` (estado bueno) | Éxito | `--2j-color-success` | |
+| `#d97706`, `#D69E2E`, `#ff9f0a`, `--orange`, `--yellow` | Aviso | `--2j-color-warning` | |
+| `#ff453a`, `#EF4444`, `--red` | Peligro | `--2j-color-danger` | |
+| `#0a84ff`, `--blue` | Información | `--2j-color-info` | |
+
+Pantallas hechas: `v3-training.css` (post-entreno y héroe de Inicio); `intelligence-today.css`, `train2j-program-home.css`, `composition-goals.css`, `news.css`, `guided-programs.css`, `training-quality-panel.css`, `studio.css` (tanda 5).
+Pendiente de decisión por sección: colores de sección de Búnker sin token de Platform (`#d4af37` oro, `#d9b5ff` púrpura, etc.). Pendiente de pantalla: el resto de ficheros.
 
 Pendiente: los 3 ficheros que usan `forwardRef` o APIs de React 19 se revisan antes de compilar con React 18. Lo demás se valida con typecheck y capturas.

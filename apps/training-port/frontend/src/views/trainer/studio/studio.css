@@ -1,5 +1,5 @@
 /* Entrena con 2J Studio — admin screens. Built on the app tokens (dark/light follow the theme). */
-.st{--st-em:#10B981;--st-warn:#D69E2E;--st-bad:#EF4444;max-width:1180px;margin:0 auto;padding:16px 16px 96px}
+.st{--st-em:var(--2j-color-brand);--st-warn:var(--2j-color-warning);--st-bad:var(--2j-color-danger);max-width:1180px;margin:0 auto;padding:16px 16px 96px}
 .st-top{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 16px;margin-bottom:14px}
 .st-top .trainer-back{flex-basis:100%}
 .st-title{flex:1 1 280px;min-width:0}
@@ -12,7 +12,7 @@
 .st-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:6px 0 14px}
 .st-seg{display:inline-flex;padding:3px;border-radius:12px;background:var(--surface-3);gap:2px;max-width:100%;overflow-x:auto}
 .st-seg button{border:0;background:transparent;color:var(--label-2);font:inherit;font-size:14px;font-weight:600;padding:8px 14px;border-radius:9px;display:flex;gap:7px;align-items:center;white-space:nowrap;cursor:pointer}
-.st-seg button.on{background:var(--surface);color:var(--label);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.st-seg button.on{background:var(--surface);color:var(--label);box-shadow:0 1px 3px color-mix(in srgb, var(--2j-color-sidebar) 25%, transparent)}
 .st-seg .num{font-size:12px;color:var(--label-3)}
 .st-seg button.on .num{color:var(--st-em)}
 .st-qlink{width:auto}
@@ -20,7 +20,7 @@
 .st-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
 .st-tools .input[type=search]{flex:1 1 220px;min-width:0}
 .st-tools select.input{flex:0 1 190px;width:auto}
-.st-tools .btn{width:auto}.st-tools .btn.on{background:var(--st-em);color:#04130D}
+.st-tools .btn{width:auto}.st-tools .btn.on{background:var(--st-em);color:var(--2j-color-text-on-brand)}
 .st-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
 .st-chips .chip .num{opacity:.7;margin-inline-start:4px;font-size:12px}
 .st-list{display:flex;flex-direction:column;gap:8px}
@@ -45,7 +45,7 @@
 .st-menu summary{list-style:none;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;cursor:pointer;color:var(--label-2)}
 .st-menu summary::-webkit-details-marker{display:none}
 .st-menu summary:hover,.st-menu[open] summary{background:var(--surface-2);color:var(--label)}
-.st-menu-pop{position:absolute;inset-inline-end:0;top:40px;z-index:30;min-width:220px;padding:6px;border-radius:14px;background:var(--bg-el);border:1px solid var(--sep);box-shadow:0 12px 32px rgba(0,0,0,.35);display:flex;flex-direction:column}
+.st-menu-pop{position:absolute;inset-inline-end:0;top:40px;z-index:30;min-width:220px;padding:6px;border-radius:14px;background:var(--bg-el);border:1px solid var(--sep);box-shadow:0 12px 32px color-mix(in srgb, var(--2j-color-sidebar) 35%, transparent);display:flex;flex-direction:column}
 .st-menu-pop button{border:0;background:none;text-align:start;color:var(--label);font:inherit;font-size:14px;padding:10px 12px;border-radius:9px;cursor:pointer}
 .st-menu-pop button:hover,.st-menu-pop button:focus-visible{background:var(--surface-2)}
 .st-menu-pop .danger{color:var(--st-bad)}
@@ -56,7 +56,7 @@
 @media (prefers-reduced-motion:reduce){.st-skel div{animation:none}}
 .st-mine{margin-top:26px}.st-mine h2{font-size:15px;margin:0 0 8px}
 .st-help{display:flex;gap:14px;padding:16px 18px;margin:0 0 14px;border-radius:18px;background:color-mix(in srgb,var(--st-em) 9%,var(--surface));border:1px solid color-mix(in srgb,var(--st-em) 28%,transparent)}
-.st-help-ic{flex:none;width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--st-em);color:#04130D}
+.st-help-ic{flex:none;width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--st-em);color:var(--2j-color-text-on-brand)}
 .st-help h2{margin:2px 0 4px;font-size:17px}.st-help p{margin:0;max-width:64ch;font-size:14px;color:var(--label-2)}
 .st-help-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.st-help-acts .btn{width:auto}
 .st-picker h3{margin:0 0 10px}.st-picker .input{margin-bottom:8px}
@@ -99,9 +99,9 @@
 .st-flag{font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:3px 7px;border-radius:6px;background:var(--surface-2);color:var(--label-2)}
 .st-flag.good{color:var(--st-em);background:color-mix(in srgb,var(--st-em) 14%,transparent)}.st-flag.warn{color:var(--st-warn);background:color-mix(in srgb,var(--st-warn) 15%,transparent)}
 .st-qpanel{padding:16px;border-radius:18px;background:var(--surface);border:1px solid var(--sep-op)}
-@media (max-width:979px){.st-qpanel{position:fixed;inset:auto 0 0 0;z-index:40;max-height:86vh;overflow:auto;border-radius:22px 22px 0 0;box-shadow:0 -12px 40px rgba(0,0,0,.45)}}
+@media (max-width:979px){.st-qpanel{position:fixed;inset:auto 0 0 0;z-index:40;max-height:86vh;overflow:auto;border-radius:22px 22px 0 0;box-shadow:0 -12px 40px color-mix(in srgb, var(--2j-color-sidebar) 45%, transparent)}}
 .st-qpanel header{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px}.st-qpanel h2{margin:2px 0 0;font-size:18px}
-.st-qmedia{width:100%;max-height:200px;object-fit:contain;border-radius:12px;background:#fff;margin-bottom:10px}
+.st-qmedia{width:100%;max-height:200px;object-fit:contain;border-radius:12px;background:var(--2j-color-surface);margin-bottom:10px}
 .st-warn{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--st-warn);margin:0 0 10px}
 /* phone */
 .st-top-acts .btn{white-space:nowrap}
