@@ -86,8 +86,9 @@ for (const client of [a, b]) {
     VALUES (${client.id}::uuid,${planResponse.json().id},1,${charge.id},${localDate}::date,'active',${randomUUID()}::uuid,${'b'.repeat(64)},'client-app-test',1000,'{}'::jsonb)`;
 }
 // El sistema admite un único consentimiento activo de Mi evolución (índice client_consents_one_active_home_evolution).
-// Una ejecución anterior sobre la misma base puede haber dejado uno: se archiva antes de crear el de esta prueba.
-for (const { id } of await sql`SELECT id FROM client_consents WHERE consent_type='home_evolution' AND status='active'`) {
+// Una ejecución anterior de esta prueba puede haber dejado uno: se archiva antes de crear el de esta prueba.
+// Solo se archivan los de esta prueba (mismo nombre sintético); un consentimiento real activo hace fallar la prueba en lugar de archivarlo.
+for (const { id } of await sql`SELECT id FROM client_consents WHERE consent_type='home_evolution' AND status='active' AND name='Consentimiento sintético Mi evolución'`) {
   assert.equal((await admin.inject({ method: 'POST', url: `/api/consents/${id}/archive`, payload: {} })).statusCode, 200);
 }
 const evolutionConsent = await admin.inject({ method: 'POST', url: '/api/consents', payload: { name: 'Consentimiento sintético Mi evolución', consentType: 'home_evolution', required: true, title: 'Uso de Mi evolución', body: 'Texto sintético de aceptación para pruebas de integración.' } });
