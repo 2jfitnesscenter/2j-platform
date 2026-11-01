@@ -5,3 +5,4 @@ export * from './onerm.js';
 export * from './autoreg.js';
 export * from './bodyweight.js';
 export * from './equipment.js';
+export * from './format.js';
