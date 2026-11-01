@@ -43,3 +43,16 @@ test('cash handover, outflow and payment failures explain the cause and next act
   assert.match(reasonText('cash_outflow_unexpected', 409, null, { action: 'registrar el gasto o la retirada' }), /al registrar el gasto o la retirada.*cash_outflow_unexpected/);
   assert.match(reasonText('payment_unexpected', 503, null, { action: 'registrar el pago' }), /falló al registrar el pago.*payment_unexpected/);
 });
+
+test('economic operation failures say what was not confirmed and how to avoid duplicate actions', () => {
+  assert.match(REASONS.cash_handover_start_failed, /no confirmó el inicio del traspaso.*comprueba si ya aparece pendiente antes de repetirlo/i);
+  assert.match(REASONS.cash_handover_confirmation_failed, /no confirmó la recepción.*comprueba si la custodia ya cambió/i);
+  assert.match(REASONS.cash_outflow_failed, /no confirmó si el gasto o la retirada quedó registrado.*antes de repetirlo para evitar duplicados/i);
+  assert.match(REASONS.cash_outflow_decision_failed, /no confirmó si la aprobación o el rechazo quedó guardado.*antes de repetir la decisión/i);
+
+  const payment = reasonText('internal_error', 500, null, { action: 'registrar el pago' });
+  assert.match(payment, /error al registrar el pago/i);
+  assert.match(payment, /no se puede confirmar si el cambio quedó registrado/i);
+  assert.match(payment, /comprueba el estado antes de repetirlo/i);
+  assert.doesNotMatch(payment, /El servidor falló al procesar la acción/);
+});

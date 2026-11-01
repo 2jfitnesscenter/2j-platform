@@ -29,10 +29,10 @@ export const REASONS: Record<string, string> = {
   handover_already_completed: 'Esa entrega ya está completada. Actualiza la pantalla.',
   handover_custody_changed: 'La caja cambió de manos mientras tanto. Actualiza la pantalla y vuelve a intentarlo.',
   handover_not_found: 'No se encuentra esa entrega. Actualiza la pantalla.',
-  cash_handover_start_failed: 'No se pudo iniciar el traspaso por un error interno del servidor. Comprueba que la conexión sigue activa y vuelve a intentarlo; si se repite, avisa a Administración.',
-  cash_handover_confirmation_failed: 'No se pudo confirmar la recepción por un error interno del servidor. Actualiza Caja y vuelve a confirmar tu recuento; si se repite, avisa a Administración.',
-  cash_outflow_failed: 'No se pudo registrar el gasto o la retirada. Comprueba que sigues teniendo la custodia de una caja abierta y vuelve a intentarlo.',
-  cash_outflow_decision_failed: 'No se pudo guardar la aprobación o el rechazo. Actualiza los movimientos pendientes y vuelve a intentarlo.',
+  cash_handover_start_failed: 'El servidor no confirmó el inicio del traspaso. Actualiza Caja y comprueba si ya aparece pendiente antes de repetirlo; si no aparece, vuelve a iniciarlo. Si se repite, avisa a Administración.',
+  cash_handover_confirmation_failed: 'El servidor no confirmó la recepción. Actualiza Caja y comprueba si la custodia ya cambió; si el traspaso sigue pendiente, vuelve a confirmar tu recuento. Si se repite, avisa a Administración.',
+  cash_outflow_failed: 'El servidor no confirmó si el gasto o la retirada quedó registrado. Actualiza los movimientos de la caja antes de repetirlo para evitar duplicados; si no aparece, vuelve a guardarlo.',
+  cash_outflow_decision_failed: 'El servidor no confirmó si la aprobación o el rechazo quedó guardado. Actualiza los movimientos pendientes antes de repetir la decisión; si sigue pendiente, vuelve a resolverlo.',
   cash_outflow_not_found: 'Ese gasto o retirada ya no existe o no está disponible. Actualiza los movimientos de la caja.',
   cash_outflow_already_decided: 'Ese gasto o retirada ya se aprobó o rechazó. Actualiza los movimientos antes de continuar.',
   cash_outflow_cash_session_required: 'No hay una caja abierta bajo tu custodia para registrar este gasto o retirada. Abre o recibe una caja y vuelve a intentarlo.',
@@ -72,10 +72,11 @@ export type ReasonContext = { /** Qué se intentaba, p. ej. «fichar la entrada�
  * respuesta por estado HTTP. El código técnico se añade siempre al texto de último recurso para que el personal pueda citarlo.
  */
 export function reasonText(code: string | undefined | null, status?: number, serverMessage?: string | null, context: ReasonContext = {}): string {
-  if (code && REASONS[code]) return REASONS[code]!;
+  if (code && REASONS[code] && !(code === 'internal_error' && context.action === 'registrar el pago')) return REASONS[code]!;
   if (serverMessage && serverMessage.trim() && code !== 'internal_error') return serverMessage;
   const what = context.action ? ` al ${context.action}` : '';
   const ref = code ? ` (código: ${code})` : status ? ` (código HTTP ${status})` : '';
+  if (code === 'internal_error' && context.action === 'registrar el pago') return `El servidor devolvió un error${what}; no se puede confirmar si el cambio quedó registrado. Actualiza la información y comprueba el estado antes de repetirlo; si no aparece, vuelve a intentarlo. Si se repite, avisa a Administración${ref}.`;
   if (status === 401) return REASONS.authentication_required!;
   if (status === 403) return REASONS.permission_denied!;
   if (status === 404) return `No se encontró lo que se pedía${what}. Actualiza la pantalla y vuelve a intentarlo${ref}.`;
