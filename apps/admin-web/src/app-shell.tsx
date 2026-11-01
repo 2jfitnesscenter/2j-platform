@@ -177,7 +177,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const sidebarHidden=isDrawer&&!drawerOpen;
   const sidebarProps=isDrawer?{role:'dialog' as const,'aria-modal':drawerOpen||undefined,'aria-label':'Navegación principal'}:{'aria-label':'Navegación principal'};
   if(authRequired)return <StaffLogin/>;
-  return <CommandContext.Provider value={{data,state,error,reload,capabilities}}><div className={`app-frame ${isRail?'is-rail':''} ${isDrawer?'is-drawer':''} ${drawerOpen?'drawer-open':''}`}>
+  return <CommandContext.Provider value={{data,state,error,reload,capabilities}}><div className={`app-frame ${isRail?'is-rail':''} ${isDrawer?'is-drawer':''} ${drawerOpen?'drawer-open':''}`} data-2j-design="v2">
     <a className="skip-link" href="#main-content" onClick={skipToContent}>Saltar al contenido</a>
     {isDrawer&&drawerOpen&&<div className="app-scrim" data-2j-design="v2" role="presentation" onClick={()=>setDrawerOpen(false)}/>}
     <aside id="app-sidebar" ref={sidebarRef} className="app-sidebar" data-2j-design="v2" {...sidebarProps} aria-hidden={sidebarHidden||undefined} onKeyDown={trapTab}>

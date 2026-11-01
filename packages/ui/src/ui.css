@@ -11,32 +11,43 @@
   text-decoration: none; white-space: nowrap; cursor: pointer; -webkit-tap-highlight-color: transparent;
   transition: background-color var(--2j-motion-fast) var(--2j-motion-easing), border-color var(--2j-motion-fast) var(--2j-motion-easing), color var(--2j-motion-fast) var(--2j-motion-easing);
 }
-.ui-button:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; }
+.ui-button:focus-visible { outline: 2px solid var(--2j-color-focus); outline-offset: 2px; box-shadow: 0 0 0 4px rgb(143 200 255 / 22%); }
 .ui-button--sm { min-height: var(--2j-control-sm); padding: 0 var(--2j-space-3); }
 @media (pointer: coarse) { .ui-button--sm { min-height: var(--2j-control-md); } }
 
-.ui-button--primary { background: var(--2j-color-brand); color: var(--2j-color-text-on-brand); }
-.ui-button--primary:hover { background: var(--2j-color-brand-hover); }
-.ui-button--primary:active { background: var(--2j-color-brand-hover); box-shadow: inset 0 1px 3px rgb(22 24 26 / 24%); }
+/* A77 "liquid glass": translucent fill + backdrop blur + light edge (brighter on top) + soft inner highlight.
+   Lime is an accent (edge, text, tint), never a large solid fill. Without backdrop-filter support the translucent fill still reads. */
+.ui-button {
+  -webkit-backdrop-filter: blur(var(--2j-color-glass-blur)) saturate(140%); backdrop-filter: blur(var(--2j-color-glass-blur)) saturate(140%);
+  background: var(--2j-color-glass-fill); border-color: var(--2j-color-glass-edge);
+  box-shadow: inset 0 1px 0 var(--2j-color-glass-edge-top), 0 1px 2px rgb(0 0 0 / 35%);
+}
+.ui-button:hover { background: var(--2j-color-glass-fill-hover); border-color: var(--2j-color-border-strong); }
+.ui-button:active { background: var(--2j-color-glass-fill-active); box-shadow: inset 0 1px 3px rgb(0 0 0 / 45%); }
 
-.ui-button--secondary { background: var(--2j-color-surface); border-color: var(--2j-color-border-strong); }
-.ui-button--secondary:hover { background: var(--2j-color-surface-subtle); }
-.ui-button--secondary:active { background: var(--2j-color-surface-subtle); border-color: var(--2j-color-text-secondary); }
+.ui-button--primary { background: var(--2j-color-glass-brand-fill); border-color: var(--2j-color-glass-brand-edge); color: var(--2j-color-brand); }
+.ui-button--primary:hover { background: var(--2j-color-glass-brand-fill-hover); border-color: var(--2j-color-brand); color: var(--2j-color-brand-hover); }
+.ui-button--primary:active { background: var(--2j-color-glass-brand-fill); box-shadow: inset 0 1px 3px rgb(0 0 0 / 45%); }
 
-.ui-button--danger { background: var(--2j-color-surface); border-color: var(--2j-color-danger); color: var(--2j-color-danger-ink); }
-.ui-button--danger:hover { background: var(--2j-color-danger-soft); }
-.ui-button--danger:active { background: var(--2j-color-danger-soft); box-shadow: inset 0 1px 3px rgb(22 24 26 / 16%); }
+.ui-button--secondary { color: var(--2j-color-text-primary); }
+.ui-button--secondary:active { border-color: var(--2j-color-text-secondary); }
+
+.ui-button--danger { background: var(--2j-color-glass-danger-fill); border-color: var(--2j-color-danger); color: var(--2j-color-danger-ink); }
+.ui-button--danger:hover { background: var(--2j-color-glass-danger-fill-hover); }
+.ui-button--danger:active { background: var(--2j-color-glass-danger-fill); }
 /* Filled danger only for the final button of a confirmation dialog. */
-.ui-button--danger-solid { background: var(--2j-color-danger); color: #fff; }
+.ui-button--danger-solid { background: var(--2j-color-danger); border-color: var(--2j-color-danger); color: #1a0707; -webkit-backdrop-filter: none; backdrop-filter: none; }
 .ui-button--danger-solid:hover { background: var(--2j-color-danger-ink); }
-.ui-button--danger-solid:active { background: var(--2j-color-danger-ink); box-shadow: inset 0 1px 3px rgb(22 24 26 / 24%); }
-.ui-button--ghost:hover { background: var(--2j-color-surface-subtle); }
-.ui-button--ghost:active { background: var(--2j-color-border); }
+.ui-button--danger-solid:active { background: var(--2j-color-danger-ink); box-shadow: inset 0 1px 3px rgb(0 0 0 / 35%); }
 
-/* Disabled is never opacity alone: a flat grey surface, secondary text and a not-allowed cursor. */
+.ui-button--ghost { background: transparent; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.ui-button--ghost:hover { background: var(--2j-color-glass-fill); border-color: var(--2j-color-glass-edge); }
+.ui-button--ghost:active { background: var(--2j-color-glass-fill-active); }
+
+/* Disabled is never opacity alone: flat, no blur, no highlight, dashed edge, secondary text and a not-allowed cursor. */
 .ui-button:disabled, .ui-button[aria-disabled="true"] {
-  background: var(--2j-color-surface-subtle); border-color: var(--2j-color-border); color: var(--2j-color-text-secondary);
-  box-shadow: none; cursor: not-allowed;
+  background: var(--2j-color-surface-subtle); border-color: var(--2j-color-border); border-style: dashed; color: var(--2j-color-text-secondary);
+  box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; cursor: not-allowed;
 }
 .ui-button.is-loading:disabled { cursor: progress; }
 .ui-button-label { min-width: 0; }
