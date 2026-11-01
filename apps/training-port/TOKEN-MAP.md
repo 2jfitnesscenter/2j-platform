@@ -19,4 +19,14 @@ Regla: se conserva la jerarquía (fondo, superficie, texto, acento, estado), no 
 | `--icon-stroke` | Se conserva | Trazo de iconos (A85: iconos idénticos) |
 | `--v2-fast`, `--v2-ease`, `--fast`, `--ease` | `--2j-motion-fast`, `--2j-motion-easing` | Movimiento |
 
+## Colores fijos (paso 1 de la hoja de ruta)
+
+| Valor fijo en CSS | Rol | Token de Platform | Nota |
+|---|---|---|---|
+| `#fff` como texto sobre superficie oscura | Texto sobre héroe oscuro | `--2j-color-sidebar-text` | Oscuro en ambos temas; `--2j-color-text-primary` cambiaría a oscuro en claro |
+| `#08090a` (fondo del héroe) | Superficie oscura | `--2j-color-sidebar` | |
+| `rgba(255,255,255,a)` (texto, bordes, fondos) | Veladura clara sobre oscuro | `color-mix(in srgb, var(--2j-color-sidebar-text) a%, transparent)` | Conserva el alfa exacto del original |
+
+Pantalla hecha: `v3-training.css` (post-entreno y héroe de Inicio). Pendiente en la misma regla: el resto de pantallas, y los colores de sección de Búnker (`#d4af37`, `#10b981`, `#73b52e`...) que requieren decisión por sección.
+
 Pendiente: los 3 ficheros que usan `forwardRef` o APIs de React 19 se revisan antes de compilar con React 18. Lo demás se valida con typecheck y capturas.
