@@ -1,20 +1,20 @@
 /* The Train tab's Actions sheet: a dark, glassy skin in the 2J palette (#0B0F12 · emerald #10B981 · gold), compact and quick. It bleeds to the edges of the sheet so
    it reads as one surface in light and dark. Touch states are explicit (pressed), nothing animates beyond a short press. */
-.ax{margin:-8px -18px -20px;padding:18px 16px calc(18px + env(safe-area-inset-bottom));display:grid;gap:10px;color:#EEF3F1;
-  background:radial-gradient(110% 70% at 85% -10%,rgba(16,185,129,.16),transparent 60%),#0B0F12;border-radius:inherit}
+.ax{margin:-8px -18px -20px;padding:18px 16px calc(18px + env(safe-area-inset-bottom));display:grid;gap:10px;color:var(--2j-color-sidebar-text);
+  background:radial-gradient(110% 70% at 85% -10%,rgba(16,185,129,.16),transparent 60%),var(--2j-color-sidebar);border-radius:inherit}
 .ax-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:0 2px 2px}
-.ax-head h3{margin:0;font-size:20px;letter-spacing:-.03em;color:#fff}
-.ax-head span{font-size:12px;color:#9FB0AA}
-.ax-tile{display:flex;align-items:center;gap:12px;min-width:0;min-height:60px;padding:10px 12px;border:1px solid rgba(255,255,255,.09);border-radius:18px;
-  background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.025));color:#EEF3F1;text-align:left;
+.ax-head h3{margin:0;font-size:20px;letter-spacing:-.03em;color:var(--2j-color-sidebar-text)}
+.ax-head span{font-size:12px;color:var(--2j-color-sidebar-muted)}
+.ax-tile{display:flex;align-items:center;gap:12px;min-width:0;min-height:60px;padding:10px 12px;border:1px solid color-mix(in srgb, var(--2j-color-sidebar-text) 9%, transparent);border-radius:18px;
+  background:linear-gradient(180deg,color-mix(in srgb, var(--2j-color-sidebar-text) 6%, transparent),color-mix(in srgb, var(--2j-color-sidebar-text) 2.5%, transparent));color:var(--2j-color-sidebar-text);text-align:left;
   backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:transform .12s ease,background .12s ease,border-color .12s ease}
-.ax-tile:active{transform:scale(.975);background:rgba(255,255,255,.1)}
+.ax-tile:active{transform:scale(.975);background:color-mix(in srgb, var(--2j-color-sidebar-text) 10%, transparent)}
 .ax-tile:focus-visible{outline:2px solid #34D399;outline-offset:2px}
-.ax-ico{flex:none;width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:rgba(255,255,255,.07);color:#cfe3da}
+.ax-ico{flex:none;width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:color-mix(in srgb, var(--2j-color-sidebar-text) 7%, transparent);color:var(--2j-color-sidebar-text)}
 .ax-ico svg{width:21px;height:21px}
 .ax-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
 .ax-txt b{font-size:14.5px;font-weight:700;line-height:1.2;overflow-wrap:anywhere}
-.ax-txt small{font-size:11.5px;color:#9FB0AA}
+.ax-txt small{font-size:11.5px;color:var(--2j-color-sidebar-muted)}
 .ax-tile.primary{min-height:68px;border-color:rgba(52,211,153,.55);background:linear-gradient(135deg,rgba(52,211,153,.95),rgba(16,185,129,.95));color:#04140E;box-shadow:0 10px 28px rgba(16,185,129,.28)}
 .ax-tile.primary .ax-ico{background:rgba(4,20,14,.16);color:#04140E}
 .ax-tile.primary small{color:rgba(4,20,14,.7)}
