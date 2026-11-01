@@ -348,3 +348,11 @@ export const trainingSessionSets = pgTable('training_session_sets', {
   exerciseName: text('exercise_name').notNull(), setIndex: integer('set_index').notNull(), reps: integer('reps').notNull(), weightKg: numeric('weight_kg', { precision: 6, scale: 2 }).notNull(), rir: integer('rir'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex('training_session_sets_unique').on(t.sessionId, t.exerciseName, t.setIndex), check('training_session_sets_reps', sql`${t.reps} BETWEEN 0 AND 100`)]);
+
+// A88: catálogo de ejercicios importado desde el origen de Búnker (migrations/0077). Espejo de tipos principales.
+export const exerciseCatalog = pgTable('exercise_catalog', {
+  id: text('id').primaryKey(), name: text('name').notNull(), bodyPart: text('body_part').notNull(), equipment: text('equipment').notNull(),
+  target: text('target').notNull(), muscleGroup: text('muscle_group').notNull(), secondaryMuscles: text('secondary_muscles').array().notNull().default(sql`'{}'`),
+  steps: text('steps').array().notNull().default(sql`'{}'`), imageFile: text('image_file'), gifFile: text('gif_file'), contentSha256: char('content_sha256', { length: 64 }).notNull(),
+  importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('exercise_catalog_muscle_group_idx').on(t.muscleGroup, t.name, t.id), index('exercise_catalog_name_idx').on(sql`lower(${t.name})`, t.id)]);
