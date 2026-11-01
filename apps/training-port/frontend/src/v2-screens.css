@@ -1,0 +1,231 @@
+/* Experience V2 — screen-level styles built on the primitives in v2.css (Home hero, Post-workout, Timeline, Exercise meta, tab bar, glass, micro-motion). */
+.v2-hero {
+  position: relative; overflow: hidden; isolation: isolate; margin: 8px 0 16px; padding: 22px 18px 16px;
+  border-radius: var(--v2-r-hero); color: #f4f5f6;
+  background: linear-gradient(165deg, var(--v2-graphite-2) 0%, #08090a 72%);
+  border: 1px solid rgba(255,255,255,.08); box-shadow: var(--v2-e2);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.v2-hero-bg { position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(120% 90% at 100% -14%, color-mix(in srgb, var(--acc) 26%, transparent), transparent 56%); }
+.v2-hero-bg::after { content: ''; position: absolute; inset: -4% -6% auto auto; width: 52%; height: 70%;
+  background: url('/brand/logo-mark.png') right top / contain no-repeat; filter: brightness(0) invert(1); opacity: .06; }
+.v2-hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.min0 { min-width: 0; }
+.v2-hero h1 { font-family: 'Sora', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, system-ui, sans-serif;
+  font-weight: 800; font-size: calc(27px * var(--text-scale,1)); line-height: 1.1; letter-spacing: -.02em; margin: 0; color: #fff; }
+.v2-hero .sub { color: rgba(255,255,255,.62); font-size: calc(14px * var(--text-scale,1)); margin-top: 5px; text-transform: capitalize; }
+.v2-hero .v2-eyebrow { color: rgba(255,255,255,.55); }
+.v2-hero-today { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 20px;
+  background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.08); }
+.v2-hero-title { display: flex; align-items: center; gap: 10px; font-size: calc(21px * var(--text-scale,1)); font-weight: 700; letter-spacing: -.02em; line-height: 1.2; color: #fff; }
+.v2-hero-title.rest { color: rgba(255,255,255,.8); }
+.v2-hero-ico { width: 38px; height: 38px; border-radius: 12px; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 20px;
+  background: var(--acc); color: var(--on-acc); }
+.v2-hero-title.rest .v2-hero-ico { background: rgba(255,255,255,.12); color: #fff; }
+.v2-hero-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.v2-hero .v2-pill { background: rgba(255,255,255,.1); color: rgba(255,255,255,.82); }
+.v2-hero .v2-pill.acc { background: color-mix(in srgb, var(--acc) 24%, transparent); color: var(--acc); }
+.v2-hero .v2-pill.gold { background: var(--v2-gold-soft); color: var(--v2-gold); }
+.v2-hero .v2-cta.ghost { background: rgba(255,255,255,.12); color: #fff; }
+.v2-hero-week { display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left; padding: 2px 2px 0; color: inherit; }
+.v2-hero-weekv { font-size: calc(13px * var(--text-scale,1)); font-weight: 600; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.85); }
+.v2-hero-streak { display: inline-flex; align-items: center; gap: 6px; font-size: calc(12.5px * var(--text-scale,1)); font-weight: 600; color: var(--v2-gold); }
+.v2-hero .v2-progress { background: rgba(255,255,255,.14); }
+.v2-hero-rings { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 8px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.08); }
+.v2-hero-ring { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.v2-hero-ring .v { font-size: calc(14px * var(--text-scale,1)); font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; margin-top: 4px; }
+.v2-hero-ring .k { font-size: calc(11px * var(--text-scale,1)); color: rgba(255,255,255,.55); letter-spacing: .02em; }
+.v2-hero .v2-ring-track { stroke: rgba(255,255,255,.14); }
+
+/* ---------------------------------------------------- bottom navigation -- */
+/* Glass bar (it floats over scrolling content) + a capsule behind the active icon that fades/grows in.
+   Same destinations, same gates, same routes — only the look changes. */
+#tabbar {
+  background: var(--bg-el);
+  border-top: var(--hair) solid var(--v2-glass-line);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  #tabbar {
+    background: var(--v2-glass-bg);
+    -webkit-backdrop-filter: saturate(160%) blur(20px);
+    backdrop-filter: saturate(160%) blur(20px);
+  }
+}
+#tabbar button.start { z-index: 1; }
+#tabbar .tb-ic {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 54px; height: 30px; border-radius: 999px;
+  transition: background var(--v2-med) var(--v2-ease), transform var(--v2-fast) var(--v2-ease);
+}
+#tabbar button.on .tb-ic { background: color-mix(in srgb, var(--acc) 20%, transparent); }
+#tabbar button:active .tb-ic { transform: scale(.94); }
+#tabbar button .icn { transition: transform var(--v2-med) var(--v2-ease); }
+#tabbar button.on .icn { transform: translateY(-1px) scale(1.04); }
+#tabbar button:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; border-radius: 14px; }
+@media (max-width: 360px) { #tabbar .tb-ic { width: 44px; } }
+@media (prefers-reduced-motion: reduce) { #tabbar .tb-ic, #tabbar button .icn { transition: none !important; } }
+
+/* -------------------------------------------------------------- timeline -- */
+.v2-tl-list { list-style: none; margin: 0; padding: 0 0 0 4px; position: relative; display: flex; flex-direction: column; gap: 14px; }
+.v2-tl-list::before { content: ''; position: absolute; left: 8px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--label) 12%, transparent); }
+.v2-tl-item { position: relative; padding-left: 26px; display: flex; flex-direction: column; gap: 6px; }
+.v2-tl-dot { position: absolute; left: 0; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--acc); box-shadow: 0 0 0 4px var(--surface); }
+.v2-tl-dot.gold { background: var(--v2-gold); }
+.v2-tl-main { display: flex; flex-direction: column; gap: 1px; text-align: left; min-height: 44px; justify-content: center; color: var(--label); }
+.v2-tl-date { font-size: calc(11.5px * var(--text-scale,1)); color: var(--label-2); letter-spacing: .03em; }
+.v2-tl-name { font-size: calc(15.5px * var(--text-scale,1)); font-weight: 600; letter-spacing: -.01em; }
+.v2-tl-sub { font-size: calc(12.5px * var(--text-scale,1)); color: var(--label-2); font-variant-numeric: tabular-nums; }
+.v2-tl-ev { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 12px; font-size: calc(13px * var(--text-scale,1)); background: var(--acc-soft); color: var(--acc); }
+.v2-tl-ev b { font-weight: 600; text-transform: capitalize; }
+.v2-tl-ev.gold { background: var(--v2-gold-soft); color: var(--v2-gold); }
+
+/* ---------------------------------------------------------- post-workout -- */
+.v2-fin { display: flex; flex-direction: column; gap: 12px; text-align: left; padding-bottom: 4px; }
+.v2-fin h4.sec { margin: 6px 0 -2px; }
+.v2-fin .card { margin-bottom: 0; }
+.v2-fin-hero { position: relative; overflow: hidden; isolation: isolate; text-align: center; padding: 22px 16px 18px; border-radius: 22px; color: #fff;
+  background: linear-gradient(165deg, var(--v2-graphite-2) 0%, #08090a 75%); border: 1px solid rgba(255,255,255,.08); }
+.v2-fin-hero::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(100% 80% at 50% -10%, color-mix(in srgb, var(--acc) 30%, transparent), transparent 62%); }
+.v2-fin-hero.gold { border-color: var(--v2-gold-line); }
+.v2-fin-hero.gold::before { background: radial-gradient(100% 80% at 50% -10%, color-mix(in srgb, var(--v2-gold) 34%, transparent), transparent 62%); }
+.v2-fin-hero h3 { margin: 12px 0 2px; font-size: calc(22px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.02em; }
+.v2-fin-sub { font-size: calc(13px * var(--text-scale,1)); color: rgba(255,255,255,.62); }
+.v2-fin-check { width: 62px; height: 62px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 30px;
+  background: var(--acc); color: var(--on-acc); }
+.v2-fin-hero.gold .v2-fin-check { background: var(--v2-gold); color: #231a02; }
+.v2-fin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 14px 10px; padding: 14px 16px; }
+.v2-fin-pr { padding: 2px 0; }
+.v2-fin-events .list, .v2-fin-events { margin: 0; }
+.v2-fin-week { display: flex; flex-direction: column; gap: 10px; }
+.v2-fin-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.v2-fin-map { padding: 12px 12px 8px; }
+
+/* --------------------------------------------------------- exercise meta -- */
+.v2-xm { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; flex: 1 1 100%; min-width: 0; }
+.v2-xm-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.v2-xm-facts { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.v2-xm-main { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 14px; font-size: calc(16px * var(--text-scale,1)); font-weight: 700; letter-spacing: -.012em;
+  font-variant-numeric: tabular-nums; background: var(--acc-soft); color: var(--acc); }
+.v2-xm-main .icn { font-size: 17px; flex: none; }
+.v2-xm-f { display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 6px 12px; border-radius: 14px; background: color-mix(in srgb, var(--label) 6%, transparent); min-width: 0; }
+.v2-xm-f .k { font-size: calc(10.5px * var(--text-scale,1)); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--label-3); }
+.v2-xm-f .v { font-size: calc(14px * var(--text-scale,1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--label); white-space: nowrap; }
+.shero-meta .v2-xm { margin-bottom: 0; }
+
+/* ----------------------------------------------------------------- glass -- */
+/* Selective: only things that float over other content. Cards and lists stay solid. */
+.sheet, .center { box-shadow: var(--v2-e3); border: var(--hair) solid var(--v2-glass-line); }
+.sheet { border-bottom: 0; }
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .sheet, .center {
+    background: var(--v2-glass-bg);
+    -webkit-backdrop-filter: saturate(150%) blur(22px);
+    backdrop-filter: saturate(150%) blur(22px);
+  }
+  :root[data-theme="light"] .sheet, :root[data-theme="light"] .center { background: var(--v2-glass-bg); }
+}
+/* full-screen sheets are pages, not floating panels: stay solid */
+.sheet-full { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* ----------------------------------------------------------- micro motion -- */
+/* One-shot, 150–250 ms, transform/opacity only. All of it is switched off by prefers-reduced-motion below (and by the
+   global rule in index.css). */
+.setrow .n.on, .sdot.on, .sset.done .sset-t .icn { animation: v2-pop var(--v2-med) var(--v2-ease) both; }
+.setrow .n.on.pr { animation: v2-pop var(--v2-med) var(--v2-ease) both, v2-glow 900ms var(--v2-ease) 1 both; }
+.setrow { transition: opacity var(--v2-med) var(--v2-ease); }
+.shero { animation: v2-rise var(--v2-slow) var(--v2-ease) both; }
+.cue.open .cue-steps { animation: v2-rise var(--v2-slow) var(--v2-ease) both; }
+.scomplete:active, .setrow .n:active { transform: scale(.94); }
+.news-card, .t2-promo, .tappable { transition: transform var(--v2-fast) var(--v2-ease); }
+.t2-promo:active, .tappable:active { transform: scale(.985); }
+@media (prefers-reduced-motion: reduce) {
+  .setrow .n.on, .sdot.on, .sset.done .sset-t .icn, .setrow .n.on.pr, .shero, .cue.open .cue-steps { animation: none !important; }
+  .setrow, .news-card, .t2-promo, .tappable { transition: none !important; }
+  .t2-promo:active, .tappable:active, .scomplete:active, .setrow .n:active { transform: none; }
+}
+.v2-fin-actions .row { flex-direction: column; align-items: stretch; gap: 8px; }
+
+/* ------------------------------------------------- indicators (detail) -- */
+.v2-hero-ring { color: inherit; border-radius: 14px; padding: 4px 2px; }
+.v2-hero-ring:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.v2-ring-arc.state { opacity: .7; }
+.v2-ind { display: flex; flex-direction: column; gap: 10px; }
+.v2-ind-head { display: flex; align-items: center; gap: 16px; }
+.v2-ind-fig { font-size: calc(30px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.v2-ind-fig small { font-size: .5em; font-weight: 600; color: var(--label-2); letter-spacing: 0; }
+.v2-ind-basis { font-size: calc(15px * var(--text-scale,1)); line-height: 1.4; margin: 0; }
+.v2-ind-meta { display: flex; gap: 8px; align-items: flex-start; font-size: calc(12.5px * var(--text-scale,1)); color: var(--label-2); margin: 0; line-height: 1.4; }
+.v2-ind-meta .icn { font-size: 15px; margin-top: 1px; flex: none; }
+
+/* ----------------------------------------------------- muscle detail card -- */
+.v2-md { margin-top: 10px; padding: 12px; border-radius: 16px; background: color-mix(in srgb, var(--label) 6%, transparent); animation: v2-rise var(--v2-med) var(--v2-ease) both; }
+.v2-md-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.v2-md-h b { font-size: calc(16px * var(--text-scale,1)); text-transform: capitalize; letter-spacing: -.01em; }
+.v2-md-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+.v2-md-empty { margin: 0; font-size: calc(13px * var(--text-scale,1)); color: var(--label-2); }
+@media (prefers-reduced-motion: reduce) { .v2-md { animation: none !important; } }
+
+/* ------------------------------------------------ premium body (richer) -- */
+.v2-bmp-map::before { inset: 4% 8% 10%; background: radial-gradient(closest-side, color-mix(in srgb, var(--acc) 22%, transparent), transparent 74%); }
+.bodymap.bm-premium .bm-v { max-height: min(52vh, 380px); filter: drop-shadow(0 10px 16px rgba(0,0,0,.28)); }
+.bodymap.bm-premium .bm-sil { fill: color-mix(in srgb, var(--label) 9%, var(--surface)); stroke: color-mix(in srgb, var(--label) 14%, transparent); stroke-width: 1.5; }
+.bodymap.bm-premium .bm-m.l1 { fill: color-mix(in srgb, var(--acc) 38%, var(--bm-base)); }
+.bodymap.bm-premium .bm-m.l2 { fill: color-mix(in srgb, var(--acc) 62%, var(--bm-base)); }
+.bodymap.bm-premium .bm-m.l3 { fill: color-mix(in srgb, var(--acc) 84%, #fff 4%); }
+.bodymap.bm-premium .bm-m.l4 { fill: color-mix(in srgb, var(--acc) 92%, #fff 14%); filter: drop-shadow(0 0 7px color-mix(in srgb, var(--acc) 70%, transparent)); }
+.bodymap.bm-premium .bm-m.sel { stroke: #fff; stroke-width: 4; animation: v2-pop var(--v2-med) var(--v2-ease) both; }
+.bodymap.bm-premium.tappable .bm-m:hover { filter: brightness(1.12); }
+@media (prefers-reduced-motion: reduce) { .bodymap.bm-premium .bm-m.sel { animation: none !important; } }
+
+/* ------------------------------------------------------- energy source -- */
+.v2-en { display: inline-flex; flex-direction: column; gap: 1px; min-width: 0; }
+.v2-en b { font-size: calc(16px * var(--text-scale,1)); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.v2-en span { font-size: calc(11.5px * var(--text-scale,1)); color: var(--label-2); }
+.v2-en.estimated b { color: var(--label); }
+
+/* ------------------------------------------------------- health overview -- */
+.v2-ho { margin: 4px 0 14px; display: flex; flex-direction: column; gap: 10px; }
+.v2-ho-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.v2-ho-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; padding: 14px; min-height: 112px; color: var(--label); }
+.v2-ho-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.v2-ho-ic { width: 28px; height: 28px; border-radius: 9px; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 15px;
+  color: var(--tint, var(--acc)); background: color-mix(in srgb, var(--tint, var(--acc)) 16%, transparent); }
+.v2-ho-fig { font-size: calc(26px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.v2-ho-fig small { font-size: .46em; font-weight: 600; color: var(--label-2); letter-spacing: 0; }
+.v2-ho-sub { font-size: calc(12px * var(--text-scale,1)); color: var(--label-2); font-variant-numeric: tabular-nums; }
+.v2-spark { display: block; max-width: 100%; }
+.v2-hs { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 14px; font-size: calc(12.5px * var(--text-scale,1)); color: var(--label-2);
+  background: color-mix(in srgb, var(--label) 6%, transparent); }
+.v2-hs .icn { font-size: 16px; flex: none; }
+.v2-hs.wearable .icn { color: var(--acc); }
+.v2-hs span { flex: 1; min-width: 0; line-height: 1.35; }
+.v2-hs button { flex: none; min-height: 32px; padding: 0 12px; border-radius: 999px; font-weight: 600; background: var(--acc-soft); color: var(--acc); }
+.v2-hd { display: flex; flex-direction: column; gap: 10px; }
+.v2-hd-head { display: flex; align-items: center; gap: 10px; }
+.v2-hd-head h3 { margin: 0; }
+.v2-hd-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: var(--hair) solid var(--sep); }
+.v2-hd-row .k { color: var(--label-2); font-size: calc(14px * var(--text-scale,1)); }
+.v2-hd-row .v { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; display: flex; flex-direction: column; }
+.v2-hd-row .v small { font-weight: 400; font-size: calc(11.5px * var(--text-scale,1)); color: var(--label-2); }
+
+/* an odd tile (or a lone one) takes the full row instead of leaving a hole */
+.v2-ho-grid > .v2-ho-tile:last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+/* the date under the greeting: only the first letter is capital ("Sábado, 3 de octubre"), never every word */
+.v2-hero .sub { text-transform: none; }
+.v2-hero .sub::first-letter { text-transform: uppercase; }
+
+/* ------------------------------------------------ Settings → where you train: add-a-place form -- */
+/* The global .btn is width:100%, which inside this flex row squeezed the name field to ~30 px and stretched "Add place" across the row.
+   The field now takes the space; the button keeps its own width and drops under the field on very narrow screens. */
+.gym-create-place { border-radius: 18px; }
+.gym-create-row { flex-wrap: wrap; gap: 10px; align-items: stretch; }
+.gym-create-row .input { flex: 1 1 140px; width: auto; min-width: 0; min-height: 48px; margin: 0; }
+.gym-create-row .gym-create-button { flex: 0 0 auto; width: auto; min-height: 48px; padding: 0 18px; white-space: nowrap; font-size: calc(15px * var(--text-scale,1)); }
+.gym-create-kind .chip { min-height: 40px; padding: 0 16px; }
+/* the card being set up (no place saved yet) is marked, even though nothing is active until "Add place" */
+.gym-profile-card.pending { border-style: dashed; border-color: var(--acc); background: var(--acc-soft); }
+.gym-profile-card.pending .gym-profile-card-icon { background: color-mix(in srgb, var(--acc) 16%, var(--surface)); color: var(--acc); }
+.gym-pending-badge { background: var(--surface); padding: 3px 7px; border-radius: 99px; }

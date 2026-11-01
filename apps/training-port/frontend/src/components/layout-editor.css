@@ -1,0 +1,37 @@
+/* The layout editor (Home, Progress, Settings) and the first-time guide. App tokens only: it follows light/dark like the screen it sits in. */
+.le{display:grid;gap:8px}
+.le-sub{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label-2);margin:6px 2px 0}
+.le .ux-pc-row{min-height:52px}
+.le-btn{display:inline-flex;align-items:center;gap:5px;flex:none;min-height:36px;padding:0 11px;border:1px solid var(--sep);border-radius:12px;background:var(--surface-2);color:var(--label);font-size:12.5px;font-weight:650}
+.le-btn svg{width:15px;height:15px}
+.le-btn.add{border-color:color-mix(in srgb,var(--acc) 55%,var(--sep));color:var(--acc)}
+.le-fixed{flex:none;font-size:11.5px;color:var(--label-2);padding:0 6px}
+.le-empty{padding:8px 4px}
+.le-restore{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:42px;margin-top:4px;border:1px solid var(--sep);border-radius:14px;background:transparent;color:var(--label);font-size:13px;font-weight:650}
+.le-restore svg{width:16px}
+.le-restore:disabled{opacity:.45}
+.le.compact .ux-pc-row{padding:6px 8px 6px 10px}
+/* the small "Personalizar" entry at the top of Home and Progress */
+.pz-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;min-height:30px}
+.pz-btn{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 10px;border:1px solid var(--sep);border-radius:99px;background:color-mix(in srgb,var(--surface-2) 70%,transparent);color:var(--label-2);font-size:12px;font-weight:650;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.pz-btn svg{width:14px;height:14px}
+.pz-btn.on{color:var(--acc);border-color:color-mix(in srgb,var(--acc) 55%,var(--sep))}
+.pz-panel{display:grid;gap:10px;padding:14px;margin:0 0 14px;border:1px solid color-mix(in srgb,var(--acc) 40%,var(--sep));border-radius:20px;background:var(--surface)}
+.pz-panel h2{margin:0;font-size:17px}
+.pz-panel .pz-lead{margin:0;color:var(--label-2);font-size:12.5px;line-height:1.4}
+.pz-done{min-height:44px}
+/* first-time guide */
+.pg-back{position:fixed;inset:0;z-index:300;display:flex;align-items:flex-end;justify-content:center;padding:16px 16px calc(16px + env(safe-area-inset-bottom));background:rgba(5,8,10,.62);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.pg{width:min(100%,460px);display:grid;gap:12px;padding:20px 18px 16px;border-radius:24px;background:#0F1519;color:#EEF3F1;border:1px solid rgba(255,255,255,.1);box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.pg-art{display:grid;place-items:center;height:92px;border-radius:18px;background:radial-gradient(90% 90% at 70% 0%,rgba(16,185,129,.28),transparent 60%),#121B20;border:1px solid rgba(255,255,255,.07)}
+.pg-art svg{width:40px;height:40px;color:#34D399}
+.pg-step{font-size:11px;letter-spacing:.14em;font-weight:800;color:#D9B45B;text-transform:uppercase}
+.pg h3{margin:0;font-size:20px;letter-spacing:-.02em}
+.pg p{margin:0;color:#9FB0AA;font-size:14px;line-height:1.5}
+.pg-dots{display:flex;gap:6px;justify-content:center}
+.pg-dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.18)}
+.pg-dots i.on{background:#10B981;width:20px;border-radius:99px}
+.pg-acts{display:flex;gap:8px}
+.pg-acts button{flex:1;min-height:46px;border-radius:14px;font-weight:750;font-size:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#EEF3F1}
+.pg-acts button.go{background:linear-gradient(135deg,#34D399,#10B981);color:#04140E;border-color:transparent}
+.pz-set{margin-bottom:12px}

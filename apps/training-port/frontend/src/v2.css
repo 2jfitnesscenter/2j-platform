@@ -1,0 +1,219 @@
+/* ============================================================================
+   2J Fitness Center 2.0.1 — Experience V2 · design layer
+   ----------------------------------------------------------------------------
+   One reusable layer on top of index.css (loaded after it). It adds tokens and a small set of
+   primitives; it does not restyle existing screens by itself. Screens opt in with the v2-* classes
+   (see components/v2.jsx) so Health V2, Social V2 and Seguimiento V2 can reuse the same pieces.
+
+   Rules this layer follows:
+   · dark graphite base, the member's accent (--acc, emerald-green by default) for action and progress,
+     GOLD only for records / achievements / milestones (--v2-gold);
+   · glass is selective: sheets, the tab bar, floating panels and stats over images — never plain cards;
+   · motion is short (150–250 ms), one-shot, and switched off by prefers-reduced-motion at the bottom.
+   ========================================================================== */
+
+:root {
+  /* spacing (4-pt scale) */
+  --v2-s1: 4px; --v2-s2: 8px; --v2-s3: 12px; --v2-s4: 16px; --v2-s5: 24px; --v2-s6: 32px;
+
+  /* radius */
+  --v2-r-chip: 999px; --v2-r-sm: 10px; --v2-r-card: 18px; --v2-r-hero: 26px; --v2-r-sheet: 24px;
+
+  /* brand + achievement colours (fixed: shareable cards must look the same in every theme) */
+  --v2-emerald: #2fd18b;
+  --v2-emerald-2: #0f8f5c;
+  --v2-gold: #e8bb4c;
+  --v2-gold-2: #a97c10;
+  --v2-gold-soft: color-mix(in srgb, var(--v2-gold) 16%, transparent);
+  --v2-gold-line: color-mix(in srgb, var(--v2-gold) 42%, transparent);
+  --v2-graphite: #121315;
+  --v2-graphite-2: #1b1d20;
+
+  /* surfaces */
+  --v2-card: color-mix(in srgb, var(--surface) 92%, var(--label) 3%);
+  --v2-card-line: color-mix(in srgb, var(--label) 7%, transparent);
+  --v2-glass-bg: color-mix(in srgb, var(--bg-el) 82%, transparent);
+  --v2-glass-line: color-mix(in srgb, var(--label) 10%, transparent);
+  --v2-glass-blur: 18px;
+
+  /* elevation */
+  --v2-e1: 0 1px 2px rgba(0,0,0,.28), 0 4px 14px -6px rgba(0,0,0,.32);
+  --v2-e2: 0 2px 4px rgba(0,0,0,.3), 0 14px 32px -14px rgba(0,0,0,.5);
+  --v2-e3: 0 4px 8px rgba(0,0,0,.34), 0 28px 60px -20px rgba(0,0,0,.62);
+
+  /* motion */
+  --v2-ease: cubic-bezier(.2,.8,.2,1);
+  --v2-fast: 150ms; --v2-med: 200ms; --v2-slow: 250ms;
+}
+:root[data-theme="light"] {
+  --v2-card: var(--surface);
+  --v2-card-line: rgba(0,0,0,.06);
+  --v2-glass-bg: color-mix(in srgb, #fff 84%, transparent);
+  --v2-glass-line: rgba(0,0,0,.08);
+  --v2-e1: 0 1px 2px rgba(20,24,28,.08), 0 4px 14px -6px rgba(20,24,28,.12);
+  --v2-e2: 0 2px 4px rgba(20,24,28,.08), 0 14px 32px -14px rgba(20,24,28,.2);
+  --v2-e3: 0 4px 8px rgba(20,24,28,.1), 0 28px 60px -20px rgba(20,24,28,.28);
+}
+
+/* ------------------------------------------------------------ surfaces -- */
+.v2-surface {
+  background: var(--v2-card);
+  border: var(--hair) solid var(--v2-card-line);
+  border-radius: var(--v2-r-card);
+  box-shadow: var(--v2-e1);
+}
+.v2-surface.raised { box-shadow: var(--v2-e2); }
+
+/* Selective glass: translucent + blurred only where something sits ON content (sheets, tab bar,
+   floating panels, stats over an image). Falls back to the solid elevated colour without blur support. */
+.v2-glass {
+  background: var(--bg-el);
+  border: var(--hair) solid var(--v2-glass-line);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .v2-glass {
+    background: var(--v2-glass-bg);
+    -webkit-backdrop-filter: saturate(150%) blur(var(--v2-glass-blur));
+    backdrop-filter: saturate(150%) blur(var(--v2-glass-blur));
+  }
+}
+
+/* ---------------------------------------------------------- typography -- */
+.v2-eyebrow { font-size: calc(11.5px * var(--text-scale,1)); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--label-2); }
+.v2-title   { font-size: calc(22px * var(--text-scale,1)); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; }
+.v2-lead    { font-size: calc(15px * var(--text-scale,1)); color: var(--label-2); letter-spacing: -.006em; }
+.v2-num     { font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; }
+.v2-stat    { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.v2-stat .v { font-size: calc(21px * var(--text-scale,1)); font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+.v2-stat .k { font-size: calc(11.5px * var(--text-scale,1)); color: var(--label-2); letter-spacing: .02em; }
+.v2-stat .d { font-size: calc(11.5px * var(--text-scale,1)); font-weight: 600; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.v2-stat .d.up { color: var(--acc); }
+.v2-stat .d.down { color: var(--orange); }
+
+/* ------------------------------------------------- pills / badges / chips -- */
+.v2-pill {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 3px 10px;
+  border-radius: var(--v2-r-chip); font-size: calc(12px * var(--text-scale,1)); font-weight: 600; line-height: 1.2;
+  background: color-mix(in srgb, var(--label) 8%, transparent); color: var(--label-2); white-space: nowrap;
+}
+.v2-pill .icn { font-size: calc(13px * var(--text-scale,1)); }
+.v2-pill.acc  { background: var(--acc-soft); color: var(--acc); }
+.v2-pill.gold { background: var(--v2-gold-soft); color: var(--v2-gold); }
+.v2-pill.nocap { text-transform: none; }
+.v2-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: var(--v2-r-chip); font-size: calc(11px * var(--text-scale,1)); font-weight: 700; font-variant-numeric: tabular-nums;
+  background: var(--acc); color: var(--on-acc);
+}
+.v2-badge.gold { background: var(--v2-gold); color: #231a02; }
+
+/* ------------------------------------------------------------ progress -- */
+.v2-progress { height: 8px; border-radius: var(--v2-r-chip); background: color-mix(in srgb, var(--label) 10%, transparent); overflow: hidden; }
+.v2-progress > i {
+  display: block; height: 100%; border-radius: inherit; width: 0;
+  background: linear-gradient(90deg, var(--acc-2), var(--acc));
+  transition: width var(--v2-slow) var(--v2-ease);
+}
+.v2-progress.gold > i { background: linear-gradient(90deg, var(--v2-gold-2), var(--v2-gold)); }
+.v2-ring-track { stroke: color-mix(in srgb, var(--label) 12%, transparent); }
+.v2-ring-arc { transition: stroke-dashoffset var(--v2-slow) var(--v2-ease); }
+
+/* ----------------------------------------------------------- controls -- */
+.v2-iconbtn {
+  width: 40px; height: 40px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  font-size: calc(18px * var(--text-scale,1)); color: var(--label);
+  background: color-mix(in srgb, var(--label) 9%, transparent);
+  transition: transform var(--v2-fast) var(--v2-ease), background var(--v2-fast);
+}
+.v2-iconbtn:active { transform: scale(.92); background: color-mix(in srgb, var(--label) 16%, transparent); }
+.v2-iconbtn:focus-visible, .v2-cta:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.v2-cta {
+  display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 50px; padding: 0 20px;
+  border-radius: 16px; font-size: calc(16px * var(--text-scale,1)); font-weight: 700; letter-spacing: -.01em;
+  background: var(--acc); color: var(--on-acc);
+  box-shadow: 0 10px 24px -10px color-mix(in srgb, var(--acc) 70%, transparent);
+  transition: transform var(--v2-fast) var(--v2-ease), box-shadow var(--v2-fast);
+}
+.v2-cta:active { transform: scale(.98); box-shadow: 0 4px 12px -6px color-mix(in srgb, var(--acc) 70%, transparent); }
+.v2-cta.ghost { background: color-mix(in srgb, var(--label) 9%, transparent); color: var(--label); box-shadow: none; }
+
+/* ------------------------------------------------- skeleton / empty state -- */
+.v2-skel {
+  border-radius: var(--v2-r-sm); min-height: 14px;
+  background: linear-gradient(100deg, color-mix(in srgb, var(--label) 7%, transparent) 30%, color-mix(in srgb, var(--label) 14%, transparent) 50%, color-mix(in srgb, var(--label) 7%, transparent) 70%);
+  background-size: 220% 100%; animation: v2-shimmer 1.4s linear infinite;
+}
+@keyframes v2-shimmer { from { background-position: 120% 0 } to { background-position: -120% 0 } }
+.v2-empty { text-align: center; padding: var(--v2-s5) var(--v2-s4); color: var(--label-2); }
+.v2-empty .ic { font-size: 30px; color: var(--label-3); display: flex; justify-content: center; margin-bottom: var(--v2-s2); }
+.v2-empty .tt { font-size: calc(16px * var(--text-scale,1)); font-weight: 600; color: var(--label); margin-bottom: 4px; }
+
+/* -------------------------------------------------------------- motion -- */
+@keyframes v2-rise { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+@keyframes v2-pop  { 0% { transform: scale(.82); opacity: 0 } 60% { transform: scale(1.06); opacity: 1 } 100% { transform: scale(1) } }
+@keyframes v2-glow { 0% { box-shadow: 0 0 0 0 var(--v2-gold-line) } 100% { box-shadow: 0 0 0 16px transparent } }
+.v2-rise { animation: v2-rise var(--v2-slow) var(--v2-ease) both; }
+.v2-pop  { animation: v2-pop var(--v2-slow) var(--v2-ease) both; }
+.v2-glow { animation: v2-glow 900ms var(--v2-ease) 1 both; }
+.v2-tap { transition: transform var(--v2-fast) var(--v2-ease); }
+.v2-tap:active { transform: scale(.98); }
+
+/* The global rule in index.css already stops every animation/transition; this keeps the V2 pieces readable
+   (final state shown, no motion) and is covered by a test so it cannot be removed unnoticed. */
+@media (prefers-reduced-motion: reduce) {
+  .v2-rise, .v2-pop, .v2-glow, .v2-skel { animation: none !important; opacity: 1; transform: none; }
+  .v2-progress > i, .v2-ring-arc, .v2-tap, .v2-cta, .v2-iconbtn { transition: none !important; }
+}
+
+/* ----------------------------------------------- achievement / PR card -- */
+/* Fixed palette (no theme tokens, no blur): this node is also rasterised for sharing. */
+.v2-ach {
+  position: relative; overflow: hidden; isolation: isolate; text-align: center;
+  width: 100%; max-width: 340px; margin: 0 auto; padding: 18px 20px 20px; border-radius: 24px;
+  color: #f4f5f6; font-family: 'Sora', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, system-ui, sans-serif;
+  background: linear-gradient(165deg, #1d1f22 0%, #0c0d0e 70%);
+  border: 1px solid rgba(255,255,255,.09);
+}
+.v2-ach::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(110% 70% at 50% -10%, rgba(47,209,139,.26), transparent 62%); }
+.v2-ach.gold { border-color: rgba(232,187,76,.38); }
+.v2-ach.gold::before { background: radial-gradient(110% 70% at 50% -10%, rgba(232,187,76,.30), transparent 62%), radial-gradient(80% 50% at 50% 115%, rgba(47,209,139,.14), transparent 70%); }
+.v2-ach-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 10px; margin-bottom: 14px; }
+.v2-ach-brand { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 11px; font-weight: 800; letter-spacing: .12em; color: rgba(255,255,255,.82); }
+.v2-ach-brand img { width: 18px; height: 18px; object-fit: contain; filter: brightness(0) invert(1); opacity: .9; }
+.v2-ach-kind { white-space: nowrap; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; background: rgba(47,209,139,.16); color: #2fd18b; }
+.v2-ach.gold .v2-ach-kind { background: rgba(232,187,76,.16); color: #e8bb4c; }
+.v2-ach-medal { width: 84px; height: 84px; margin: 4px auto 12px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 38px;
+  color: #2fd18b; background: radial-gradient(circle at 35% 30%, rgba(47,209,139,.3), rgba(47,209,139,.06)); box-shadow: 0 0 0 2px rgba(47,209,139,.45), 0 12px 32px -10px rgba(47,209,139,.55); }
+.v2-ach.gold .v2-ach-medal { color: #e8bb4c; background: radial-gradient(circle at 35% 30%, rgba(232,187,76,.34), rgba(232,187,76,.06)); box-shadow: 0 0 0 2px rgba(232,187,76,.55), 0 12px 32px -10px rgba(232,187,76,.6); }
+.v2-ach-medal img { width: 100%; height: 100%; object-fit: contain; border-radius: 50%; }
+.v2-ach-title { font-size: 19px; font-weight: 700; letter-spacing: -.015em; line-height: 1.2; text-transform: capitalize; }
+.v2-ach-sub { margin-top: 3px; font-size: 12.5px; color: rgba(255,255,255,.6); line-height: 1.35; }
+.v2-ach-value { margin-top: 12px; font-size: 34px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.05; color: #fff; }
+.v2-ach.gold .v2-ach-value { color: #f3cf74; }
+.v2-ach-delta { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  background: rgba(47,209,139,.16); color: #2fd18b; }
+.v2-ach-delta .icn { font-size: 13px; }
+.v2-ach-date { margin-top: 14px; font-size: 11px; letter-spacing: .06em; color: rgba(255,255,255,.45); }
+
+/* ---------------------------------------------------- premium body map -- */
+.v2-bmp-map { position: relative; padding: 6px 0 2px; }
+.v2-bmp-map::before { content: ''; position: absolute; inset: 8% 14% 14%; z-index: 0; pointer-events: none; border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--acc) 14%, transparent), transparent 72%); }
+.v2-bmp-map .bodymap { position: relative; z-index: 1; }
+.bodymap.bm-premium .bm-sil { fill: color-mix(in srgb, var(--label) 12%, var(--surface)); }
+.bodymap.bm-premium .bm-m { transition: fill var(--v2-slow) var(--v2-ease), filter var(--v2-slow) var(--v2-ease); }
+.bodymap.bm-premium .bm-m.l3, .bodymap.bm-premium .bm-m.l4 { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--acc) 50%, transparent)); }
+.bodymap.bm-premium .bm-m.sel { stroke: var(--label); stroke-width: 5; }
+.v2-bmp-cap { display: flex; justify-content: space-around; font-size: calc(10.5px * var(--text-scale,1)); font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--label-3); margin-top: 2px; }
+.v2-bmp-rank { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.v2-bmp-rank button { width: 100%; min-height: 40px; display: grid; grid-template-columns: minmax(84px, 1.1fr) 2fr auto; align-items: center; gap: 10px; padding: 4px 10px; border-radius: 12px; text-align: left; color: var(--label);
+  transition: background var(--v2-fast); }
+.v2-bmp-rank li.on button, .v2-bmp-rank button:active { background: color-mix(in srgb, var(--label) 8%, transparent); }
+.v2-bmp-rank .nm { font-size: calc(13.5px * var(--text-scale,1)); font-weight: 600; text-transform: capitalize; }
+.v2-bmp-rank .bar { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--label) 10%, transparent); overflow: hidden; }
+.v2-bmp-rank .bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--acc-2), var(--acc)); transition: width var(--v2-slow) var(--v2-ease); }
+.v2-bmp-rank .v { font-size: calc(12.5px * var(--text-scale,1)); color: var(--label-2); font-variant-numeric: tabular-nums; }
+.v2-bmp-sel { display: flex; justify-content: space-between; margin-top: 6px; padding: 8px 10px; border-top: var(--hair) solid var(--sep); font-size: calc(13.5px * var(--text-scale,1)); }
+.v2-bmp-sel b { text-transform: capitalize; }
+@media (prefers-reduced-motion: reduce) { .bodymap.bm-premium .bm-m, .v2-bmp-rank .bar i { transition: none !important; } }

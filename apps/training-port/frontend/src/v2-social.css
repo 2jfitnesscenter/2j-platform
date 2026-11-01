@@ -1,0 +1,168 @@
+/* =====================================================================================================
+   SOCIAL V2 + SEGUIMIENTO V2 — the existing screens dressed in Experience V2 (no new features, no new data).
+   Scoped under .v2-social / .v2-friends / .v2-chat / .v2-fu so nothing else in the app changes.
+   Loaded after v2.css and v2-screens.css; uses their tokens and primitives.
+   ===================================================================================================== */
+
+/* lists: soft cards with a hairline + elevation instead of flat grey rows */
+.v2-social .list, .v2-friends .list, .v2-chat .list { gap: 10px; }
+.v2-social .item, .v2-friends .item, .v2-chat .item {
+  background: var(--v2-card); border: var(--hair) solid var(--v2-card-line); border-radius: var(--v2-r-card);
+  box-shadow: var(--v2-e1); padding: 12px 14px; min-height: 64px;
+  transition: transform var(--v2-fast) var(--v2-ease), background var(--v2-fast);
+}
+.v2-social .item:active, .v2-friends .item:active, .v2-chat .item:active { transform: scale(.985); }
+.v2-social .item .tt, .v2-friends .item .tt, .v2-chat .item .tt { font-weight: 600; letter-spacing: -.012em; }
+.v2-social .item .lrow-i, .v2-chat .item .lrow-i { width: 40px; height: 40px; border-radius: 13px; }
+.v2-social .item .chev, .v2-chat .item .chev { color: var(--label-3); }
+
+/* header: calm, actions grouped in a soft capsule */
+.v2-social .hdr .row { gap: 2px; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--label) 7%, transparent); }
+.v2-social .hdr .iconbtn { background: transparent; width: 40px; height: 40px; }
+.v2-social .hdr .iconbtn:active { background: color-mix(in srgb, var(--label) 12%, transparent); }
+
+/* the entry tiles: icon in a tinted square, a clear title, the live count underneath */
+.v2-social .community-dashboard { gap: 10px; }
+.v2-social .community-tile {
+  background: var(--v2-card); border: var(--hair) solid var(--v2-card-line); border-radius: 18px; box-shadow: var(--v2-e1); padding: 14px;
+  transition: transform var(--v2-fast) var(--v2-ease);
+}
+.v2-social .community-tile-main { background: linear-gradient(135deg, color-mix(in srgb, var(--acc) 14%, var(--v2-card)), var(--v2-card)); border-color: var(--acc-line); }
+.v2-social .community-tile-icon { width: 42px; height: 42px; border-radius: 14px; }
+.v2-social .community-tile-copy strong { font-size: calc(15px * var(--text-scale,1)); letter-spacing: -.012em; }
+.v2-social .community-tile-copy small { font-size: calc(12px * var(--text-scale,1)); }
+.v2-social .community-intro { border-radius: 20px; border-color: var(--acc-line); box-shadow: var(--v2-e1); }
+.v2-social .community-help { min-height: 36px; }
+
+/* marks: a record is gold; the row says so without shouting */
+.v2-social .item.v2-mark { border-color: var(--v2-gold-line); background: linear-gradient(135deg, color-mix(in srgb, var(--v2-gold) 9%, var(--v2-card)), var(--v2-card)); }
+/* challenges: accent (gold stays for records) */
+.v2-social .item.v2-challenge .lrow-i { background: var(--acc-soft); color: var(--acc); }
+
+/* empty states: one calm centred block, never a large grey slab */
+.v2-social .empty, .v2-friends .empty, .v2-chat .empty {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 30px 20px; border-radius: 20px;
+  background: color-mix(in srgb, var(--label) 4%, transparent); border: var(--hair) dashed var(--sep);
+}
+.v2-social .empty .ico, .v2-friends .empty .ico, .v2-chat .empty .ico {
+  width: 56px; height: 56px; border-radius: 18px; margin: 0 0 8px; font-size: 26px; align-items: center;
+  background: var(--acc-soft); color: var(--acc);
+}
+
+/* loading skeleton rows */
+.v2-lskel { display: flex; flex-direction: column; gap: 10px; }
+.v2-lskel-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--v2-r-card); background: var(--v2-card); border: var(--hair) solid var(--v2-card-line); }
+.v2-lskel-row .v2-skel:first-child { width: 40px; height: 40px; border-radius: 13px; flex: none; }
+.v2-lskel-row > div { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+/* ----------------------------------------------------------- shared moments (feed) -- */
+.v2-social .social-moments-grid { gap: 16px; }
+.v2-social .social-moment { padding: 14px; border-radius: 22px; border: var(--hair) solid var(--v2-card-line); background: var(--v2-card); box-shadow: var(--v2-e2); }
+.v2-social .social-moment-by { gap: 10px; margin-bottom: 12px; align-items: center; }
+.v2-social .moment-avatar { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--acc-soft); color: var(--acc); }
+.v2-social .social-moment-by small { display: block; font-size: calc(11.5px * var(--text-scale,1)); color: var(--label-3); margin-top: 1px; }
+.v2-moment-kind { margin-left: auto; }
+.v2-social .social-moment-actions { margin-top: 10px; }
+.v2-social .social-moment-card { display: flex; justify-content: center; }
+.v2-social .social-moment-card .community-sharecard { width: min(320px, 100%); }
+
+/* the shareable card in the Experience V2 palette: emerald for everyday kinds, gold for records / achievements / milestones */
+.community-sharecard { background: radial-gradient(ellipse at 82% 38%, rgba(47,209,139,.20), transparent 46%), linear-gradient(150deg, #181b1d 0%, #0b0c0d 70%, #121516 100%); border: 1px solid rgba(255,255,255,.08); }
+.csc-mark { border-color: rgba(47,209,139,.5); color: #2fd18b; }
+.csc-brand-dot { background: #2fd18b; box-shadow: 0 0 16px #2fd18b; }
+.csc-orbit { border-color: rgba(47,209,139,.16); }
+.csc-art-icon { color: #4fe0a3; border-color: rgba(47,209,139,.4); background: linear-gradient(145deg, rgba(47,209,139,.22), rgba(47,209,139,.05)); box-shadow: 0 0 55px rgba(47,209,139,.16); }
+.csc-kicker { color: #6fe3b0; }
+.community-sharecard[data-share-kind="workout"] .csc-art-icon { color: #7ef0bf; background: linear-gradient(145deg, rgba(47,209,139,.32), rgba(15,143,92,.10)); box-shadow: 0 0 72px rgba(47,209,139,.28); }
+.community-sharecard[data-share-kind="record"], .community-sharecard[data-share-kind="achievement"], .community-sharecard[data-share-kind="streak"] {
+  background: radial-gradient(ellipse at 50% 35%, rgba(232,187,76,.24), transparent 44%), linear-gradient(150deg, #211b10, #0f0d08 70%, #17130b); border-color: rgba(232,187,76,.34);
+}
+.community-sharecard[data-share-kind="record"] .csc-kicker, .community-sharecard[data-share-kind="achievement"] .csc-kicker, .community-sharecard[data-share-kind="streak"] .csc-kicker { color: #f0c866; }
+.community-sharecard[data-share-kind="record"] .csc-art-icon, .community-sharecard[data-share-kind="achievement"] .csc-art-icon, .community-sharecard[data-share-kind="streak"] .csc-art-icon {
+  color: #f6d68a; border-color: rgba(232,187,76,.5); background: linear-gradient(145deg, rgba(232,187,76,.26), rgba(200,140,30,.06)); box-shadow: 0 0 72px rgba(232,187,76,.26); transform: none;
+}
+.community-sharecard[data-share-kind="record"] .csc-mark, .community-sharecard[data-share-kind="achievement"] .csc-mark, .community-sharecard[data-share-kind="streak"] .csc-mark { border-color: rgba(232,187,76,.5); color: #e8bb4c; }
+.community-sharecard[data-share-kind="record"] .csc-brand-dot, .community-sharecard[data-share-kind="achievement"] .csc-brand-dot, .community-sharecard[data-share-kind="streak"] .csc-brand-dot { background: #e8bb4c; box-shadow: 0 0 16px #e8bb4c; }
+.community-sharecard[data-share-kind="record"] .csc-orbit, .community-sharecard[data-share-kind="achievement"] .csc-orbit, .community-sharecard[data-share-kind="streak"] .csc-orbit { border-color: rgba(232,187,76,.16); }
+
+/* --------------------------------------------------------------------------- friends -- */
+.v2-friends .hdr { align-items: center; }
+.v2-friends .item .grow { min-width: 0; }
+.v2-friends .item .iconbtn { width: 40px; height: 40px; }
+.v2-req { flex-wrap: wrap; border-color: var(--acc-line) !important; background: linear-gradient(135deg, color-mix(in srgb, var(--acc) 10%, var(--v2-card)), var(--v2-card)) !important; }
+.v2-req-acts { display: flex; gap: 8px; width: 100%; padding-left: 52px; }
+.v2-req-acts .btn { flex: 1; min-height: 40px; }
+.v2-friends h4.sec { display: flex; align-items: center; gap: 8px; }
+.v2-friends .search { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 14px; background: color-mix(in srgb, var(--label) 7%, transparent); }
+.v2-friends .search input { flex: 1; min-height: 44px; background: transparent; border: 0; color: inherit; }
+.v2-friends .v2-msg-btn { background: var(--acc-soft); color: var(--acc); }
+
+/* ------------------------------------------------------------------------------ chat -- */
+.v2-chat .item .ss { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.v2-chat-time { font-size: calc(11.5px * var(--text-scale,1)); color: var(--label-3); font-variant-numeric: tabular-nums; flex: none; }
+.v2-chat-unread .tt { font-weight: 700; }
+.v2-chat-unread .ss { color: var(--label); }
+.v2-unread-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); flex: none; }
+.chat-stream { flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 4px 2px 12px; overflow-y: auto; }
+.chat-day { align-self: center; margin: 10px 0 4px; padding: 3px 12px; border-radius: 999px; font-size: calc(11.5px * var(--text-scale,1)); font-weight: 600; letter-spacing: .02em;
+  color: var(--label-2); background: color-mix(in srgb, var(--label) 8%, transparent); }
+.chat-msg { max-width: 80%; padding: 9px 13px; font-size: calc(15px * var(--text-scale,1)); line-height: 1.4; overflow-wrap: anywhere; animation: v2-rise var(--v2-med) var(--v2-ease) both; }
+.chat-msg.mine { align-self: flex-end; background: linear-gradient(160deg, var(--acc), var(--acc-2)); color: var(--on-acc); border-radius: 18px 18px 5px 18px; }
+.chat-msg.theirs { align-self: flex-start; background: var(--v2-card); border: var(--hair) solid var(--v2-card-line); border-radius: 18px 18px 18px 5px; }
+.chat-msg time { display: block; margin-top: 3px; font-size: calc(10.5px * var(--text-scale,1)); opacity: .65; text-align: right; font-variant-numeric: tabular-nums; }
+.chat-composer { position: sticky; bottom: calc(86px + var(--sab)); display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; margin-top: 4px; border-radius: 999px; z-index: 5; }
+.chat-composer .field { flex: 1; border: 0; background: transparent; min-height: 44px; box-shadow: none; }
+.chat-composer .send { width: 44px; height: 44px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--acc); color: var(--on-acc); transition: transform var(--v2-fast) var(--v2-ease), opacity var(--v2-fast); }
+.chat-composer .send:disabled { opacity: .4; }
+.chat-composer .send:active:not(:disabled) { transform: scale(.92); }
+.chat-share-bubble { border-radius: 20px; }
+
+/* ---------------------------------------------------------------------------- profile -- */
+.v2-social .social-profile-hero, .v2-friends .social-profile-hero { border-radius: var(--v2-r-hero); border: var(--hair) solid var(--v2-card-line); box-shadow: var(--v2-e2); }
+.social-profile-private-note { padding: 10px 14px; border-radius: 14px; background: color-mix(in srgb, var(--label) 5%, transparent); }
+
+/* ==================================================================================================
+   SEGUIMIENTO V2 — member card and staff card
+   ================================================================================================== */
+.v2-fu { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 20px; margin-bottom: 12px; text-align: left; width: 100%; color: inherit; }
+.v2-fu.due { border-color: var(--acc-line); background: linear-gradient(135deg, color-mix(in srgb, var(--acc) 11%, var(--v2-card)), var(--v2-card)); }
+.v2-fu.overdue { border-color: color-mix(in srgb, var(--orange) 55%, transparent); background: linear-gradient(135deg, color-mix(in srgb, var(--orange) 12%, var(--v2-card)), var(--v2-card)); }
+.v2-fu-top { display: flex; align-items: center; gap: 12px; }
+.v2-fu-ic { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; flex: none; font-size: 21px; background: var(--acc-soft); color: var(--acc); }
+.v2-fu.overdue .v2-fu-ic { background: color-mix(in srgb, var(--orange) 18%, transparent); color: var(--orange); }
+.v2-fu-when { font-size: calc(19px * var(--text-scale,1)); font-weight: 750; letter-spacing: -.02em; line-height: 1.15; }
+.v2-fu-sub { font-size: calc(12.5px * var(--text-scale,1)); color: var(--label-2); }
+.v2-fu-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 10px 14px; }
+.v2-fu-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.v2-fu-alerts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.v2-fu-alerts li { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; font-size: calc(13px * var(--text-scale,1));
+  background: color-mix(in srgb, var(--orange) 13%, transparent); color: var(--label); }
+.v2-fu-alerts .icn { color: var(--orange); font-size: 16px; flex: none; }
+.v2-fu-meas { display: flex; flex-direction: column; border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--label) 5%, transparent); }
+.v2-fu-mrow { display: grid; grid-template-columns: minmax(0, 1.4fr) auto auto; gap: 10px; align-items: baseline; padding: 9px 12px; font-size: calc(13.5px * var(--text-scale,1)); }
+.v2-fu-mrow + .v2-fu-mrow { border-top: var(--hair) solid var(--sep); }
+.v2-fu-mrow b { font-variant-numeric: tabular-nums; }
+.v2-fu-mrow em { font-style: normal; min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; color: var(--label-2); font-size: calc(12px * var(--text-scale,1)); }
+.v2-fu-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.v2-fu-acts .btn { flex: 1 1 120px; min-height: 44px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg { animation: none !important; }
+  .v2-social .item, .v2-friends .item, .v2-chat .item, .v2-social .community-tile, .chat-composer .send { transition: none !important; }
+  .v2-social .item:active, .v2-friends .item:active, .v2-chat .item:active { transform: none; }
+}
+
+/* five tabs never fit on a phone: one scrollable row, labels never wrap */
+.v2-social .seg { overflow-x: auto; scrollbar-width: none; justify-content: flex-start; }
+.v2-social .seg::-webkit-scrollbar { display: none; }
+.v2-social .seg > button { flex: 0 0 auto; white-space: nowrap; padding-left: 14px; padding-right: 14px; }
+/* a short conversation sits at the bottom, next to the composer, like every chat */
+.chat-stream > :first-child { margin-top: auto; }
+
+/* narrow phones (360): the title yields, the action capsule keeps its four 36 px targets inside the screen */
+.v2-social .hdr > div:first-child { min-width: 0; flex: 1; }
+.v2-social .hdr > .row { flex: none; }
+@media (max-width: 380px) {
+  .v2-social .hdr .iconbtn { width: 36px; height: 36px; }
+  .v2-social .hdr h1 { font-size: calc(28px * var(--text-scale,1)); }
+}

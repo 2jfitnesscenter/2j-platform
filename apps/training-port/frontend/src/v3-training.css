@@ -1,0 +1,171 @@
+/* =====================================================================================================
+   SPRINT 1 · TRAINING V3 · POST-WORKOUT V3 · HOME ALIVE — Experience V2 language (tokens in v2.css).
+   Presentation over the existing engines. Everything here is scoped to .workout / #timer / .v3-* / .v3pw-* so other screens keep
+   their look. Pieces that are off (images, RPE, feedback…) simply do not render — nothing below reserves space for them.
+   ===================================================================================================== */
+
+/* ------------------------------------------------------------- session header + progress -- */
+.workout .v3-hdr { margin: 4px 0 10px; align-items: center; }
+.workout .v3-hdr .wtitle { font-size: calc(18px * var(--text-scale,1)); font-weight: 750; letter-spacing: -.02em; }
+.workout .v3-hdr .sub { font-variant-numeric: tabular-nums; }
+.workout .v3-hdr .iconbtn { width: 40px; height: 40px; }
+.v3-prog { display: flex; align-items: center; gap: 14px; padding: 12px 14px; margin: 0 0 12px; border-radius: 20px;
+  background: var(--v2-card); border: var(--hair) solid var(--v2-card-line); box-shadow: var(--v2-e1); }
+.v3-prog-pct { font-size: calc(14px * var(--text-scale,1)); font-weight: 800; font-variant-numeric: tabular-nums; color: var(--label); }
+.v3-prog-pct small { font-size: .62em; font-weight: 700; color: var(--label-2); }
+.v3-prog-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.v3-prog-k { font-size: calc(11.5px * var(--text-scale,1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--label-2); }
+.v3-prog-sets { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.v3-prog-sets b { font-size: calc(22px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.03em; }
+.v3-prog-sets span { font-size: calc(13px * var(--text-scale,1)); color: var(--label-2); }
+.v3-dots { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.v3-dot { width: 22px; height: 22px; border-radius: 8px; padding: 0; position: relative; background: color-mix(in srgb, var(--label) 11%, transparent);
+  transition: background var(--v2-med) var(--v2-ease), transform var(--v2-fast) var(--v2-ease); }
+.v3-dot::after { content: ''; position: absolute; inset: -11px -3px; }                    /* 44 px tap area, 22 px visual */
+.v3-dot.done { background: var(--acc); }
+.v3-dot.cur { box-shadow: 0 0 0 2px var(--v2-card), 0 0 0 4px var(--acc); transform: scale(1.04); }
+.v3-dot.ss { border-radius: 8px 8px 3px 3px; }
+.v3-dot:active { transform: scale(.9); }
+.v3-dot:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }
+
+/* ----------------------------------------------------------------------------- next up -- */
+.v3-next { width: 100%; display: flex; align-items: center; gap: 12px; margin: 12px 0 0; padding: 10px 12px; border-radius: 16px; text-align: left; min-height: 56px;
+  background: color-mix(in srgb, var(--label) 5%, transparent); border: var(--hair) dashed var(--sep); color: var(--label); }
+.v3-next .thumb { width: 38px; height: 38px; border-radius: 10px; }
+.v3-next-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.v3-next-k { font-size: calc(10.5px * var(--text-scale,1)); font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--label-3); }
+.v3-next-n { font-size: calc(14.5px * var(--text-scale,1)); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v3-next-meta { display: inline-flex; align-items: center; gap: 4px; font-size: calc(12px * var(--text-scale,1)); color: var(--label-2); flex: none; font-variant-numeric: tabular-nums; }
+.v3-next .chev { color: var(--label-3); flex: none; }
+.v3-next:active { transform: scale(.985); }
+
+/* ------------------------------------------------------------------------- simple view -- */
+/* the exercise is the star: picture as an editorial card, big name, one strong "current set" panel */
+.workout .shero { gap: 10px; }
+.workout .shero .exmedia { border-radius: 24px; margin-bottom: 0; box-shadow: var(--v2-e2); }
+.workout .shero .exmedia img { height: min(32vh, 250px); }
+.workout .shero .exmedia.mini img { height: 92px; }
+.workout .shero-name h2 { font-size: calc(30px * var(--text-scale,1)); line-height: 1.08; letter-spacing: -.035em; }
+.workout .sset { border-radius: 24px; padding: 16px; gap: 12px; background: var(--v2-card); border: var(--hair) solid var(--v2-card-line); box-shadow: var(--v2-e2); }
+.workout .sset.done { border-color: var(--acc-line); }
+.workout .sset-t { font-size: calc(21px * var(--text-scale,1)); }
+.workout .stile { min-height: 104px; border-radius: 20px; background: color-mix(in srgb, var(--label) 7%, transparent); }
+.workout .stile-v { font-size: calc(38px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.workout .stile-l { font-size: calc(12px * var(--text-scale,1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--label-2); }
+.workout .scomplete, .workout .sset .btn.primary { min-height: 56px; border-radius: 18px; font-size: calc(17px * var(--text-scale,1)); font-weight: 750; }
+.workout .sdot { width: 40px; height: 40px; }
+
+/* ----------------------------------------------------------------------- detailed view -- */
+.workout .workout-sets-card { border-radius: 22px; background: var(--v2-card); border: var(--hair) solid var(--v2-card-line); box-shadow: var(--v2-e1); }
+.workout .setrow .n { width: 40px; height: 40px; }
+.workout .setrow.done { opacity: .55; }
+.workout .exname { letter-spacing: -.03em; }
+
+/* superset = one grouped block, with a rail in the group colour and a chain connector between its exercises */
+.workout .ss-card { position: relative; border-radius: 24px; padding: 14px 14px 14px 18px; background: var(--v2-card); border: var(--hair) solid var(--v2-card-line); box-shadow: var(--v2-e2); overflow: hidden; }
+.workout .ss-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--ss-color, var(--acc)); }
+.workout .ss-hd { font-weight: 700; color: var(--ss-color, var(--acc)); }
+.workout .ss-amp { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 14px 0 10px; }
+.workout .ss-amp::before, .workout .ss-amp::after { content: ''; flex: 1; height: 1px; background: color-mix(in srgb, var(--ss-color, var(--acc)) 45%, transparent); }
+
+/* progression recommendation: calm card, the figure is the headline */
+.workout .reccard { border-radius: 20px; background: var(--v2-card); border: var(--hair) solid var(--acc-line); box-shadow: var(--v2-e1); }
+.workout .reccard.down, .workout .reccard.hold { border-color: color-mix(in srgb, var(--orange) 45%, transparent); }
+.workout .rec-h { font-size: calc(20px * var(--text-scale,1)); }
+.workout .rec-acts .btn { min-height: 44px; }
+
+/* Series Feedback: four tall, tactile choices — one tap, no interrogation */
+.workout .setfb { border-radius: 20px; padding: 12px; background: color-mix(in srgb, var(--label) 5%, transparent); box-shadow: none; }
+.workout .setfb-q { font-weight: 600; color: var(--label); }
+.workout .setfb-chips { gap: 8px; }
+.workout .setfb-chip { min-height: 52px; border-radius: 14px; font-weight: 650; background: var(--v2-card); box-shadow: inset 0 0 0 1px var(--v2-card-line); transition: transform var(--v2-fast) var(--v2-ease), background var(--v2-fast); }
+.workout .setfb-chip:active { transform: scale(.96); }
+.workout .setfb-chip.easy { box-shadow: inset 0 -3px 0 var(--blue); }
+.workout .setfb-chip.good, .workout .setfb-chip.ok { box-shadow: inset 0 -3px 0 var(--acc); }
+.workout .setfb-chip.hard { box-shadow: inset 0 -3px 0 var(--orange); }
+.workout .setfb-chip.fail { box-shadow: inset 0 -3px 0 var(--red); }
+.workout .setfb-chip.on { box-shadow: none; }
+
+/* effort picker (RPE / RIR): quick, colour-coded values above the slider */
+.v3-eff-quick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 4px 0 14px; }
+.v3-eff-chip { min-height: 64px; border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  background: color-mix(in srgb, var(--label) 7%, transparent); box-shadow: inset 0 -3px 0 transparent; transition: transform var(--v2-fast) var(--v2-ease), background var(--v2-fast); }
+.v3-eff-chip span { font-size: 20px; line-height: 1; }
+.v3-eff-chip b { font-size: calc(16px * var(--text-scale,1)); font-variant-numeric: tabular-nums; }
+.v3-eff-chip.c-green { box-shadow: inset 0 -3px 0 var(--green); }
+.v3-eff-chip.c-amber { box-shadow: inset 0 -3px 0 var(--yellow); }
+.v3-eff-chip.c-red { box-shadow: inset 0 -3px 0 var(--red); }
+.v3-eff-chip.on { background: var(--acc-soft); outline: 2px solid var(--acc); }
+.v3-eff-chip:active { transform: scale(.94); }
+
+/* -------------------------------------------------------------------------- rest timer -- */
+#timer.rest { border-radius: 26px; padding: 14px 16px; gap: 12px; }
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  #timer.rest { background: var(--v2-glass-bg); -webkit-backdrop-filter: saturate(150%) blur(20px); backdrop-filter: saturate(150%) blur(20px); border: var(--hair) solid var(--v2-glass-line); box-shadow: var(--v2-e3); }
+}
+.v3-rest-ring { position: relative; width: 64px; height: 64px; flex: none; }
+.v3-rest-ring svg .trk { stroke: color-mix(in srgb, var(--label) 14%, transparent); }
+.v3-rest-ring svg .arc { stroke: var(--acc); transition: stroke-dashoffset 1s linear; }
+.v3-rest-ring .t { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; min-width: 0; font-size: calc(17px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+#timer.rest.paused .v3-rest-ring .arc { stroke: var(--label-3); }
+.v3-rest-next { font-size: calc(14px * var(--text-scale,1)); color: var(--label-2); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.v3-rest-next b { color: var(--label); font-weight: 650; }
+#timer.rest .head .lbl { font-size: calc(12px * var(--text-scale,1)); font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--acc); }
+#timer.rest .acts .btn { min-height: 46px; border-radius: 14px; }
+#timer.rest .acts .skip { font-weight: 750; }
+
+@media (prefers-reduced-motion: reduce) {
+  .v3-dot, .setfb-chip, .v3-eff-chip, .v3-rest-ring svg .arc { transition: none !important; }
+  .v3-dot.cur { transform: none; }
+}
+
+/* ======================================================================== post-workout V3 -- */
+.v3pw { gap: 14px; }
+.v3pw-hero { position: relative; overflow: hidden; isolation: isolate; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px;
+  padding: 26px 16px 18px; border-radius: 28px; color: #fff; border: 1px solid rgba(255,255,255,.09); box-shadow: var(--v2-e3);
+  background: linear-gradient(165deg, var(--v2-graphite-2) 0%, #08090a 78%); }
+.v3pw-glow { position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(90% 70% at 50% -8%, color-mix(in srgb, var(--acc) 38%, transparent), transparent 66%); }
+.v3pw-hero.gold { border-color: var(--v2-gold-line); }
+.v3pw-hero.gold .v3pw-glow { background: radial-gradient(90% 70% at 50% -8%, color-mix(in srgb, var(--v2-gold) 42%, transparent), transparent 66%), radial-gradient(60% 40% at 50% 110%, color-mix(in srgb, var(--acc) 18%, transparent), transparent 70%); }
+.v3pw-eyebrow { margin-top: 10px; font-size: calc(11.5px * var(--text-scale,1)); font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--acc); }
+.v3pw-hero.gold .v3pw-eyebrow { color: var(--v2-gold); }
+.v3pw-name { margin: 0; font-size: calc(28px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.035em; line-height: 1.08; color: #fff; text-transform: capitalize; }
+.v3pw-hero .v2-fin-sub { color: rgba(255,255,255,.62); }
+.v3pw-hero .v2-fin-check { width: 68px; height: 68px; font-size: 32px; }
+.v3pw-big { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 10px 14px; width: 100%; margin-top: 14px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.1); }
+.v3pw-big .v2-stat { align-items: center; text-align: center; }
+.v3pw-big .v2-stat .v { font-size: calc(26px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.035em; color: #fff; }
+.v3pw-big .v2-stat .k { color: rgba(255,255,255,.55); text-transform: uppercase; letter-spacing: .09em; font-size: calc(10.5px * var(--text-scale,1)); font-weight: 700; }
+.v3pw-big .v2-stat .d { color: rgba(255,255,255,.7); }
+.v3pw-big .v2-stat .d.up { color: var(--acc); }
+.v3pw-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 12px; }
+.v3pw-hero .v2-pill { background: rgba(255,255,255,.1); color: rgba(255,255,255,.86); }
+.v3pw-hero .v2-pill.gold { background: var(--v2-gold-soft); color: var(--v2-gold); }
+.v3pw .v2-fin-actions .btn.primary { min-height: 54px; border-radius: 18px; font-weight: 750; }
+
+/* share card: the 2J mark first, records in gold (a PR lift is the only gold on it) */
+.sharecard .sc-lift.pr svg, .sharecard .sc-lift.pr .sc-lift-v { color: var(--v2-gold); }
+.sharecard .sc-title { letter-spacing: -.03em; }
+.sharecard .sc-badges-label { color: var(--v2-gold); }
+
+/* ============================================================================ Home alive -- */
+.v3h-live { display: flex; flex-direction: column; gap: 8px; }
+.v3h-live .v2-progress { height: 10px; }
+.v3h-live-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }
+.v3h-live-row b { font-size: calc(20px * var(--text-scale,1)); font-weight: 800; letter-spacing: -.03em; }
+.v3h-live-row span { font-size: calc(12.5px * var(--text-scale,1)); color: rgba(255,255,255,.62); }
+.v3h-recap { display: flex; flex-wrap: wrap; gap: 6px; }
+.v3h-pr { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 16px; text-align: left; width: 100%;
+  background: var(--v2-gold-soft); border: 1px solid var(--v2-gold-line); color: #fff; animation: v2-rise var(--v2-slow) var(--v2-ease) both; }
+.v3h-pr .icn { color: var(--v2-gold); font-size: 22px; flex: none; }
+.v3h-pr-k { font-size: calc(10.5px * var(--text-scale,1)); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--v2-gold); }
+.v3h-pr-v { font-size: calc(15px * var(--text-scale,1)); font-weight: 700; letter-spacing: -.01em; text-transform: capitalize; }
+.v3h-pr-v small { font-weight: 500; color: rgba(255,255,255,.7); text-transform: none; }
+.v3h-next { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 16px; background: rgba(255,255,255,.06); font-size: calc(13.5px * var(--text-scale,1)); color: rgba(255,255,255,.85); }
+.v3h-next .icn { color: var(--acc); font-size: 18px; flex: none; }
+.v3h-next b { text-transform: capitalize; color: #fff; }
+@media (prefers-reduced-motion: reduce) { .v3h-pr { animation: none !important; } }
+.v3pw-hero.gold .v2-fin-check { background: var(--v2-gold); color: #231a02; }
+.v3pw-big { grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }
+.v3pw-big .v2-stat .v { font-size: calc(22px * var(--text-scale,1)); }

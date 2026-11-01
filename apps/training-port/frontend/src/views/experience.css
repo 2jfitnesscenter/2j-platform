@@ -1,0 +1,47 @@
+.ux-h{font-size:26px;line-height:1.15;margin:0 0 6px;text-wrap:balance}
+.ux-lead{margin:0 0 18px;color:var(--label-2);font-size:.95rem;line-height:1.4}
+.ux-presets,.ux-list{display:grid;gap:10px;margin-bottom:14px}
+.ux-preset,.ux-card{display:flex;align-items:center;gap:12px;text-align:left;width:100%;padding:13px 14px;border-radius:18px;border:1.5px solid var(--sep);background:var(--surface-2);color:var(--label);font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
+.ux-card{cursor:default}
+.ux-preset.on,.ux-card.on{border-color:color-mix(in srgb,var(--acc) 70%,var(--sep));background:color-mix(in srgb,var(--acc) 9%,var(--surface-2))}
+.ux-ico{flex:none;width:40px;height:40px;border-radius:13px;display:grid;place-items:center;color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent);font-size:20px}
+.ux-txt{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.ux-t{font-weight:600;font-size:1rem}
+.ux-s{color:var(--label-2);font-size:.82rem;line-height:1.35}
+.ux-foot{color:var(--label-2);font-size:.8rem;line-height:1.4;margin:6px 2px 14px}
+.ux-cta{position:sticky;bottom:calc(74px + env(safe-area-inset-bottom));padding:12px 0 calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 35%)}
+.ux-cta.ob{bottom:0}
+.ux-page .sec{margin-top:18px}
+@media (prefers-reduced-motion:reduce){.ux-preset,.ux-card{transition:none}}
+/* Home invitation, Settings groups, Profile disclosures */
+.ux-invite{display:flex;align-items:center;gap:6px;padding:0;margin-bottom:14px;border-color:color-mix(in srgb,var(--acc) 40%,var(--sep));background:color-mix(in srgb,var(--acc) 7%,var(--surface-2))}
+.ux-invite-main{display:flex;align-items:center;gap:12px;flex:1;min-width:0;padding:12px 6px 12px 14px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.ux-invite-main .grow{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ux-invite-x{margin-right:8px;flex:none}
+.set-grp{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:26px 4px 8px;font-size:1.05rem;letter-spacing:-.01em;color:var(--label)}
+.set-grp span{font-size:.78rem;font-weight:500;color:var(--label-2)}
+.disc{border:1px solid var(--sep);border-radius:18px;background:var(--surface-2);margin:0 0 12px;overflow:hidden}
+.disc-h{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.disc-h .grow{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.disc-h .ttl{font-weight:600}
+.disc-b{padding:0 6px 6px}
+.disc-b .sect{margin-bottom:6px}
+/* When a module is hidden the remaining ones should still fill the row */
+@media (max-width:999px){.tiles>.tile:last-child:nth-child(odd){grid-column:1/-1}}
+.home-grid2>.home-half:only-child{grid-column:1/-1}
+/* Admin → Artificial intelligence */
+.ai-block{display:grid;gap:10px;padding:14px;margin:0 0 12px;border:1px solid var(--sep);border-radius:20px;background:var(--surface-2)}
+.ai-head{display:flex;align-items:flex-start;gap:12px}
+.ai-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.86rem;font-weight:600}
+.ai-dot{width:9px;height:9px;border-radius:50%;flex:none}
+.ai-block .btn{width:auto;justify-self:start}
+.ai-panel{margin:4px -6px 0;padding-top:10px;border-top:1px solid var(--sep)}
+.ai-panel>.card{margin-bottom:0;box-shadow:none;border:0;background:none;padding:0}
+
+/* Progress page layout (ExperienceSetup): one quiet row per block — name, up/down, switch. Targets stay ≥ 40px; nothing technical is shown. */
+.ux-pc { display: flex; flex-direction: column; gap: 8px; }
+.ux-pc-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px 8px 12px; border-radius: 16px; background: var(--surface); border: 1px solid var(--sep-op); }
+.ux-pc-row.off .ux-pc-t, .ux-pc-row.off .ux-ico { opacity: .45; }
+.ux-pc-t { flex: 1; min-width: 0; font-size: 15px; font-weight: 500; overflow-wrap: anywhere; line-height: 1.25; }
+.ux-pc-mv { width: 40px; height: 40px; flex: none; }
+.ux-pc-mv:disabled { opacity: .25; }
