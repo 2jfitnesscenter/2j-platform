@@ -7,6 +7,7 @@ import type { BookingEligibilityResolver } from './booking-eligibility.js';
 import { materializeCalendarTemplates } from './calendar-materializer.js';
 import type { TrainingAdapter, TrainingEvolutionAdapter } from './training-integration.js';
 import { memberTrainingCapabilities } from './training-capabilities-api.js';
+import { registerTrainingMemberRoutes } from './training-member.js';
 import { canaryBusinessDate, canaryLocalMidnightUtc } from '@2j/domain';
 import { evaluateTermPaymentAccess } from './term-payment-access.js';
 import { resolveEffectiveClientAssignments } from './entitlements.js';
@@ -206,6 +207,8 @@ export function registerClientAppRoutes(
     if (!profile) return reply.code(401).send({ error: 'client_authentication_required' });
     return { profile };
   });
+
+  registerTrainingMemberRoutes(app, db, client, memberNow);
 
   app.get('/api/me/training-summary', async (request, reply) => {
     const actor = await client(request, reply); if (!actor) return;
