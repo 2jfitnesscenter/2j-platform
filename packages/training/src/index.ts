@@ -6,3 +6,5 @@ export * from './autoreg.js';
 export * from './bodyweight.js';
 export * from './equipment.js';
 export * from './format.js';
+export * from './history.js';
+export * from './ports.js';
