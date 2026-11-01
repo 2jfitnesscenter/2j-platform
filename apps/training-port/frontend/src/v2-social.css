@@ -67,7 +67,7 @@
 .v2-social .social-moment-card .community-sharecard { width: min(320px, 100%); }
 
 /* the shareable card in the Experience V2 palette: emerald for everyday kinds, gold for records / achievements / milestones */
-.community-sharecard { background: radial-gradient(ellipse at 82% 38%, rgba(47,209,139,.20), transparent 46%), linear-gradient(150deg, #181b1d 0%, #0b0c0d 70%, #121516 100%); border: 1px solid rgba(255,255,255,.08); }
+.community-sharecard { background: radial-gradient(ellipse at 82% 38%, rgba(47,209,139,.20), transparent 46%), linear-gradient(150deg, var(--2j-color-sidebar) 0%, var(--2j-color-sidebar) 70%, var(--2j-color-sidebar) 100%); border: 1px solid color-mix(in srgb, var(--2j-color-sidebar-text) 8%, transparent); }
 .csc-mark { border-color: rgba(47,209,139,.5); color: #2fd18b; }
 .csc-brand-dot { background: #2fd18b; box-shadow: 0 0 16px #2fd18b; }
 .csc-orbit { border-color: rgba(47,209,139,.16); }
