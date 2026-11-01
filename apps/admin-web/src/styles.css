@@ -215,7 +215,7 @@ body:has(#economics) .dialog input, body:has(#economics) .dialog select { width:
   .app-page .main { min-height:calc(100vh - 130px); }
 }
 @media (max-width: 680px) {
-  .app-page .main { min-height:calc(100vh - 112px); padding:0 14px 26px; }
+  .app-page .main { min-height:calc(100vh - 112px); padding:0 16px 26px; }
 }
 
 @media (max-width: 1120px) {

@@ -32,8 +32,8 @@ for (const mode of ['light', 'dark']) {
 }
 
 test('brand colors remain aligned with the 2J source palette', () => {
-  assert.equal(tokens.brand.primary, '#73b52e');
-  assert.equal(tokens.brand.strong, '#578923');
+  assert.equal(tokens.brand.primary, '#a4d65e', 'A77: lime #A4D65E is the single accent');
+  assert.equal(tokens.brand.strong, '#8cbd44');
 });
 
 test('V2 layer keeps one brand green and meets its documented contrast pairs', () => {
@@ -65,4 +65,12 @@ test('generated CSS check accepts Windows CRLF checkouts', async (t) => {
 
   const result = spawnSync(process.execPath, [resolve(temporaryRoot, 'tooling/generate-css.mjs'), '--check'], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test('A77: graphite canvas, lime only as accent, glass tokens defined, and Planes facts are not a 3-column grid', async () => {
+  const c = tokens.v2.color;
+  assert.ok(parseInt(c.canvas.slice(1, 3), 16) < 0x18, 'V2 canvas is near-black');
+  for (const key of ['glassFill', 'glassFillHover', 'glassEdge', 'glassEdgeTop', 'glassBlur', 'glassBrandFill', 'glassBrandEdge']) assert.ok(c[key], `missing ${key}`);
+  const css = await readFile(resolve(root, '../../apps/admin-web/src/services-v2.css'), 'utf8');
+  assert.doesNotMatch(css, /\.plan-facts \{[^}]*repeat\(3/, 'plan facts must stay one readable line each');
 });
