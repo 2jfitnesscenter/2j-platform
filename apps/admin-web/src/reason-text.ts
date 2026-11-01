@@ -16,7 +16,7 @@ export const REASONS: Record<string, string> = {
   cash_already_open: 'Esa caja ya está abierta. Actualiza la pantalla para verla y trabajar con ella.',
   cash_register_already_used_today: 'Esa caja ya tuvo su sesión de hoy (una sesión por caja y día). Usa la otra caja o espera a mañana.',
   cash_session_previous_day_requires_owner_resolution: 'Hay una caja de un día anterior sin cerrar: hoy no se puede cerrar ni abrir otra desde aquí, y mientras siga a tu cargo tampoco podrás fichar la salida. Avisa al propietario para que la resuelva (Economía → «Resolver caja pendiente»).',
-  cash_legacy_session_requires_owner_resolution: 'Hay una caja antigua sin registro asignado. Avisa al propietario para que la resuelva en Caja antes de abrir otra.',
+  cash_legacy_session_requires_owner_resolution: 'Hay una caja antigua sin registro asignado. Avisa al propietario para que la resuelva en Economía → «Resolver caja pendiente» antes de abrir otra.',
   cash_outflow_approval_pending: 'Hay un gasto o retirada pendiente de aprobación del propietario, y hasta entonces no se puede cerrar la caja. Pídele que lo apruebe o lo rechace.',
   cash_custodian_required: 'Solo quien tiene la caja a su cargo puede cerrarla. Pídele que la cierre o que te la entregue.',
   cash_already_closed: 'Esa caja ya está cerrada. Actualiza la pantalla.',
