@@ -46,7 +46,13 @@ Tanda 6a (`layout-editor.css`, `actions-sheet.css`, `v2-screens.css`): superfici
 - **Esmeralda de sección:** `#10B981`, `#34D399`, `#2fd18b`, `rgba(16,185,129,a)`, `rgba(52,211,153,a)`. Pendiente de decisión: si el esmeralda de Búnker debe pasar a lima (como en `studio.css`) o conservarse como color de sección.
 - **Texto oscuro sobre verde:** `#04140E`, `rgba(4,20,14,a)`.
 - **Púrpura de sección:** `#d9b5ff`.
+- **Oro de sección (tanda 6):** `#e8bb4c`, `#f3cf74`, `#f6d68a`, `#f0c866`, `#f2c04b`, `#f6db93`, `#ebd9a8`, `#e5c877`, `#d9c890`, `#a97c10`, `#b8902f`, `rgba(232,187,76,a)`, `rgba(242,192,75,a)`, `rgba(200,140,30,a)`.
+- **Esmeralda de sección (tanda 6):** `#2fd18b`, `#2fbf8f`, `#0f8f5c`, `#6fe3b0`, `#7ef0bf`, `#4fe0a3`, `#a7f0d2`, `#bff2db`, `#c9f7e3`, `rgba(47,209,139,a)`, `rgba(16,185,129,a)`, `rgba(52,211,153,a)`, `rgba(15,143,92,a)`.
+- **Texto y fondo oscuro de sección (tanda 6):** `#241a04`, `#1a1405`, `#211b10`, `#17130b`, `#0f0d08`, `#04130d`.
+- **Gris medio sin rol claro:** `rgba(127,127,127,.4)` (usado en `v3-progress.css`).
 
-Pendiente de pantalla: `index.css` (582 colores), `views/premium.css`, `v3-progress.css`, `v2.css`, `views/opposition.css`, `v2-social.css`, `v3-library.css`.
+Tanda 6 (`v3-library.css`, `v2-social.css`, `v2.css`, `v3-progress.css`, `views/opposition.css`, `views/premium.css`): cristal claro (`#fff 84%`) a `--2j-color-surface`; `#ff9f0a`, `#ff453a`, `#0a84ff` y sus variables de Búnker a `warning`, `danger`, `info`; `#f87171`, `#fca5a5` a `danger`; `#7dd3fc`, `#bde8fd` a `info`; `rgba(248,113,113,a)` y `rgba(125,211,252,a)` con alfa a `danger` e `info`.
+
+Pendiente de pantalla: `index.css` (582 colores), no tocado por decisión de alcance.
 
 Pendiente: los 3 ficheros que usan `forwardRef` o APIs de React 19 se revisan antes de compilar con React 18. Lo demás se valida con typecheck y capturas.
