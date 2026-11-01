@@ -1520,7 +1520,7 @@ test('catalog price and plan lifecycle mutations fail closed for anonymous and n
 test('sale price override requires catalog pricing permission and a reason', async () => {
   const service=await createService(`Precio protegido ${randomUUID()}`);const created=await createPlan([service.id],{basePriceCents:4500});const planId=created.response.json().id;assert.equal((await app.inject({method:'POST',url:`/api/plans/${planId}/activate`})).statusCode,200);
   const client=(await createClientRequest(clientsAdminApp,{firstName:'Precio',lastName:`Protegido ${randomUUID()}`})).json();const limited=buildServer(process.env.DATABASE_URL,{authorizationResolver:async()=>({actorId:'qa-admin-price-denied',role:'admin',deniedPermissions:['catalog.pricing.manage']})});
-  try{const payload={planId,startsOn:'2026-10-09',dueOn:'2026-10-09',amountCents:4600};const noReason=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload});assert.equal(noReason.statusCode,409);assert.equal(noReason.json().error,'adjustment_reason_required');const denied=await limited.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{...payload,adjustmentReason:'Descuento excepcional'}});assert.equal(denied.statusCode,403);assert.equal(denied.json().error,'price_override_forbidden');}
+  try{const regular=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${client.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{planId,startsOn:'2026-11-02',dueOn:'2026-11-02',amountCents:4500}});assert.equal(regular.statusCode,201,regular.body,'catalog price needs no adjustment reason');const adjustedClient=(await createClientRequest(clientsAdminApp,{firstName:'Precio',lastName:`Ajustado ${randomUUID()}`})).json();const payload={planId,startsOn:'2026-11-02',dueOn:'2026-11-02',amountCents:4600};const noReason=await clientsAdminApp.inject({method:'POST',url:`/api/clients/${adjustedClient.id}/plans`,headers:{'idempotency-key':randomUUID()},payload});assert.equal(noReason.statusCode,409);assert.equal(noReason.json().error,'adjustment_reason_required');const denied=await limited.inject({method:'POST',url:`/api/clients/${adjustedClient.id}/plans`,headers:{'idempotency-key':randomUUID()},payload:{...payload,adjustmentReason:'Descuento excepcional'}});assert.equal(denied.statusCode,403);assert.equal(denied.json().error,'price_override_forbidden');}
   finally{await limited.close();}
 });
 
@@ -2553,7 +2553,7 @@ test('cash close, human transfer validation, and tax-explicit invoice drafts hav
   assert.equal(Number(immutableCash.difference_cents), 800);
 });
 
-test('previous-day open cash blocks collection and requires owner resolution without changing clock records', async () => {
+test('previous-day cash does not block opening another register or clocking out', async () => {
   const sourceUrl=new URL(process.env.DATABASE_URL),databaseName=`cash_stale_${randomUUID().replaceAll('-','')}`;
   const adminUrl=new URL(sourceUrl);adminUrl.pathname='/postgres';const admin=postgres(adminUrl.toString(),{max:1,connect_timeout:5});
   let testDb,testApp;
@@ -2567,16 +2567,15 @@ test('previous-day open cash blocks collection and requires owner resolution wit
     const [bunker]=await testDb`SELECT id FROM economic_cash_registers WHERE code='bunker'`;
     const [session]=await testDb`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${bunker.id},(now() AT TIME ZONE 'Atlantic/Canary')::date-1,5000,${testDb.json(cashCount(5000))},'qa-stale-shift') RETURNING id,local_date`;
     const payment=await testApp.inject({method:'POST',url:'/api/economics/payments',headers:{'idempotency-key':randomUUID()},payload:{chargeId:charge.json().id,splits:[{method:'cash',amountCents:500}]}});
-    assert.equal(payment.statusCode,409,payment.body);assert.equal(payment.json().error,'cash_session_previous_day_requires_owner_resolution');
-    assert.match(payment.json().message,/propietario debe resolverla/i);
-    const opened=await testApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:cashCount(0)}});
-    assert.equal(opened.statusCode,409,opened.body);assert.equal(opened.json().error,'cash_session_previous_day_requires_owner_resolution');
-    const close=await testApp.inject({method:'POST',url:`/api/economics/cash/${session.id}/close`,payload:{countedDenominations:cashCount(5000)}});
-    assert.equal(close.statusCode,409,close.body);assert.equal(close.json().error,'cash_session_previous_day_requires_owner_resolution');
-    const [unchanged]=await testDb`SELECT status,closed_at,closed_by,local_date FROM economic_cash_sessions WHERE id=${session.id}`;
-    assert.equal(unchanged.status,'open');assert.equal(unchanged.closed_at,null);assert.equal(unchanged.closed_by,null);
+    assert.equal(payment.statusCode,409,payment.body);assert.equal(payment.json().error,'cash_session_required','D113 still requires the actor to hold an open current shift');
+    const [staff]=await testDb`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('Turno','Sintético','Turno Sintético','trainer','qa-stale-cash-owner-resolution','test') RETURNING id`;
+    await testDb`INSERT INTO staff_timeclock_events(professional_id,event_type,actor_id,origin) VALUES (${staff.id},'clock_in','qa-stale-cash-owner-resolution','web')`;
+    const opened=await testApp.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'sala',openingDenominations:cashCount(0)}});
+    assert.equal(opened.statusCode,201,opened.body);
     const [clockCount]=await testDb`SELECT count(*)::int AS count FROM staff_timeclock_events`;
-    assert.equal(clockCount.count,0,'stale cash resolution does not invent timeclock events');
+    assert.equal(clockCount.count,1,'opening another register does not modify clock history');
+    const clockOut=await testApp.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}});
+    assert.equal(clockOut.statusCode,201,clockOut.body,'cash never blocks clock-out');
   } finally {
     await testApp?.close();await testDb?.end();await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);await admin.end();
   }

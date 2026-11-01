@@ -29,6 +29,8 @@ test('two physical registers have isolated custodians, blind counts, handover an
   for(const key of ['expectedCents','countedCents','differenceCents','previousCloseCents'])assert.equal(Object.hasOwn(openA.json(),key),false,`open API must not expose ${key}`);
   const openB=await trainerB.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'sala',openingDenominations:openingB}});
   assert.equal(openB.statusCode,201,openB.body);sessionSala=openB.json().id;
+  const wrongRegisterClose=await trainerA.inject({method:'POST',url:`/api/economics/cash/${sessionSala}/close`,payload:{countedDenominations:openingB}});
+  assert.equal(wrongRegisterClose.statusCode,409);assert.equal(wrongRegisterClose.json().error,'cash_custodian_or_clocked_staff_required','a clocked-in worker cannot close another worker\'s current-day register');
   const actorARegisters=await trainerA.inject({method:'GET',url:'/api/economics/cash/registers'});
   assert.equal(actorARegisters.statusCode,200);assert.equal(actorARegisters.json().items.filter(row=>row.ownCustody).length,1);
   assert.equal(actorARegisters.json().items.find(row=>row.code==='sala').sessionId,null,'another custodian session id is not exposed');
@@ -65,8 +67,8 @@ test('two physical registers have isolated custodians, blind counts, handover an
   assert.ok(!incomingToday.json().session.movements.some(item=>item.id===outgoingMovementId),'incoming custodian cannot see outgoing movements');
   const clockOutA=await trainerA.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}});
   assert.equal(clockOutA.statusCode,201,clockOutA.body,'outgoing trainer may clock out after handover');
-  const clockOutBBlocked=await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}});
-  assert.equal(clockOutBBlocked.statusCode,409);assert.equal(clockOutBBlocked.json().error,'cash_register_must_be_closed_or_handed_over');
+  const clockOutBWithOpenRegister=await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}});
+  assert.equal(clockOutBWithOpenRegister.statusCode,201,clockOutBWithOpenRegister.body,'an open register must not block clock-out');
 
   const ownerDay=await owner.inject({method:'GET',url:'/api/economics/cash/day'});
   assert.equal(ownerDay.statusCode,200,ownerDay.body);assert.equal(ownerDay.json().registers.length,2);
@@ -80,7 +82,6 @@ test('two physical registers have isolated custodians, blind counts, handover an
   assert.equal(finalClose.statusCode,200,finalClose.body);for(const key of ['expectedCents','differenceCents','openingCents','previousCloseCents'])assert.equal(Object.hasOwn(finalClose.json(),key),false);
   const [register]=await sql`SELECT register_id AS id,local_date AS date FROM economic_cash_sessions WHERE id=${sessionBunker}`;
   await assert.rejects(sql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},${register.date},2000,${sql.json(count(2000))},'cash-trainer-b')`,error=>error.code==='23505'&&error.message.includes('economic_cash_one_session_per_register_day'));
-  assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,201);
   assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-in',payload:{origin:'web'}})).statusCode,201);
   const duplicateDayOpen=await trainerB.inject({method:'POST',url:'/api/economics/cash/open',payload:{registerCode:'bunker',openingDenominations:count(2000)}});
   assert.equal(duplicateDayOpen.statusCode,409);assert.equal(duplicateDayOpen.json().error,'cash_register_already_used_today');
@@ -89,7 +90,7 @@ test('two physical registers have isolated custodians, blind counts, handover an
   const ownerReopen=await owner.inject({method:'POST',url:`/api/economics/cash/${sessionBunker}/owner-reopen`,payload:{custodianActorId:'cash-trainer-b',openingDenominations:count(2000)}});
   assert.equal(ownerReopen.statusCode,200,ownerReopen.body);assert.equal(ownerReopen.json().id,sessionBunker);assert.equal(ownerReopen.json().status,'open');
   for(const key of ['expectedCents','differenceCents','previousCloseCents'])assert.equal(Object.hasOwn(ownerReopen.json(),key),false,`owner reopening must not expose cash expectations in the operational response`);
-  assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,409);
+  assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,201,'cash custody never blocks clock-out');
   const [reopenAudit]=await sql`SELECT actor_id,details FROM economic_audit_events WHERE resource_id=${sessionBunker} AND action='cash.reopened' ORDER BY occurred_at DESC LIMIT 1`;
   assert.equal(reopenAudit.actor_id,'cash-owner');assert.equal(reopenAudit.details.custodianActorId,'cash-trainer-b');
   const closedAgain=await trainerB.inject({method:'POST',url:`/api/economics/cash/${sessionBunker}/close`,payload:{countedDenominations:count(2000)}});
@@ -109,8 +110,7 @@ test('two physical registers have isolated custodians, blind counts, handover an
   }),error=>error.code==='55000','a stale audit cannot authorize this transition');
 });
 
-test('owner reopen applies the same legacy and previous-day barriers as normal opening',async()=>{
-  assert.equal((await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}})).statusCode,201);
+test('owner reopen keeps the legacy barrier while previous-day registers remain closable without blocking a new shift',async()=>{
   assert.equal((await trainerA.inject({method:'POST',url:'/api/timeclock/clock-in',payload:{origin:'web'}})).statusCode,201);
   const legacyDenominations=count(1000);
   await sql`ALTER TABLE economic_cash_sessions DISABLE TRIGGER economic_cash_session_register_insert_guard`;
@@ -125,11 +125,14 @@ test('owner reopen applies the same legacy and previous-day barriers as normal o
   const [register]=await sql`SELECT id FROM economic_cash_registers WHERE code='sala'`;
   const staleDenominations=count(1200);
   const [stale]=await sql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},(now() AT TIME ZONE 'Atlantic/Canary')::date-1,1200,${sql.json(staleDenominations)},'cash-trainer-a') RETURNING id`;
-  await sql`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${stale.id},${personA.id},'cash-trainer-a')`;
-  const staleBlocked=await owner.inject({method:'POST',url:`/api/economics/cash/${sessionSala}/owner-reopen`,payload:{custodianActorId:'cash-trainer-a',openingDenominations:count(1000)}});
-  assert.equal(staleBlocked.statusCode,409);assert.equal(staleBlocked.json().error,'cash_session_previous_day_requires_owner_resolution');
-  const staleResolved=await owner.inject({method:'POST',url:`/api/economics/cash/${stale.id}/owner-resolve`,payload:{countedDenominations:staleDenominations,reason:'Resolver fixture de sesión anterior'}});
-  assert.equal(staleResolved.statusCode,200,staleResolved.body);
+  const forgottenActor=`previous-day-custody-${randomUUID()}`;
+  const [forgottenStaff]=await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('Custodia','Anterior','Custodia anterior','trainer',${forgottenActor},'test') RETURNING id`;
+  await sql`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${stale.id},${forgottenStaff.id},${forgottenActor})`;
+  const staleWarning=await trainerA.inject({method:'GET',url:'/api/economics/cash/registers'});
+  assert.equal(staleWarning.statusCode,200);assert.equal(staleWarning.json().items.find(row=>row.code==='sala').previousDayWarning,true);
+  const staleClosed=await trainerA.inject({method:'POST',url:`/api/economics/cash/${stale.id}/close`,payload:{countedDenominations:staleDenominations}});
+  assert.equal(staleClosed.statusCode,200,staleClosed.body,'clocked-in custodian closes previous-day cash with blind count');
+  for(const key of ['expectedCents','differenceCents'])assert.equal(Object.hasOwn(staleClosed.json(),key),false,'staff must not see the cash difference');
 
   const reopened=await owner.inject({method:'POST',url:`/api/economics/cash/${sessionSala}/owner-reopen`,payload:{custodianActorId:'cash-trainer-a',openingDenominations:count(1000)}});
   assert.equal(reopened.statusCode,200,reopened.body);
@@ -144,6 +147,8 @@ test('owner reopen applies the same legacy and previous-day barriers as normal o
 });
 
 test('migration 0055 attaches the current-register guards to payments, paid store sales and store annulments',async()=>{
+  const [clockOutGuard]=await sql`SELECT tgname FROM pg_trigger WHERE tgrelid='staff_timeclock_events'::regclass AND tgname='staff_timeclock_cash_custody_guard' AND NOT tgisinternal`;
+  assert.equal(clockOutGuard,undefined,'A76 migration removes the database guard coupling clock-out to cash custody');
   const [paymentTrigger]=await sql`SELECT t.tgname AS name,p.proname AS function FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid='economic_transactions'::regclass AND t.tgname='economic_transactions_cash_session_guard' AND NOT t.tgisinternal`;
   assert.equal(paymentTrigger?.function,'economic_transaction_cash_session_guard');
   const [saleTrigger]=await sql`SELECT t.tgname AS name,p.proname AS function FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid='store_sales'::regclass AND t.tgname='store_sale_payment_cash_session_guard' AND NOT t.tgisinternal`;
@@ -200,20 +205,17 @@ test('legacy open sessions without a register fail closed until owner resolution
 });
 
 test('owner resolves forgotten previous-day register custody with audit and notification without changing clock records',async()=>{
-  const current=await owner.inject({method:'GET',url:'/api/economics/cash/today'});assert.equal(current.statusCode,200,current.body);
-  const open=current.json().items.find(item=>item.registerCode==='bunker'&&item.status==='open');assert.ok(open);
-  const closed=await trainerB.inject({method:'POST',url:`/api/economics/cash/${open.id}/close`,payload:{countedDenominations:count(Number(open.expectedCents))}});
-  assert.equal(closed.statusCode,200,closed.body);
-  const clockOut=await trainerB.inject({method:'POST',url:'/api/timeclock/clock-out',payload:{origin:'web'}});assert.equal(clockOut.statusCode,201,clockOut.body);
-  const [register]=await sql`SELECT id FROM economic_cash_registers WHERE code='bunker'`;
+  const forgottenActor=`forgotten-${randomUUID()}`;
+  const [staff]=await sql`INSERT INTO staff_professionals(first_name,last_name,display_name,base_role,auth_actor_id,created_by) VALUES ('Caja','Forgotten','Caja olvidada','trainer',${forgottenActor},'test') RETURNING id`;
+  const [register]=await sql`SELECT id FROM economic_cash_registers WHERE code='sala'`;
   const staleOpening=count(1200);
-  const [stale]=await sql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},(now() AT TIME ZONE 'Atlantic/Canary')::date-1,1200,${sql.json(staleOpening)},'cash-trainer-b') RETURNING id`;
-  await sql`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${stale.id},${personB.id},'cash-trainer-b')`;
+  const [stale]=await sql`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},(now() AT TIME ZONE 'Atlantic/Canary')::date-2,1200,${sql.json(staleOpening)},${forgottenActor}) RETURNING id`;
+  await sql`INSERT INTO economic_cash_custodies(cash_session_id,professional_id,actor_id) VALUES (${stale.id},${staff.id},${forgottenActor})`;
   const [beforeClock]=await sql`SELECT count(*)::int AS count FROM staff_timeclock_events`;
   const resolved=await owner.inject({method:'POST',url:`/api/economics/cash/${stale.id}/owner-resolve`,payload:{countedDenominations:count(1100),reason:'El entrenador olvidó cerrar el registro'}});
   assert.equal(resolved.statusCode,200,resolved.body);assert.equal(resolved.json().status,'late_close');assert.equal(resolved.json().differenceCents,-100);assert.equal(resolved.json().timeclockChanged,false);
   const [afterClock]=await sql`SELECT count(*)::int AS count FROM staff_timeclock_events`;assert.equal(afterClock.count,beforeClock.count);
   const [custody]=await sql`SELECT ended_reason,ended_by FROM economic_cash_custodies WHERE cash_session_id=${stale.id}`;assert.equal(custody.ended_reason,'owner_resolution');assert.equal(custody.ended_by,'cash-owner');
   const [auditRow]=await sql`SELECT details FROM economic_audit_events WHERE resource_id=${stale.id} AND action='cash.forgotten_session_resolved'`;assert.equal(auditRow.details.reason,'El entrenador olvidó cerrar el registro');assert.equal(auditRow.details.timeclockChanged,false);
-  const [notice]=await sql`SELECT event_type FROM domain_events_outbox WHERE aggregate_id=${stale.id} AND recipient_staff_actor_id='cash-trainer-b'`;assert.equal(notice.event_type,'staff.cash_legacy_resolved');
+  const [notice]=await sql`SELECT event_type FROM domain_events_outbox WHERE aggregate_id=${stale.id} AND recipient_staff_actor_id=${forgottenActor}`;assert.equal(notice.event_type,'staff.cash_legacy_resolved');
 });

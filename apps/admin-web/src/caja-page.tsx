@@ -15,7 +15,7 @@ const denominations = [
 type DenominationKey = typeof denominations[number][0];
 
 type RegisterCode = 'bunker' | 'sala';
-type Register = { id: string; code: RegisterCode; name: string; available: boolean; ownCustody: boolean; sessionId: string | null };
+type Register = { id: string; code: RegisterCode; name: string; available: boolean; ownCustody: boolean; sessionId: string | null; previousDayWarning?: boolean };
 type SessionStatus = 'open' | 'closed' | 'late_close';
 type TodaySession = { id: string; registerCode: RegisterCode | null; status: SessionStatus; openedAt: string; closedAt: string | null; openingCents?: number; expectedCents?: number; countedCents?: number | null; differenceCents?: number | null };
 type SessionRow = { id: string; registerCode: RegisterCode | null; registerName: string; localDate: string; status: SessionStatus; openedAt: string; closedAt: string | null; openedByName: string | null; closedByName: string | null; openingCents?: number; expectedCents?: number; countedCents?: number | null; differenceCents?: number | null };
@@ -150,6 +150,7 @@ export function CajaPage() {
         const closedToday = !open && ((!!session && session.status !== 'open') || report.items.some(row => row.registerCode === code && row.localDate === todayIso() && row.status !== 'open'));
         return <Card key={code} as="article" className="caja-register" aria-labelledby={`caja-${code}-title`}>
           <CardHeader title={name} titleId={`caja-${code}-title`} level={2} actions={<StatusChip tone={open ? 'success' : 'neutral'} icon={null}>{open ? (register?.ownCustody ? 'Abierta · a tu cargo' : 'Abierta') : closedToday ? 'Cerrada hoy' : 'Sin abrir'}</StatusChip>} />
+          {register?.previousDayWarning && <p className="caja-warning" role="status">Caja de ayer sin cerrar: ciérrala o traspásala.</p>}
           {session && <p className="caja-muted">Abierta a las {formatTime(session.openedAt)}{session.closedAt ? ` · cerrada a las ${formatTime(session.closedAt)}` : ''}</p>}
           {ownerView && session?.expectedCents != null && <dl className="caja-figures"><div><dt>Fondo</dt><dd>{euro(session.openingCents ?? 0)}</dd></div><div><dt>Esperado</dt><dd>{euro(session.expectedCents)}</dd></div>{session.status !== 'open' && <div><dt>Diferencia</dt><dd><DifferenceChip cents={session.differenceCents} /></dd></div>}</dl>}
           {!ownerView && open && <p className="caja-muted">Recuento a ciegas: el importe esperado y la diferencia no se muestran al cajero.</p>}

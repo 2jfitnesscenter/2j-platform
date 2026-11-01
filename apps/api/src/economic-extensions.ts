@@ -5,7 +5,7 @@ import { can, type AuthorizationContext } from '@2j/permissions';
 import type { createDatabase } from './db.js';
 import { activateSettledEntitlementPeriods } from './assignment-periods.js';
 import { appendNotificationEvent } from './notifications.js';
-import { cashDenominationsSchema, cashDenominationsToCents, legacyCashSessionMessage, lockOpenCashSession, shiftRequiredMessage, previousDayCashSessionMessage } from './cash-session.js';
+import { cashDenominationsSchema, cashDenominationsToCents, legacyCashSessionMessage, lockOpenCashSession, shiftRequiredMessage } from './cash-session.js';
 
 type DB = ReturnType<typeof createDatabase>['client'];
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
@@ -55,14 +55,12 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     try {
       const result = await db.begin(async tx => {
         await tx`SELECT pg_advisory_xact_lock(hashtext('2j-economic-register-operations'))`;
-        const [session] = await tx`SELECT id,register_id AS "registerId",local_date,status,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE id=${sessionId} FOR UPDATE`;
+        const [session] = await tx`SELECT id,register_id AS "registerId",local_date,status,local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isPreviousDay" FROM economic_cash_sessions WHERE id=${sessionId} FOR UPDATE`;
         if (!session) return { error: 'cash_session_not_found' as const };
         if (session.status !== 'open') return { error: 'cash_already_closed' as const };
-        if (!session.isToday) return { error: 'cash_session_previous_day_requires_owner_resolution' as const };
         const [custody] = await tx`SELECT id,professional_id AS "professionalId" FROM economic_cash_custodies WHERE cash_session_id=${session.id} AND actor_id=${context.actorId} AND ended_at IS NULL FOR UPDATE`;
-        if (!custody) return { error: 'cash_custodian_required' as const };
-        const [clock] = await tx`SELECT e.event_type AS "eventType" FROM staff_timeclock_events e LEFT JOIN LATERAL(SELECT corrected_occurred_at FROM staff_timeclock_corrections c WHERE c.event_id=e.id ORDER BY c.revision DESC LIMIT 1)c ON true WHERE e.professional_id=${custody.professionalId} ORDER BY COALESCE(c.corrected_occurred_at,e.occurred_at) DESC,e.id DESC LIMIT 1`;
-        if (clock?.eventType !== 'clock_in') return { error: 'cash_custodian_not_clocked_in' as const };
+        const [clockedStaff] = await tx`SELECT p.id FROM staff_professionals p JOIN LATERAL(SELECT e.event_type FROM staff_timeclock_events e LEFT JOIN LATERAL(SELECT corrected_occurred_at FROM staff_timeclock_corrections c WHERE c.event_id=e.id ORDER BY c.revision DESC LIMIT 1)c ON true WHERE e.professional_id=p.id ORDER BY COALESCE(c.corrected_occurred_at,e.occurred_at) DESC,e.id DESC LIMIT 1) latest ON latest.event_type='clock_in' WHERE p.auth_actor_id=${context.actorId} AND p.status='active' FOR UPDATE OF p`;
+        if (!custody && !(session.isPreviousDay && clockedStaff)) return { error: 'cash_custodian_or_clocked_staff_required' as const };
         const [pendingOutflow] = await tx`SELECT id FROM economic_cash_outflows WHERE cash_session_id=${session.id} AND status='pending_owner_approval' LIMIT 1`;
         if (pendingOutflow) return { error: 'cash_outflow_approval_pending' as const };
         const snapshot = await cashSnapshot(tx, session.id);
@@ -70,12 +68,12 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         const difference = countedCents - snapshot.expectedCents;
         const [closed] = await tx`UPDATE economic_cash_sessions SET status=CASE WHEN local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'late_close' ELSE 'closed' END,close_kind=CASE WHEN local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date THEN 'late_close' ELSE 'closed' END,expected_cents=${snapshot.expectedCents},counted_cents=${countedCents},counted_denominations=${JSON.stringify(countedDenominations)}::jsonb,difference_cents=${difference},closed_by=${context.actorId},closed_at=now() WHERE id=${session.id} AND status='open' RETURNING id,status,local_date AS "localDate",opened_at AS "openedAt",closed_at AS "closedAt",closed_by AS "closedBy",opening_cents AS "openingCents",expected_cents AS "expectedCents",counted_cents AS "countedCents",counted_denominations AS "countedDenominations",difference_cents AS "differenceCents"`;
         if (!closed) return { error: 'cash_already_closed' as const };
-        await tx`UPDATE economic_cash_custodies SET ended_at=now(),ended_reason='closed',ended_by=${context.actorId} WHERE id=${custody.id} AND ended_at IS NULL`;
+        await tx`UPDATE economic_cash_custodies SET ended_at=now(),ended_reason='closed',ended_by=${context.actorId} WHERE cash_session_id=${session.id} AND ended_at IS NULL`;
         await audit(tx, context, 'cash.closed', 'cash_session', session.id, null, { registerId: session.registerId, localDate: String(session.local_date), lateClose: closed.status === 'late_close', openingCents: snapshot.openingCents, openingDenominations: snapshot.openingDenominations, cashPaymentsCents: snapshot.cashPaymentsCents, cashRefundsCents: snapshot.cashRefundsCents, adjustmentsCents: snapshot.adjustmentsCents, outflowsCents: snapshot.outflowsCents, expectedCents: snapshot.expectedCents, countedCents, countedDenominations, differenceCents: difference });
         return { closed, snapshot };
       });
       if ('error' in result) { request.log.warn({ route: 'POST /api/economics/cash/close', reason: result.error }, 'cash close refused'); }
-      if ('error' in result) return reply.code(result.error === 'cash_session_not_found' ? 404 : 409).send({ error: result.error, ...shiftRequiredMessage(result.error), ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{}) });
+      if ('error' in result) return reply.code(result.error === 'cash_session_not_found' ? 404 : 409).send({ error: result.error, ...shiftRequiredMessage(result.error) });
       const response = { ...result.closed, registerId: result.snapshot.registerId, registerCode: result.snapshot.registerCode, registerName: result.snapshot.registerName, openingDenominations: result.snapshot.openingDenominations, cashPaymentsCents: result.snapshot.cashPaymentsCents, cashRefundsCents: result.snapshot.cashRefundsCents, cashStoreSalesCents: result.snapshot.cashStoreSalesCents, cashStoreRefundsCents: result.snapshot.cashStoreRefundsCents, storeSaleAnnulmentsCents: result.snapshot.storeSaleAnnulmentsCents, adjustmentsCents: result.snapshot.adjustmentsCents, outflowsCents: result.snapshot.outflowsCents };
       return can(context, 'owner.panel.read') ? response : blindCashSnapshot(response);
     } catch (error) {
@@ -88,11 +86,11 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
   app.get('/api/economics/cash/registers', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const context = await auth(request, reply, 'billing.cash.manage'); if (!context) return;
-    const items = await db`SELECT r.id,r.code,r.name,r.active,s.id AS "openSessionId",
+    const items = await db`SELECT r.id,r.code,r.name,r.active,s.id AS "openSessionId",(s.local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date) AS "previousDayOpen",
         EXISTS(SELECT 1 FROM economic_cash_custodies own WHERE own.cash_session_id=s.id AND own.actor_id=${context.actorId} AND own.ended_at IS NULL) AS "ownCustody"
       FROM economic_cash_registers r LEFT JOIN economic_cash_sessions s ON s.register_id=r.id AND s.status='open'
       WHERE r.active ORDER BY r.code`;
-    return { items: items.map(item => ({ id: item.id, code: item.code, name: item.name, active: item.active, available: !item.openSessionId, ownCustody: item.ownCustody, sessionId: item.ownCustody ? item.openSessionId : null })), timezone: 'Atlantic/Canary' };
+    return { items: items.map(item => ({ id: item.id, code: item.code, name: item.name, active: item.active, available: !item.openSessionId, ownCustody: item.ownCustody, sessionId: item.ownCustody ? item.openSessionId : null, previousDayWarning: Boolean(item.previousDayOpen) })), timezone: 'Atlantic/Canary' };
   });
   app.get('/api/economics/cash/today', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -196,8 +194,6 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         await tx`SELECT pg_advisory_xact_lock(hashtext('2j-economic-register-operations'))`;
         const [legacy] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND register_id IS NULL LIMIT 1 FOR UPDATE`;
         if (legacy) return { error: 'cash_legacy_session_requires_owner_resolution' as const };
-        const [stale] = await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date LIMIT 1 FOR UPDATE`;
-        if (stale) return { error: 'cash_session_previous_day_requires_owner_resolution' as const };
         const [person] = await tx`SELECT id FROM staff_professionals WHERE auth_actor_id=${context.actorId} AND status='active' FOR UPDATE`;
         if (!person) return { error: 'staff_account_unlinked' as const };
         const [clock] = await tx`SELECT e.event_type AS "eventType" FROM staff_timeclock_events e LEFT JOIN LATERAL(SELECT corrected_occurred_at FROM staff_timeclock_corrections c WHERE c.event_id=e.id ORDER BY c.revision DESC LIMIT 1)c ON true WHERE e.professional_id=${person.id} ORDER BY COALESCE(c.corrected_occurred_at,e.occurred_at) DESC,e.id DESC LIMIT 1`;
@@ -207,7 +203,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         const [register] = await tx`SELECT id,code,name FROM economic_cash_registers WHERE code=${parsed.data.registerCode} AND active=true FOR UPDATE`;
         if (!register) return { error: 'cash_register_not_found' as const };
         const [open] = await tx`SELECT id,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE register_id=${register.id} AND status='open' LIMIT 1 FOR UPDATE`;
-        if (open) return { error: open.isToday ? 'cash_already_open' as const : 'cash_session_previous_day_requires_owner_resolution' as const };
+        if (open) return { error: 'cash_already_open' as const };
         const [usedToday] = await tx`SELECT id FROM economic_cash_sessions WHERE register_id=${register.id} AND local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date LIMIT 1 FOR UPDATE`;
         if (usedToday) return { error: 'cash_register_already_used_today' as const };
         const [row] = await tx`INSERT INTO economic_cash_sessions(register_id,local_date,opening_cents,opening_denominations,opened_by) VALUES (${register.id},(now() AT TIME ZONE 'Atlantic/Canary')::date,${openingCents},${JSON.stringify(parsed.data.openingDenominations)}::jsonb,${context.actorId}) RETURNING id,register_id AS "registerId",local_date AS "localDate",status,opened_at AS "openedAt"`;
@@ -217,7 +213,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         return { row: { ...row, registerCode: register.code, registerName: register.name } };
       });
       if ('error' in result) { request.log.warn({ route: 'POST /api/economics/cash/open', reason: result.error }, 'cash open refused'); }
-      if ('error' in result) return reply.code(result.error==='staff_account_unlinked'?404:409).send({ error: result.error, ...shiftRequiredMessage(result.error), ...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:result.error==='cash_legacy_session_requires_owner_resolution'?{message:legacyCashSessionMessage}:{}) });
+      if ('error' in result) return reply.code(result.error==='staff_account_unlinked'?404:409).send({ error: result.error, ...shiftRequiredMessage(result.error), ...(result.error==='cash_legacy_session_requires_owner_resolution'?{message:legacyCashSessionMessage}:{}) });
       return reply.code(201).send({ ...result.row, openingCents, openingDenominations: parsed.data.openingDenominations });
     } catch (error) {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
@@ -238,8 +234,6 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         await tx`SELECT pg_advisory_xact_lock(hashtext('2j-economic-register-operations'))`;
         const [legacy]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND register_id IS NULL LIMIT 1 FOR UPDATE`;
         if(legacy)return {error:'cash_legacy_session_requires_owner_resolution'} as const;
-        const [stale]=await tx`SELECT id FROM economic_cash_sessions WHERE status='open' AND local_date<(now() AT TIME ZONE 'Atlantic/Canary')::date LIMIT 1 FOR UPDATE`;
-        if(stale)return {error:'cash_session_previous_day_requires_owner_resolution'} as const;
         const [session]=await tx`SELECT id,register_id AS "registerId",local_date AS "localDate",status,opened_by AS "openedBy" FROM economic_cash_sessions WHERE id=${params.data.sessionId} FOR UPDATE`;
         if(!session)return {error:'cash_session_not_found'} as const;
         if(!session.registerId)return {error:'cash_legacy_session_requires_owner_resolution'} as const;
@@ -273,10 +267,9 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
     const parsed = closeBody.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
     const [legacy] = await db`SELECT id FROM economic_cash_sessions WHERE status='open' AND register_id IS NULL LIMIT 1`;
     if (legacy) return reply.code(409).send({error:'cash_legacy_session_requires_owner_resolution',message:legacyCashSessionMessage});
-    const [session] = await db`SELECT s.id FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id WHERE c.actor_id=${context.actorId} AND c.ended_at IS NULL AND s.local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AND s.status='open' LIMIT 1`;
+    const [session] = await db`SELECT s.id FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id WHERE c.actor_id=${context.actorId} AND c.ended_at IS NULL AND s.status='open' LIMIT 1`;
     if (!session) {
-      const [stale]=await db`SELECT s.id FROM economic_cash_custodies c JOIN economic_cash_sessions s ON s.id=c.cash_session_id WHERE c.actor_id=${context.actorId} AND c.ended_at IS NULL AND s.status='open' LIMIT 1`;
-      return reply.code(409).send(stale?{error:'cash_session_previous_day_requires_owner_resolution',message:previousDayCashSessionMessage}:{error:'cash_not_open'});
+      return reply.code(409).send({error:'cash_not_open'});
     }
     return closeCash(request, reply, session.id, parsed.data.countedDenominations, context);
   });
@@ -353,7 +346,6 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       const [session]=await tx`SELECT id,register_id AS "registerId",local_date,status,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE id=${p.data.sessionId} FOR UPDATE`;
       if(!session||!session.registerId)return {error:'cash_session_not_found'} as const;
       if(session.status!=='open')return {error:'cash_not_open'} as const;
-      if(!session.isToday)return {error:'cash_session_previous_day_requires_owner_resolution'} as const;
       const [outgoing]=await tx`SELECT id,professional_id AS "professionalId" FROM economic_cash_custodies WHERE cash_session_id=${session.id} AND actor_id=${context.actorId} AND ended_at IS NULL FOR UPDATE`;
       if(!outgoing)return {error:'cash_custodian_required'} as const;
       const [recipient]=await tx`SELECT id,auth_actor_id AS "actorId" FROM staff_professionals WHERE id=${b.data.incomingProfessionalId} AND status='active' FOR UPDATE`;
@@ -371,7 +363,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       await audit(tx,context,'cash.handover_started','cash_handover',handover.id,null,{sessionId:session.id,registerId:session.registerId,incomingProfessionalId:recipient.id,outgoingDenominations:b.data.outgoingDenominations});
       return {id:handover.id,sessionId:session.id,status:'awaiting_incoming_confirmation'} as const;
     });
-      if('error'in result)return reply.code(result.error==='cash_session_not_found'?404:409).send({error:result.error,...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{})});
+      if('error'in result)return reply.code(result.error==='cash_session_not_found'?404:409).send({error:result.error});
       return reply.code(201).send(result);
     }catch{return reply.code(500).send({error:'cash_handover_start_failed'});}
   });
@@ -407,7 +399,6 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       if(handover.completedAt)return {error:'handover_already_completed'} as const;
       const [session]=await tx`SELECT id,register_id AS "registerId",status,local_date=(now() AT TIME ZONE 'Atlantic/Canary')::date AS "isToday" FROM economic_cash_sessions WHERE id=${handover.cashSessionId} FOR UPDATE`;
       if(session?.status!=='open')return {error:'cash_not_open'} as const;
-      if(!session.isToday)return {error:'cash_session_previous_day_requires_owner_resolution'} as const;
       const [recipient]=await tx`SELECT id FROM staff_professionals WHERE id=${handover.incomingProfessionalId} AND auth_actor_id=${context.actorId} AND status='active' FOR UPDATE`;
       if(!recipient)return {error:'staff_account_unlinked'} as const;
       const [clock]=await tx`SELECT e.event_type AS "eventType" FROM staff_timeclock_events e LEFT JOIN LATERAL(SELECT corrected_occurred_at FROM staff_timeclock_corrections c WHERE c.event_id=e.id ORDER BY c.revision DESC LIMIT 1)c ON true WHERE e.professional_id=${recipient.id} ORDER BY COALESCE(c.corrected_occurred_at,e.occurred_at) DESC,e.id DESC LIMIT 1`;
@@ -426,7 +417,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
       // A mismatch is an owner-only incident; the incoming cashier only needs confirmation.
       return {id:completed.id,status:'completed',completedAt:completed.completedAt} as const;
     });
-      if('error'in result)return reply.code(result.error==='handover_not_found'?404:409).send({error:result.error,...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:{})});
+      if('error'in result)return reply.code(result.error==='handover_not_found'?404:409).send({error:result.error});
       return reply.send(result);
     }catch{return reply.code(500).send({error:'cash_handover_confirmation_failed'});}
   });
@@ -458,7 +449,7 @@ export function registerEconomicExtensions(app: FastifyInstance<any, any, any, a
         await audit(tx,context,pending?'cash.outflow_pending':'cash.outflow_recorded','cash_outflow',row.id,null,{sessionId:cash.id,registerId:cash.registerId,movementType:row.movementType,amountCents:row.amountCents,reason:row.reason,hasReceipt:Boolean(row.hasReceipt),status:row.status});
         return {row} as const;
       });
-      if('error'in result)return reply.code(409).send({error:result.error,...(result.error==='cash_session_previous_day_requires_owner_resolution'?{message:previousDayCashSessionMessage}:result.error==='cash_legacy_session_requires_owner_resolution'?{message:legacyCashSessionMessage}:{})});
+      if('error'in result)return reply.code(409).send({error:result.error,...(result.error==='cash_legacy_session_requires_owner_resolution'?{message:legacyCashSessionMessage}:{})});
       return reply.code(201).send(result.row);
     }catch(error){const code=typeof error==='object'&&error&&'code'in error?String(error.code):'';return reply.code(code==='23514'?409:500).send({error:code==='23514'?'cash_custodian_required':'cash_outflow_failed'});}
   });
