@@ -6,7 +6,7 @@ import React from 'react';
 const dom=new JSDOM('<!doctype html><html><body></body></html>',{url:'http://127.0.0.1:5174/#store'});
 Object.assign(globalThis,{window:dom.window,document:dom.window.document,HTMLElement:dom.window.HTMLElement,MutationObserver:dom.window.MutationObserver,getComputedStyle:dom.window.getComputedStyle,IS_REACT_ACT_ENVIRONMENT:true});
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
-const {cleanup,fireEvent,render,screen,waitFor,within}=await import('@testing-library/react');const {StorePage}=await import('../src/store-page.tsx');
+const {cleanup,fireEvent,render,screen,waitFor,within}=await import('@testing-library/react');const {StorePage}=await import('../src/store-page.tsx');const {parseStockPaste}=await import('../src/store-batch.ts');
 afterEach(()=>{cleanup();globalThis.fetch=undefined;delete window.prompt;delete window.confirm;});after(()=>dom.window.close());
 // The real API serialises priceCents as a string; stock is a number.
 const protein={id:'p1',category:'nutrition',name:'Proteína',description:'900 g',active:true,variants:[{id:'v1',sku:'PROT',label:'Chocolate',size:'900 g',flavor:'Chocolate',priceCents:'2500',active:true,stockTracked:true,stock:4}]};
@@ -101,6 +101,19 @@ test('inventory is a table of variants with stock, status and movements; registe
   fireEvent.change(within(dialog).getByLabelText('Motivo'),{target:{value:'Reposición proveedor'}});
   fireEvent.click(within(dialog).getByRole('button',{name:'Registrar movimiento'}));
   await waitFor(()=>assert.ok(posts.some(([url,body])=>url.endsWith('/variants/v1/movements')&&body.quantity===6&&body.type==='restock'&&body.reason==='Reposición proveedor')));
+});
+
+test('batch stock paste previews valid SKU rows and reports line-specific errors',()=>{
+  const parsed=parseStockPaste('SKU\tUnidades\nPROT\t3\nNO-EXISTE\t2\nPROT\t1',[{id:'v1',sku:'PROT',productName:'Proteína',label:'Chocolate'}]);
+  assert.deepEqual(parsed.items,[{variantId:'v1',quantity:3,line:2}]);assert.deepEqual(parsed.errors,['Línea 3: SKU o producto+talla no reconocido.','Línea 4: variante duplicada en el lote.']);
+});
+
+test('inventory batch opens a searchable variant grid and sends one atomic batch request',async()=>{
+  const posts=[];serve({onRequest:(target,init)=>{if(init.method==='POST'){posts.push([target,JSON.parse(init.body)]);return json({items:[]},201);}return null;}});
+  render(React.createElement(StorePage));await screen.findByRole('heading',{name:'Proteína'});fireEvent.click(screen.getByRole('tab',{name:'Inventario'}));fireEvent.click(screen.getByRole('button',{name:'Registrar stock'}));
+  const dialog=await screen.findByRole('dialog',{name:'Registrar stock'});fireEvent.click(within(dialog).getByRole('button',{name:'Movimiento en lote'}));
+  fireEvent.change(within(dialog).getByLabelText('Motivo común'),{target:{value:'Recuento sintético'}});fireEvent.change(within(dialog).getByLabelText('Unidades Proteína Chocolate'),{target:{value:'2'}});fireEvent.click(within(dialog).getByRole('button',{name:'Aplicar lote'}));
+  await waitFor(()=>assert.equal(posts.length,1));assert.ok(posts[0][0].endsWith('/api/admin/store/inventory/batch-movements'));assert.deepEqual(posts[0][1].lines,[{variantId:'v1',quantity:2}]);assert.equal(posts[0][1].reason,'Recuento sintético');
 });
 
 test('voiding a sale asks for confirmation and only then restores stock through the existing endpoint',async()=>{

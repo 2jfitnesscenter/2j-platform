@@ -14,6 +14,10 @@ const productPatch = z.object({ category: z.enum(['nutrition','merchandising']).
 const variantInput = z.object({ sku: z.string().max(80).nullable().optional(), label: text(100), size: z.string().max(40).nullable().optional(), flavor: z.string().max(80).nullable().optional(), priceCents: z.number().int().min(0).max(100_000_000_000), active: z.boolean().default(true), stockTracked: z.boolean().default(true) }).strict();
 const variantPatch = z.object({ sku: z.string().max(80).nullable().optional(), label: text(100).optional(), size: z.string().max(40).nullable().optional(), flavor: z.string().max(80).nullable().optional(), priceCents: z.number().int().min(0).max(100_000_000_000).optional(), active: z.boolean().optional(), stockTracked: z.boolean().optional() }).strict().refine(value => Object.keys(value).length > 0);
 const movementInput = z.object({ type: z.enum(['opening','restock','adjustment_in','adjustment_out']), quantity: z.number().int().min(1).max(100_000), reason: text(300) }).strict();
+const batchMovementInput = z.object({ type: z.enum(['opening','restock','adjustment','shrinkage','return']), reason: text(300), lines: z.array(z.object({ variantId: uuid, quantity: z.number().int().min(-100_000).max(100_000) }).strict()).min(1).max(500) }).strict().superRefine((value,ctx)=>{
+  if(new Set(value.lines.map(line=>line.variantId)).size!==value.lines.length)ctx.addIssue({code:'custom',path:['lines'],message:'No se puede repetir una variante.'});
+  value.lines.forEach((line,index)=>{if(line.quantity===0)ctx.addIssue({code:'custom',path:['lines',index,'quantity'],message:'La cantidad no puede ser cero.'});if(line.quantity<0&&value.type!=='adjustment')ctx.addIssue({code:'custom',path:['lines',index,'quantity'],message:'Solo un ajuste justificado puede reducir el stock.'});});
+});
 const discountReasonInput = z.string().max(480).transform(value => value.normalize('NFKC').trim()).pipe(z.string().min(3).max(240));
 const saleInput = z.object({ clientId: uuid, lines: z.array(z.object({ variantId: uuid, quantity: z.number().int().min(1).max(1000), discountCents: z.number().int().min(0).max(100_000_000_000).default(0), discountReason: discountReasonInput.optional() }).strict()).min(1).max(50), paymentState: z.enum(['paid','pending']), paymentMethod: z.enum(['cash','card','transfer','bizum','other']).nullable().optional(), note: z.string().max(500).default('') }).strict().superRefine((value, ctx) => { if (new Set(value.lines.map(line => line.variantId)).size !== value.lines.length) ctx.addIssue({ code:'custom', path:['lines'], message:'No se puede repetir una variante.' }); value.lines.forEach((line,index)=>{if(line.discountCents>0&&!line.discountReason?.trim())ctx.addIssue({code:'custom',path:['lines',index,'discountReason'],message:'El descuento necesita un motivo.'});if(line.discountCents===0&&line.discountReason)ctx.addIssue({code:'custom',path:['lines',index,'discountReason'],message:'El motivo solo se usa con un descuento.'});}); });
 const centerKey = '2j';
@@ -142,6 +146,36 @@ export function registerStoreRoutes(app: FastifyInstance, db: DB, resolveStaff: 
     const params=z.object({variantId:uuid}).safeParse(request.params);const parsed=movementInput.safeParse(request.body);if(!params.success||!parsed.success)return reply.code(400).send({error:'validation_error'});
     let result;try{result=await db.begin(async tx=>{const [variant]=await tx`SELECT v.id,v.stock_tracked FROM store_product_variants v JOIN store_products p ON p.id=v.product_id WHERE v.id=${params.data.variantId} AND p.center_key=${centerKey} FOR UPDATE OF v`;if(!variant)return {error:'variant_not_found'} as const;if(!variant.stock_tracked)return {error:'stock_tracking_disabled'} as const;const before=await variantStock(tx,variant.id);const delta=parsed.data.type==='adjustment_out'?-parsed.data.quantity:parsed.data.quantity;if(before+delta<0)return {error:'insufficient_stock'} as const;const [movement]=await tx`INSERT INTO store_inventory_movements(variant_id,quantity_delta,movement_type,reason,actor_id) VALUES (${variant.id},${delta},${parsed.data.type},${parsed.data.reason},${actor.actorId}) RETURNING id,quantity_delta AS "quantityDelta",movement_type AS type,reason,occurred_at AS "occurredAt"`;if(!movement)throw new Error('store_movement_insert_missing');const action=parsed.data.type==='opening'?'inventory.opening':parsed.data.type==='restock'?'inventory.restocked':'inventory.adjusted';await audit(tx,actor.actorId,action,'variant',variant.id,{movementId:movement.id,quantityDelta:delta,reason:parsed.data.reason});return {movement,stock:before+delta};});}catch(error:any){if(error?.code==='23505')return reply.code(409).send({error:'opening_stock_already_registered'});return reply.code(500).send({error:'internal_error'});}
     if('error'in result)return reply.code(result.error==='variant_not_found'?404:409).send({error:result.error});return reply.code(201).send(result);
+  });
+
+  app.post('/api/admin/store/inventory/batch-movements', async (request,reply) => {
+    const actor=await staffContext(request,reply,resolveStaff,'store.inventory.manage');if(!actor)return;
+    const parsed=batchMovementInput.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:'validation_error'});
+    const lines=parsed.data.lines.filter(line=>line.quantity!==0).sort((a,b)=>a.variantId.localeCompare(b.variantId));
+    if(lines.length===0)return reply.code(400).send({error:'batch_has_no_movements'});
+    try {
+      const result=await db.begin(async tx=>{
+        const locked=await tx`SELECT v.id,v.stock_tracked AS "stockTracked",p.name AS "productName",v.label AS "variantLabel" FROM store_product_variants v JOIN store_products p ON p.id=v.product_id WHERE p.center_key=${centerKey} AND v.id=ANY(${lines.map(line=>line.variantId)}::uuid[]) ORDER BY v.id FOR UPDATE OF v`;
+        if(locked.length!==lines.length)return {error:'variant_not_found'} as const;
+        const byId=new Map(locked.map((row:any)=>[row.id,row]));const prepared=[];
+        for(const line of lines){const variant:any=byId.get(line.variantId);if(!variant)return {error:'variant_not_found'} as const;if(!variant.stockTracked)return {error:'stock_tracking_disabled'} as const;
+          const delta=parsed.data.type==='shrinkage'?-line.quantity:line.quantity;
+          const before=await variantStock(tx,line.variantId);const after=before+delta;if(after<0)return {error:'insufficient_stock',variantId:line.variantId} as const;
+          const movementType=parsed.data.type==='adjustment'?(delta<0?'adjustment_out':'adjustment_in'):parsed.data.type;
+          prepared.push({line,variant,delta,before,after,movementType});
+        }
+        const results=[];
+        for(const item of prepared){const {line,variant,delta,after,movementType}=item;
+          const [movement]=await tx`INSERT INTO store_inventory_movements(variant_id,quantity_delta,movement_type,reason,actor_id) VALUES (${line.variantId}::uuid,${delta},${movementType},${parsed.data.reason},${actor.actorId}) RETURNING id,variant_id AS "variantId",quantity_delta AS "quantityDelta",movement_type AS type,reason,occurred_at AS "occurredAt"`;
+          if(!movement)throw new Error('store_batch_movement_insert_missing');
+          await audit(tx,actor.actorId,'inventory.batch_recorded','variant',line.variantId,{movementId:movement.id,batchType:parsed.data.type,quantityDelta:delta,reason:parsed.data.reason});
+          results.push({...movement,productName:variant.productName,variantLabel:variant.variantLabel,stock:after});
+        }
+        return {items:results};
+      });
+      if('error'in result)return reply.code(result.error==='variant_not_found'?404:409).send(result);
+      return reply.code(201).send(result);
+    } catch(error:any) { if(error?.code==='23505')return reply.code(409).send({error:'opening_stock_already_registered'});return reply.code(500).send({error:'internal_error'}); }
   });
 
   app.get('/api/admin/store/sales', async (request,reply) => {if(!await staffContext(request,reply,resolveStaff,'store.sales.read'))return;const items=await db`SELECT s.id,s.client_id AS "clientId",s.cash_session_id AS "cashSessionId",c.first_name AS "firstName",c.last_name AS "lastName",s.status,s.payment_state AS "paymentState",s.payment_method AS "paymentMethod",s.total_cents AS "totalCents",s.created_at AS "createdAt",COALESCE(jsonb_agg(jsonb_build_object('productName',l.product_name_snapshot,'variantLabel',l.variant_label_snapshot,'quantity',l.quantity,'unitPriceCents',l.unit_price_cents,'discountCents',l.discount_cents,'discountReason',l.discount_reason,'igicBasisPoints',l.igic_basis_points,'taxCents',l.tax_cents,'lineTotalCents',l.line_total_cents) ORDER BY l.id) FILTER(WHERE l.id IS NOT NULL),'[]'::jsonb) AS lines FROM store_sales s JOIN clients c ON c.id=s.client_id LEFT JOIN store_sale_lines l ON l.sale_id=s.id WHERE s.center_key=${centerKey} GROUP BY s.id,c.first_name,c.last_name ORDER BY s.created_at DESC,s.id DESC LIMIT 200`;return {items:items.map(normalizeSale)};});

@@ -224,3 +224,18 @@ test('Bizum is its own payment method: a store sale and a charge payment keep it
   const splits=await sql`SELECT method FROM economic_payment_splits WHERE transaction_id=${paid.json().id}`;assert.deepEqual(splits.map(row=>row.method),['bizum']);
   const refused=await post('/api/economics/payments',{chargeId:charge.json().id,splits:[{method:'paypal',amountCents:100}]},{'idempotency-key':randomUUID()});assert.equal(refused.statusCode,400);
 });
+
+test('batch stock movements are atomic, audited per variant and only adjustments may reduce inventory',async()=>{
+  const item=await product();const first=await variant(item.id,{label:'Lote S',sku:`BATCH-${randomUUID()}`});const second=await variant(item.id,{label:'Lote M',sku:`BATCH-${randomUUID()}`});
+  const applied=await admin.inject({method:'POST',url:'/api/admin/store/inventory/batch-movements',payload:{type:'opening',reason:'Inventario inicial sintético',lines:[{variantId:first.id,quantity:4},{variantId:second.id,quantity:2}]}});
+  assert.equal(applied.statusCode,201,applied.body);assert.equal(applied.json().items.length,2);assert.deepEqual(Object.fromEntries(applied.json().items.map(row=>[row.variantId,row.stock])),{[first.id]:4,[second.id]:2});
+  const before=await sql`SELECT count(*)::int AS count FROM store_inventory_movements WHERE variant_id=ANY(${[first.id,second.id]}::uuid[])`;assert.equal(before[0].count,2);
+  const failed=await admin.inject({method:'POST',url:'/api/admin/store/inventory/batch-movements',payload:{type:'shrinkage',reason:'Merma por rotura',lines:[{variantId:first.id,quantity:1},{variantId:second.id,quantity:9}]}});
+  assert.equal(failed.statusCode,409);assert.equal(failed.json().error,'insufficient_stock');
+  const [unchanged]=await sql`SELECT sum(quantity_delta)::int AS total FROM store_inventory_movements WHERE variant_id=${first.id}`;assert.equal(unchanged.total,4,'the first line rolls back when a later line fails');
+  const adjustment=await admin.inject({method:'POST',url:'/api/admin/store/inventory/batch-movements',payload:{type:'adjustment',reason:'Recuento físico sintético',lines:[{variantId:first.id,quantity:-2}]}});assert.equal(adjustment.statusCode,201,adjustment.body);assert.equal(adjustment.json().items[0].stock,2);
+  const tooLow=await admin.inject({method:'POST',url:'/api/admin/store/inventory/batch-movements',payload:{type:'adjustment',reason:'Recuento erróneo',lines:[{variantId:first.id,quantity:-99}]}});assert.equal(tooLow.statusCode,409);assert.equal(tooLow.json().error,'insufficient_stock');
+  const forbidden=await admin.inject({method:'POST',url:'/api/admin/store/inventory/batch-movements',payload:{type:'restock',reason:'No negativo',lines:[{variantId:first.id,quantity:-1}]}});assert.equal(forbidden.statusCode,400);
+  const missingReason=await admin.inject({method:'POST',url:'/api/admin/store/inventory/batch-movements',payload:{type:'adjustment',reason:'',lines:[{variantId:first.id,quantity:-1}]}});assert.equal(missingReason.statusCode,400);
+  const [audits]=await sql`SELECT count(*)::int AS count FROM store_audit_events WHERE action='inventory.batch_recorded' AND resource_id=ANY(${[first.id,second.id]}::uuid[])`;assert.equal(audits.count,3);
+});
