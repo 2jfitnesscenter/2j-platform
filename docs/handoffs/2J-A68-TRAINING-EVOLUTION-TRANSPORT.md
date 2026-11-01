@@ -32,3 +32,10 @@ Implementación en curso sobre `main` `6d46f06523285882e518de0512af11e11be46461`
 
 - Ejecutar `git diff --check`, publicar el mismo PR y comprobar CI sobre su SHA exacto.
 - Revisión independiente de nivel 2 sobre el SHA publicado. No habilitar despliegue.
+
+## Seguimiento Home — estado en main
+
+- Platform `GET /api/me/evolution` y la lectura de historial desde Perfil/Home están integrados mediante #174. El endpoint exige en servidor derecho de entrenamiento y consentimiento vigente `home_evolution`; Home no replica esos gates.
+- Home muestra el historial finalizado cuando `state: available`, un estado vacío cuando no hay entrenamientos y «Sin datos disponibles» para los estados bloqueados por acceso o consentimiento. `not_linked` y el modo demo conservan «No conectado» porque no hay vínculo o la demo no consulta servicios.
+- Mediciones, gráficos, evaluaciones y salud siguen «No conectado»; no forman parte del endpoint de historial deportivo.
+- Esta actualización añade regresión de UI para `state: not_available` (sin acceso de entrenamiento), junto a la existente para `consent_required`. Client-app: 49/49 tests; typecheck y build de Home pasan. CI de la PR que contiene esta cobertura queda pendiente de su SHA exacto.
