@@ -140,6 +140,19 @@ test('creates a charge with integer cents and records a partial payment idempote
   assert.ok(await screen.findByRole('status'));
 });
 
+test('payment refusal shows the server reason and a next step instead of a generic message', async () => {
+  mockFetch({ onPayment: () => response({ error: 'charge_refunded' }, 409) });
+  render(React.createElement(EconomicsPage));
+  fireEvent.click((await screen.findAllByRole('button', { name: 'Registrar pago' }))[0]);
+  const dialog = await screen.findByRole('dialog', { name: 'Registrar pago' });
+  fireEvent.change(within(dialog).getByLabelText('Importe (€)'), { target: { value: '10.00' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirmar pago' }));
+  const alert = await within(dialog).findByRole('alert');
+  assert.match(alert.textContent, /se devolvió completamente/);
+  assert.match(alert.textContent, /Selecciona un cargo pendiente distinto/);
+  assert.doesNotMatch(alert.textContent, /^No se pudo registrar el pago\.?$/);
+});
+
 const openCashDialog = async () => { fireEvent.click(await screen.findByRole('button', { name: 'Abrir caja' })); return screen.findByRole('dialog', { name: 'Abrir caja' }); };
 
 test('with no active shift the notice is visible from the start, before anyone hits an error', async () => {
