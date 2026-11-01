@@ -13,6 +13,7 @@ import { registerEntitlementRoutes } from './entitlements.js';
 import { parseInternalServiceKeys, type InternalServiceKeys } from './internal-service-auth.js';
 import { registerTrainingCapabilitiesRoute } from './training-capabilities-api.js';
 import { registerTrainingSsoRoutes } from './training-sso.js';
+import { registerStaffBunkerSsoRoutes } from './staff-bunker-sso.js';
 import { registerTrainingSuspensionRoutes } from './training-suspensions.js';
 import { createTrainingSignalDispatcher } from './training-signals.js';
 import { registerAssignmentPeriodRoutes } from './assignment-periods.js';
@@ -230,6 +231,8 @@ export type ServerOptions = {
   /** One-time Training SSO (Platform -> Búnker). Off by default; never enabled implicitly. */
   trainingSsoEnabled?: boolean;
   trainingSsoRedirectUrl?: string | null;
+  bunkerAdminSsoEnabled?: boolean;
+  bunkerAdminSsoRedirectUrl?: string | null;
   resolvePersonAuth?: (request: import('fastify').FastifyRequest) => Promise<ResolvedPersonAuth | null>;
   trainingLinkVerifier?: TrainingLinkVerifier;
   /** Bilateral link lifecycle (finish linking with the owner's proof, activate, revoke). Off by default; needs verified + canonical linking and service calls. */
@@ -320,7 +323,7 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     const granted = grantLinkIssue(context);
     if (!granted) return null;
     if (!ownerActorId || granted.actorId !== ownerActorId) return granted;
-    return { ...granted, explicitPermissions: [...new Set([...(granted.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read', 'platform_link_issue', 'member.invitations.manage'])] };
+    return { ...granted, explicitPermissions: [...new Set([...(granted.explicitPermissions ?? []), 'owner.panel.read', 'center.hours.manage', 'staff.shifts.manage', 'staff.shifts.read', 'platform_link_issue', 'member.invitations.manage', 'bunker.admin.access'])] };
   };
   if (options.ownerPersonId != null && !z.string().uuid().safeParse(options.ownerPersonId).success) throw new Error('ownerPersonId must be a trusted Platform person UUID.');
   const ownerPersonId = options.ownerPersonId?.toLowerCase() ?? null;
@@ -426,6 +429,23 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
     resolvePersonAuth: options.resolvePersonAuth ?? (memberPilotAuth.enabled ? memberPilotAuth.resolvePerson : async () => null),
     redirectUrl: options.trainingSsoRedirectUrl ?? null,
     allowedOrigin: options.memberAppOrigin ?? null,
+  });
+  registerStaffBunkerSsoRoutes(app, client, {
+    enabled: options.bunkerAdminSsoEnabled === true,
+    keys: trainingCapabilitiesKeys,
+    resolveStaff: authorizationResolver,
+    redirectUrl: options.bunkerAdminSsoRedirectUrl ?? null,
+    allowedOrigins: [...new Set([allowedOrigin, ...(staffOrigin ? [staffOrigin] : [])])],
+    currentAuthorization: async (personId) => {
+      const [row] = await client`SELECT a.auth_subject AS "actorId", sp.base_role AS "baseRole", (p.id=${ownerPersonId}::uuid) AS "isOwner"
+        FROM platform_persons p JOIN platform_person_auth_subjects a ON a.person_id=p.id AND a.status='active'
+        LEFT JOIN platform_person_staff ps ON ps.person_id=p.id LEFT JOIN staff_professionals sp ON sp.id=ps.professional_id
+        WHERE p.id=${personId}::uuid AND p.status='active' AND (p.id=${ownerPersonId}::uuid OR (sp.id IS NOT NULL AND sp.status='active' AND sp.auth_actor_id=a.auth_subject)) LIMIT 1`;
+      if (!row) return null;
+      const role: ApprovedRole | null = row.isOwner === true ? 'owner' : ['admin', 'trainer', 'reception-management', 'accountant'].includes(String(row.baseRole)) ? row.baseRole as ApprovedRole : null;
+      if (!role) return null;
+      return grantLinkIssue({ actorId: String(row.actorId), personId, role, ...(row.isOwner === true ? { explicitPermissions: ['owner.panel.read', 'platform_link_issue', 'bunker.admin.access'] } : {}) });
+    },
   });
   registerAssignmentPeriodRoutes(app, client, authorizationResolver);
   registerAutomaticRenewalRoutes(app, client, authorizationResolver);
@@ -882,6 +902,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     trainingServiceAllowInsecureLoopback: process.env.TRAINING_SERVICE_ALLOW_INSECURE_LOOPBACK === 'true',
     trainingSsoEnabled: process.env.TRAINING_SSO_ENABLED === 'true',
     trainingSsoRedirectUrl: process.env.TRAINING_SSO_REDIRECT_URL ?? null,
+    bunkerAdminSsoEnabled: process.env.BUNKER_ADMIN_SSO_ENABLED === 'true',
+    bunkerAdminSsoRedirectUrl: process.env.BUNKER_ADMIN_SSO_REDIRECT_URL ?? null,
     memberAppOrigin: process.env.MEMBER_APP_ORIGIN ?? null,
     ...(localDemoClientId ? { clientAuthorizationResolver: async () => ({ clientId: localDemoClientId.toLowerCase() }) } : {}),
   });

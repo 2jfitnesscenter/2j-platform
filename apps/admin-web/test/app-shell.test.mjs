@@ -335,7 +335,7 @@ test('global search also finds the screens this profile can open (ignoring accen
 });
 
 test('A78: the menu is grouped by function, keeps every route and href, and hides what the profile cannot use',()=>{
-  const owner={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true,cash:true,ownerPanel:true,catalogPricingManage:true,memberInvitationManage:true};
+  const owner={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true,cash:true,ownerPanel:true,bunkerAdmin:true,catalogPricingManage:true,memberInvitationManage:true};
   const nav=getProfessionalNavigation(owner,'home');
   assert.deepEqual(nav.map(group=>[group.label,group.children.map(route=>route.label)]),[
     ['Inicio',['Resumen','Avisos y auditoría']],
@@ -343,7 +343,7 @@ test('A78: the menu is grouped by function, keeps every route and href, and hide
     ['Agenda y equipo',['Agenda','Servicios','Espacios','Fichaje','Equipo']],
     ['Caja y ventas',['Caja','Economía','Tienda']],
     ['Centro',['Mi gimnasio','Informes','Noticias','Configuración','Ajustes de avisos']],
-    ['Administración',['Panel de gestión','Monitorización']],
+    ['Administración',['Panel de gestión','Monitorización','Búnker']],
   ]);
   for(const route of nav.flatMap(group=>group.children))assert.equal(route.href,`#${route.id}`,'URLs and routes are unchanged');
   assert.equal(nav.flatMap(group=>group.children).length,new Set(nav.flatMap(group=>group.children.map(route=>route.id))).size,'no destination appears twice');
@@ -352,7 +352,7 @@ test('A78: the menu is grouped by function, keeps every route and href, and hide
 });
 
 test('A78: the drawer on a phone lists the same groups in the same order as the desktop sidebar, with unread counts on Mensajes and Avisos',async()=>{
-  const owner={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true,cash:true,ownerPanel:true,catalogPricingManage:true,memberInvitationManage:true};
+  const owner={calendar:true,clients:true,communications:true,billing:true,staff:true,notificationSettings:true,news:true,store:true,cash:true,ownerPanel:true,bunkerAdmin:true,catalogPricingManage:true,memberInvitationManage:true};
   const withAttention={...model,unread:3,attention:[{id:'a-1',kind:'followup',title:'Seguimiento',summary:'x',href:'#clients',ageAt:null}]};
   const labels=async width=>{
     cleanup();
@@ -370,4 +370,17 @@ test('A78: the drawer on a phone lists the same groups in the same order as the 
   assert.deepEqual(phone.groups,['Inicio','Clientes','Agenda y equipo','Caja y ventas','Centro','Administración']);
   assert.deepEqual(phone,desktop);
   assert.deepEqual(desktop.counts,['1','3'],'Avisos and Mensajes show their unread counts');
+});
+
+test('A79: Búnker sits last under Administración and shows only with bunkerAdmin, independently of the owner panel',()=>{
+  const none={calendar:false,clients:false,communications:false,billing:false,staff:false};
+  const entries=caps=>getProfessionalNavigation({...none,...caps}).find(group=>group.id==='administration')?.children.map(route=>route.label)??null;
+  assert.equal(entries({}),null,'no permission, no group and no entry');
+  assert.equal(entries({ownerPanel:true}).includes('Búnker'),false,'the owner panel alone does not open Búnker');
+  assert.deepEqual(entries({ownerPanel:true,bunkerAdmin:true}),['Panel de gestión','Monitorización','Búnker']);
+  assert.deepEqual(entries({bunkerAdmin:true}),['Búnker']);
+  assert.equal(entries({bunkerAdmin:false,ownerPanel:true}).includes('Búnker'),false);
+  const route=getProfessionalNavigation({...none,bunkerAdmin:true}).flatMap(group=>group.children).find(item=>item.id==='bunker');
+  assert.equal(route.href,'#bunker');
+  assert.deepEqual(getProfessionalPageContext('bunker'),{section:'Administración',page:'Búnker'});
 });

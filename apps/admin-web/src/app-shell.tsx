@@ -21,7 +21,7 @@ export type CommandCenterModel = {
 const CommandContext = React.createContext<{data:CommandCenterModel|null;state:'loading'|'ready'|'error';error:string;reload:()=>void;capabilities:NavigationCapabilities|null}>({data:null,state:'loading',error:'',reload:()=>{},capabilities:null});
 export const useCommandCenter = () => React.useContext(CommandContext);
 export const useProfessionalCapabilities = () => React.useContext(CommandContext).capabilities;
-export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean;linkReviewManage?:boolean;memberInvitationManage?:boolean};
+export type NavigationCapabilities = Pick<CommandCenterModel['permissions'],'calendar'|'clients'|'communications'|'billing'|'staff'> & {notificationSettings?:boolean;ownerPanel?:boolean;bunkerAdmin?:boolean;news?:boolean;store?:boolean;cash?:boolean;catalogPricingManage?:boolean;linkReviewManage?:boolean;memberInvitationManage?:boolean};
 export function ProfessionalCapabilitiesProvider({capabilities,children}:{capabilities:NavigationCapabilities|null;children:React.ReactNode}) {
   return <CommandContext.Provider value={{data:null,state:'loading',error:'',reload:()=>{},capabilities}}>{children}</CommandContext.Provider>;
 }
@@ -45,6 +45,7 @@ const routes={
   reports:{id:'reports',label:'Informes',href:'#reports',permission:'billing',icon:icons.ReceiptText},
   promotions:{id:'promotions',label:'Promociones',href:'#promotions',permission:'catalogPricingManage',icon:icons.BadgePercent},
   monitoring:{id:'monitoring',label:'Monitorización',href:'#monitoring',permission:'ownerPanel',icon:icons.Activity},
+  bunker:{id:'bunker',label:'Búnker',href:'#bunker',permission:'bunkerAdmin',icon:icons.Dumbbell},
   management:{id:'management',label:'Panel de gestión',href:'#management',permission:'ownerPanel',icon:icons.ShieldCheck},
   store:{id:'store',label:'Tienda',href:'#store',permission:'store',icon:icons.ShoppingBag},
   news:{id:'news',label:'Noticias',href:'#news',permission:'news',icon:icons.Newspaper},
@@ -59,7 +60,7 @@ const navSections:NavSection[]=[
   {id:'agenda-team',label:'Agenda y equipo',icon:icons.CalendarDays,children:[routes.calendar,routes.services,routes.spaces,routes.timeclock,routes.staff]},
   {id:'cash-sales',label:'Caja y ventas',icon:icons.Wallet,children:[routes.caja,routes.economics,routes.store]},
   {id:'center',label:'Centro',icon:icons.Briefcase,children:[routes['my-gym'],routes.reports,routes.news,routes.settings,routes['notification-settings']]},
-  {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.management,routes.monitoring]},
+  {id:'administration',label:'Administración',icon:icons.ShieldCheck,children:[routes.management,routes.monitoring,routes.bunker]},
 ];
 /** Groups that start open on a wide sidebar. */
 const defaultOpenGroups=navSections.map(section=>section.id);
