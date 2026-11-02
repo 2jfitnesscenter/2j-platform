@@ -176,7 +176,7 @@ export function AppShell({children}:{children:React.ReactNode}) {
   const navigation=getProfessionalNavigation(permissions,route);
   const pageContext=getProfessionalPageContext(route);
   /** Unread badges: Mensajes (unread conversations) and Avisos (incidences, without the unread-messages row to avoid counting it twice). */
-  const navCount=(id:string)=>!data?0:id==='communications'?(data.unread||0):id==='activity'?attentionOf(data).rows.filter(row=>row.id!=='unread-messages').length:0;
+  const navCount=(id:string)=>!data||!data.permissions?0:id==='communications'?(data.unread||0):id==='activity'?attentionOf(data).rows.filter(row=>row.id!=='unread-messages').length:0;
   const toggleGroup=(groupId:string)=>setExpandedGroups(current=>{const next=new Set(current);if(next.has(groupId))next.delete(groupId);else next.add(groupId);return next;});
   const logout=async()=>{try{const response=await apiFetch(`${api}/api/staff/auth/logout`,{method:'POST',credentials:'include',cache:'no-store'});if(!response.ok)throw new Error();setAuthRequired(true);setCapabilities(null);setData(null);}catch{setError('No se pudo cerrar la sesión. Inténtalo de nuevo.');}};
   const sidebarHidden=isDrawer&&!drawerOpen;
