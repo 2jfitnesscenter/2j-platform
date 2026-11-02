@@ -52,6 +52,8 @@ const utcDateOffset = (offsetDays, from = new Date()) => {
   const date = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate() + offsetDays));
   return date.toISOString().slice(0, 10);
 };
+/** A recent start near today-2 whose first monthly period still holds a weekday: weekday_ratio_v1 correctly rejects an empty first period (e.g. a Saturday the 31st), which made this fixture date-dependent. */
+const recentStartWithWeekdays = () => { for (const offset of [-2, -1, 0, -3, -4]) { const date = utcDateOffset(offset); const d = new Date(`${date}T00:00:00Z`); const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate(); for (let day = d.getUTCDate(); day <= last; day++) { const w = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), day)).getUTCDay(); if (w >= 1 && w <= 5) return date; } } throw new Error('no usable start date'); };
 const addDays = (date, days) => utcDateOffset(days, new Date(`${date}T00:00:00Z`));
 const utcMonthDateFrom = (date, monthOffset, day) => {
   const [year, month] = date.split('-').map(Number);
@@ -265,7 +267,7 @@ test('unlimited term assignments require no grant but remain behind enforced pay
 });
 
 test('reservation evaluation share-lock serializes with payment writer without a global lock',async()=>{
-  const client=await createClient(),service=await createService(),plan=await createContractPlan(service),assignment=await assign(client,plan,utcDateOffset(-2));
+  const client=await createClient(),service=await createService(),plan=await createContractPlan(service),assignment=await assign(client,plan,recentStartWithWeekdays());
   let lockedResolve,releaseResolve;
   const locked=new Promise(resolve=>{lockedResolve=resolve;});const release=new Promise(resolve=>{releaseResolve=resolve;});
   const startsAt=futureSessionStart();
@@ -273,10 +275,10 @@ test('reservation evaluation share-lock serializes with payment writer without a
   const outcome=await locked;assert.equal(outcome.eligible,true);
   const pendingPayment=recordPayment(assignment.chargeId,5000);
   let observedLock=false;
-  for(let attempt=0;attempt<200;attempt++){
+  for(let attempt=0;attempt<400;attempt++){
     const waiters=await sql`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'`;
     if(Number(waiters[0]?.count)>0){observedLock=true;break;}
-    await new Promise(resolve=>setImmediate(resolve));
+    await new Promise(resolve=>setTimeout(resolve,10));
   }
   assert.equal(observedLock,true,'payment writer must wait on the charge row held by booking eligibility');
   releaseResolve();await booking;
