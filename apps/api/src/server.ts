@@ -20,6 +20,7 @@ import { registerAutomaticRenewalRoutes } from './auto-renewal.js';
 import { registerCalendarRoutes } from './calendar.js';
 import { registerClientAppRoutes } from './client-app.js';
 import { createPushService, registerPushRoutes, type PushProvider } from './push.js';
+import { createMembershipPeriodEnforcementWorker } from './membership-period-enforcement.js';
 import { createWebPushProvider } from './push-web-provider.js';
 import { createMemberPilotAuth } from './member-pilot-auth.js';
 import { registerMemberBookingCohortRoutes } from './member-booking-cohort.js';
@@ -445,6 +446,9 @@ export function buildServer(databaseUrl = process.env.DATABASE_URL, options: Ser
   registerPushRoutes(app, client, clientAuthorizationResolver, push, memberOrigin);
   app.addHook('onReady', async () => { push.start(); });
   app.addHook('onClose', async () => { push.stop(); });
+  const membershipWorker = createMembershipPeriodEnforcementWorker(client, { enabled: process.env.MEMBERSHIP_ENFORCEMENT_ENABLED === 'true', logger: app.log });
+  app.addHook('onReady', async () => { membershipWorker.start(); });
+  app.addHook('onClose', async () => { membershipWorker.stop(); });
   memberPilotAuth.register(app);
   registerPlatformPasskeyRoutes(app, client, { enabled: options.platformPasskeysEnabled === true, rpId: options.platformPasskeyRpId ?? null, origin: options.memberAppOrigin ?? null, startSession: memberPilotAuth.startSession, resolveAuthorization: authorizationResolver, ...(options.platformPasskeyMaxRequestsPerMinute ? { maxRequestsPerMinute: options.platformPasskeyMaxRequestsPerMinute } : {}) });
   staffAuth.register(app, client);

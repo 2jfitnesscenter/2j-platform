@@ -83,3 +83,33 @@ export async function cancelUncoveredPeriodBookings(db: Db, now = new Date()) {
   }
   return {cancelled, checked:candidates.length, localDate:today, timezone:'Atlantic/Canary' as const};
 }
+
+/**
+ * Scheduler for cancelUncoveredPeriodBookings (D247/D253, day-11 rule). It was implemented and tested but never run.
+ * Off unless MEMBERSHIP_ENFORCEMENT_ENABLED=true, because it cancels real reservations. Overlapping ticks are skipped.
+ */
+export function createMembershipPeriodEnforcementWorker(db: Db, options: { enabled: boolean; intervalMs?: number; logger?: { warn?: (...a: any[]) => void } }) {
+  let timer: ReturnType<typeof setInterval> | null = null, running = false;
+  async function tick() {
+    if (running) return null;
+    running = true;
+    try {
+      return await cancelUncoveredPeriodBookings(db);
+    } catch (error) {
+      options.logger?.warn?.({ err: error }, 'membership period enforcement tick failed');
+      return null;
+    } finally {
+      running = false;
+    }
+  }
+  return {
+    tick,
+    start() {
+      if (timer || !options.enabled) return;
+      timer = setInterval(() => { void tick(); }, Math.max(60_000, options.intervalMs ?? 5 * 60_000));
+      timer.unref?.();
+    },
+    stop() { if (timer) { clearInterval(timer); timer = null; } },
+    isRunning: () => timer !== null,
+  };
+}
