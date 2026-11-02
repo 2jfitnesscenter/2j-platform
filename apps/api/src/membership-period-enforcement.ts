@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Sql } from 'postgres';
 import { canaryBusinessDate } from '@2j/domain';
 import { appendNotificationEvent } from './notifications.js';
+import { enqueuePushForClient } from './push.js';
 
 type Db = Sql<Record<string, unknown>>;
 
@@ -50,6 +51,7 @@ export async function cancelUncoveredPeriodBookings(db: Db, now = new Date()) {
         FROM calendar_reservations r JOIN calendar_reservation_rights cr ON cr.reservation_id=r.id
         WHERE cr.assignment_id=${candidate.assignmentId} AND cr.entitlement_period_id=${candidate.periodId} AND r.status='reserved'
         ORDER BY r.id FOR UPDATE OF r`;
+      const cancelledByClient = new Map<string, number>();
       for (const reservation of reservations) {
         const [updated] = await tx`UPDATE calendar_reservations SET status='cancelled_by_membership',cancelled_at=${now.toISOString()},cancelled_by='system:membership-period-worker',updated_at=${now.toISOString()}
           WHERE id=${reservation.id} AND status='reserved' RETURNING id`;
@@ -69,6 +71,11 @@ export async function cancelUncoveredPeriodBookings(db: Db, now = new Date()) {
           VALUES ('system:membership-period-worker','reservation.cancelled_by_membership','calendar_reservation',${reservation.id},${reservation.sessionId},${reservation.clientId},${tx.json({previousStatus:'reserved',newStatus:'cancelled_by_membership',periodId:candidate.periodId,dueOn:charge.dueOn,penalty:false})})`;
         await appendNotificationEvent(tx,{type:'booking.cancelled_by_membership',aggregateType:'calendar_reservation',aggregateId:String(reservation.id),clientId:String(reservation.clientId),dedupeKey:`membership-period-cancelled:${reservation.id}`});
         periodCancelled++;
+        cancelledByClient.set(String(reservation.clientId), (cancelledByClient.get(String(reservation.clientId)) ?? 0) + 1);
+      }
+      // D248: one grouped push per member and period, only when something was cancelled.
+      for (const [clientId, count] of cancelledByClient) {
+        await enqueuePushForClient(tx, clientId, 'booking.cancelled_by_membership', `membership-period-cancelled-push:${candidate.periodId}:${clientId}`, { count: Math.min(count, 999) });
       }
       return periodCancelled;
     });

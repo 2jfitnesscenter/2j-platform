@@ -7,6 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createBookingEligibilityResolver, type BookingEntitlementOption, type BookingEligibilityResolver, type BookingEligibilityResult } from './booking-eligibility.js';
 import type { ClientAuthorizationContext } from './communications.js';
 import { appendNotificationEvent } from './notifications.js';
+import { enqueuePushForClient } from './push.js';
 import { materializeCalendarTemplates } from './calendar-materializer.js';
 
 type SqlClient = ReturnType<typeof createDatabase>['client'];
@@ -213,6 +214,7 @@ export function registerCalendarRoutes(
       await appendAudit(tx,actorId,'reservation.created','calendar_reservation',reservation.id,session.id,entry.clientId,{source:'waitlist_promotion'});
       await appendAudit(tx,actorId,'waitlist.promoted','calendar_waitlist_entry',entry.id,session.id,entry.clientId,{reservationId:reservation.id});
       await appendNotificationEvent(tx,{type:'waitlist.promoted',aggregateType:'calendar_reservation',aggregateId:reservation.id,clientId:entry.clientId,dedupeKey:`waitlist-promoted:${entry.id}`});
+      await enqueuePushForClient(tx, entry.clientId, 'waitlist.promoted', `waitlist-promoted:${entry.id}`);
       promoted.push(reservation.id);
     }
     return promoted;

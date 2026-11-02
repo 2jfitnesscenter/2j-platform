@@ -68,6 +68,17 @@ export async function enqueuePushIntent(sql: Sql, input: PushIntentInput): Promi
   return { created: false, intentId: String(existing.id) };
 }
 
+/**
+ * Same as enqueuePushIntent, addressed by the member's client. A client without a linked Platform person has no device identity, so nothing is queued
+ * and the business transaction is not affected. Returns null in that case.
+ */
+export async function enqueuePushForClient(sql: Sql, clientId: string, kind: PushKind, dedupeKey: string, params?: PushParams) {
+  if (!/^[0-9a-f-]{36}$/i.test(clientId)) return null;
+  const [link] = await sql`SELECT person_id AS "personId" FROM platform_person_clients WHERE client_id=${clientId}::uuid ORDER BY linked_at, person_id LIMIT 1`;
+  if (!link) return null;
+  return enqueuePushIntent(sql, { personId: String(link.personId), kind, dedupeKey, ...(params ? { params } : {}) });
+}
+
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 const DEFAULT_INTERVAL_MS = 2_000;
 const RETRY_DELAY_S = 60;
