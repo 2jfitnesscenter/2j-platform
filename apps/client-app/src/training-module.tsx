@@ -9,6 +9,20 @@ type TodayResponse =
 export type TrainingSet = { exerciseName: string; setIndex: number; reps: number; weightKg: number; rir: number | null };
 type HistorySession = { id: string; routineName: string | null; startedAt: string; finishedAt: string; setCount: number; exercises: { exerciseName: string; sets: Omit<TrainingSet, 'exerciseName'>[] }[] };
 export type SetDraft = { reps: string; weight: string; rir: string };
+export type RoutineView = { id: string; name: string; status: 'active' | 'archived'; scheduledWeekdays: number[]; exercises: { exerciseName: string; targetSets: number; mode: string }[] };
+const weekdayLabels: Array<{ day: number; label: string }> = [{ day: 1, label: 'Lun' }, { day: 2, label: 'Mar' }, { day: 3, label: 'Mié' }, { day: 4, label: 'Jue' }, { day: 5, label: 'Vie' }, { day: 6, label: 'Sáb' }, { day: 7, label: 'Dom' }];
+/** Una línea por ejercicio: "Nombre" o "Nombre | series". Sin nombre o con series fuera de 1–20 no es válida. */
+export function parseRoutineExercises(text: string): { exerciseName: string; targetSets: number }[] | null {
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  const exercises: { exerciseName: string; targetSets: number }[] = [];
+  for (const line of lines) {
+    const [namePart, setsPart] = line.split('|').map(part => part.trim());
+    const targetSets = setsPart === undefined || setsPart === '' ? 3 : Number(setsPart);
+    if (!namePart || namePart.length > 80 || !Number.isInteger(targetSets) || targetSets < 1 || targetSets > 20) return null;
+    exercises.push({ exerciseName: namePart, targetSets });
+  }
+  return exercises.length > 0 ? exercises : null;
+}
 
 export class TrainingApiError extends Error {
   constructor(readonly status: number, readonly body: Record<string, unknown>) { super(String(body.error ?? 'training_request_failed')); }
@@ -42,7 +56,11 @@ const setKey = (exerciseName: string, setIndex: number) => `${exerciseName}#${se
 const describeSet = (set: { reps: number; weightKg: number; rir: number | null }) => `${set.reps} × ${set.weightKg} kg${set.rir === null ? '' : ` · RIR ${set.rir}`}`;
 
 export function TrainingModule({ onBack }: { onBack: () => void }) {
-  const [mode, setMode] = React.useState<'today' | 'session' | 'history'>('today');
+  const [mode, setMode] = React.useState<'today' | 'session' | 'history' | 'routines'>('today');
+  const [routines, setRoutines] = React.useState<RoutineView[] | null>(null);
+  const [routineName, setRoutineName] = React.useState('');
+  const [routineDays, setRoutineDays] = React.useState<number[]>([]);
+  const [routineExercises, setRoutineExercises] = React.useState('');
   const [today, setToday] = React.useState<TodayResponse | null>(null);
   const [blocked, setBlocked] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -74,7 +92,42 @@ export function TrainingModule({ onBack }: { onBack: () => void }) {
     }
   }, []);
 
+  const loadRoutines = React.useCallback(async () => {
+    setError('');
+    try {
+      setRoutines((await trainingApi<{ routines: RoutineView[] }>('/api/me/training/routines')).routines);
+    } catch (caught) {
+      if (caught instanceof TrainingApiError && caught.status === 403) setBlocked(true);
+      else setError('No se han podido cargar tus rutinas.');
+    }
+  }, []);
+
+  const createRoutine = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const exercises = parseRoutineExercises(routineExercises);
+    if (!routineName.trim() || routineDays.length === 0 || !exercises) { setError('Pon un nombre, al menos un día y un ejercicio por línea (Nombre | series, de 1 a 20).'); return; }
+    setBusy(true); setError(''); setMessage('');
+    try {
+      await trainingApi('/api/me/training/routines', { method: 'POST', body: JSON.stringify({ name: routineName.trim(), scheduledWeekdays: routineDays, exercises }) });
+      setRoutineName(''); setRoutineDays([]); setRoutineExercises(''); setMessage('Rutina creada.');
+      await loadRoutines();
+    } catch {
+      setError('No se ha podido crear la rutina.');
+    } finally { setBusy(false); }
+  };
+
+  const setRoutineStatus = async (routine: RoutineView) => {
+    setBusy(true); setError(''); setMessage('');
+    try {
+      await trainingApi(`/api/me/training/routines/${routine.id}`, { method: 'PATCH', body: JSON.stringify({ status: routine.status === 'active' ? 'archived' : 'active' }) });
+      await loadRoutines();
+    } catch {
+      setError('No se ha podido actualizar la rutina.');
+    } finally { setBusy(false); }
+  };
+
   React.useEffect(() => { void load(); }, [load]);
+  React.useEffect(() => { if (mode === 'routines') void loadRoutines(); }, [mode, loadRoutines]);
   React.useEffect(() => { if (mode === 'history') void loadHistory(); }, [mode, loadHistory]);
 
   const startSession = async () => {
@@ -130,10 +183,11 @@ export function TrainingModule({ onBack }: { onBack: () => void }) {
     <section className="settings-card training-module" aria-labelledby="training-title">
       <button type="button" className="text-button contextual-link" onClick={onBack}>← Volver</button>
       <p className="eyebrow">ENTRENAMIENTO</p>
-      <h2 id="training-title">{mode === 'history' ? 'Historial' : mode === 'session' ? session?.routineName ?? 'Sesión' : 'Hoy'}</h2>
+      <h2 id="training-title">{mode === 'history' ? 'Historial' : mode === 'routines' ? 'Mis rutinas' : mode === 'session' ? session?.routineName ?? 'Sesión' : 'Hoy'}</h2>
       <nav className="training-tabs" aria-label="Entrenamiento">
         <button type="button" className={`button ${mode === 'today' ? 'primary' : 'secondary'}`} aria-pressed={mode === 'today'} onClick={() => { setMode('today'); void load(); }}>Hoy</button>
         <button type="button" className={`button ${mode === 'history' ? 'primary' : 'secondary'}`} aria-pressed={mode === 'history'} onClick={() => setMode('history')}>Historial</button>
+        <button type="button" className={`button ${mode === 'routines' ? 'primary' : 'secondary'}`} aria-pressed={mode === 'routines'} onClick={() => setMode('routines')}>Mis rutinas</button>
       </nav>
       {message && <p className="muted" role="status">{message}</p>}
       {error && <p className="state-card error-card" role="alert">{error}</p>}
@@ -178,6 +232,42 @@ export function TrainingModule({ onBack }: { onBack: () => void }) {
             </fieldset>
           ))}
           <button type="button" className="button primary full" disabled={busy} onClick={finishSession}>Terminar y guardar</button>
+        </div>
+      )}
+
+      {mode === 'routines' && (
+        <div>
+          <form className="settings-card" aria-labelledby="routine-form-title" onSubmit={createRoutine}>
+            <p className="eyebrow">NUEVA RUTINA</p>
+            <h3 id="routine-form-title">Crear rutina</h3>
+            <label className="field-label" htmlFor="routine-name">Nombre</label>
+            <input id="routine-name" className="text-input" value={routineName} maxLength={120} onChange={event => setRoutineName(event.target.value)} />
+            <fieldset>
+              <legend>Días</legend>
+              {weekdayLabels.map(({ day, label }) => (
+                <label key={day} className="weekday-option">
+                  <input type="checkbox" checked={routineDays.includes(day)} onChange={() => setRoutineDays(current => current.includes(day) ? current.filter(item => item !== day) : [...current, day].sort((a, b) => a - b))} /> {label}
+                </label>
+              ))}
+            </fieldset>
+            <label className="field-label" htmlFor="routine-exercises">Ejercicios (uno por línea: Nombre | series)</label>
+            <textarea id="routine-exercises" className="text-input" rows={5} value={routineExercises} onChange={event => setRoutineExercises(event.target.value)} />
+            <button type="submit" className="button primary full" disabled={busy}>Guardar rutina</button>
+          </form>
+          {routines === null ? <p className="muted">Cargando…</p> : routines.length === 0 ? (
+            <div className="empty-card"><p>Aún no tienes rutinas.</p></div>
+          ) : (
+            <ul aria-label="Mis rutinas" className="training-routines">
+              {routines.map(routine => (
+                <li key={routine.id} className="settings-card">
+                  <strong>{routine.name}</strong>
+                  <small className="muted"> · {routine.status === 'active' ? 'Activa' : 'Archivada'} · {routine.scheduledWeekdays.map(day => weekdayLabels.find(item => item.day === day)?.label ?? day).join(', ') || 'Sin días'}</small>
+                  <ul>{routine.exercises.map(exercise => <li key={exercise.exerciseName}>{exercise.exerciseName} · {exercise.targetSets} series</li>)}</ul>
+                  <button type="button" className="button secondary" disabled={busy} onClick={() => setRoutineStatus(routine)}>{routine.status === 'active' ? 'Archivar' : 'Reactivar'}</button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
