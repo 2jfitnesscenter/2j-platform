@@ -32,7 +32,12 @@
 ## Decisiones tomadas en este plan
 
 - **Proxy:** nginx, en `deploy/proxy/nginx.conf`, añadido al `docker-compose.yml` raíz. Motivo: es lo más simple para dos orígenes bajo un dominio.
-- **Enlace automático:** el espec dice que el enlace se crea al primer login con Google si ya existe cuenta de Búnker. Este plan **no** crea enlaces automáticamente: el enlace se crea solo con el flujo de vinculación existente (`training-link-flow.ts`) o por personal. Crear el enlace por coincidencia de correo sería inseguro. **Pendiente de confirmar con el usuario.**
+- **Enlace automático por correo (decisión del usuario, 2026-11-02):** al primer login con Google, si el correo verificado coincide con la cuenta de Búnker, se crea `training_account_links` con `method = 'email_match'`. Condiciones obligatorias:
+  - (a) el correo de Google debe llegar con `email_verified = true`;
+  - (b) la cuenta de Búnker debe tener el correo verificado; si Búnker no lo guarda verificado, el enlace no se crea y queda pendiente (esto se confirma en Task 6);
+  - (c) coincidencia exacta, comparando en minúsculas y sin espacios;
+  - (d) uno a uno: si el correo coincide con más de una cuenta de Búnker, o la cuenta ya está enlazada a otra persona, no se enlaza y queda pendiente para revisión del personal.
+  - Riesgo aceptado por el usuario: un correo verificado de una persona ajena podría asociarse a una cuenta.
 - **Passkey al vincular:** el flujo de vinculación sigue pidiendo passkey dentro de Búnker. Solo se elimina la passkey al entrar desde Home.
 - **Nivel de sesión en Búnker:** nuevo valor `home`, distinto de `sso`, para no cambiar el comportamiento del flujo SSO antiguo mientras dura la transición.
 
@@ -131,6 +136,11 @@ test('rejects a Google account with no active person', async () => {
 - [ ] **Step 3: Implementar el callback.** Verificar `state` y `code_verifier` guardados en cookie `2j_member_oauth` (HttpOnly, 5 min). Intercambiar `code` con Google y validar `id_token` (issuer, audience, expiración). Buscar `platform_person_auth_subjects` con `provider='google'` y `auth_subject = sub`. Si no hay fila activa, responder 403 `no_member_account`.
 - [ ] **Step 4: Ejecutar y ver que pasa.** Expected: PASS.
 - [ ] **Step 5: Escribir la prueba de éxito** y verificar que crea sesión (Task 4) con persona existente.
+- [ ] **Step 6: Pruebas de enlace por correo** (decisión del usuario, condiciones (a) a (d) de Decisiones):
+  - correo con `email_verified = false` → no enlaza, estado pendiente;
+  - correo que coincide con dos cuentas de Búnker → no enlaza, estado pendiente;
+  - cuenta de Búnker ya enlazada a otra persona → no enlaza, estado pendiente;
+  - coincidencia única y verificada → crea `training_account_links` con `method = 'email_match'`.
 - [ ] **Step 6: Commit.** `git commit -m "feat(identity): login de socio con Google"`
 
 ---
