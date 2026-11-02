@@ -1,3 +1,4 @@
+import { reconcileClientReservationCoverage } from './entitlement-reconciliation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -231,6 +232,8 @@ export function registerEntitlementRoutes(app: FastifyInstance<any,any,any,any,a
         const [event]=await tx`INSERT INTO client_plan_assignment_events(assignment_id,event_type,effective_on,expected_resume_on,reason,actor_id,actor_role,idempotency_key,request_hash) VALUES (${assignment.id},${eventType},${effectiveOn},${action==='pause'?(body.data.expectedResumeOn??null):null},${body.data.reason??null},${context.actorId},${context.role},${key.data},${requestHash}) RETURNING id`;
         await tx`INSERT INTO economic_audit_events(actor_id,action,resource_type,resource_id,client_id,details) VALUES (${context.actorId},${`client_plan.${eventType}`},'client_plan_assignment',${assignment.id},${params.data.clientId},${JSON.stringify({eventId:event!.id,effectiveOn,reason:body.data.reason??null})}::jsonb)`;
         await tx`INSERT INTO client_events(client_id,event_type,actor_id,actor_role) VALUES (${params.data.clientId},${`client.plan_${eventType}`},${context.actorId},${context.role})`;
+        // A cancelled membership loses coverage for its future bookings: reconcile in this same transaction (D247/D253).
+        if(action==='cancel')await reconcileClientReservationCoverage(tx as never,{clientId:params.data.clientId,actorId:context.actorId,eventKey:`assignment-cancel:${event!.id}`});
         return {replay:false,eventId:event!.id,status:eventType};
       });
       if('error'in result)return reply.code(result.error==='assignment_not_found'?404:409).send({error:result.error});

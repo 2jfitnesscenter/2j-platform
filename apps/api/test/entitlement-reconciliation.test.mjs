@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { buildServer } from '../src/server.ts';
 import { migrateDatabase } from '../src/migrate.ts';
@@ -49,6 +49,10 @@ async function bookedMember() {
   return { client, assignment, reservationId: booking.json().id };
 }
 
+async function cancelEventOnly(assignmentId) {
+  await sql`INSERT INTO client_plan_assignment_events(assignment_id,event_type,effective_on,reason,actor_id,actor_role,idempotency_key,request_hash)
+    VALUES (${assignmentId}::uuid,'cancelled',${localDate}::date,'Reconciliación de prueba','recon-test','admin',${randomUUID()}::uuid,${createHash('sha256').update(randomUUID()).digest('hex')})`;
+}
 async function reservationStatus(id) {
   const [row] = await sql`SELECT status FROM calendar_reservations WHERE id=${id}::uuid`;
   return row.status;
@@ -60,25 +64,19 @@ async function reconcile(clientId, eventKey) {
   return sql.begin(tx => reconcileClientReservationCoverage(tx, { clientId, actorId: 'recon-test', eventKey }));
 }
 
-test('an uncovered future reservation is cancelled once and its quota restored exactly once', async () => {
+test('cancelling an assignment through the product route releases its uncovered booking and restores quota once', async () => {
   const member = await bookedMember();
+  assert.equal(await reservationStatus(member.reservationId), 'reserved');
   const cancel = await app.inject({ method: 'POST', url: `/api/clients/${member.client.id}/plans/${member.assignment.id}/cancel`, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'Reconciliación de prueba' } });
   assert.ok([200, 201].includes(cancel.statusCode), cancel.body);
-
-  assert.equal(await reservationStatus(member.reservationId), 'reserved', 'precondition: the product cancel path must not already release the booking');
-  const first = await reconcile(member.client.id, `evt-${randomUUID()}`);
-  const status = await reservationStatus(member.reservationId);
-  assert.notEqual(status, 'reserved');
-  const restores = await restoreRows(member.client.id);
-  assert.equal(restores.length, 1, `expected exactly one restore row, got ${restores.length}`);
-  assert.equal(first.cancelled, 1);
-  assert.equal(first.restored, 1);
+  assert.equal(await reservationStatus(member.reservationId), 'cancelled_by_membership');
+  assert.equal((await restoreRows(member.client.id)).length, 1);
 });
 
 test('repeating the same reconciliation does not cancel or restore twice', async () => {
   const member = await bookedMember();
   const eventKey = `evt-${randomUUID()}`;
-  await app.inject({ method: 'POST', url: `/api/clients/${member.client.id}/plans/${member.assignment.id}/cancel`, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'Reconciliación de prueba' } });
+  await cancelEventOnly(member.assignment.id);
   const first = await reconcile(member.client.id, eventKey);
   const second = await reconcile(member.client.id, eventKey);
   assert.equal(first.cancelled, 1);
@@ -89,7 +87,7 @@ test('repeating the same reconciliation does not cancel or restore twice', async
 
 test('two concurrent reconciliations for the same member never double-cancel or double-restore', async () => {
   const member = await bookedMember();
-  await app.inject({ method: 'POST', url: `/api/clients/${member.client.id}/plans/${member.assignment.id}/cancel`, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'Reconciliación de prueba' } });
+  await cancelEventOnly(member.assignment.id);
   const [a, b] = await Promise.all([reconcile(member.client.id, `evt-a-${randomUUID()}`), reconcile(member.client.id, `evt-b-${randomUUID()}`)]);
   assert.equal(a.cancelled + b.cancelled, 1, `cancel must happen exactly once: ${a.cancelled}+${b.cancelled}`);
   assert.equal(a.restored + b.restored, 1, `restore must happen exactly once: ${a.restored}+${b.restored}`);

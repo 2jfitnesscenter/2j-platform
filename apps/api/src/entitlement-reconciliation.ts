@@ -63,11 +63,11 @@ export async function reconcileClientReservationCoverage(
       restored++;
       await tx`INSERT INTO calendar_audit_events(actor_id,action,resource_type,resource_id,session_id,client_id,details)
         VALUES (${input.actorId},'reservation.entitlement_restored','calendar_reservation',${String(reservation.id)},${String(reservation.sessionId)},${input.clientId},
-          ${tx.json({ rightId: String(right.rightId), ledgerEntryId: String(entry!.id), eventKey: input.eventKey })})`;
+          ${JSON.stringify({ rightId: String(right.rightId), ledgerEntryId: String(entry!.id), eventKey: input.eventKey })}::text::jsonb)`;
     }
     await tx`INSERT INTO calendar_audit_events(actor_id,action,resource_type,resource_id,session_id,client_id,details)
       VALUES (${input.actorId},'reservation.cancelled_by_membership','calendar_reservation',${String(reservation.id)},${String(reservation.sessionId)},${input.clientId},
-        ${tx.json({ previousStatus: 'reserved', newStatus: 'cancelled_by_membership', eventKey: input.eventKey })})`;
+        ${JSON.stringify({ previousStatus: 'reserved', newStatus: 'cancelled_by_membership', eventKey: input.eventKey })}::text::jsonb)`;
   }
 
   // D248: one grouped push per member and event, only when something was cancelled.
