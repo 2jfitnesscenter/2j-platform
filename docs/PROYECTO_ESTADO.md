@@ -85,10 +85,16 @@ Una sola aplicación para el socio del centro deportivo: entra con Google, ve su
 ### 6.2 Verificado y no verificado
 
 - **Verificado por lectura y pruebas unitarias/integración en cada tarea:** todo lo anterior.
+- **Verificado el 2026-11-02 en local (PostgreSQL 17 en Docker):**
+  - Platform `apps/api`: `tsc --noEmit` limpio; suite 520/521. El único fallo, `reservation evaluation share-lock serializes with payment writer`, **también falla en la base ac023c4** (es previo, no lo introduce el hito);
+  - Búnker `api`: 1003/1005. Los 2 fallos son los conocidos de `security-ops.test.js`;
+  - Búnker `frontend`: build con `VITE_BASE=/bunker/` correcto; `security-ui.test.jsx` 14/14 tras añadir la etiqueta de `platform_email_sync` (commit `0f81afe` en `2jfitnessapp`);
+  - Home `client-app`: `tsc` limpio, build correcto, tests 55/55;
+  - e2e `home-bunker-single-app.spec.ts` en local: **2/2 pasan** (Google falso → Home → `/bunker/` sin login → registro de fuerza → vuelta a Home; y caso pendiente). Hubo que corregir el helper (el estado de Búnker va cifrado) y admitir Google Fonts, que es la única host externa declarada por Búnker (commit `af2f683` en `2j-hub`).
 - **NO verificado:**
-  - el e2e de extremo a extremo (`tooling/e2e/home-bunker-single-app.spec.ts` y el job `single-app` de CI): **no se ha ejecutado**. Aquí no hay Docker ni PostgreSQL;
-  - `docker compose up`, el build de imágenes y `nginx -t`;
-  - la suite completa con los números exactos en la rama final (la última ejecución dio 520/521; el fallo `term-payment-booking` share-lock también falla en la base).
+  - `docker compose up`: **falla**. El servicio `home` usa `Dockerfile.demo` (imagen demo, necesita `dist-demo`, no la Home real), y el servicio `api` no tiene Dockerfile: monta el repo y ejecuta `apps/api/dist/server.js` sin dependencias instaladas. Hay que decidirlo antes de seguir (ver §9);
+  - `nginx -t` del proxy;
+  - CI de los PR (`2j-hub#1`): `quality` falla por el share-lock previo (también en `main`); `secret scan` falla por 7 `generic-api-key` en fixtures de tests, incluidos commits de historia (también en `main`); los dos jobs e2e fallan porque falta el secreto `BUNKER_REPO_READ_TOKEN` y el workflow toma Búnker de `main` por defecto. CI de `2jfitnessapp#82`: `test` falla por `security-ui` (ya corregido en `0f81afe`, pendiente de re-ejecutar CI); `api` y `api-image` pasan.
 
 ### 6.3 Pendiente antes de producción
 
