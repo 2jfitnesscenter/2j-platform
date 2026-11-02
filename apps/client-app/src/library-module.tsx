@@ -41,9 +41,8 @@ async function libraryApi<T>(path: string): Promise<T> {
 export function LibraryEntryCard({ onOpen }: { onOpen: () => void }) {
   return (
     <button type="button" className="profile-link-card library-home-card" onClick={onOpen}>
-      <span className="eyebrow">BIBLIOTECA</span>
-      <strong>Ejercicios</strong>
-      <small className="muted">Busca un ejercicio y revisa cómo se hace.</small>
+      <strong>Biblioteca</strong>
+      <small className="muted">Busca ejercicios y revisa cómo se hacen.</small>
     </button>
   );
 }
