@@ -198,6 +198,12 @@ export function registerClientAppRoutes(
         WHERE s.service_id=sv.id AND s.status='scheduled' AND s.starts_at>now() AND a.status='active'
           AND (s.individual_client_id IS NULL OR s.individual_client_id=${actor.clientId})
       )
+      -- Solo servicios que el socio puede reservar: una asignación activa con cuota de sesiones para ese servicio.
+      AND EXISTS (
+        SELECT 1 FROM client_plan_assignments a
+        JOIN plan_rights r ON r.plan_id=a.plan_id AND r.plan_version=a.plan_version
+        WHERE a.client_id=${actor.clientId} AND a.status='active' AND r.right_type='sessions_quota' AND r.service_id=sv.id
+      )
       ORDER BY sv.name,sv.id LIMIT 100`;
     return { services };
   });
