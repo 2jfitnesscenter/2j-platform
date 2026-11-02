@@ -39,7 +39,7 @@
   - (d) uno a uno: si el correo coincide con más de una cuenta de Búnker, o la cuenta ya está enlazada a otra persona, no se enlaza y queda pendiente para revisión del personal.
   - Riesgo aceptado por el usuario: un correo verificado de una persona ajena podría asociarse a una cuenta.
 - **Passkey al vincular:** el flujo de vinculación sigue pidiendo passkey dentro de Búnker. Solo se elimina la passkey al entrar desde Home.
-- **Rutas de Búnker:** todas las rutas `2jfitnessapp/...` del plan se leen como `bunker/...` dentro de `2j-hub`, porque Búnker se copia en ese repo (decisión del usuario). `2jfitnessapp` queda intacto.
+- **Cambios de Búnker en su propia línea:** las tareas 6 a 9 se hacen en el repo `2jfitnessapp`, en la rama `agent/claude/m1-bunker-home-session` creada desde `main`. Nunca en `main`, para que los usuarios de prueba sigan usando Búnker tal cual. No hay copia de Búnker dentro de `2j-hub` (la copia inicial se retiró en `d159b76`). Las rutas `2jfitnessapp/...` del plan son las de ese repo.
 - **Nivel de sesión en Búnker:** nuevo valor `home`, distinto de `sso`, para no cambiar el comportamiento del flujo SSO antiguo mientras dura la transición.
 
 ---
