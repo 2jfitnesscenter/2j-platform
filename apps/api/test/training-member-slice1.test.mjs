@@ -104,7 +104,7 @@ test('saving sets stores reps, weight and RIR, updates an existing set, and reje
   const url = `/api/me/training/sessions/${session.id}/sets`;
   const saved = await appEntitled.inject({ method: 'POST', url, payload: { exerciseName: 'Sentadilla', setIndex: 1, reps: 8, weightKg: 80, rir: 2 } });
   assert.equal(saved.statusCode, 200, saved.body);
-  assert.deepEqual(json(saved).set, { exerciseName: 'Sentadilla', setIndex: 1, reps: 8, weightKg: 80, rir: 2 });
+  assert.deepEqual(json(saved).set, { exerciseName: 'Sentadilla', setIndex: 1, setType: 'work', done: true, reps: 8, weightKg: 80, rir: 2, rpe: null, feel: null, seconds: null, minutes: null, speedKmh: null });
   const corrected = await appEntitled.inject({ method: 'POST', url, payload: { exerciseName: 'Sentadilla', setIndex: 1, reps: 9, weightKg: 82.5 } });
   assert.equal(corrected.statusCode, 200, corrected.body);
   assert.equal(json(corrected).set.reps, 9); assert.equal(json(corrected).set.rir, null);
@@ -257,4 +257,67 @@ test('the access endpoint tells the home card whether the member is entitled, wi
   assert.deepEqual(json(await appEntitled.inject({ method: 'GET', url: '/api/me/training/access' })), { entitled: true });
   assert.deepEqual(json(await appBlocked.inject({ method: 'GET', url: '/api/me/training/access' })), { entitled: false });
 });
+});
+
+test('routines: create with exercises, replace the list, default fields, and archive', async () => {
+  const created = await appOther.inject({ method: 'POST', url: '/api/me/training/routines', payload: { name: 'Cardio y fuerza', scheduledWeekdays: [weekday, weekday],
+    exercises: [{ exerciseName: 'Bici', mode: 'cardio', targetSets: 1, target: { minutes: 20 } }, { exerciseName: 'Sentadilla', targetSets: 4, supersetGroup: 'A', progressionPolicy: 'linear' }] } });
+  assert.equal(created.statusCode, 201, created.body);
+  const routine = json(created).routine;
+  assert.deepEqual(routine.scheduledWeekdays, [weekday]);
+  assert.deepEqual(routine.exercises.map(exercise => [exercise.position, exercise.exerciseName, exercise.mode]), [[1, 'Bici', 'cardio'], [2, 'Sentadilla', 'reps']]);
+  assert.deepEqual(routine.exercises[0].target, { minutes: 20 });
+  assert.equal(routine.exercises[1].supersetGroup, 'A');
+  assert.equal(routine.exercises[1].progressionPolicy, 'linear');
+  const listed = json(await appOther.inject({ method: 'GET', url: '/api/me/training/routines' }));
+  assert.ok(listed.routines.some(item => item.id === routine.id));
+  const replaced = await appOther.inject({ method: 'PATCH', url: `/api/me/training/routines/${routine.id}`, payload: { exercises: [{ exerciseName: 'Press banca' }] } });
+  assert.equal(replaced.statusCode, 200, replaced.body);
+  assert.deepEqual(json(replaced).routine.exercises.map(exercise => [exercise.position, exercise.exerciseName, exercise.targetSets, exercise.mode]), [[1, 'Press banca', 3, 'reps']]);
+  assert.equal(json(replaced).routine.scheduledWeekdays[0], weekday);
+  const archived = await appOther.inject({ method: 'PATCH', url: `/api/me/training/routines/${routine.id}`, payload: { status: 'archived' } });
+  assert.equal(archived.statusCode, 200, archived.body);
+  assert.equal(json(archived).routine.status, 'archived');
+  assert.equal((await appOther.inject({ method: 'POST', url: '/api/me/training/routines', payload: { name: 'X', exercises: [{ exerciseName: 'Remo', mode: 'bogus' }] } })).statusCode, 400);
+  assert.equal((await appOther.inject({ method: 'PATCH', url: `/api/me/training/routines/${routine.id}`, payload: {} })).statusCode, 400);
+  assert.equal((await appOther.inject({ method: 'PATCH', url: `/api/me/training/routines/${randomUUID()}`, payload: { name: 'Nada' } })).statusCode, 404);
+  assert.equal((await appBlocked.inject({ method: 'GET', url: '/api/me/training/routines' })).statusCode, 403);
+});
+
+test('sets: time, cardio, undone and warmup sets are stored and only work sets close a session', async () => {
+  const fran = await makeClient('Fran');
+  await entitle(fran);
+  await addRoutine(fran, { weekdays: [weekday] });
+  const appFran = appFor(fran);
+  try {
+  const started = await appFran.inject({ method: 'POST', url: '/api/me/training/sessions', payload: {} });
+  assert.equal(started.statusCode, 201, started.body);
+  const sessionId = json(started).session.id;
+  const url = `/api/me/training/sessions/${sessionId}/sets`;
+  assert.equal((await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Press banca', setIndex: 1, setType: 'warmup', reps: 10, weightKg: 20 } })).statusCode, 200);
+  const warmupOnly = await appFran.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/finish`, payload: {} });
+  assert.equal(warmupOnly.statusCode, 409, warmupOnly.body);
+  assert.equal(json(warmupOnly).error, 'no_sets_logged');
+  const plank = await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Plancha', setIndex: 1, seconds: 45, feel: 'good' } });
+  assert.equal(plank.statusCode, 200, plank.body);
+  assert.equal(json(plank).set.seconds, 45); assert.equal(json(plank).set.reps, null); assert.equal(json(plank).set.feel, 'good');
+  const bike = await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Bici', setIndex: 1, minutes: 20, speedKmh: 12.5 } });
+  assert.equal(bike.statusCode, 200, bike.body);
+  assert.equal(json(bike).set.minutes, 20); assert.equal(json(bike).set.speedKmh, 12.5);
+  assert.equal((await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Remo', setIndex: 1 } })).statusCode, 400);
+  assert.equal((await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Remo', setIndex: 1, reps: 8, rir: 1.3 } })).statusCode, 400);
+  const undone = await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Press banca', setIndex: 2, reps: 6, weightKg: 60, rir: 1.5, rpe: 8.5, done: false } });
+  assert.equal(undone.statusCode, 200, undone.body);
+  assert.equal(json(undone).set.done, false); assert.equal(json(undone).set.rir, 1.5); assert.equal(json(undone).set.rpe, 8.5);
+  const finished = await appFran.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/finish`, payload: {} });
+  assert.equal(finished.statusCode, 200, finished.body);
+  const history = json(await appFran.inject({ method: 'GET', url: '/api/me/training/history' }));
+  const latest = history.sessions[0];
+  assert.equal(latest.id, sessionId);
+  const pressBanca = latest.exercises.find(exercise => exercise.exerciseName === 'Press banca');
+  assert.deepEqual(pressBanca.sets.map(set => [set.setIndex, set.setType, set.done]), [[1, 'warmup', true]]);
+  assert.equal(latest.setCount, 3);
+  } finally {
+    await appFran.close();
+  }
 });
