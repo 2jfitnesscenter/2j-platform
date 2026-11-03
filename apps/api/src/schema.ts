@@ -328,24 +328,26 @@ export const platformMemberInvitationEvents = pgTable('platform_member_invitatio
 // A81 slice 1: entrenamiento de socio. Espejo de tipos y restricciones de migrations/0075 y 0076; la fuente de verdad es el SQL de las migraciones.
 export const trainingRoutines = pgTable('training_routines', {
   id: uuid('id').defaultRandom().primaryKey(), clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
-  name: text('name').notNull(), scheduledWeekdays: smallint('scheduled_weekdays').array().notNull().default(sql`'{}'`), status: text('status').notNull().default('active'),
+  name: text('name').notNull(), scheduledWeekdays: smallint('scheduled_weekdays').array().notNull().default(sql`'{}'`), status: text('status').notNull().default('active'), legacyBunkerId: text('legacy_bunker_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('training_routines_client_listing_idx').on(t.clientId, t.status, t.id), check('training_routines_status_allowed', sql`${t.status} IN ('active','archived')`), check('training_routines_name_length', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 120`), check('training_routines_weekdays_valid', sql`${t.scheduledWeekdays} <@ ARRAY[1,2,3,4,5,6,7]::smallint[]`)]);
 
 export const trainingRoutineExercises = pgTable('training_routine_exercises', {
   id: uuid('id').defaultRandom().primaryKey(), routineId: uuid('routine_id').notNull().references(() => trainingRoutines.id, { onDelete: 'cascade' }),
   position: integer('position').notNull(), exerciseName: text('exercise_name').notNull(), targetSets: integer('target_sets').notNull().default(3),
+  exerciseId: text('exercise_id'), mode: text('mode').notNull().default('reps'), supersetGroup: text('superset_group'), target: jsonb('target').notNull().default(sql`'{}'::jsonb`), progressionPolicy: text('progression_policy'),
 }, (t) => [uniqueIndex('training_routine_exercises_position_unique').on(t.routineId, t.position), check('training_routine_exercises_target_sets', sql`${t.targetSets} BETWEEN 1 AND 20`)]);
 
 export const trainingSessions = pgTable('training_sessions', {
   id: uuid('id').defaultRandom().primaryKey(), clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
-  routineId: uuid('routine_id').references(() => trainingRoutines.id, { onDelete: 'restrict' }), status: text('status').notNull(), businessDate: date('business_date').notNull(),
+  routineId: uuid('routine_id').references(() => trainingRoutines.id, { onDelete: 'restrict' }), status: text('status').notNull(), businessDate: date('business_date').notNull(), legacyBunkerId: text('legacy_bunker_id'), excludeFromProgression: boolean('exclude_from_progression').notNull().default(false),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(), finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, (t) => [uniqueIndex('training_sessions_one_open_per_client').on(t.clientId).where(sql`${t.status} = 'in_progress'`), index('training_sessions_history_idx').on(t.clientId, t.startedAt, t.id), check('training_sessions_status_allowed', sql`${t.status} IN ('in_progress','finished','abandoned')`), check('training_sessions_finished_consistent', sql`(${t.status} = 'finished') = (${t.finishedAt} IS NOT NULL)`)]);
 
 export const trainingSessionSets = pgTable('training_session_sets', {
   id: uuid('id').defaultRandom().primaryKey(), sessionId: uuid('session_id').notNull().references(() => trainingSessions.id, { onDelete: 'cascade' }),
-  exerciseName: text('exercise_name').notNull(), setIndex: integer('set_index').notNull(), reps: integer('reps').notNull(), weightKg: numeric('weight_kg', { precision: 6, scale: 2 }).notNull(), rir: integer('rir'),
+  exerciseName: text('exercise_name').notNull(), setIndex: integer('set_index').notNull(), reps: integer('reps'), weightKg: numeric('weight_kg', { precision: 6, scale: 2 }), rir: numeric('rir', { precision: 3, scale: 1 }),
+  setType: text('set_type').notNull().default('work'), done: boolean('done').notNull().default(true), seconds: integer('seconds'), minutes: numeric('minutes', { precision: 6, scale: 2 }), speedKmh: numeric('speed_kmh', { precision: 4, scale: 1 }), rpe: numeric('rpe', { precision: 3, scale: 1 }), feel: text('feel'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex('training_session_sets_unique').on(t.sessionId, t.exerciseName, t.setIndex), check('training_session_sets_reps', sql`${t.reps} BETWEEN 0 AND 100`)]);
 
