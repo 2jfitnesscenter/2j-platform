@@ -217,9 +217,8 @@ export function TrainingEntryCard({ onOpen, previewMode }: { onOpen: () => void;
   if (previewMode || !entitled) return null;
   return (
     <button type="button" className="profile-link-card training-home-card" onClick={onOpen}>
-      <span className="eyebrow">ENTRENAMIENTO</span>
-      <strong>Hoy y mi historial</strong>
-      <small className="muted">Empieza la sesión de hoy o revisa tus sesiones guardadas.</small>
+      <strong>Entrenar</strong>
+      <small className="muted">Sesión de hoy e historial.</small>
     </button>
   );
 }
