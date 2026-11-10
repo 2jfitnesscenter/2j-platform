@@ -52,6 +52,8 @@ const routinePatch = z.object({
   exercises: z.array(routineExerciseInput).max(40).optional(),
   status: z.enum(['active', 'archived']).optional(),
 }).strict();
+/** Tope de rutinas activas por socio: evita que una cuenta llene la tabla. */
+export const MAX_ACTIVE_ROUTINES = 30;
 const uniqueWeekdays = (days: number[]) => [...new Set(days)].sort((a, b) => a - b);
 
 /** Forma pública de una serie: los campos numéricos llegan como número o null, nunca como texto. */
@@ -193,6 +195,51 @@ export function registerTrainingMemberRoutes(app: FastifyInstance, db: DB, clien
     return { set: serializeSet(set) };
   });
 
+  /** Una sesión propia con sus series y los ejercicios de su rutina: permite reanudar una sesión abierta tras recargar. */
+  app.get('/api/me/training/sessions/:id', async (request, reply) => {
+    const ctx = await gate(request, reply); if (!ctx) return;
+    const params = z.object({ id: uuid }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_training_session' });
+    const [row] = await db`SELECT s.id, s.status, s.routine_id AS "routineId", s.started_at AS "startedAt", r.name AS "routineName"
+      FROM training_sessions s LEFT JOIN training_routines r ON r.id=s.routine_id
+      WHERE s.id=${params.data.id}::uuid AND s.client_id=${ctx.clientId}::uuid`;
+    if (!row) return reply.code(404).send({ error: 'training_session_not_found' });
+    const sets = await db`SELECT exercise_name AS "exerciseName", set_index AS "setIndex", set_type AS "setType", done, reps, weight_kg::float8 AS "weightKg", rir::float8 AS rir,
+      rpe::float8 AS rpe, feel, seconds, minutes::float8 AS minutes, speed_kmh::float8 AS "speedKmh"
+      FROM training_session_sets WHERE session_id=${String(row.id)}::uuid ORDER BY exercise_name, set_index`;
+    return { session: {
+      id: String(row.id), status: String(row.status), routineId: row.routineId ? String(row.routineId) : null, routineName: row.routineName ? String(row.routineName) : null,
+      startedAt: new Date(row.startedAt).toISOString(), exercises: row.routineId ? await routineExercises(String(row.routineId)) : [], sets: sets.map(serializeSet),
+    } };
+  });
+
+  /** Última vez de cada ejercicio (series hechas de la sesión terminada más reciente que lo incluye). Sirve de referencia al registrar. */
+  app.get('/api/me/training/last', async (request, reply) => {
+    const ctx = await gate(request, reply); if (!ctx) return;
+    const query = z.object({ exercise: z.union([exerciseName, z.array(exerciseName).max(40)]) }).safeParse(request.query ?? {});
+    if (!query.success) return reply.code(400).send({ error: 'invalid_training_last' });
+    const names = [...new Set([query.data.exercise].flat())];
+    const rows = await db`SELECT t.exercise_name AS "exerciseName", t.set_index AS "setIndex", t.set_type AS "setType", t.done, t.reps, t.weight_kg::float8 AS "weightKg", t.rir::float8 AS rir,
+        t.rpe::float8 AS rpe, t.feel, t.seconds, t.minutes::float8 AS minutes, t.speed_kmh::float8 AS "speedKmh", s.finished_at AS "finishedAt"
+      FROM training_session_sets t JOIN training_sessions s ON s.id=t.session_id
+      WHERE t.done AND t.exercise_name = ANY(${names}::text[]) AND s.id IN (
+        SELECT DISTINCT ON (t2.exercise_name) s2.id FROM training_session_sets t2 JOIN training_sessions s2 ON s2.id=t2.session_id
+        WHERE s2.client_id=${ctx.clientId}::uuid AND s2.status='finished' AND t2.done AND t2.exercise_name = ANY(${names}::text[])
+        ORDER BY t2.exercise_name, s2.finished_at DESC, s2.id DESC)
+      ORDER BY t.exercise_name, t.set_index`;
+    // Una sesión puede ser la última de un ejercicio y no de otro: se queda, por ejercicio, solo la más reciente.
+    const latest = new Map<string, number>();
+    for (const row of rows) { const at = new Date(row.finishedAt).getTime(); if ((latest.get(String(row.exerciseName)) ?? 0) < at) latest.set(String(row.exerciseName), at); }
+    const byExercise = new Map<string, { finishedAt: string; sets: ReturnType<typeof serializeSet>[] }>();
+    for (const row of rows) {
+      const name = String(row.exerciseName), at = new Date(row.finishedAt);
+      if (at.getTime() !== latest.get(name)) continue;
+      const entry = byExercise.get(name) ?? { finishedAt: at.toISOString(), sets: [] };
+      entry.sets.push(serializeSet(row)); byExercise.set(name, entry);
+    }
+    return { last: [...byExercise.entries()].map(([name, entry]) => ({ exerciseName: name, ...entry })) };
+  });
+
   app.post('/api/me/training/sessions/:id/finish', async (request, reply) => {
     const ctx = await gate(request, reply); if (!ctx) return;
     const params = z.object({ id: uuid }).safeParse(request.params);
@@ -270,6 +317,8 @@ export function registerTrainingMemberRoutes(app: FastifyInstance, db: DB, clien
     const body = routineCreate.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_training_routine' });
     const { name, scheduledWeekdays, exercises } = body.data;
+    const [live] = await db`SELECT count(*)::int AS count FROM training_routines WHERE client_id=${ctx.clientId}::uuid AND status='active'`;
+    if (Number(live?.count ?? 0) >= MAX_ACTIVE_ROUTINES) return reply.code(409).send({ error: 'training_routine_limit' });
     // Rutina y ejercicios se escriben juntos: nunca queda una rutina a medias.
     const routineId = await db.begin(async tx => {
       const [row] = await tx`INSERT INTO training_routines(client_id,name,scheduled_weekdays)

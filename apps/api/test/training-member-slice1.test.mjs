@@ -321,3 +321,44 @@ test('sets: time, cardio, undone and warmup sets are stored and only work sets c
     await appFran.close();
   }
 });
+
+test('resume and reference: a member reads an own session with its sets, and the last time of each exercise', async () => {
+  const gala = await makeClient('Gala');
+  await entitle(gala);
+  const galaRoutine = await addRoutine(gala, { weekdays: [otherWeekday], name: 'Libre' });
+  const app = appFor(gala);
+  try {
+    // Una rutina que hoy no toca se puede empezar indicándola.
+    const started = await app.inject({ method: 'POST', url: '/api/me/training/sessions', payload: { routineId: galaRoutine } });
+    assert.equal(started.statusCode, 201, started.body);
+    const sessionId = json(started).session.id;
+    for (const [setIndex, reps, weightKg] of [[1, 8, 60], [2, 7, 60]]) {
+      assert.equal((await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/sets`, payload: { exerciseName: 'Sentadilla', setIndex, reps, weightKg, rir: 1.5 } })).statusCode, 200);
+    }
+    const open = json(await app.inject({ method: 'GET', url: `/api/me/training/sessions/${sessionId}` })).session;
+    assert.equal(open.status, 'in_progress'); assert.equal(open.routineName, 'Libre');
+    assert.deepEqual(open.exercises.map(exercise => exercise.exerciseName), ['Sentadilla', 'Press banca']);
+    assert.deepEqual(open.sets.map(set => [set.exerciseName, set.setIndex, set.reps, set.weightKg, set.rir]), [['Sentadilla', 1, 8, 60, 1.5], ['Sentadilla', 2, 7, 60, 1.5]]);
+    assert.equal((await appOther.inject({ method: 'GET', url: `/api/me/training/sessions/${sessionId}` })).statusCode, 404, 'another member cannot read it');
+    assert.equal((await appBlocked.inject({ method: 'GET', url: `/api/me/training/sessions/${sessionId}` })).statusCode, 403);
+
+    const before = json(await app.inject({ method: 'GET', url: '/api/me/training/last?exercise=Sentadilla' }));
+    assert.deepEqual(before.last, [], 'an open session is not a reference yet');
+    assert.equal((await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/finish`, payload: {} })).statusCode, 200);
+    const last = json(await app.inject({ method: 'GET', url: '/api/me/training/last?exercise=Sentadilla&exercise=Press%20banca' })).last;
+    assert.deepEqual(last.map(item => [item.exerciseName, item.sets.map(set => `${set.reps}x${set.weightKg}`)]), [['Sentadilla', ['8x60', '7x60']]]);
+    assert.deepEqual(json(await appOther.inject({ method: 'GET', url: '/api/me/training/last?exercise=Sentadilla' })).last.filter(item => item.sets.some(set => set.weightKg === 60 && set.reps === 7)), [], 'never another member\'s data');
+    assert.equal((await app.inject({ method: 'GET', url: '/api/me/training/last' })).statusCode, 400);
+  } finally { await app.close(); }
+});
+
+test('routines: a member cannot keep more than the allowed number of active routines', async () => {
+  const hugo = await makeClient('Hugo');
+  await entitle(hugo);
+  await sql`INSERT INTO training_routines(client_id,name) SELECT ${hugo}::uuid, 'R' || n FROM generate_series(1,30) n`;
+  const app = appFor(hugo);
+  try {
+    const over = await app.inject({ method: 'POST', url: '/api/me/training/routines', payload: { name: 'Una más' } });
+    assert.equal(over.statusCode, 409); assert.equal(json(over).error, 'training_routine_limit');
+  } finally { await app.close(); }
+});
