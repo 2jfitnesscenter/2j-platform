@@ -749,3 +749,133 @@ html[data-2j-appearance="light"] body:has(.client-app.hub-theme) { background:#F
   .evolution-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 .member-message-list{display:grid;gap:12px}.member-message{max-width:min(92%,560px);padding:14px 16px;border:1px solid var(--2j-color-border);border-radius:18px;background:var(--2j-color-surface);overflow-wrap:anywhere}.member-message.from-client{justify-self:end;border-color:color-mix(in srgb,var(--2j-color-brand) 52%,var(--2j-color-border));background:color-mix(in srgb,var(--2j-color-brand) 9%,var(--2j-color-surface))}.member-message p{margin:0 0 8px;white-space:pre-wrap}.member-message small{display:block;color:var(--2j-color-text-secondary);font-size:11px}.member-message-compose{display:grid;gap:8px;margin-top:18px;padding:16px;border:1px solid var(--2j-color-border);border-radius:var(--2j-radius-lg);background:var(--2j-color-surface)}.member-message-compose textarea{min-height:112px;resize:vertical;padding:12px;border:1px solid var(--2j-color-border);border-radius:12px;background:var(--2j-color-canvas);color:var(--2j-color-text-primary)}.member-message-compose>small{text-align:right;color:var(--2j-color-text-secondary);font-size:11px}.member-message-compose .button{justify-self:end;min-width:150px}
+
+/* Biblioteca de ejercicios: filtros, lista y detalle con los tokens de la app. */
+.library-filters { display:grid; gap:12px; margin:0 0 14px; }
+.library-filters label { display:grid; gap:6px; min-width:0; }
+.library-filters label span { color:var(--2j-color-text-secondary); font-size:12px; }
+.library-filters input,.library-filters select { min-height:44px; width:100%; padding:0 12px; border:1px solid var(--2j-color-border); border-radius:12px; background:var(--2j-color-surface); color:var(--2j-color-text-primary); font:inherit; }
+.library-list { display:grid; gap:8px; margin:0 0 14px; padding:0; list-style:none; }
+.library-item { display:grid; gap:3px; width:100%; min-height:56px; padding:12px 14px; border:1px solid var(--2j-color-border); border-radius:14px; background:var(--2j-color-surface); color:var(--2j-color-text-primary); text-align:left; cursor:pointer; }
+.library-item strong { font-size:15px; }
+.library-item small { font-size:12px; }
+.library-detail { display:grid; gap:10px; padding:18px; border:1px solid var(--2j-color-border); border-radius:18px; background:var(--2j-color-surface); }
+.library-detail h1 { margin:2px 0 0; font-size:24px; letter-spacing:-.03em; }
+.library-detail p { margin:0; color:var(--2j-color-text-secondary); font-size:13px; line-height:1.5; }
+.library-steps { margin:4px 0 0; padding-left:20px; color:var(--2j-color-text-primary); font-size:14px; line-height:1.6; }
+.library-steps li { margin-bottom:6px; }
+
+/* Inicio: los dos accesos (Entrenar y Biblioteca) van en una fila de tarjetas iguales, con el título primero. */
+.home-shortcuts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:0 0 13px; }
+.home-shortcuts>:only-child { grid-column:1 / -1; }
+.home-shortcuts .profile-link-card { display:grid; align-content:start; gap:6px; min-height:112px; padding:16px; }
+.home-shortcuts .profile-link-card strong { font-size:16px; letter-spacing:-.02em; }
+.home-shortcuts .profile-link-card small { line-height:1.4; }
+
+/* Botones de cristal líquido (estilo iOS): tinte translúcido, desenfoque, borde con brillo superior y reflejo. Usa los tokens glass-* del sistema. */
+.button,
+.home-shortcuts .profile-link-card {
+  position:relative; isolation:isolate; overflow:hidden;
+  -webkit-backdrop-filter:blur(var(--2j-color-glass-blur)) saturate(170%);
+  backdrop-filter:blur(var(--2j-color-glass-blur)) saturate(170%);
+  box-shadow:inset 0 1px 0 var(--2j-color-glass-edge-top), inset 0 -1px 0 rgb(0 0 0 / 12%), 0 10px 24px rgb(0 0 0 / 18%);
+  transition:transform .2s ease, background-color .2s ease, box-shadow .2s ease;
+}
+.button::before,
+.home-shortcuts .profile-link-card::before {
+  content:""; position:absolute; inset:0; z-index:-1; border-radius:inherit; pointer-events:none;
+  background:linear-gradient(180deg,rgb(255 255 255 / 30%) 0%,rgb(255 255 255 / 0%) 54%);
+}
+.button.primary { background:var(--2j-color-glass-brand-fill); border-color:rgb(255 255 255 / 24%); color:var(--2j-color-text-on-brand); }
+.button.secondary { background:var(--2j-color-glass-fill); border-color:var(--2j-color-glass-edge); color:var(--2j-color-text-primary); }
+.button:hover:not(:disabled) { box-shadow:inset 0 1px 0 var(--2j-color-glass-edge-top), inset 0 -1px 0 rgb(0 0 0 / 12%), 0 14px 30px rgb(0 0 0 / 24%); }
+.button:active:not(:disabled) { transform:scale(.97); }
+.home-shortcuts .profile-link-card { background:var(--2j-color-glass-fill); border-color:var(--2j-color-glass-edge); }
+.home-shortcuts .profile-link-card:active { transform:scale(.98); }
+.hub-theme-light .button.primary { background:rgb(8 127 91 / 84%); border-color:rgb(255 255 255 / 40%); color:#FFFFFF; }
+.hub-theme-light .button.primary:hover:not(:disabled) { background:rgb(7 107 78 / 90%); }
+.hub-theme-light .button.secondary,
+.hub-theme-light .home-shortcuts .profile-link-card { background:rgb(255 255 255 / 58%); border-color:rgb(255 255 255 / 70%); }
+@media (prefers-reduced-transparency: reduce) {
+  .button,
+  .home-shortcuts .profile-link-card { -webkit-backdrop-filter:none; backdrop-filter:none; }
+  .button.primary { background:var(--2j-color-brand); }
+  .button.secondary,
+  .home-shortcuts .profile-link-card { background:var(--2j-color-surface); }
+}
+
+/* Capa premium global: grafito y lima de Platform (A77-2) con cristal líquido en superficies, cabecera, navegación y controles. Sin colores nuevos. */
+.client-app {
+  --pm-glass: rgb(255 255 255 / 72%);
+  --pm-glass-strong: rgb(255 255 255 / 86%);
+  --pm-edge: rgb(255 255 255 / 92%);
+  --pm-shadow: 0 18px 40px rgb(23 32 21 / 9%);
+  --pm-glow: rgb(164 214 94 / 22%);
+  position:relative; isolation:isolate; min-height:100vh;
+}
+.client-app::before {
+  content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+  background:radial-gradient(60% 40% at 100% 0%,var(--pm-glow),transparent 70%),radial-gradient(50% 35% at 0% 100%,rgb(164 214 94 / 12%),transparent 70%),var(--2j-color-canvas);
+}
+.client-app:not(.hub-theme-light) {
+  --pm-glass: rgb(30 36 28 / 62%);
+  --pm-glass-strong: rgb(40 48 37 / 80%);
+  --pm-edge: rgb(255 255 255 / 15%);
+  --pm-shadow: 0 22px 50px rgb(0 0 0 / 40%);
+  --pm-glow: rgb(164 214 94 / 16%);
+}
+.client-app:not(.hub-theme-light)::before {
+  background:radial-gradient(55% 38% at 100% 0%,rgb(164 214 94 / 20%),transparent 70%),radial-gradient(45% 32% at 0% 100%,rgb(164 214 94 / 9%),transparent 70%),linear-gradient(180deg,#171c15 0%,#101410 100%);
+}
+
+.client-app :is(.profile-link-card,.empty-card,.settings-card,.member-store-card,.member-purchase-card,.member-news-item,.home-news,.home-book-cta,.home-next-booking,.booking-card,.session-card,.membership-card,.profile-card,.plan-row,.state-card,.loading-card,.welcome,.today-card,.week-strip,.notification-item,.hub-training-card,.store-category,.center-news,.center-spaces) {
+  background:var(--pm-glass);
+  border-color:var(--pm-edge);
+  border-radius:22px;
+  -webkit-backdrop-filter:blur(24px) saturate(180%);
+  backdrop-filter:blur(24px) saturate(180%);
+  box-shadow:inset 0 1px 0 rgb(255 255 255 / 16%), var(--pm-shadow);
+}
+.client-app .home-book-cta {
+  background:radial-gradient(ellipse at 100% 0%,var(--pm-glow),transparent 58%),var(--pm-glass-strong);
+  border-color:rgb(164 214 94 / 45%);
+}
+.client-app .home-book-cta .button.primary { box-shadow:inset 0 1px 0 rgb(255 255 255 / 40%), 0 12px 28px rgb(164 214 94 / 28%); }
+
+.client-app .client-header,
+.client-app .bottom-nav {
+  background:var(--pm-glass-strong);
+  -webkit-backdrop-filter:blur(26px) saturate(190%);
+  backdrop-filter:blur(26px) saturate(190%);
+  border-color:var(--pm-edge);
+  box-shadow:inset 0 1px 0 rgb(255 255 255 / 14%), var(--pm-shadow);
+}
+.client-app .bottom-nav { border-radius:24px; margin:0 10px calc(8px + env(safe-area-inset-bottom)); border:1px solid var(--pm-edge); }
+.client-app .bottom-nav .nav-button.active { color:var(--2j-color-brand); }
+.client-app .bottom-nav .nav-button.active>span { background:var(--2j-color-glass-brand-fill); box-shadow:inset 0 1px 0 rgb(255 255 255 / 24%); }
+
+.client-app .store-filter button,
+.client-app .booking-tabs button,
+.client-app .quiet-button {
+  background:var(--pm-glass);
+  border-color:var(--pm-edge);
+  -webkit-backdrop-filter:blur(18px);
+  backdrop-filter:blur(18px);
+  box-shadow:inset 0 1px 0 rgb(255 255 255 / 14%);
+}
+.client-app .store-filter button.active,
+.client-app .booking-tabs [aria-selected="true"] {
+  background:var(--2j-color-glass-brand-fill);
+  border-color:rgb(164 214 94 / 70%);
+  color:var(--2j-color-text-primary);
+  box-shadow:inset 0 1px 0 rgb(255 255 255 / 26%), 0 8px 20px rgb(164 214 94 / 18%);
+}
+.client-app input,.client-app select,.client-app textarea {
+  background:var(--pm-glass);
+  border-color:var(--pm-edge);
+  -webkit-backdrop-filter:blur(16px);
+  backdrop-filter:blur(16px);
+}
+.client-app input:focus-visible,.client-app select:focus-visible,.client-app textarea:focus-visible { outline:2px solid var(--2j-color-brand); outline-offset:2px; }
+.hub-theme-light.client-app .button.primary,.hub-theme-light .button.primary { background:rgb(8 110 80 / 94%); }
+.hub-theme-light.client-app .button.primary:hover:not(:disabled),.hub-theme-light .button.primary:hover:not(:disabled) { background:rgb(7 96 70 / 96%); }
