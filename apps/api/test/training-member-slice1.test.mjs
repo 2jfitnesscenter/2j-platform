@@ -362,3 +362,27 @@ test('routines: a member cannot keep more than the allowed number of active rout
     assert.equal(over.statusCode, 409); assert.equal(json(over).error, 'training_routine_limit');
   } finally { await app.close(); }
 });
+
+test('staff: the client file reads Platform training records with training.read only', async () => {
+  const ines = await makeClient('Inés');
+  await entitle(ines);
+  const routine = await addRoutine(ines, { weekdays: [weekday], name: 'Ficha' });
+  const app = appFor(ines);
+  const trainer = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'records-trainer', role: 'trainer' }) });
+  const accountant = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'records-accountant', role: 'accountant' }) });
+  try {
+    const sessionId = json(await app.inject({ method: 'POST', url: '/api/me/training/sessions', payload: { routineId: routine } })).session.id;
+    await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/sets`, payload: { exerciseName: 'Sentadilla', setIndex: 1, reps: 10, weightKg: 50 } });
+    await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/sets`, payload: { exerciseName: 'Sentadilla', setIndex: 2, reps: 5, weightKg: 20, setType: 'warmup' } });
+    assert.equal((await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/finish`, payload: {} })).statusCode, 200);
+    const read = await trainer.inject({ method: 'GET', url: `/api/clients/${ines}/training-records` });
+    assert.equal(read.statusCode, 200, read.body);
+    const body = json(read);
+    assert.equal(body.totals.sessions, 1); assert.equal(body.totals.sessionsLast30Days, 1); assert.ok(body.totals.lastTrainingAt);
+    assert.deepEqual(body.routines.map(item => [item.name, item.exerciseCount, item.scheduledWeekdays]), [['Ficha', 2, [weekday]]]);
+    assert.deepEqual(body.sessions.map(item => [item.routineName, item.setCount, item.exerciseCount, item.volumeKg]), [['Ficha', 2, 1, 500]], 'warm-up sets do not count as volume');
+    assert.equal((await accountant.inject({ method: 'GET', url: `/api/clients/${ines}/training-records` })).statusCode, 403);
+    assert.equal((await trainer.inject({ method: 'GET', url: `/api/clients/${randomUUID()}/training-records` })).statusCode, 404);
+    assert.equal((await trainer.inject({ method: 'GET', url: '/api/clients/nope/training-records' })).statusCode, 400);
+  } finally { await Promise.all([app.close(), trainer.close(), accountant.close()]); }
+});

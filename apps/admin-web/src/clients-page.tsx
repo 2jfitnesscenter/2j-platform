@@ -43,6 +43,7 @@ type FollowupItem = { id:string; name:string; status:string; dueAt:string|null; 
 
 const apiUrl = import.meta.env?.VITE_API_URL ?? 'http://localhost:3100';
 const statusLabel = { active: 'Activo', archived: 'Archivado' };
+type TrainingRecordsView = { totals: { sessions: number; sessionsLast30Days: number; lastTrainingAt: string | null }; routines: Array<{ id: string; name: string; scheduledWeekdays: number[]; exerciseCount: number }>; sessions: Array<{ id: string; routineName: string | null; finishedAt: string; setCount: number; exerciseCount: number; volumeKg: number }> };
 const moduleLabels: Record<string, string> = { reservations: 'Reservas', training: 'Entrenamiento', nutrition: 'Nutrición', health: 'Salud', clients: 'Clientes', communication: 'Comunicación' };
 const client360Sections = new Set(['summary', 'reservations', 'plans', 'payments', 'purchases', 'training', 'documents', 'messages', 'followup', 'history']);
 
@@ -107,6 +108,7 @@ export function ClientsPage() {
   const [followupData, setFollowupData] = useState<FollowupItem[]|null>(null);
   const [trainingData, setTrainingData] = useState<TrainingSummaryView|null>(null);
   const [trainingState, setTrainingState] = useState<'idle'|'loading'|'ready'|'error'>('idle');
+  const [trainingRecords, setTrainingRecords] = useState<TrainingRecordsView|null>(null);
   const [operationState, setOperationState] = useState<'loading'|'ready'|'error'>('ready');
   const [operationError, setOperationError] = useState('');
   const [reviewNotes, setReviewNotes] = useState<Record<string,string>>({});
@@ -252,6 +254,12 @@ export function ClientsPage() {
     let current = true;
     const controller = new AbortController();
     setTrainingState('loading');
+    setTrainingRecords(null);
+    // A81: entrenamiento registrado en Platform. Si falla, la sección sigue mostrando el resto.
+    void apiFetch(`${apiUrl}/api/clients/${selectedId}/training-records`, { cache: 'no-store', signal: controller.signal })
+      .then(response => response.ok ? response.json() as Promise<TrainingRecordsView> : null)
+      .then(data => { if (current) setTrainingRecords(data && data.totals && Array.isArray(data.routines) && Array.isArray(data.sessions) ? data : null); })
+      .catch(() => {});
     void apiFetch(`${apiUrl}/api/clients/${selectedId}/training-summary`, { cache: 'no-store', signal: controller.signal })
       .then(async response => {
         if (response.status === 401 || response.status === 403) throw new Error('No se pudo autorizar la consulta de evolución.');
@@ -610,7 +618,12 @@ export function ClientsPage() {
                 {trainingData.summary.recentActivity && <><div><dt>Último entrenamiento</dt><dd>{trainingData.summary.recentActivity.lastTrainingAt ? dateLabel(`${trainingData.summary.recentActivity.lastTrainingAt}T12:00:00`) : 'Sin actividad reciente'}</dd></div><div><dt>Sesiones en los últimos 30 días</dt><dd>{trainingData.summary.recentActivity.sessionsLast30Days}</dd></div></>}
               </dl>
             </>}
-            <p className="client-muted">Mediciones de Platform: No conectado</p>
+            {!trainingRecords && <p className="client-muted">Mediciones de Platform: No conectado</p>}
+            {trainingRecords && <section aria-labelledby="client-training-records-title" className="client-stack">
+              <h3 id="client-training-records-title">Entrenamiento en Platform</h3>
+              <dl className="client-dl"><div><dt>Sesiones terminadas</dt><dd>{trainingRecords.totals.sessions}</dd></div><div><dt>Últimos 30 días</dt><dd>{trainingRecords.totals.sessionsLast30Days}</dd></div><div><dt>Último entrenamiento</dt><dd>{trainingRecords.totals.lastTrainingAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Atlantic/Canary' }).format(new Date(trainingRecords.totals.lastTrainingAt)) : 'Sin sesiones'}</dd></div><div><dt>Rutinas activas</dt><dd>{trainingRecords.routines.length ? trainingRecords.routines.map(routine => `${routine.name} (${routine.exerciseCount})`).join(', ') : 'Ninguna'}</dd></div></dl>
+              {trainingRecords.sessions.length > 0 && <ul className="client-list" aria-label="Últimas sesiones">{trainingRecords.sessions.map(session => <li key={session.id} className="client-list-row"><strong>{session.routineName ?? 'Sesión libre'}</strong><span>{new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Atlantic/Canary' }).format(new Date(session.finishedAt))} · {session.exerciseCount} {session.exerciseCount === 1 ? 'ejercicio' : 'ejercicios'} · {session.setCount} series · {session.volumeKg} kg</span></li>)}</ul>}
+            </section>}
           </Card>}
 
           {activeSection === 'reservations' && activeSectionData?.access === 'available' && <div className="client-stack">
