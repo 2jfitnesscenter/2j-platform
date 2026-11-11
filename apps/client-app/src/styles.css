@@ -879,3 +879,16 @@ html[data-2j-appearance="light"] body:has(.client-app.hub-theme) { background:#F
 .client-app input:focus-visible,.client-app select:focus-visible,.client-app textarea:focus-visible { outline:2px solid var(--2j-color-brand); outline-offset:2px; }
 .hub-theme-light.client-app .button.primary,.hub-theme-light .button.primary { background:rgb(8 110 80 / 94%); }
 .hub-theme-light.client-app .button.primary:hover:not(:disabled),.hub-theme-light .button.primary:hover:not(:disabled) { background:rgb(7 96 70 / 96%); }
+
+/* A81: rutinas y sesión de entrenamiento (tokens compartidos; sin colores propios). */
+.training-module .training-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px; }
+.training-module .training-tabs .button { flex:1 1 0; min-width:0; }
+.training-plan-list,.training-routines,.training-editor-list { display:grid; gap:10px; margin:10px 0; padding:0; list-style:none; }
+.training-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+.training-exercise { display:grid; gap:10px; min-width:0; margin:0 0 14px; padding:12px; border:1px solid var(--2j-color-border); border-radius:14px; }
+.training-set { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,8.5rem),1fr)); gap:8px; align-items:end; min-width:0; padding:10px; border:1px solid var(--2j-color-border); border-radius:12px; background:var(--2j-color-surface-subtle); }
+.training-set label,.training-editor>label { display:grid; gap:4px; min-width:0; font-size:12px; color:var(--2j-color-text-secondary); }
+.training-set :is(input,select),.training-editor>label input { width:100%; min-width:0; min-height:44px; padding:8px 10px; border:1px solid var(--2j-color-border-input); border-radius:10px; background:var(--2j-color-surface); color:var(--2j-color-text-primary); font:inherit; }
+.training-editor { display:grid; gap:12px; min-width:0; }
+.training-days { display:flex; flex-wrap:wrap; gap:6px; margin:0; padding:0; border:0; }
+.training-days .button { min-width:44px; min-height:44px; padding:0 10px; }
