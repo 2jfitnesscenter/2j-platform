@@ -104,7 +104,7 @@ test('saving sets stores reps, weight and RIR, updates an existing set, and reje
   const url = `/api/me/training/sessions/${session.id}/sets`;
   const saved = await appEntitled.inject({ method: 'POST', url, payload: { exerciseName: 'Sentadilla', setIndex: 1, reps: 8, weightKg: 80, rir: 2 } });
   assert.equal(saved.statusCode, 200, saved.body);
-  assert.deepEqual(json(saved).set, { exerciseName: 'Sentadilla', setIndex: 1, reps: 8, weightKg: 80, rir: 2 });
+  assert.deepEqual(json(saved).set, { exerciseName: 'Sentadilla', setIndex: 1, setType: 'work', done: true, reps: 8, weightKg: 80, rir: 2, rpe: null, feel: null, seconds: null, minutes: null, speedKmh: null });
   const corrected = await appEntitled.inject({ method: 'POST', url, payload: { exerciseName: 'Sentadilla', setIndex: 1, reps: 9, weightKg: 82.5 } });
   assert.equal(corrected.statusCode, 200, corrected.body);
   assert.equal(json(corrected).set.reps, 9); assert.equal(json(corrected).set.rir, null);
@@ -257,4 +257,132 @@ test('the access endpoint tells the home card whether the member is entitled, wi
   assert.deepEqual(json(await appEntitled.inject({ method: 'GET', url: '/api/me/training/access' })), { entitled: true });
   assert.deepEqual(json(await appBlocked.inject({ method: 'GET', url: '/api/me/training/access' })), { entitled: false });
 });
+});
+
+test('routines: create with exercises, replace the list, default fields, and archive', async () => {
+  const created = await appOther.inject({ method: 'POST', url: '/api/me/training/routines', payload: { name: 'Cardio y fuerza', scheduledWeekdays: [weekday, weekday],
+    exercises: [{ exerciseName: 'Bici', mode: 'cardio', targetSets: 1, target: { minutes: 20 } }, { exerciseName: 'Sentadilla', targetSets: 4, supersetGroup: 'A', progressionPolicy: 'linear' }] } });
+  assert.equal(created.statusCode, 201, created.body);
+  const routine = json(created).routine;
+  assert.deepEqual(routine.scheduledWeekdays, [weekday]);
+  assert.deepEqual(routine.exercises.map(exercise => [exercise.position, exercise.exerciseName, exercise.mode]), [[1, 'Bici', 'cardio'], [2, 'Sentadilla', 'reps']]);
+  assert.deepEqual(routine.exercises[0].target, { minutes: 20 });
+  assert.equal(routine.exercises[1].supersetGroup, 'A');
+  assert.equal(routine.exercises[1].progressionPolicy, 'linear');
+  const listed = json(await appOther.inject({ method: 'GET', url: '/api/me/training/routines' }));
+  assert.ok(listed.routines.some(item => item.id === routine.id));
+  const replaced = await appOther.inject({ method: 'PATCH', url: `/api/me/training/routines/${routine.id}`, payload: { exercises: [{ exerciseName: 'Press banca' }] } });
+  assert.equal(replaced.statusCode, 200, replaced.body);
+  assert.deepEqual(json(replaced).routine.exercises.map(exercise => [exercise.position, exercise.exerciseName, exercise.targetSets, exercise.mode]), [[1, 'Press banca', 3, 'reps']]);
+  assert.equal(json(replaced).routine.scheduledWeekdays[0], weekday);
+  const archived = await appOther.inject({ method: 'PATCH', url: `/api/me/training/routines/${routine.id}`, payload: { status: 'archived' } });
+  assert.equal(archived.statusCode, 200, archived.body);
+  assert.equal(json(archived).routine.status, 'archived');
+  assert.equal((await appOther.inject({ method: 'POST', url: '/api/me/training/routines', payload: { name: 'X', exercises: [{ exerciseName: 'Remo', mode: 'bogus' }] } })).statusCode, 400);
+  assert.equal((await appOther.inject({ method: 'PATCH', url: `/api/me/training/routines/${routine.id}`, payload: {} })).statusCode, 400);
+  assert.equal((await appOther.inject({ method: 'PATCH', url: `/api/me/training/routines/${randomUUID()}`, payload: { name: 'Nada' } })).statusCode, 404);
+  assert.equal((await appBlocked.inject({ method: 'GET', url: '/api/me/training/routines' })).statusCode, 403);
+});
+
+test('sets: time, cardio, undone and warmup sets are stored and only work sets close a session', async () => {
+  const fran = await makeClient('Fran');
+  await entitle(fran);
+  await addRoutine(fran, { weekdays: [weekday] });
+  const appFran = appFor(fran);
+  try {
+  const started = await appFran.inject({ method: 'POST', url: '/api/me/training/sessions', payload: {} });
+  assert.equal(started.statusCode, 201, started.body);
+  const sessionId = json(started).session.id;
+  const url = `/api/me/training/sessions/${sessionId}/sets`;
+  assert.equal((await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Press banca', setIndex: 1, setType: 'warmup', reps: 10, weightKg: 20 } })).statusCode, 200);
+  const warmupOnly = await appFran.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/finish`, payload: {} });
+  assert.equal(warmupOnly.statusCode, 409, warmupOnly.body);
+  assert.equal(json(warmupOnly).error, 'no_sets_logged');
+  const plank = await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Plancha', setIndex: 1, seconds: 45, feel: 'good' } });
+  assert.equal(plank.statusCode, 200, plank.body);
+  assert.equal(json(plank).set.seconds, 45); assert.equal(json(plank).set.reps, null); assert.equal(json(plank).set.feel, 'good');
+  const bike = await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Bici', setIndex: 1, minutes: 20, speedKmh: 12.5 } });
+  assert.equal(bike.statusCode, 200, bike.body);
+  assert.equal(json(bike).set.minutes, 20); assert.equal(json(bike).set.speedKmh, 12.5);
+  assert.equal((await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Remo', setIndex: 1 } })).statusCode, 400);
+  assert.equal((await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Remo', setIndex: 1, reps: 8, rir: 1.3 } })).statusCode, 400);
+  const undone = await appFran.inject({ method: 'POST', url, payload: { exerciseName: 'Press banca', setIndex: 2, reps: 6, weightKg: 60, rir: 1.5, rpe: 8.5, done: false } });
+  assert.equal(undone.statusCode, 200, undone.body);
+  assert.equal(json(undone).set.done, false); assert.equal(json(undone).set.rir, 1.5); assert.equal(json(undone).set.rpe, 8.5);
+  const finished = await appFran.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/finish`, payload: {} });
+  assert.equal(finished.statusCode, 200, finished.body);
+  const history = json(await appFran.inject({ method: 'GET', url: '/api/me/training/history' }));
+  const latest = history.sessions[0];
+  assert.equal(latest.id, sessionId);
+  const pressBanca = latest.exercises.find(exercise => exercise.exerciseName === 'Press banca');
+  assert.deepEqual(pressBanca.sets.map(set => [set.setIndex, set.setType, set.done]), [[1, 'warmup', true]]);
+  assert.equal(latest.setCount, 3);
+  } finally {
+    await appFran.close();
+  }
+});
+
+test('resume and reference: a member reads an own session with its sets, and the last time of each exercise', async () => {
+  const gala = await makeClient('Gala');
+  await entitle(gala);
+  const galaRoutine = await addRoutine(gala, { weekdays: [otherWeekday], name: 'Libre' });
+  const app = appFor(gala);
+  try {
+    // Una rutina que hoy no toca se puede empezar indicándola.
+    const started = await app.inject({ method: 'POST', url: '/api/me/training/sessions', payload: { routineId: galaRoutine } });
+    assert.equal(started.statusCode, 201, started.body);
+    const sessionId = json(started).session.id;
+    for (const [setIndex, reps, weightKg] of [[1, 8, 60], [2, 7, 60]]) {
+      assert.equal((await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/sets`, payload: { exerciseName: 'Sentadilla', setIndex, reps, weightKg, rir: 1.5 } })).statusCode, 200);
+    }
+    const open = json(await app.inject({ method: 'GET', url: `/api/me/training/sessions/${sessionId}` })).session;
+    assert.equal(open.status, 'in_progress'); assert.equal(open.routineName, 'Libre');
+    assert.deepEqual(open.exercises.map(exercise => exercise.exerciseName), ['Sentadilla', 'Press banca']);
+    assert.deepEqual(open.sets.map(set => [set.exerciseName, set.setIndex, set.reps, set.weightKg, set.rir]), [['Sentadilla', 1, 8, 60, 1.5], ['Sentadilla', 2, 7, 60, 1.5]]);
+    assert.equal((await appOther.inject({ method: 'GET', url: `/api/me/training/sessions/${sessionId}` })).statusCode, 404, 'another member cannot read it');
+    assert.equal((await appBlocked.inject({ method: 'GET', url: `/api/me/training/sessions/${sessionId}` })).statusCode, 403);
+
+    const before = json(await app.inject({ method: 'GET', url: '/api/me/training/last?exercise=Sentadilla' }));
+    assert.deepEqual(before.last, [], 'an open session is not a reference yet');
+    assert.equal((await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/finish`, payload: {} })).statusCode, 200);
+    const last = json(await app.inject({ method: 'GET', url: '/api/me/training/last?exercise=Sentadilla&exercise=Press%20banca' })).last;
+    assert.deepEqual(last.map(item => [item.exerciseName, item.sets.map(set => `${set.reps}x${set.weightKg}`)]), [['Sentadilla', ['8x60', '7x60']]]);
+    assert.deepEqual(json(await appOther.inject({ method: 'GET', url: '/api/me/training/last?exercise=Sentadilla' })).last.filter(item => item.sets.some(set => set.weightKg === 60 && set.reps === 7)), [], 'never another member\'s data');
+    assert.equal((await app.inject({ method: 'GET', url: '/api/me/training/last' })).statusCode, 400);
+  } finally { await app.close(); }
+});
+
+test('routines: a member cannot keep more than the allowed number of active routines', async () => {
+  const hugo = await makeClient('Hugo');
+  await entitle(hugo);
+  await sql`INSERT INTO training_routines(client_id,name) SELECT ${hugo}::uuid, 'R' || n FROM generate_series(1,30) n`;
+  const app = appFor(hugo);
+  try {
+    const over = await app.inject({ method: 'POST', url: '/api/me/training/routines', payload: { name: 'Una más' } });
+    assert.equal(over.statusCode, 409); assert.equal(json(over).error, 'training_routine_limit');
+  } finally { await app.close(); }
+});
+
+test('staff: the client file reads Platform training records with training.read only', async () => {
+  const ines = await makeClient('Inés');
+  await entitle(ines);
+  const routine = await addRoutine(ines, { weekdays: [weekday], name: 'Ficha' });
+  const app = appFor(ines);
+  const trainer = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'records-trainer', role: 'trainer' }) });
+  const accountant = buildServer(process.env.DATABASE_URL, { authorizationResolver: async () => ({ actorId: 'records-accountant', role: 'accountant' }) });
+  try {
+    const sessionId = json(await app.inject({ method: 'POST', url: '/api/me/training/sessions', payload: { routineId: routine } })).session.id;
+    await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/sets`, payload: { exerciseName: 'Sentadilla', setIndex: 1, reps: 10, weightKg: 50 } });
+    await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/sets`, payload: { exerciseName: 'Sentadilla', setIndex: 2, reps: 5, weightKg: 20, setType: 'warmup' } });
+    assert.equal((await app.inject({ method: 'POST', url: `/api/me/training/sessions/${sessionId}/finish`, payload: {} })).statusCode, 200);
+    const read = await trainer.inject({ method: 'GET', url: `/api/clients/${ines}/training-records` });
+    assert.equal(read.statusCode, 200, read.body);
+    const body = json(read);
+    assert.equal(body.totals.sessions, 1); assert.equal(body.totals.sessionsLast30Days, 1); assert.ok(body.totals.lastTrainingAt);
+    assert.deepEqual(body.routines.map(item => [item.name, item.exerciseCount, item.scheduledWeekdays]), [['Ficha', 2, [weekday]]]);
+    assert.deepEqual(body.sessions.map(item => [item.routineName, item.setCount, item.exerciseCount, item.volumeKg]), [['Ficha', 2, 1, 500]], 'warm-up sets do not count as volume');
+    assert.equal((await accountant.inject({ method: 'GET', url: `/api/clients/${ines}/training-records` })).statusCode, 403);
+    assert.equal((await trainer.inject({ method: 'GET', url: `/api/clients/${randomUUID()}/training-records` })).statusCode, 404);
+    assert.equal((await trainer.inject({ method: 'GET', url: '/api/clients/nope/training-records' })).statusCode, 400);
+  } finally { await Promise.all([app.close(), trainer.close(), accountant.close()]); }
 });

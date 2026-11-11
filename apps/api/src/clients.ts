@@ -161,6 +161,37 @@ export function registerClientRoutes(
     }
   });
 
+  /** A81: entrenamiento registrado en Platform (rutinas activas y últimas sesiones terminadas) para la ficha del cliente. Solo lectura. */
+  app.get('/api/clients/:clientId/training-records', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const context = await authorized(request, reply, 'training.read');
+    if (!context) return;
+    const params = z.object({ clientId: uuid }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_client_id' });
+    try {
+      const [found] = await database`SELECT id FROM clients WHERE id=${params.data.clientId}::uuid`;
+      if (!found) return reply.code(404).send({ error: 'client_not_found' });
+      const routines = await database`SELECT r.id, r.name, r.scheduled_weekdays AS "scheduledWeekdays", (SELECT count(*)::int FROM training_routine_exercises e WHERE e.routine_id=r.id) AS "exerciseCount"
+        FROM training_routines r WHERE r.client_id=${params.data.clientId}::uuid AND r.status='active' ORDER BY r.created_at, r.id`;
+      const sessions = await database`SELECT s.id, s.finished_at AS "finishedAt", r.name AS "routineName",
+          (SELECT count(*)::int FROM training_session_sets t WHERE t.session_id=s.id AND t.done) AS "setCount",
+          (SELECT count(DISTINCT t.exercise_name)::int FROM training_session_sets t WHERE t.session_id=s.id AND t.done) AS "exerciseCount",
+          (SELECT COALESCE(sum(t.reps*t.weight_kg),0)::float8 FROM training_session_sets t WHERE t.session_id=s.id AND t.done AND t.set_type<>'warmup') AS "volumeKg"
+        FROM training_sessions s LEFT JOIN training_routines r ON r.id=s.routine_id
+        WHERE s.client_id=${params.data.clientId}::uuid AND s.status='finished' ORDER BY s.finished_at DESC, s.id DESC LIMIT 10`;
+      const [totals] = await database`SELECT count(*)::int AS total, count(*) FILTER (WHERE finished_at > now()-interval '30 days')::int AS "last30Days", max(finished_at) AS "lastAt"
+        FROM training_sessions WHERE client_id=${params.data.clientId}::uuid AND status='finished'`;
+      return {
+        totals: { sessions: Number(totals?.total ?? 0), sessionsLast30Days: Number(totals?.last30Days ?? 0), lastTrainingAt: totals?.lastAt ? new Date(totals.lastAt).toISOString() : null },
+        routines: routines.map(row => ({ id: String(row.id), name: String(row.name), scheduledWeekdays: Array.from(row.scheduledWeekdays as unknown[], Number), exerciseCount: Number(row.exerciseCount) })),
+        sessions: sessions.map(row => ({ id: String(row.id), routineName: row.routineName ? String(row.routineName) : null, finishedAt: new Date(row.finishedAt).toISOString(), setCount: Number(row.setCount), exerciseCount: Number(row.exerciseCount), volumeKg: Math.round(Number(row.volumeKg)) })),
+      };
+    } catch (error) {
+      app.log.error({ databaseCode: databaseErrorCode(error), route: 'GET /api/clients/:clientId/training-records' }, 'client training records failed');
+      return reply.code(500).send({ error: 'internal_error' });
+    }
+  });
+
   app.post('/api/clients', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const context = await authorized(request, reply, 'clients.manage');
